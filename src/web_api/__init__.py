@@ -1,0 +1,10 @@
+"""
+Web API - FastAPI Backend for ThinkWithTool
+
+This package provides a modern REST API with Server-Sent Events (SSE)
+streaming for the AI assistant, replacing the Gradio interface.
+"""
+
+from .app import app, create_app
+
+__all__ = ['app', 'create_app']
