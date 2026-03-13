@@ -1,27 +1,52 @@
-# Use the Miniconda3 image from continuumio as the base image
 FROM continuumio/miniconda3
 
-# Set environment variables
-ENV PATH /opt/conda/bin:$PATH
-ENV PROMETHEUS_MULTIPROC_DIR /workspace/metrics
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    THINKTOOL_DOCKER=1
 
-# Create the /workspace directory and set it as the working directory
-WORKDIR /workspace
+RUN mkdir -p /app /workspace /seed
 
-# Copy all files from the current directory on the host to the container's /workspace directory
-COPY . /workspace
+WORKDIR /app
 
-# Ensure the correct Python version is installed (Python > 3.12.4) via conda
-# Install pip using conda, in case it doesn't come pre-installed
-# Update pip to the latest version
-# Install dependencies from the requirements.txt file
-RUN conda install python=3.12 pip && \
-    pip install --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+# ── System packages (GUI / VNC stack + common libs) ────────────────────────
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        xvfb \
+        x11vnc \
+        fluxbox \
+        novnc \
+        websockify \
+        supervisor \
+        xterm \
+        fonts-dejavu \
+        fonts-liberation \
+        dbus-x11 \
+        libgtk-3-0 \
+        libsdl2-2.0-0 \
+        libsdl2-image-2.0-0 \
+        libsdl2-mixer-2.0-0 \
+        libsdl2-ttf-2.0-0 \
+        git \
+        curl && \
+    apt-get clean && rm -rf /var/lib/apt/lists/* && \
+    ln -s /usr/share/novnc/vnc.html /usr/share/novnc/index.html
 
-# Use JINA for browser now - should be faster and more robust
-#RUN playwright install-deps
-#RUN playwright install
+# ── Python environment ─────────────────────────────────────────────────────
+COPY requirements.txt /app/requirements.txt
 
-# Make sure bash is used when connecting to the container
-CMD ["/bin/bash"]
+RUN conda create -n agent python=3.12 pip -y && \
+    conda run -n agent pip install --no-cache-dir -r requirements.txt
+
+# ── Application source ─────────────────────────────────────────────────────
+COPY . /app
+
+COPY entrypoint.sh /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
+
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+RUN sed -i 's/\r$//' /etc/supervisor/conf.d/supervisord.conf
+
+# Agent API + dev-server ports + noVNC
+EXPOSE 8080 8888 8889 8890 6080
+
+ENTRYPOINT ["/entrypoint.sh"]

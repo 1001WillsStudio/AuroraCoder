@@ -2,9 +2,11 @@ import os
 import uuid
 import shutil
 import subprocess
+import tempfile
+import threading
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 import json
 import logging
 import sys
@@ -31,17 +33,25 @@ class SessionManager:
         self.base_env_name: Optional[str] = None  # The actual base env used for this session
         self.session_info: Dict[str, Any] = {}
         
+        # Optional override: when set, all tools and the shell use this as cwd
+        # instead of session_dir (e.g. a shared workspace).
+        self.working_directory_override: Optional[Path] = None
+
         # For persistent terminal
         self.persistent_shell: Optional[subprocess.Popen] = None
         
-    def create_session(self, session_name: Optional[str] = None, base_env_name: Optional[str] = None) -> Dict[str, Any]:
-        """Create a new isolated session with conda environment and working directory.
+    def create_session(self, session_name: Optional[str] = None,
+                       base_env_name: Optional[str] = None,
+                       reuse_env: bool = False) -> Dict[str, Any]:
+        """Create a new session with conda environment and working directory.
         
         Args:
             session_name: Optional name for the session
             base_env_name: Optional conda environment name to clone from. 
                           If not provided, uses self.default_base_env_name.
                           If that's also not set, falls back to DEFAULT_BASE_ENV_NAME.
+            reuse_env: If True, use base_env_name directly instead of cloning.
+                       Faster startup and avoids path/config issues in cloned envs.
         """
         
         # Generate session ID and name
@@ -58,11 +68,9 @@ class SessionManager:
         self.session_dir = self.base_sessions_dir / full_session_name
         self.session_dir.mkdir(exist_ok=True)
         
-        # Create conda environment name
-        self.conda_env_name = f"thinktool_{self.session_id}"
-        
-        # Determine which base environment to clone from
+        # Determine which base environment to use
         self.base_env_name = base_env_name or self.default_base_env_name
+        self.conda_env_name = self.base_env_name if reuse_env else f"thinktool_{self.session_id}"
         
         # Session info
         self.session_info = {
@@ -70,15 +78,18 @@ class SessionManager:
             "session_name": full_session_name,
             "conda_env_name": self.conda_env_name,
             "base_env_name": self.base_env_name,
+            "reuse_env": reuse_env,
             "session_dir": str(self.session_dir),
             "created_at": datetime.now().isoformat(),
             "status": "initializing"
         }
         
         try:
-            # Create conda environment
-            logger.info(f"Creating conda environment: {self.conda_env_name}")
-            self._create_conda_environment()
+            if reuse_env:
+                logger.info(f"Reusing conda environment: {self.conda_env_name}")
+            else:
+                logger.info(f"Creating conda environment: {self.conda_env_name}")
+                self._create_conda_environment()
             
             # Create session workspace
             self._setup_session_workspace()
@@ -177,7 +188,6 @@ class SessionManager:
         If a shell is already running, it will be terminated first to ensure
         a fresh shell with the correct environment for the current session.
         """
-        # Terminate any existing shell before starting a new one
         if self.persistent_shell:
             logger.info("Terminating existing persistent shell before starting a new one...")
             try:
@@ -191,13 +201,9 @@ class SessionManager:
                     pass
             self.persistent_shell = None
 
-        use_shell_platform = sys.platform == "win32"
-        
-        if use_shell_platform:
-            # Use -Command - to read from stdin, but keep the profile so that Conda activation functions are loaded
-            shell_cmd = ["powershell.exe", "-NoLogo", "-Command", "-"]
+        if sys.platform == "win32":
+            shell_cmd = ["cmd.exe", "/D"]
         else:
-            # Start bash as an interactive shell so that .bashrc (and therefore Conda's hook) is sourced
             shell_cmd = ["bash", "-i"]
 
         try:
@@ -209,50 +215,103 @@ class SessionManager:
                 text=True,
                 cwd=self.get_session_working_directory(),
                 shell=False,
-                bufsize=1, # Line-buffered
+                bufsize=1,
                 universal_newlines=True
             )
             
-            # Activate the conda environment
             activation_cmd = self.activate_session_in_shell()
-            self.run_in_persistent_shell(activation_cmd)
+            if activation_cmd:
+                self._run_init_command(activation_cmd)
             logger.info(f"Persistent shell started and environment '{self.conda_env_name}' activated.")
             
         except Exception as e:
             logger.error(f"Failed to start persistent shell: {e}")
             self.persistent_shell = None
 
-    def run_in_persistent_shell(self, command: str, timeout: int = 30) -> (str, str):
-        """Runs a command in the persistent shell and returns stdout, stderr."""
+    def _run_init_command(self, command: str):
+        """Run a shell-state-changing command (e.g. conda activate) without output capture.
+
+        Uses a boundary on stdout purely for synchronization.  Output is
+        discarded — this is only for commands whose side-effects on the shell
+        environment matter (PATH changes, working directory, etc.).
+        """
+        if not self.persistent_shell or not command:
+            return
+        boundary = f"INIT_{uuid.uuid4().hex[:8]}"
+        self.persistent_shell.stdin.write(f"{command}\necho {boundary}\n")
+        self.persistent_shell.stdin.flush()
+        while True:
+            line = self.persistent_shell.stdout.readline()
+            if not line or boundary in line:
+                break
+
+    def run_in_persistent_shell(self, command: str, timeout: int = 120) -> Tuple[str, str]:
+        """Runs a command in the persistent shell and returns (stdout, exit_code).
+
+        Output is redirected to a temp file so it is completely free of
+        prompt noise and command echo.  A boundary marker echoed to stdout
+        is used only for synchronization.  A background thread reads stdout
+        so the call can be cleanly timed out.
+        """
         if not self.persistent_shell:
             return "", "Persistent shell not running."
 
-        # Unique boundary to mark the end of output
-        boundary = f"END_OF_COMMAND_{uuid.uuid4()}"
-        
-        # stderr is redirected to stdout at Popen, so we don't need 2>&1
-        full_cmd = f"{command}\necho {boundary}\n"
+        cmd_id = uuid.uuid4().hex[:8]
+        out_file = os.path.join(tempfile.gettempdir(), f"shell_out_{cmd_id}.txt")
+        boundary = f"END_{cmd_id}"
+
+        if sys.platform == "win32":
+            wrapped = (
+                f'({command}) > "{out_file}" 2>&1\n'
+                f'echo {boundary}\n'
+            )
+        else:
+            wrapped = (
+                f'{{ {command}; }} > "{out_file}" 2>&1\n'
+                f'echo {boundary}\n'
+            )
 
         try:
-            self.persistent_shell.stdin.write(full_cmd)
+            self.persistent_shell.stdin.write(wrapped)
             self.persistent_shell.stdin.flush()
         except Exception as e:
             return "", f"Failed to write to shell: {e}"
 
-        stdout_lines = []
-        stderr_lines = [] # stderr is redirected to stdout, so this will be empty
-        
-        # This read loop is basic. A more robust implementation would use threads
-        # to read stdout and stderr simultaneously to prevent deadlocks.
-        while True:
-            line = self.persistent_shell.stdout.readline()
-            if line.strip() == boundary:
-                break
-            if not line: # End of stream
-                break
-            stdout_lines.append(line)
-        
-        return "".join(stdout_lines), ""
+        found = threading.Event()
+
+        def _wait_for_boundary():
+            while True:
+                line = self.persistent_shell.stdout.readline()
+                if not line or boundary in line:
+                    found.set()
+                    return
+
+        reader = threading.Thread(target=_wait_for_boundary, daemon=True)
+        reader.start()
+        reader.join(timeout=timeout)
+
+        if not found.is_set():
+            try:
+                os.remove(out_file)
+            except OSError:
+                pass
+            return "", f"Command timed out after {timeout}s"
+
+        stdout = ""
+        try:
+            with open(out_file, "r", encoding="utf-8", errors="replace") as f:
+                stdout = f.read()
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            stdout = f"[Error reading command output: {e}]"
+        finally:
+            try:
+                os.remove(out_file)
+            except OSError:
+                pass
+
+        return stdout, ""
 
     def restart_persistent_shell(self) -> str:
         """Terminates the current shell and starts a new one."""
@@ -288,7 +347,9 @@ class SessionManager:
         return ["conda", "run", "-n", self.conda_env_name]
     
     def get_session_working_directory(self) -> Path:
-        """Get the session working directory"""
+        """Get the session working directory (respects working_directory_override)."""
+        if self.working_directory_override:
+            return self.working_directory_override
         return self.session_dir or Path.cwd()
     
     def activate_session_in_shell(self) -> str:
@@ -296,7 +357,7 @@ class SessionManager:
         if not self.conda_env_name:
             return ""
         if sys.platform == "win32":
-            # On Windows the Conda PowerShell module is loaded from the user profile above
+            # On Windows cmd.exe, conda activate is available via condabin on PATH
             return f"conda activate {self.conda_env_name}"
         # On Unix we have to make sure the shell knows about 'conda' before we try to activate
         return (
@@ -310,16 +371,17 @@ class SessionManager:
             return
         
         try:
-            # Remove conda environment
-            if self.conda_env_name:
+            # Remove conda environment (skip if reusing a shared env)
+            if self.conda_env_name and not self.session_info.get("reuse_env"):
                 logger.info(f"Removing conda environment: {self.conda_env_name}")
                 cmd = ["conda", "env", "remove", "-n", self.conda_env_name, "-y"]
                 
-                # Use shell=True for Windows compatibility
                 use_shell = sys.platform == "win32"
                 result = subprocess.run(cmd, capture_output=True, text=True, shell=use_shell)
                 if result.returncode != 0:
                     logger.warning(f"Failed to remove conda environment: {result.stderr}")
+            elif self.session_info.get("reuse_env"):
+                logger.info(f"Skipping env removal (shared env: {self.conda_env_name})")
             
             # Mark session as cleaned up
             if self.session_dir and self.session_dir.exists():
@@ -482,11 +544,10 @@ class SessionManager:
             
             for session_info in sessions_to_remove:
                 try:
-                    # Remove conda environment
+                    # Remove conda environment (skip if it was a shared/reused env)
                     conda_env_name = session_info.get("conda_env_name")
-                    if conda_env_name:
+                    if conda_env_name and not session_info.get("reuse_env"):
                         cmd = ["conda", "env", "remove", "-n", conda_env_name, "-y"]
-                        # Use shell=True for Windows compatibility
                         use_shell = sys.platform == "win32"
                         subprocess.run(cmd, capture_output=True, text=True, shell=use_shell)
                     

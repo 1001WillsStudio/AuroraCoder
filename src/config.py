@@ -51,6 +51,28 @@ MODEL_PROVIDERS = {
         "supports_thinking": False,
         "extra_body": None,
     },
+    "nvidia-glm5": {
+        "id": "nvidia-glm5",
+        "name": "NVIDIA GLM-5",
+        "description": "Z-AI GLM-5 on NVIDIA with deep thinking",
+        "base_url": "https://integrate.api.nvidia.com/v1",
+        "api_key": "[REDACTED]",
+        "model": "z-ai/glm5",
+        "supports_thinking": True,
+        "extra_body": {
+            "chat_template_kwargs": {"enable_thinking": True, "clear_thinking": False}
+        },
+    },
+    "nvidia-glm5-fast": {
+        "id": "nvidia-glm5-fast",
+        "name": "NVIDIA GLM-5 (No Thinking)",
+        "description": "Z-AI GLM-5 on NVIDIA, no reasoning (faster)",
+        "base_url": "https://integrate.api.nvidia.com/v1",
+        "api_key": "[REDACTED]",
+        "model": "z-ai/glm5",
+        "supports_thinking": False,
+        "extra_body": None,
+    },
     # ==========================================================================
     # Vertex AI Gemini Models (Google Cloud)
     # ==========================================================================
@@ -105,22 +127,46 @@ MAX_TOOL_CALLS = 10  # Increased since native tool calling is more efficient
 MAX_ITERATIONS = 30  # Maximum iterations per turn before requiring user to continue
 CONTINUE_ITERATIONS = 30  # Additional iterations when user clicks Continue
 
+# =============================================================================
+# Docker Mode
+# =============================================================================
+# Auto-detected via THINKTOOL_DOCKER env var (set in Dockerfile / docker-compose).
+DOCKER_MODE = os.environ.get("THINKTOOL_DOCKER", "0") == "1"
+DOCKER_VNC = os.environ.get("THINKTOOL_VNC", "0") == "1"
+WORKSPACE_DIR = "/workspace" if DOCKER_MODE else None
+
 # Session Configuration
 # Default conda environment to clone for new sessions
 # Set to None to use the built-in default (thinktool_sandbox_base)
 # Set to an existing conda env name (e.g., "agent") to clone from that environment
-DEFAULT_BASE_ENV_NAME = None
+DEFAULT_BASE_ENV_NAME = "agent" if DOCKER_MODE else None
+
+# Code interpreter (Pyright) error checking on files shown to the model.
+# Set to False to disable — useful when the checker produces noisy false positives.
+CODE_INTERPRETER_ERRORS_ENABLED = True
 
 # File Operation Markers
 EDIT_ZONE_MARKER = "# Edit Zone"
 
 # Terminal Environment Note
-TERMINAL_ENV_NOTE = (
-    "Environment Note: The terminal runs commands in a Windows PowerShell session within a Conda environment. "
-    "PowerShell does NOT support the '&&' operator for command chaining. "
-    "Attempting to run 'command_1 && command_2' will result in an error. "
-    "Execute each command separately or run them in individual terminal command calls."
-)
+if DOCKER_MODE:
+    _docker_note = (
+        "Environment Note: The terminal runs commands in a bash session inside a Docker container with a Conda environment. "
+        "You can chain commands with '&&' (e.g. 'command_1 && command_2'). "
+        "When the user asks you to run a web dev server, use port 8888 (exposed to the host). "
+    )
+    if DOCKER_VNC:
+        _docker_note += (
+            "A graphical desktop is available via DISPLAY=:99. "
+            "The user can see GUI applications (pygame, tkinter, browsers, etc.) at http://localhost:6080 in their browser. "
+            "When running GUI applications, they will render on this virtual display automatically."
+        )
+    TERMINAL_ENV_NOTE = _docker_note
+else:
+    TERMINAL_ENV_NOTE = (
+        "Environment Note: The terminal runs commands in a Windows Command Prompt (cmd.exe) session within a Conda environment. "
+        "You can chain commands with '&&' (e.g. 'command_1 && command_2')."
+    )
 
 # System Message Template
 # Use SYSTEM_MESSAGE_TEMPLATE.format(current_time=datetime.datetime.now().isoformat())

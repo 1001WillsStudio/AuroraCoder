@@ -1,11 +1,11 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, RotateCcw, Terminal, Search, FileCode, Globe, Sun, Moon, PanelLeftClose, PanelLeft, ChevronDown, History } from 'lucide-react'
+import { Send, RotateCcw, Terminal, Search, FileCode, Globe, Sun, Moon, PanelLeftClose, PanelLeft, ChevronDown, History, Upload, Download } from 'lucide-react'
 import ChatMessage from './components/ChatMessage'
 import WelcomeScreen from './components/WelcomeScreen'
 import CodePanel from './components/CodePanel'
 import FileTree from './components/FileTree'
 import SessionPicker from './components/SessionPicker'
-import { streamChat, getProviders, getCurrentSession } from './services/api'
+import { streamChat, getProviders, getCurrentSession, getWorkspaceInfo, uploadWorkspace, exportWorkspace } from './services/api'
 
 // Debug: log message structure
 const DEBUG = true
@@ -145,6 +145,11 @@ function App() {
   
   // Last request info for retry functionality
   const [lastRequest, setLastRequest] = useState(null)
+
+  // Workspace (Docker mode) state
+  const [isDockerMode, setIsDockerMode] = useState(false)
+  const [isUploading, setIsUploading] = useState(false)
+  const uploadInputRef = useRef(null)
   
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
@@ -221,6 +226,42 @@ function App() {
     }
     fetchCurrentSession()
   }, [])
+
+  // Check if backend is in Docker mode
+  useEffect(() => {
+    async function checkDockerMode() {
+      try {
+        const info = await getWorkspaceInfo()
+        setIsDockerMode(info.docker_mode === true)
+      } catch {
+        setIsDockerMode(false)
+      }
+    }
+    checkDockerMode()
+  }, [])
+
+  const handleUploadProject = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setIsUploading(true)
+    try {
+      await uploadWorkspace(file)
+      setFileTreeRefreshTrigger(prev => prev + 1)
+    } catch (err) {
+      console.error('Upload failed:', err)
+    } finally {
+      setIsUploading(false)
+      if (uploadInputRef.current) uploadInputRef.current.value = ''
+    }
+  }
+
+  const handleExportWorkspace = async () => {
+    try {
+      await exportWorkspace()
+    } catch (err) {
+      console.error('Export failed:', err)
+    }
+  }
 
   // Handle session loaded from picker
   const handleSessionLoaded = (sessionInfo) => {
@@ -909,6 +950,34 @@ function App() {
                 <History size={16} />
                 <span>Load Session</span>
               </button>
+              {isDockerMode && (
+                <>
+                  <button
+                    className="load-session-btn"
+                    onClick={() => uploadInputRef.current?.click()}
+                    disabled={isUploading}
+                    title="Upload a zip file into the workspace"
+                  >
+                    <Upload size={16} />
+                    <span>{isUploading ? 'Uploading...' : 'Upload Project'}</span>
+                  </button>
+                  <input
+                    ref={uploadInputRef}
+                    type="file"
+                    accept=".zip"
+                    style={{ display: 'none' }}
+                    onChange={handleUploadProject}
+                  />
+                  <button
+                    className="load-session-btn"
+                    onClick={handleExportWorkspace}
+                    title="Download workspace as zip"
+                  >
+                    <Download size={16} />
+                    <span>Export Workspace</span>
+                  </button>
+                </>
+              )}
             </div>
 
             {/* Current Session Info */}

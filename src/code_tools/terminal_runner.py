@@ -51,37 +51,18 @@ class TerminalRunner:
                 return "Error: Persistent shell is not available. Try running 'start_new_terminal'."
 
             stdout, stderr = session_manager.run_in_persistent_shell(command, timeout=timeout)
-            
-            # Format output
-            # Determine the current working directory inside the persistent shell *after* the command ran.
-            live_cwd_cmd = "pwd"
-            if sys.platform == "win32":
-                # PowerShell returns an object for pwd; this prints just the path string.
-                live_cwd_cmd = "(Get-Location).Path"
-
-            live_cwd_out, _ = session_manager.run_in_persistent_shell(live_cwd_cmd, timeout=timeout)
-
-            # Extract the last non-empty line as the cwd
-            live_cwd = session_manager.get_session_working_directory()
-            if live_cwd_out:
-                for line in reversed(live_cwd_out.splitlines()):
-                    line = line.strip()
-                    if line:
-                        live_cwd = line
-                        break
 
             output = []
             output.append(f"Command: {command}")
-            output.append(f"Working Directory: {live_cwd}")
-            
+
             if stdout:
                 output.append("\nSTDOUT:")
                 output.append(stdout)
-            
+
             if stderr:
                 output.append("\nSTDERR:")
                 output.append(stderr)
-            
+
             return '\n'.join(output)
             
         except Exception as e:

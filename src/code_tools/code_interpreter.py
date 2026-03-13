@@ -10,6 +10,7 @@ import subprocess
 import logging
 
 from ..code_sandbox.session_manager import session_manager
+from ..config import CODE_INTERPRETER_ERRORS_ENABLED
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +186,10 @@ class CodeInterpreter:
         Checks code for errors using Pyright for .py files.
         Uses the session's conda environment for type checking.
         No checks are performed for other file types. (Internal method)
+        Disabled entirely when CODE_INTERPRETER_ERRORS_ENABLED is False.
         """
+        if not CODE_INTERPRETER_ERRORS_ENABLED:
+            return {}
         if filename.endswith(".py"):
             temp_dir = None
             try:

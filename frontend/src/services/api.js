@@ -255,3 +255,67 @@ export async function createNewSession(sessionName = null) {
   }
   return response.json()
 }
+
+// ============================================================================
+// Workspace API (Docker mode)
+// ============================================================================
+
+/**
+ * Get workspace info (docker mode, path, file count)
+ */
+export async function getWorkspaceInfo() {
+  const response = await fetch(`${API_BASE}/workspace/info`)
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`)
+  }
+  return response.json()
+}
+
+/**
+ * Upload a zip file to the workspace
+ * @param {File} zipFile - The zip file to upload
+ * @param {boolean} clear - Clear existing workspace before extracting
+ */
+export async function uploadWorkspace(zipFile, clear = true) {
+  const url = `${API_BASE}/workspace/upload?clear=${clear}`
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/zip' },
+    body: zipFile,
+  })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: 'Upload failed' }))
+    throw new Error(err.detail || `HTTP error! status: ${response.status}`)
+  }
+  return response.json()
+}
+
+/**
+ * Download the workspace as a zip file
+ */
+export async function exportWorkspace() {
+  const response = await fetch(`${API_BASE}/workspace/export`)
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`)
+  }
+  const blob = await response.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'workspace.zip'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+/**
+ * Reset the workspace (delete all files)
+ */
+export async function resetWorkspace() {
+  const response = await fetch(`${API_BASE}/workspace`, { method: 'DELETE' })
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`)
+  }
+  return response.json()
+}

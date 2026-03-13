@@ -8,7 +8,7 @@ import json
 from fastapi.responses import StreamingResponse
 
 from .main_flow import generate_chat_responses_stream
-from .gradio.display_utils import prepare_displayed_text
+# prepare_displayed_text was removed with the Gradio frontend
 
 app = FastAPI()
 

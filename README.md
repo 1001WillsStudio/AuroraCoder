@@ -86,7 +86,6 @@ ThinkWithTool provides isolated session environments:
     *   **`config.py`**: Configuration for API endpoints, model settings, and session parameters.
     *   **`code_tools/`**: Implementation of coding-specific tools (File Ops, Terminal, Grep, Code Interpreter).
     *   **`core_tools/`**: General purpose tools (Search, Browser, Tool Store).
-    *   **`gradio/`**: Web UI implementation with multimodal input support.
     *   **`code_sandbox/`**: Session manager for conda environment and working directory isolation.
 *   **`code_archive/`**: Storage for deprecated or removed components.
 *   **`data/`**: Storage for conversation logs.
@@ -111,20 +110,34 @@ ThinkWithTool provides isolated session environments:
 
 ### Running the Application
 
-**Web UI (Recommended):**
-```bash
-python -m src.gradio.app
+**Web API + React Frontend (single script):**
+```powershell
+.\start.ps1
 ```
+This launches both the backend and frontend together. Press `Ctrl+C` to stop both.
 
-The Gradio interface provides:
-- Multimodal input (text + file uploads)
-- Continue button for extending long-running tasks
-- Formatted output with thinking display
+Or start them manually in separate terminals:
+```bash
+# Terminal 1 — FastAPI backend
+conda activate agent
+python run_web.py
+# Backend: http://localhost:8080
+# API docs: http://localhost:8080/docs
+
+# Terminal 2 — React frontend
+cd frontend
+npm install
+npm run dev
+# Frontend: http://localhost:3000
+```
 
 **Session CLI:**
 ```bash
+conda activate agent
 python -m src.code_sandbox.session_cli
 ```
+
+Available subcommands: `create`, `list`, `cleanup`, `info`, `test`
 
 ## Configuration
 
@@ -142,7 +155,7 @@ Key settings in `src/config.py`:
 
 Core dependencies (see `requirements.txt`):
 - `openai>=1.0.0` - API client
-- `gradio>=5.29.0` - Web UI
+- `fastapi>=0.104.1` - Web API
 - `google-api-python-client>=2.169.0` - Google Search
 - `pyright` - Python type checking (via nodejs)
 

@@ -145,7 +145,8 @@ def init_application_session(
     app_name: str,
     cleanup_on_exit: bool = True,
     max_old_sessions: int = 10,
-    base_env_name: Optional[str] = None
+    base_env_name: Optional[str] = None,
+    reuse_env: bool = False
 ) -> Dict[str, Any]:
     """
     Initialize session environment for an application.
@@ -162,6 +163,7 @@ def init_application_session(
         max_old_sessions: Maximum number of old sessions to keep
         base_env_name: Optional conda environment name to clone from.
                       If not provided, uses the SessionManager's default.
+        reuse_env: If True, use base_env_name directly instead of cloning.
         
     Returns:
         Session information dictionary
@@ -175,8 +177,10 @@ def init_application_session(
         # Create new session
         logger.info(f"Creating session for application: {app_name}")
         if base_env_name:
-            logger.info(f"Using base environment: {base_env_name}")
-        session_info = session_manager.create_session(app_name, base_env_name=base_env_name)
+            logger.info(f"Using base environment: {base_env_name} (reuse={reuse_env})")
+        session_info = session_manager.create_session(
+            app_name, base_env_name=base_env_name, reuse_env=reuse_env
+        )
         
         if session_info['status'] == 'failed':
             logger.error(f"Session creation failed: {session_info.get('error')}")

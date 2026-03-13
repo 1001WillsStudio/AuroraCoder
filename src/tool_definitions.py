@@ -258,7 +258,7 @@ NATIVE_TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "run_terminal_command",
-            "description": "Executes terminal/shell commands in a persistent, stateful Windows PowerShell session. The shell's environment and working directory are preserved between commands.",
+            "description": "Executes terminal/shell commands in a persistent, stateful Windows Command Prompt (cmd.exe) session with Conda. The shell's environment and working directory are preserved between commands.",
             "parameters": {
                 "type": "object",
                 "properties": {

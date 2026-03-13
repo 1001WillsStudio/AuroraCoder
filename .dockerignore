@@ -1,0 +1,9 @@
+frontend/node_modules
+__pycache__
+*.pyc
+.git
+.cursor
+data/
+*.egg-info
+.mypy_cache
+.pytest_cache

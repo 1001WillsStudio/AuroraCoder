@@ -23,9 +23,13 @@ from ..providers import get_available_providers, get_default_provider
 from ..code_sandbox import init_application_session, get_session_status
 from ..code_sandbox.session_utils import session_manager, load_session_environment, list_loadable_sessions
 from ..code_tools.file_operations import set_file_tracking_callbacks, set_current_conversation
-from ..config import CONTINUE_ITERATIONS, DEFAULT_BASE_ENV_NAME, DEFAULT_PROVIDER
+from ..config import CONTINUE_ITERATIONS, DEFAULT_BASE_ENV_NAME, DEFAULT_PROVIDER, DOCKER_MODE, WORKSPACE_DIR
 from pathlib import Path
 import difflib
+import shutil
+import zipfile
+import io
+import tempfile
 
 logger = logging.getLogger(__name__)
 
@@ -406,11 +410,18 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Initializing session environment...")
     try:
+        if DOCKER_MODE and WORKSPACE_DIR:
+            workspace = Path(WORKSPACE_DIR)
+            workspace.mkdir(parents=True, exist_ok=True)
+            session_manager.working_directory_override = workspace
+            logger.info(f"Docker mode: workspace override set to {workspace}")
+
         session_info = init_application_session(
             app_name="web_api_assistant",
-            cleanup_on_exit=False,  # Don't auto-cleanup on close; manual cleanup only
+            cleanup_on_exit=False,
             max_old_sessions=10,
-            base_env_name=DEFAULT_BASE_ENV_NAME
+            base_env_name=DEFAULT_BASE_ENV_NAME,
+            reuse_env=DOCKER_MODE
         )
         
         if session_info['status'] == 'failed':
@@ -546,7 +557,7 @@ async def list_sessions(loadable_only: bool = True):
         result["current_session"] = {
             "session_id": session_manager.session_id,
             "session_name": session_manager.session_info.get("session_name") if session_manager.session_info else None,
-            "session_dir": str(session_manager.session_dir) if session_manager.session_dir else None
+            "session_dir": str(session_manager.get_session_working_directory())
         }
         
         return result
@@ -615,7 +626,7 @@ async def get_current_session():
         "status": "active",
         "session_id": session_manager.session_id,
         "session_name": session_manager.session_info.get("session_name"),
-        "session_dir": str(session_manager.session_dir) if session_manager.session_dir else None,
+        "session_dir": str(session_manager.get_session_working_directory()),
         "conda_env_name": session_manager.conda_env_name,
         "base_env_name": session_manager.base_env_name,
         "created_at": session_manager.session_info.get("created_at"),
@@ -918,8 +929,8 @@ def get_file_diffs_for_conversation(conversation_id: str) -> Dict[str, Any]:
     """
     result = {"files": [], "error": None}
     
-    session_dir = session_manager.session_dir
-    if not session_dir or not session_dir.exists():
+    work_dir = session_manager.get_session_working_directory()
+    if not work_dir or not work_dir.exists():
         result["error"] = "No active session"
         return result
     
@@ -928,7 +939,7 @@ def get_file_diffs_for_conversation(conversation_id: str) -> Dict[str, Any]:
     
     for file_path in touched:
         try:
-            full_path = session_dir / file_path
+            full_path = work_dir / file_path
             
             # Get current content
             if full_path.exists() and full_path.is_file():
@@ -1064,15 +1075,15 @@ async def get_file_tree(max_depth: int = 5):
     
     Returns a hierarchical tree structure of files and folders.
     """
-    session_dir = session_manager.session_dir
-    if not session_dir or not session_dir.exists():
+    work_dir = session_manager.get_session_working_directory()
+    if not work_dir or not work_dir.exists():
         return {"tree": [], "root": None, "error": "No active session"}
     
-    tree = build_file_tree(session_dir, session_dir, max_depth=max_depth)
+    tree = build_file_tree(work_dir, work_dir, max_depth=max_depth)
     
     return {
         "tree": tree,
-        "root": str(session_dir),
+        "root": str(work_dir),
         "error": None
     }
 
@@ -1082,15 +1093,15 @@ async def read_file_content(file_path: str):
     """
     Read content of a file from the agent's working space.
     """
-    session_dir = session_manager.session_dir
-    if not session_dir or not session_dir.exists():
+    work_dir = session_manager.get_session_working_directory()
+    if not work_dir or not work_dir.exists():
         raise HTTPException(status_code=400, detail="No active session")
     
-    # Security: ensure path is within session directory
+    # Security: ensure path is within working directory
     try:
-        full_path = (session_dir / file_path).resolve()
-        if not str(full_path).startswith(str(session_dir.resolve())):
-            raise HTTPException(status_code=403, detail="Access denied: path outside session directory")
+        full_path = (work_dir / file_path).resolve()
+        if not str(full_path).startswith(str(work_dir.resolve())):
+            raise HTTPException(status_code=403, detail="Access denied: path outside working directory")
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid path")
     
@@ -1109,6 +1120,137 @@ async def read_file_content(file_path: str):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
+
+
+# ============================================================================
+# Workspace Upload / Export API
+# ============================================================================
+
+WORKSPACE_EXCLUDE = {
+    '__pycache__', '.git', 'node_modules', '.venv', 'venv',
+    '.thinktool_sessions', '.mypy_cache', '.pytest_cache',
+}
+
+
+def _zip_directory(directory: Path, exclude: set) -> io.BytesIO:
+    """Create an in-memory zip of *directory*, skipping names in *exclude*."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for entry in sorted(directory.rglob('*')):
+            if any(part in exclude for part in entry.parts):
+                continue
+            if entry.is_file():
+                arcname = str(entry.relative_to(directory))
+                zf.write(entry, arcname)
+    buf.seek(0)
+    return buf
+
+
+@app.post("/api/workspace/upload")
+async def upload_workspace(request: Request, clear: bool = True):
+    """
+    Upload a zip file and extract it into the agent workspace.
+
+    Args:
+        clear: If true (default), remove existing workspace contents first.
+    """
+    work_dir = session_manager.get_session_working_directory()
+    if not work_dir:
+        raise HTTPException(status_code=400, detail="No active workspace")
+
+    content_type = request.headers.get("content-type", "")
+    if "zip" not in content_type and "octet-stream" not in content_type:
+        raise HTTPException(
+            status_code=400,
+            detail="Expected a zip file (Content-Type: application/zip or application/octet-stream)"
+        )
+
+    body = await request.body()
+    if not body:
+        raise HTTPException(status_code=400, detail="Empty request body")
+
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(body))
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="Invalid zip file")
+
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    if clear:
+        for child in list(work_dir.iterdir()):
+            if child.name in WORKSPACE_EXCLUDE:
+                continue
+            if child.is_dir():
+                shutil.rmtree(child, ignore_errors=True)
+            else:
+                child.unlink(missing_ok=True)
+
+    zf.extractall(work_dir)
+    extracted = zf.namelist()
+    zf.close()
+
+    return {
+        "status": "success",
+        "files_extracted": len(extracted),
+        "workspace": str(work_dir),
+    }
+
+
+@app.get("/api/workspace/export")
+async def export_workspace():
+    """
+    Download the agent workspace as a zip file.
+    """
+    work_dir = session_manager.get_session_working_directory()
+    if not work_dir or not work_dir.exists():
+        raise HTTPException(status_code=400, detail="No active workspace")
+
+    buf = _zip_directory(work_dir, WORKSPACE_EXCLUDE)
+
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=workspace.zip"},
+    )
+
+
+@app.delete("/api/workspace")
+async def reset_workspace():
+    """
+    Clear all files from the agent workspace.
+    """
+    work_dir = session_manager.get_session_working_directory()
+    if not work_dir or not work_dir.exists():
+        raise HTTPException(status_code=400, detail="No active workspace")
+
+    removed = 0
+    for child in list(work_dir.iterdir()):
+        if child.name in WORKSPACE_EXCLUDE:
+            continue
+        if child.is_dir():
+            shutil.rmtree(child, ignore_errors=True)
+        else:
+            child.unlink(missing_ok=True)
+        removed += 1
+
+    return {"status": "success", "items_removed": removed}
+
+
+@app.get("/api/workspace/info")
+async def workspace_info():
+    """
+    Return metadata about the current workspace (Docker mode, path, file count).
+    """
+    work_dir = session_manager.get_session_working_directory()
+    file_count = 0
+    if work_dir and work_dir.exists():
+        file_count = sum(1 for _ in work_dir.rglob('*') if _.is_file())
+
+    return {
+        "docker_mode": DOCKER_MODE,
+        "workspace": str(work_dir) if work_dir else None,
+        "file_count": file_count,
+    }
 
 
 # ============================================================================
