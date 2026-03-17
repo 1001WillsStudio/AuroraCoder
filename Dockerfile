@@ -1,43 +1,11 @@
-FROM continuumio/miniconda3
+FROM thinkwithtool-base
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    THINKTOOL_DOCKER=1
-
-RUN mkdir -p /app /workspace /seed
+ENV THINKTOOL_DOCKER=1 \
+    THINKTOOL_VNC=1
 
 WORKDIR /app
 
-# ── System packages (GUI / VNC stack + common libs) ────────────────────────
-RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        xvfb \
-        x11vnc \
-        fluxbox \
-        novnc \
-        websockify \
-        supervisor \
-        xterm \
-        fonts-dejavu \
-        fonts-liberation \
-        dbus-x11 \
-        libgtk-3-0 \
-        libsdl2-2.0-0 \
-        libsdl2-image-2.0-0 \
-        libsdl2-mixer-2.0-0 \
-        libsdl2-ttf-2.0-0 \
-        git \
-        curl && \
-    apt-get clean && rm -rf /var/lib/apt/lists/* && \
-    ln -s /usr/share/novnc/vnc.html /usr/share/novnc/index.html
-
-# ── Python environment ─────────────────────────────────────────────────────
-COPY requirements.txt /app/requirements.txt
-
-RUN conda create -n agent python=3.12 pip -y && \
-    conda run -n agent pip install --no-cache-dir -r requirements.txt
-
-# ── Application source ─────────────────────────────────────────────────────
+# ── Application source (only layer that changes between rebuilds) ─────────
 COPY . /app
 
 COPY entrypoint.sh /entrypoint.sh

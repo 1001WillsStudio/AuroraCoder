@@ -1120,8 +1120,62 @@ async def read_file_content(file_path: str):
 
 
 # ============================================================================
-# Workspace File Operations API - Delete, Download & Export
+# Workspace File Operations API - Upload, Delete, Download & Export
 # ============================================================================
+
+WORKSPACE_EXCLUDE = {
+    '__pycache__', '.git', 'node_modules', '.venv', 'venv',
+    '.thinktool_sessions', '.mypy_cache', '.pytest_cache',
+}
+
+
+@app.post("/api/workspace/upload")
+async def upload_workspace(request: Request, clear: bool = True):
+    """Upload a zip file and extract it into the agent workspace."""
+    import zipfile
+    import io
+
+    work_dir = session_manager.get_session_working_directory()
+    if not work_dir:
+        raise HTTPException(status_code=400, detail="No active workspace")
+
+    content_type = request.headers.get("content-type", "")
+    if "zip" not in content_type and "octet-stream" not in content_type:
+        raise HTTPException(
+            status_code=400,
+            detail="Expected a zip file (Content-Type: application/zip or application/octet-stream)"
+        )
+
+    body = await request.body()
+    if not body:
+        raise HTTPException(status_code=400, detail="Empty request body")
+
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(body))
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="Invalid zip file")
+
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    if clear:
+        for child in list(work_dir.iterdir()):
+            if child.name in WORKSPACE_EXCLUDE:
+                continue
+            if child.is_dir():
+                shutil.rmtree(child, ignore_errors=True)
+            else:
+                child.unlink(missing_ok=True)
+
+    zf.extractall(work_dir)
+    extracted = zf.namelist()
+    zf.close()
+
+    return {
+        "status": "success",
+        "files_extracted": len(extracted),
+        "workspace": str(work_dir),
+    }
+
 
 class DeleteRequest(BaseModel):
     """Request body for deleting a file or folder."""

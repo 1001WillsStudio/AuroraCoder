@@ -1,5 +1,5 @@
-# Without VNC:  docker compose up --build
-# With VNC:     docker compose --profile vnc up --build
+# First time:  docker build -t thinkwithtool-base -f Dockerfile.base .
+# Then:        docker compose up --build
 #
 # Seed workspace by uncommenting the volumes line below.
 
@@ -8,19 +8,8 @@ services:
     build: .
     ports:
       - "8080:8080"
-      - "8888-8890:8888-8890"
-    environment:
-      - THINKTOOL_DOCKER=1
-    # volumes:
-    #   - ./my-project:/seed:ro
-
-  agent-vnc:
-    profiles: ["vnc"]
-    build: .
-    ports:
-      - "8080:8080"
-      - "8888-8890:8888-8890"
       - "6080:6080"
+      - "8888-8890:8888-8890"
     environment:
       - THINKTOOL_DOCKER=1
       - THINKTOOL_VNC=1
