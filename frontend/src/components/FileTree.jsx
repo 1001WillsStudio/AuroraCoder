@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { 
   Folder, FolderOpen, File, ChevronRight, ChevronDown, 
   RefreshCw, FileCode, FileText, Image, Database, Settings,
-  FileJson, FileType, Coffee, Braces
+  FileJson, FileType, Coffee, Braces, Download, Trash2, FolderArchive
 } from 'lucide-react'
 
 // Get icon based on file extension
@@ -51,7 +51,7 @@ const getFileIcon = (extension) => {
 }
 
 // Single tree node component
-const TreeNode = ({ node, level = 0, onFileClick, expandedFolders, toggleFolder }) => {
+const TreeNode = ({ node, level = 0, onFileClick, expandedFolders, toggleFolder, onContextMenu }) => {
   const isFolder = node.type === 'folder'
   const isExpanded = expandedFolders.has(node.path)
   const hasChildren = isFolder && node.children && node.children.length > 0
@@ -63,6 +63,12 @@ const TreeNode = ({ node, level = 0, onFileClick, expandedFolders, toggleFolder 
       onFileClick?.(node.path)
     }
   }
+
+  const handleContextMenu = (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    onContextMenu?.(e, node)
+  }
   
   return (
     <div className="tree-node">
@@ -70,6 +76,7 @@ const TreeNode = ({ node, level = 0, onFileClick, expandedFolders, toggleFolder 
         className={`tree-item ${isFolder ? 'folder' : 'file'}`}
         style={{ paddingLeft: `${level * 16 + 8}px` }}
         onClick={handleClick}
+        onContextMenu={handleContextMenu}
       >
         {isFolder ? (
           <>
@@ -105,10 +112,73 @@ const TreeNode = ({ node, level = 0, onFileClick, expandedFolders, toggleFolder 
               onFileClick={onFileClick}
               expandedFolders={expandedFolders}
               toggleFolder={toggleFolder}
+              onContextMenu={onContextMenu}
             />
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+// Context menu component
+const ContextMenu = ({ x, y, node, onClose, onDelete, onDownload, onExport }) => {
+  const menuRef = useRef(null)
+  const isFolder = node.type === 'folder'
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        onClose()
+      }
+    }
+    const handleEscape = (e) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [onClose])
+
+  useEffect(() => {
+    if (menuRef.current) {
+      const rect = menuRef.current.getBoundingClientRect()
+      if (rect.right > window.innerWidth) {
+        menuRef.current.style.left = `${x - rect.width}px`
+      }
+      if (rect.bottom > window.innerHeight) {
+        menuRef.current.style.top = `${y - rect.height}px`
+      }
+    }
+  }, [x, y])
+
+  return (
+    <div
+      ref={menuRef}
+      className="tree-context-menu"
+      style={{ left: x, top: y }}
+    >
+      {isFolder ? (
+        <button className="context-menu-item" onClick={() => { onExport(node); onClose() }}>
+          <FolderArchive size={14} />
+          <span>Export as .zip</span>
+        </button>
+      ) : (
+        <button className="context-menu-item" onClick={() => { onDownload(node); onClose() }}>
+          <Download size={14} />
+          <span>Download</span>
+        </button>
+      )}
+      <button
+        className="context-menu-item danger"
+        onClick={() => { onDelete(node); onClose() }}
+      >
+        <Trash2 size={14} />
+        <span>Delete</span>
+      </button>
     </div>
   )
 }
@@ -120,6 +190,8 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0 }) => {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [expandedFolders, setExpandedFolders] = useState(new Set())
+  const [contextMenu, setContextMenu] = useState(null)
+  const [confirmDelete, setConfirmDelete] = useState(null)
   
   const fetchTree = useCallback(async () => {
     setLoading(true)
@@ -175,9 +247,53 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0 }) => {
       return next
     })
   }, [])
-  
-  // Get root folder name from path
-  const rootName = rootPath ? rootPath.split(/[/\\]/).pop() : 'Workspace'
+
+  const handleContextMenu = useCallback((e, node) => {
+    setContextMenu({ x: e.clientX, y: e.clientY, node })
+  }, [])
+
+  const handleDownload = useCallback((node) => {
+    const a = document.createElement('a')
+    a.href = `/api/files/download?file_path=${encodeURIComponent(node.path)}`
+    a.download = node.name
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+  }, [])
+
+  const handleExport = useCallback((node) => {
+    const a = document.createElement('a')
+    a.href = `/api/files/export?folder_path=${encodeURIComponent(node.path)}`
+    a.download = `${node.name}.zip`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+  }, [])
+
+  const handleDeleteRequest = useCallback((node) => {
+    setConfirmDelete(node)
+  }, [])
+
+  const handleDeleteConfirm = useCallback(async () => {
+    if (!confirmDelete) return
+    try {
+      const res = await fetch('/api/files/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: confirmDelete.path })
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        alert(err.detail || 'Failed to delete')
+      }
+      fetchTree()
+    } catch (err) {
+      console.error('Delete failed:', err)
+      alert('Delete failed: ' + err.message)
+    } finally {
+      setConfirmDelete(null)
+    }
+  }, [confirmDelete, fetchTree])
   
   return (
     <div className="file-tree">
@@ -220,11 +336,38 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0 }) => {
                 onFileClick={onFileClick}
                 expandedFolders={expandedFolders}
                 toggleFolder={toggleFolder}
+                onContextMenu={handleContextMenu}
               />
             ))}
           </div>
         )}
       </div>
+
+      {/* Context menu */}
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          node={contextMenu.node}
+          onClose={() => setContextMenu(null)}
+          onDelete={handleDeleteRequest}
+          onDownload={handleDownload}
+          onExport={handleExport}
+        />
+      )}
+
+      {/* Delete confirmation dialog */}
+      {confirmDelete && (
+        <div className="tree-confirm-overlay" onClick={() => setConfirmDelete(null)}>
+          <div className="tree-confirm-dialog" onClick={(e) => e.stopPropagation()}>
+            <p>Delete <strong>{confirmDelete.name}</strong>{confirmDelete.type === 'folder' ? ' and all its contents' : ''}?</p>
+            <div className="tree-confirm-actions">
+              <button className="tree-confirm-cancel" onClick={() => setConfirmDelete(null)}>Cancel</button>
+              <button className="tree-confirm-delete" onClick={handleDeleteConfirm}>Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

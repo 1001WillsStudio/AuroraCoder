@@ -2511,3 +2511,114 @@ body {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
+
+/* ============================================================================
+   Context Menu (right-click) for FileTree
+   ============================================================================ */
+
+.tree-context-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 160px;
+  padding: 4px 0;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 12px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.context-menu-item:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.context-menu-item:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.context-menu-item.danger {
+  color: #ef4444;
+}
+
+.context-menu-item.danger:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.1);
+}
+
+/* Delete confirmation overlay */
+.tree-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.tree-confirm-dialog {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 20px 24px;
+  max-width: 360px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+}
+
+.tree-confirm-dialog p {
+  margin: 0 0 16px;
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.tree-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.tree-confirm-cancel,
+.tree-confirm-delete {
+  padding: 6px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--border-default);
+  transition: all var(--transition-fast);
+}
+
+.tree-confirm-cancel {
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+
+.tree-confirm-cancel:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.tree-confirm-delete {
+  background: #ef4444;
+  color: white;
+  border-color: #ef4444;
+}
+
+.tree-confirm-delete:hover {
+  background: #dc2626;
+  border-color: #dc2626;
+}

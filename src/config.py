@@ -136,10 +136,10 @@ DOCKER_VNC = os.environ.get("THINKTOOL_VNC", "0") == "1"
 WORKSPACE_DIR = "/workspace" if DOCKER_MODE else None
 
 # Session Configuration
-# Default conda environment to clone for new sessions
-# Set to None to use the built-in default (thinktool_sandbox_base)
-# Set to an existing conda env name (e.g., "agent") to clone from that environment
-DEFAULT_BASE_ENV_NAME = "agent" if DOCKER_MODE else None
+# Default conda environment to clone/reuse for new sessions.
+# In Docker (default), reuses the pre-built "agent" env.
+# Set to None to create fresh sandbox envs (local development).
+DEFAULT_BASE_ENV_NAME = os.environ.get("DEFAULT_BASE_ENV_NAME", "agent" if DOCKER_MODE else None)
 
 # Code interpreter (Pyright) error checking on files shown to the model.
 # Set to False to disable — useful when the checker produces noisy false positives.

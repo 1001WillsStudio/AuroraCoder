@@ -1,14 +1,14 @@
-# Start both the FastAPI backend and React frontend for AuroraCoder
+# Start both the FastAPI backend (Docker) and React frontend (host) for AuroraCoder
 #
 # Usage:
-#   .\start.ps1                                  # Local mode (conda + npm)
-#   .\start.ps1 -Docker                          # Docker mode, empty workspace
-#   .\start.ps1 -Docker -Project C:\myapp        # Docker mode, seed from local dir
-#   .\start.ps1 -Docker -VNC                     # Docker mode + VNC desktop (localhost:6080)
-#   .\start.ps1 -Docker -VNC -Project C:\myapp   # Docker + VNC + seed
+#   .\start.ps1                                  # Docker backend + host frontend
+#   .\start.ps1 -Project C:\myapp                # Docker mode, seed workspace from local dir
+#   .\start.ps1 -VNC                             # Docker mode + VNC desktop (localhost:6080)
+#   .\start.ps1 -VNC -Project C:\myapp           # Docker + VNC + seed
+#   .\start.ps1 -Local                           # Local mode (conda + npm, no Docker)
 
 param(
-    [switch]$Docker,
+    [switch]$Local,
     [switch]$VNC,
     [string]$Project
 )
@@ -20,9 +20,9 @@ Set-Location $ScriptDir
 $CONTAINER_NAME = "thinkwithtool-agent"
 $IMAGE_NAME = "thinkwithtool"
 
-# ── Docker mode ─────────────────────────────────────────────────────────────
+# ── Docker mode (default) ───────────────────────────────────────────────────
 
-if ($Docker) {
+if (-not $Local) {
     if ($VNC) {
         Write-Host "=== Docker Mode + VNC Desktop ===" -ForegroundColor Cyan
     } else {
@@ -108,7 +108,7 @@ if ($Docker) {
     exit 0
 }
 
-# ── Local mode (original behaviour) ────────────────────────────────────────
+# ── Local mode (opt-in via -Local) ─────────────────────────────────────────
 
 $backendJob = $null
 $frontendJob = $null

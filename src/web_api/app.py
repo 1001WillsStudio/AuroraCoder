@@ -27,9 +27,6 @@ from ..config import CONTINUE_ITERATIONS, DEFAULT_BASE_ENV_NAME, DEFAULT_PROVIDE
 from pathlib import Path
 import difflib
 import shutil
-import zipfile
-import io
-import tempfile
 
 logger = logging.getLogger(__name__)
 
@@ -1123,117 +1120,106 @@ async def read_file_content(file_path: str):
 
 
 # ============================================================================
-# Workspace Upload / Export API
+# Workspace File Operations API - Delete, Download & Export
 # ============================================================================
 
-WORKSPACE_EXCLUDE = {
-    '__pycache__', '.git', 'node_modules', '.venv', 'venv',
-    '.thinktool_sessions', '.mypy_cache', '.pytest_cache',
-}
+class DeleteRequest(BaseModel):
+    """Request body for deleting a file or folder."""
+    path: str = Field(..., description="Relative path within the workspace")
 
 
-def _zip_directory(directory: Path, exclude: set) -> io.BytesIO:
-    """Create an in-memory zip of *directory*, skipping names in *exclude*."""
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
-        for entry in sorted(directory.rglob('*')):
-            if any(part in exclude for part in entry.parts):
-                continue
-            if entry.is_file():
-                arcname = str(entry.relative_to(directory))
-                zf.write(entry, arcname)
-    buf.seek(0)
-    return buf
-
-
-@app.post("/api/workspace/upload")
-async def upload_workspace(request: Request, clear: bool = True):
-    """
-    Upload a zip file and extract it into the agent workspace.
-
-    Args:
-        clear: If true (default), remove existing workspace contents first.
-    """
-    work_dir = session_manager.get_session_working_directory()
-    if not work_dir:
-        raise HTTPException(status_code=400, detail="No active workspace")
-
-    content_type = request.headers.get("content-type", "")
-    if "zip" not in content_type and "octet-stream" not in content_type:
-        raise HTTPException(
-            status_code=400,
-            detail="Expected a zip file (Content-Type: application/zip or application/octet-stream)"
-        )
-
-    body = await request.body()
-    if not body:
-        raise HTTPException(status_code=400, detail="Empty request body")
-
-    try:
-        zf = zipfile.ZipFile(io.BytesIO(body))
-    except zipfile.BadZipFile:
-        raise HTTPException(status_code=400, detail="Invalid zip file")
-
-    work_dir.mkdir(parents=True, exist_ok=True)
-
-    if clear:
-        for child in list(work_dir.iterdir()):
-            if child.name in WORKSPACE_EXCLUDE:
-                continue
-            if child.is_dir():
-                shutil.rmtree(child, ignore_errors=True)
-            else:
-                child.unlink(missing_ok=True)
-
-    zf.extractall(work_dir)
-    extracted = zf.namelist()
-    zf.close()
-
-    return {
-        "status": "success",
-        "files_extracted": len(extracted),
-        "workspace": str(work_dir),
-    }
-
-
-@app.get("/api/workspace/export")
-async def export_workspace():
-    """
-    Download the agent workspace as a zip file.
-    """
+@app.post("/api/files/delete")
+async def delete_workspace_item(req: DeleteRequest):
+    """Delete a file or folder from the agent workspace."""
     work_dir = session_manager.get_session_working_directory()
     if not work_dir or not work_dir.exists():
-        raise HTTPException(status_code=400, detail="No active workspace")
+        raise HTTPException(status_code=400, detail="No active session")
 
-    buf = _zip_directory(work_dir, WORKSPACE_EXCLUDE)
+    try:
+        full_path = (work_dir / req.path).resolve()
+        if not str(full_path).startswith(str(work_dir.resolve())):
+            raise HTTPException(status_code=403, detail="Access denied: path outside working directory")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid path")
 
-    return StreamingResponse(
-        buf,
-        media_type="application/zip",
-        headers={"Content-Disposition": "attachment; filename=workspace.zip"},
+    if not full_path.exists():
+        raise HTTPException(status_code=404, detail="Path not found")
+
+    try:
+        if full_path.is_dir():
+            shutil.rmtree(full_path)
+        else:
+            full_path.unlink()
+        return {"status": "deleted", "path": req.path}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete: {str(e)}")
+
+
+@app.get("/api/files/download")
+async def download_workspace_file(file_path: str):
+    """Download a file from the agent workspace."""
+    from fastapi.responses import FileResponse
+
+    work_dir = session_manager.get_session_working_directory()
+    if not work_dir or not work_dir.exists():
+        raise HTTPException(status_code=400, detail="No active session")
+
+    try:
+        full_path = (work_dir / file_path).resolve()
+        if not str(full_path).startswith(str(work_dir.resolve())):
+            raise HTTPException(status_code=403, detail="Access denied: path outside working directory")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    if not full_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    if not full_path.is_file():
+        raise HTTPException(status_code=400, detail="Path is not a file (use export for folders)")
+
+    return FileResponse(
+        path=str(full_path),
+        filename=full_path.name,
+        media_type="application/octet-stream",
     )
 
 
-@app.delete("/api/workspace")
-async def reset_workspace():
-    """
-    Clear all files from the agent workspace.
-    """
+@app.get("/api/files/export")
+async def export_workspace_folder(folder_path: str):
+    """Export a folder from the workspace as a .zip archive."""
+    from fastapi.responses import FileResponse
+    import tempfile
+    import zipfile
+
     work_dir = session_manager.get_session_working_directory()
     if not work_dir or not work_dir.exists():
-        raise HTTPException(status_code=400, detail="No active workspace")
+        raise HTTPException(status_code=400, detail="No active session")
 
-    removed = 0
-    for child in list(work_dir.iterdir()):
-        if child.name in WORKSPACE_EXCLUDE:
-            continue
-        if child.is_dir():
-            shutil.rmtree(child, ignore_errors=True)
-        else:
-            child.unlink(missing_ok=True)
-        removed += 1
+    try:
+        full_path = (work_dir / folder_path).resolve()
+        if not str(full_path).startswith(str(work_dir.resolve())):
+            raise HTTPException(status_code=403, detail="Access denied: path outside working directory")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid path")
 
-    return {"status": "success", "items_removed": removed}
+    if not full_path.exists() or not full_path.is_dir():
+        raise HTTPException(status_code=404, detail="Folder not found")
+
+    try:
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+        tmp.close()
+        with zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_DEFLATED) as zf:
+            for file in full_path.rglob("*"):
+                if file.is_file():
+                    zf.write(file, file.relative_to(full_path))
+        return FileResponse(
+            path=tmp.name,
+            filename=f"{full_path.name}.zip",
+            media_type="application/zip",
+            background=None,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to export: {str(e)}")
 
 
 @app.get("/api/workspace/info")
