@@ -143,7 +143,7 @@ DEFAULT_BASE_ENV_NAME = os.environ.get("DEFAULT_BASE_ENV_NAME", "agent" if DOCKE
 
 # Code interpreter (Pyright) error checking on files shown to the model.
 # Set to False to disable — useful when the checker produces noisy false positives.
-CODE_INTERPRETER_ERRORS_ENABLED = True
+CODE_INTERPRETER_ERRORS_ENABLED = False
 
 # File Operation Markers
 EDIT_ZONE_MARKER = "# Edit Zone"

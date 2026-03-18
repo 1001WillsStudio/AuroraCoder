@@ -6,7 +6,7 @@ echo   AuroraCoder
 echo ========================================
 echo   Backend API:  http://localhost:8080
 echo   API Docs:     http://localhost:8080/docs
-echo   Frontend:     http://localhost:3000
+echo   Frontend:     http://0.0.0.0:3000
 echo   VNC Desktop:  http://localhost:6080
 echo ========================================
 echo.
@@ -58,9 +58,9 @@ if not exist "frontend\node_modules" (
 )
 
 :: Start frontend
-echo Starting frontend on http://localhost:3000 ...
+echo Starting frontend on http://0.0.0.0:3000 ...
 echo Press Ctrl+C to stop the frontend.
 echo To stop the backend: docker stop thinkwithtool-agent
 echo.
 cd frontend
-npm run dev
+npm run dev -- --host 0.0.0.0
