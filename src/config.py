@@ -148,29 +148,23 @@ CODE_INTERPRETER_ERRORS_ENABLED = False
 # File Operation Markers
 EDIT_ZONE_MARKER = "# Edit Zone"
 
-# Terminal Environment Note
-if DOCKER_MODE:
-    _docker_note = (
-        "Environment Note: The terminal runs commands in a bash session inside a Docker container with a Conda environment. "
-        "You can chain commands with '&&' (e.g. 'command_1 && command_2'). "
-        "When the user asks you to run a web dev server, use port 8888 (exposed to the host). "
-    )
-    if DOCKER_VNC:
-        _docker_note += (
-            "A graphical desktop is available via DISPLAY=:99. "
-            "The user can see GUI applications (pygame, tkinter, browsers, etc.) at http://localhost:6080 in their browser. "
-            "When running GUI applications, they will render on this virtual display automatically."
-        )
-    TERMINAL_ENV_NOTE = _docker_note
+# VNC instructions block — only included when the VNC desktop is available.
+if DOCKER_VNC:
+    VNC_INSTRUCTIONS = """
+**GUI Display via noVNC**:
+A virtual desktop (Xvfb + fluxbox) is running. GUI applications render on DISPLAY=:99 automatically.
+The user can view the live desktop through the noVNC viewer (port 6080).
+
+- **matplotlib**: use `matplotlib.use("TkAgg")` BEFORE importing pyplot, then `plt.show()`. The default `Agg` backend is non-interactive and will NOT display a window.
+- **Any GUI app** (pygame, tkinter, browser, etc.): just run it — the window appears on the noVNC desktop.
+- Background long-running GUI processes with `&` so the terminal stays responsive (e.g. `run_terminal_command("python game.py &")`).
+- If the user can't find the GUI output, tell them to open port 6080 of the current server address in their browser.
+"""
 else:
-    TERMINAL_ENV_NOTE = (
-        "Environment Note: The terminal runs commands in a Windows Command Prompt (cmd.exe) session within a Conda environment. "
-        "You can chain commands with '&&' (e.g. 'command_1 && command_2')."
-    )
+    VNC_INSTRUCTIONS = ""
 
 # System Message Template
-# Use SYSTEM_MESSAGE_TEMPLATE.format(current_time=datetime.datetime.now().isoformat())
-SYSTEM_MESSAGE_TEMPLATE = """You are a helpful and autonomous agent with powerful tools. Your primary goal is to thoroughly address the user's query by leveraging your tools to gather comprehensive information and execute necessary actions.
+SYSTEM_MESSAGE_TEMPLATE = """You are a helpful and autonomous agent with powerful tools. You are running inside a Docker container (Linux). Your primary goal is to thoroughly address the user's query by leveraging your tools to gather comprehensive information and execute necessary actions.
 
 **SUPER IMPORTANT**: Do EXACTLY what the user asks you to do. For anything else the user may need beyond their explicit request, ASK before doing so. Do not assume or add extra actions without user confirmation.
 
@@ -179,6 +173,7 @@ SYSTEM_MESSAGE_TEMPLATE = """You are a helpful and autonomous agent with powerfu
 As an autonomous agent, proactively leverage your tools to fully resolve the user's requests end-to-end. Refrain from asking the user to perform tasks or provide clarification unless essential information cannot be acquired through your tools.
 
 Current Time: {current_time}
+{vnc_instructions}
 
 **Available Tools**: You have access to file operations, web browsing, Google search, Python execution, terminal commands, and code analysis tools. Use them proactively to provide complete solutions.
 

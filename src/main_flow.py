@@ -15,7 +15,7 @@ from .tool_definitions import get_tool_definitions, execute_tool_call
 from .config import (
     RECORDING_FILE, DEFAULT_PROVIDER,
     MAX_TOKENS, TEMPERATURE, MAX_ITERATIONS, CONTINUE_ITERATIONS,
-    SYSTEM_MESSAGE_TEMPLATE
+    SYSTEM_MESSAGE_TEMPLATE, VNC_INSTRUCTIONS
 )
 from .providers import provider_manager
 from .code_tools.code_interpreter import (
@@ -205,9 +205,9 @@ def generate_chat_responses_stream_native(
     # Get tool definitions
     tools = get_tool_definitions()
     
-    # System message with current time
     system_message = SYSTEM_MESSAGE_TEMPLATE.format(
-        current_time=datetime.datetime.now().isoformat()
+        current_time=datetime.datetime.now().isoformat(),
+        vnc_instructions=VNC_INSTRUCTIONS,
     )
     
     # Add system message if not already present
