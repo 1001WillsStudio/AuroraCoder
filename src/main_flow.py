@@ -162,6 +162,7 @@ def record_conversation_turn(current_messages_list: list):
     if not current_messages_list:
         return
     try:
+        RECORDING_FILE.parent.mkdir(parents=True, exist_ok=True)
         log_entry = {
             "timestamp": datetime.datetime.now().isoformat(),
             "message": current_messages_list

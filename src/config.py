@@ -157,7 +157,7 @@ The user can view the live desktop through the noVNC viewer (port 6080).
 
 - **matplotlib**: use `matplotlib.use("TkAgg")` BEFORE importing pyplot, then `plt.show()`. The default `Agg` backend is non-interactive and will NOT display a window.
 - **Any GUI app** (pygame, tkinter, browser, etc.): just run it — the window appears on the noVNC desktop.
-- Background long-running GUI processes with `&` so the terminal stays responsive (e.g. `run_terminal_command("python game.py &")`).
+- To launch a GUI app in the background so the terminal stays responsive, use `nohup`.
 - If the user can't find the GUI output, tell them to open port 6080 of the current server address in their browser.
 """
 else:
