@@ -173,7 +173,8 @@ class FileOperations:
                         f"Search content ({len(search_lines)} lines):\n"
                         f"---\n{search_content}\n---\n"
                         f"File content near line {start_line}:\n"
-                        f"---\n{context}---")
+                        f"---\n{context}---\n\n"
+                        f"Hint: If partial edit keeps failing, use write_file to rewrite the entire file instead.")
             
             # Prepare replacement
             replace_lines = replace_content.splitlines(keepends=True)
@@ -196,8 +197,12 @@ class FileOperations:
             if new_content == original_text:
                 return f"Edit processed but resulted in no change for '{target_file}'."
             
-            # Write back using temp file for atomic operation
-            with tempfile.NamedTemporaryFile('w', delete=False, encoding='utf-8', newline='') as tmp:
+            # Write back using temp file for atomic operation.
+            # Use dir=file_path.parent so the temp file is on the same
+            # filesystem — avoids EXDEV (cross-device link) when workspace
+            # and /tmp are on different mounts (e.g. Docker volumes).
+            with tempfile.NamedTemporaryFile('w', delete=False, encoding='utf-8', newline='',
+                                            dir=str(file_path.parent)) as tmp:
                 tmp.write(new_content)
                 temp_path = tmp.name
             os.replace(temp_path, file_path)

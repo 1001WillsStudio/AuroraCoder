@@ -15,7 +15,8 @@ from .tool_definitions import get_tool_definitions, execute_tool_call
 from .config import (
     RECORDING_FILE, DEFAULT_PROVIDER,
     MAX_TOKENS, TEMPERATURE, MAX_ITERATIONS, CONTINUE_ITERATIONS,
-    SYSTEM_MESSAGE_TEMPLATE, VNC_INSTRUCTIONS
+    SYSTEM_MESSAGE_TEMPLATE, VNC_INSTRUCTIONS, TERMINAL_ENV_NOTE,
+    INTERPRETER_WARN_CHARS, INTERPRETER_MAX_FILES,
 )
 from .providers import provider_manager
 from .code_tools.code_interpreter import (
@@ -134,6 +135,9 @@ def generate_consolidated_interpreter_display(messages: List[Dict]) -> str:
     """
     Generate a consolidated code interpreter display for all open files.
     
+    If the display would be too large, appends a warning asking the agent
+    to close files it no longer needs.
+    
     Args:
         messages: Current message history to discover open files from
         
@@ -152,7 +156,23 @@ def generate_consolidated_interpreter_display(messages: List[Dict]) -> str:
     root_path = session_manager.get_session_working_directory()
     code_interpreter.set_root_path(root_path)
     
-    return code_interpreter.display_multiple_files(sorted_files)
+    display = code_interpreter.display_multiple_files(sorted_files)
+
+    notes = "\n\nNote: Closing a file removes it from this display, including previous tool responses — you will no longer see its contents unless you open it again. Only close a file after you have fully extracted all information you need from it."
+
+    if len(open_files) > INTERPRETER_MAX_FILES or len(display) > INTERPRETER_WARN_CHARS:
+        file_list = ", ".join(sorted_files)
+        notes += (
+            f"\n⚠️ CONTEXT WARNING: You have {len(open_files)} files open "
+            f"({file_list}). "
+            "To avoid running out of context, please close files you no longer "
+            "need by calling close_file() on them. If you still need data from a "
+            "currently open file, disregard this warning."
+        )
+
+    display = display.replace(CODE_INTERPRETER_END, notes + "\n" + CODE_INTERPRETER_END)
+
+    return display
 
 
 # --- Conversation Recording ---
@@ -209,6 +229,7 @@ def generate_chat_responses_stream_native(
     system_message = SYSTEM_MESSAGE_TEMPLATE.format(
         current_time=datetime.datetime.now().isoformat(),
         vnc_instructions=VNC_INSTRUCTIONS,
+        terminal_env_note=TERMINAL_ENV_NOTE,
     )
     
     # Add system message if not already present

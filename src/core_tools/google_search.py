@@ -4,22 +4,23 @@ from googleapiclient.discovery import build
 from urllib.parse import urlparse
 from typing import Any, List, Dict
 
-from ..config import proxy_host, proxy_port
-
-# Define proxy details
+from ..config import proxy_host, proxy_port, DOCKER_MODE
 
 
-# Create ProxyInfo object
-proxy_info = httplib2.ProxyInfo(
-    httplib2.socks.PROXY_TYPE_HTTP,
-    proxy_host,
-    proxy_port,
-)
+def _build_http():
+    """Build httplib2.Http with proxy only when not in Docker."""
+    if DOCKER_MODE:
+        return httplib2.Http()
+    proxy_info = httplib2.ProxyInfo(
+        httplib2.socks.PROXY_TYPE_HTTP,
+        proxy_host,
+        proxy_port,
+    )
+    return httplib2.Http(proxy_info=proxy_info)
 
-# Create Http object with proxy
-http = httplib2.Http(proxy_info=proxy_info)
 
 def google_search(search_term: str, api_key: str, cse_id: str, **kwargs: Any) -> List[Dict[str, Any]]:
+    http = _build_http()
     service = build("customsearch", "v1", http=http, developerKey=api_key)
     res = service.cse().list(q=search_term, cx=cse_id, **kwargs).execute()
     return res.get('items', [])

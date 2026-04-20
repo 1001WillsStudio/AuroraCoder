@@ -245,22 +245,51 @@ class SessionManager:
             if not line or boundary in line:
                 break
 
-    def run_in_persistent_shell(self, command: str, timeout: int = 120) -> Tuple[str, str]:
+    @staticmethod
+    def _strip_background_syntax(command: str) -> str:
+        """Remove nohup prefix and trailing & so blocking mode handles them."""
+        import re
+        cmd = command.strip()
+        cmd = re.sub(r'^nohup\s+', '', cmd)
+        cmd = re.sub(r'(?<!&)&\s*$', '', cmd)
+        return cmd.strip()
+
+    def run_in_persistent_shell(
+        self, command: str, timeout: int = 120, blocking: bool = True
+    ) -> Tuple[str, str]:
         """Runs a command in the persistent shell and returns (stdout, exit_code).
 
         Output is redirected to a temp file so it is completely free of
         prompt noise and command echo.  A boundary marker echoed to stdout
         is used only for synchronization.  A background thread reads stdout
         so the call can be cleanly timed out.
+
+        When *blocking* is ``False`` the command is launched with ``nohup``
+        in the background.  Output streams to a persistent log file whose
+        path is returned to the caller.  The shell is free immediately.
+        Any ``nohup`` / trailing ``&`` in the raw command is stripped
+        automatically — the ``blocking`` parameter is the sole mechanism.
         """
         if not self.persistent_shell:
             return "", "Persistent shell not running."
+
+        command = self._strip_background_syntax(command)
 
         cmd_id = uuid.uuid4().hex[:8]
         out_file = os.path.join(tempfile.gettempdir(), f"shell_out_{cmd_id}.txt")
         boundary = f"END_{cmd_id}"
 
-        if sys.platform == "win32":
+        if not blocking and sys.platform != "win32":
+            log_dir = os.path.join(tempfile.gettempdir(), "agent_bg_logs")
+            os.makedirs(log_dir, exist_ok=True)
+            log_file = os.path.join(log_dir, f"bg_{cmd_id}.log")
+            wrapped = (
+                f'nohup bash -c {self._shell_quote(command)}'
+                f' > "{log_file}" 2>&1 &\n'
+                f'echo "Background PID: $!  Log: {log_file}" > "{out_file}"\n'
+                f'echo {boundary}\n'
+            )
+        elif sys.platform == "win32":
             wrapped = (
                 f'({command}) > "{out_file}" 2>&1\n'
                 f'echo {boundary}\n'
@@ -291,11 +320,18 @@ class SessionManager:
         reader.join(timeout=timeout)
 
         if not found.is_set():
-            try:
-                os.remove(out_file)
-            except OSError:
-                pass
-            return "", f"Command timed out after {timeout}s"
+            logger.warning(
+                "Command timed out after %ds, spawning new shell: %s",
+                timeout, command[:120],
+            )
+            self.persistent_shell = None
+            self._start_persistent_shell()
+            return "", (
+                f"Command timed out after {timeout}s but is still running in the old terminal. "
+                f"Output is being written to: {out_file}\n"
+                "A new terminal has been started for subsequent commands. "
+                "You can read the log file above to check progress."
+            )
 
         stdout = ""
         try:
@@ -312,6 +348,11 @@ class SessionManager:
                 pass
 
         return stdout, ""
+
+    @staticmethod
+    def _shell_quote(s: str) -> str:
+        """Wrap *s* in single quotes safe for bash -c."""
+        return "'" + s.replace("'", "'\\''") + "'"
 
     def restart_persistent_shell(self) -> str:
         """Terminates the current shell and starts a new one."""

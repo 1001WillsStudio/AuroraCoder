@@ -53,8 +53,8 @@ export async function streamChat(message, conversationId, callbacks, signal, exi
   const requestBody = {
     message,
     conversation_id: conversationId || null,
-    messages: existingMessages,  // Include raw messages for interrupt/resume
-    provider: provider  // Model provider selection
+    messages: existingMessages,
+    provider: provider
   }
   console.log('[streamChat] Request:', JSON.stringify(requestBody))
   
@@ -128,48 +128,6 @@ export async function streamChat(message, conversationId, callbacks, signal, exi
     onError?.({ message: error.message, type: error.name })
     throw error
   }
-}
-
-/**
- * Continue a paused conversation
- */
-export async function continueChat(conversationId, callbacks, signal) {
-  return streamChat('', conversationId, callbacks, signal)
-}
-
-/**
- * Get conversation details
- */
-export async function getConversation(conversationId) {
-  const response = await fetch(`${API_BASE}/conversations/${conversationId}`)
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`)
-  }
-  return response.json()
-}
-
-/**
- * List all conversations
- */
-export async function listConversations() {
-  const response = await fetch(`${API_BASE}/conversations`)
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`)
-  }
-  return response.json()
-}
-
-/**
- * Delete a conversation
- */
-export async function deleteConversation(conversationId) {
-  const response = await fetch(`${API_BASE}/conversations/${conversationId}`, {
-    method: 'DELETE'
-  })
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`)
-  }
-  return response.json()
 }
 
 /**

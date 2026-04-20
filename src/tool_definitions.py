@@ -9,7 +9,7 @@ from typing import Dict, List, Any
 
 # Import all the tool functions
 from .core_tools.google_search import search_for_llm
-from .core_tools.web_browser import jina_ai_reader
+from .core_tools.web_browser import web_fetch
 # from .core_tools.code_interpreter import run_like_jupyter
 from .code_tools.file_operations import (
     read_file_tool, 
@@ -58,16 +58,33 @@ NATIVE_TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "web_browser",
-            "description": "Accesses the content of a specified URL in real-time and returns it as readable text using Jina AI reader. This tool is extremely slow, never use it more than 3 times in a chat.",
+            "description": (
+                "Fetches content from a URL, converts HTML to Markdown, and processes "
+                "it with a fast secondary model to extract relevant information.\n\n"
+                "IMPORTANT: Always provide a 'prompt' describing what you need — the raw "
+                "page is processed by a cheap secondary model so only a concise summary "
+                "enters your context. Without a prompt, you get raw Markdown which can be "
+                "very large.\n\n"
+                "Usage notes:\n"
+                "- The URL must be a fully-formed valid URL\n"
+                "- HTTP URLs are automatically upgraded to HTTPS\n"
+                "- Includes a 15-minute cache for repeated access\n"
+                "- Cross-host redirects are reported rather than followed\n"
+                "- Use google_search first to find URLs, then this tool to read them"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "target_url": {
                         "type": "string",
-                        "description": "The URL to browse and extract content from"
+                        "description": "The URL to fetch and extract content from"
+                    },
+                    "prompt": {
+                        "type": "string",
+                        "description": "What information to extract from the page. The full page is sent to a fast secondary model with this prompt, and only the concise answer is returned. Examples: 'What are the main API endpoints?', 'Extract the pricing table', 'Summarize the key findings'"
                     }
                 },
-                "required": ["target_url"]
+                "required": ["target_url", "prompt"]
             }
         }
     },
@@ -176,7 +193,7 @@ NATIVE_TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "close_file",
-            "description": "Closes a file from the code interpreter view. Use this when you're done editing a file to reduce context usage. The file is NOT deleted, just removed from the interpreter display.",
+            "description": "Removes a file from the code interpreter display. The file itself is not deleted or modified. Once closed, you will no longer see its contents in the conversation until you reopen it with read_file.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -258,13 +275,21 @@ NATIVE_TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "run_terminal_command",
-            "description": "Executes terminal/shell commands in a persistent, stateful Windows Command Prompt (cmd.exe) session with Conda. The shell's environment and working directory are preserved between commands.",
+            "description": "Executes terminal/shell commands in a persistent, stateful shell session with Conda. The shell's environment and working directory are preserved between commands. For long-running processes (servers, training, etc.), set blocking=false so the command runs in the background — output streams to a log file whose path is returned. You can read that log file later to check progress. Do NOT use nohup or trailing & yourself; use blocking=false instead. If a blocking command times out, the command keeps running in the old terminal and a new terminal is started automatically — the log file path is returned so you can check progress.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "command": {
                         "type": "string",
-                        "description": "The shell command to execute. Use 'start_new_terminal' to restart the terminal if needed."
+                        "description": "The shell command to execute. Do NOT include nohup or trailing &; use the blocking parameter instead. Use 'start_new_terminal' to restart the terminal if needed."
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Timeout in seconds. Default is 30. Increase for long-running commands."
+                    },
+                    "blocking": {
+                        "type": "boolean",
+                        "description": "If false, run the command in the background and return immediately with the PID and log file path. Use for servers, training scripts, or any long-running process. Default is true."
                     }
                 },
                 "required": ["command"]
@@ -307,7 +332,7 @@ NATIVE_TOOL_DEFINITIONS = [
 # Tool function mappings - maps tool names to their actual functions
 TOOL_FUNCTION_MAP = {
     "google_search": search_for_llm,
-    "web_browser": jina_ai_reader,
+    "web_browser": web_fetch,
     # "python_interpreter": run_like_jupyter,
     "read_file": read_file_tool,
     "write_file": full_file_write_tool,

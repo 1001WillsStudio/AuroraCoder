@@ -13,6 +13,19 @@ try:
 except ImportError:
     session_manager = None
 
+from ..config import TERMINAL_MAX_OUTPUT_CHARS
+
+
+def _truncate_output(text: str, limit: int = TERMINAL_MAX_OUTPUT_CHARS) -> str:
+    """Keep the first and last portions of long output, dropping the middle."""
+    if len(text) <= limit:
+        return text
+    keep = limit // 2
+    head = text[:keep]
+    tail = text[-keep:]
+    dropped = len(text) - keep * 2
+    return f"{head}\n\n... [{dropped:,} characters truncated] ...\n\n{tail}"
+
 
 class TerminalRunner:
     """Terminal command runner with support for background processes."""
@@ -27,44 +40,48 @@ class TerminalRunner:
         self.background_processes = {}
         self.process_counter = 0
     
-    def run_command(self, command: str, timeout: int = 30, cwd: str = None) -> str:
+    def run_command(
+        self, command: str, timeout: int = 30, blocking: bool = True, cwd: str = None
+    ) -> str:
         """
         Run a terminal command in the persistent session shell.
-        
+
         Args:
             command: The command to execute. If "start_new_terminal", it restarts the shell.
-            timeout: Command timeout in seconds (currently not implemented in persistent shell)
-            cwd: Working directory (now managed by the session)
-            
+            timeout: Command timeout in seconds.
+            blocking: If False, launch in background and return the log file path.
+            cwd: Working directory (now managed by the session).
+
         Returns:
             Command output or process information
         """
         try:
             if not session_manager:
                 return "Error: Session manager is not available."
-            
-            # Handle restart command
+
             if command.strip() == "start_new_terminal":
                 return session_manager.restart_persistent_shell()
 
             if not session_manager.persistent_shell:
                 return "Error: Persistent shell is not available. Try running 'start_new_terminal'."
 
-            stdout, stderr = session_manager.run_in_persistent_shell(command, timeout=timeout)
+            stdout, stderr = session_manager.run_in_persistent_shell(
+                command, timeout=timeout, blocking=blocking,
+            )
 
             output = []
             output.append(f"Command: {command}")
 
             if stdout:
                 output.append("\nSTDOUT:")
-                output.append(stdout)
+                output.append(_truncate_output(stdout))
 
             if stderr:
                 output.append("\nSTDERR:")
-                output.append(stderr)
+                output.append(_truncate_output(stderr))
 
             return '\n'.join(output)
-            
+
         except Exception as e:
             return f"Error running command: {str(e)}"
     
@@ -98,12 +115,12 @@ class TerminalRunner:
             
             if result.stdout:
                 output.append("STDOUT:")
-                output.append(result.stdout)
+                output.append(_truncate_output(result.stdout))
                 output.append("")
             
             if result.stderr:
                 output.append("STDERR:")
-                output.append(result.stderr)
+                output.append(_truncate_output(result.stderr))
                 output.append("")
             
             if result.returncode != 0:
@@ -117,10 +134,12 @@ class TerminalRunner:
             return f"Error executing command: {str(e)}"
 
 
-def run_terminal_cmd_tool(command: str, workspace_root: str = None) -> str:
+def run_terminal_cmd_tool(
+    command: str, timeout: int = 30, blocking: bool = True, workspace_root: str = None
+) -> str:
     """Run terminal command tool wrapper."""
     runner = TerminalRunner(workspace_root=workspace_root)
-    return runner.run_command(command)
+    return runner.run_command(command, timeout=timeout, blocking=blocking)
 
 # To maintain compatibility if other parts of the codebase use these
 def list_background_processes_tool(workspace_root: str = None) -> str:

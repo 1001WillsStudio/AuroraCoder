@@ -23,7 +23,7 @@ from ..providers import get_available_providers, get_default_provider
 from ..code_sandbox import init_application_session, get_session_status
 from ..code_sandbox.session_utils import session_manager, load_session_environment, list_loadable_sessions
 from ..code_tools.file_operations import set_file_tracking_callbacks, set_current_conversation
-from ..config import CONTINUE_ITERATIONS, DEFAULT_BASE_ENV_NAME, DEFAULT_PROVIDER, DOCKER_MODE, WORKSPACE_DIR
+from ..config import DEFAULT_BASE_ENV_NAME, DEFAULT_PROVIDER, DOCKER_MODE, WORKSPACE_DIR
 from pathlib import Path
 import difflib
 import shutil
@@ -48,32 +48,10 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     """Request body for chat endpoint."""
-    message: str = Field(..., description="User message text")
-    conversation_id: Optional[str] = Field(None, description="Conversation ID for continuing a conversation")
-    messages: Optional[list] = Field(None, description="Optional: existing messages to continue from (for interrupt/resume)")
+    message: Optional[str] = Field(None, description="User message text (omit for continue)")
+    conversation_id: Optional[str] = Field(None, description="Conversation ID for stream management")
+    messages: Optional[list] = Field(None, description="Full conversation history from frontend (required for continue/resume)")
     provider: Optional[str] = Field(None, description="Model provider to use (e.g., 'deepseek', 'nvidia')")
-
-
-class ContinueRequest(BaseModel):
-    """Request body for continue endpoint."""
-    conversation_id: str = Field(..., description="Conversation ID to continue")
-    provider: Optional[str] = Field(None, description="Model provider to use")
-
-
-class ConversationState(BaseModel):
-    """Stored conversation state."""
-    id: str
-    messages: list
-    created_at: str
-    updated_at: str
-    status: str = "active"
-
-
-# ============================================================================
-# In-Memory Conversation Store
-# ============================================================================
-
-conversations: Dict[str, ConversationState] = {}
 
 # Track active streams per conversation - allows cancelling previous stream when new one starts
 # Maps conversation_id -> threading.Event (cancel signal)
@@ -108,29 +86,6 @@ def unregister_stream(conversation_id: str, cancel_event: threading.Event):
     with active_streams_lock:
         if active_streams.get(conversation_id) is cancel_event:
             del active_streams[conversation_id]
-
-
-def get_conversation(conversation_id: str) -> Optional[ConversationState]:
-    """Retrieve a conversation by ID."""
-    return conversations.get(conversation_id)
-
-
-def save_conversation(conversation_id: str, messages: list, status: str = "active") -> ConversationState:
-    """Save or update a conversation."""
-    now = datetime.now().isoformat()
-    if conversation_id in conversations:
-        conversations[conversation_id].messages = messages
-        conversations[conversation_id].updated_at = now
-        conversations[conversation_id].status = status
-    else:
-        conversations[conversation_id] = ConversationState(
-            id=conversation_id,
-            messages=messages,
-            created_at=now,
-            updated_at=now,
-            status=status
-        )
-    return conversations[conversation_id]
 
 
 # ============================================================================
@@ -336,12 +291,8 @@ async def stream_chat_response(
                         })
                     )
                     
-                    # Store final state
-                    save_conversation(conversation_id, current_messages, final_status)
                 else:
-                    # Client disconnected - still save state but mark as cancelled
-                    logger.info(f"[stream] Saving cancelled state for {conversation_id}")
-                    save_conversation(conversation_id, current_messages, "client_disconnected")
+                    logger.info(f"[stream] Client disconnected for {conversation_id}")
                 
             except Exception as e:
                 if not cancel_event.is_set():
@@ -675,42 +626,39 @@ async def create_new_session(session_name: Optional[str] = None, base_env_name: 
 @app.post("/api/chat")
 async def chat(chat_request: ChatRequest, request: Request):
     """
-    Start a new chat or continue an existing conversation.
+    Stateless chat endpoint. Returns a streaming response with SSE events.
     
-    Returns a streaming response with SSE events.
-    
-    If `messages` is provided in the request, it will be used directly (for interrupt/resume).
-    Otherwise, messages are loaded from the conversation store.
+    The frontend owns all conversation state.  For a new turn, send `message`
+    (and optionally prior `messages`).  To continue after max-iterations, send
+    the `raw_messages` from the last SSE payload as `messages` without a `message`.
     """
     # Generate or use existing conversation ID
     conversation_id = chat_request.conversation_id or str(uuid.uuid4())
     
     logger.info(f"[API] /api/chat called with conversation_id: {chat_request.conversation_id}, new_id: {conversation_id}")
     
-    # Set current conversation for file tracking
     set_current_conversation(conversation_id)
     
-    # Clear snapshots for new turn (we want diff from this turn's start)
-    clear_conversation_snapshots(conversation_id)
+    is_continue = bool(chat_request.messages and not chat_request.message)
     
-    # Use provided messages if available (for interrupt/resume), otherwise load from store
-    if chat_request.messages:
-        # Messages provided directly - use them (interrupt/resume scenario)
-        messages = chat_request.messages.copy()
-        logger.info(f"[API] Using provided messages: {len(messages)}")
-    else:
-        # Get existing messages from conversation store or start fresh
-        existing_conv = get_conversation(conversation_id) if chat_request.conversation_id else None
-        messages = existing_conv.messages.copy() if existing_conv else []
-        logger.info(f"[API] Loaded messages from store: {len(messages)}")
+    # On a new conversation (not a continue), reset shell and file snapshots
+    if not is_continue:
+        clear_conversation_snapshots(conversation_id)
+        try:
+            session_manager.restart_persistent_shell()
+            logger.info(f"[API] Restarted persistent shell for new conversation {conversation_id}")
+        except Exception as e:
+            logger.warning(f"[API] Failed to restart shell: {e}")
     
-    # Add user message
-    messages.append({
-        "role": "user",
-        "content": chat_request.message
-    })
+    messages = (chat_request.messages or []).copy()
     
-    logger.info(f"[API] Total messages after adding user: {len(messages)}, provider: {chat_request.provider}")
+    if chat_request.message:
+        messages.append({
+            "role": "user",
+            "content": chat_request.message
+        })
+    
+    logger.info(f"[API] Total messages: {len(messages)}, provider: {chat_request.provider}")
     
     # Use provided provider or default
     provider = chat_request.provider or DEFAULT_PROVIDER
@@ -727,90 +675,6 @@ async def chat(chat_request: ChatRequest, request: Request):
             "X-Provider": provider
         }
     )
-
-
-@app.post("/api/chat/continue")
-async def continue_chat(continue_request: ContinueRequest, request: Request):
-    """
-    Continue a conversation that reached max iterations.
-    """
-    conversation = get_conversation(continue_request.conversation_id)
-    if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    
-    if conversation.status != "max_iterations_reached":
-        raise HTTPException(
-            status_code=400, 
-            detail="Conversation is not in a continuable state"
-        )
-    
-    # Set current conversation for file tracking (don't clear snapshots for continue)
-    set_current_conversation(continue_request.conversation_id)
-    
-    # Use provided provider or default
-    provider = continue_request.provider or DEFAULT_PROVIDER
-    
-    # Continue from current state
-    return StreamingResponse(
-        stream_chat_response(
-            conversation.messages, 
-            continue_request.conversation_id,
-            request,
-            max_iterations=CONTINUE_ITERATIONS,
-            provider=provider
-        ),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-            "X-Conversation-ID": continue_request.conversation_id,
-            "X-Provider": provider
-        }
-    )
-
-
-@app.get("/api/conversations/{conversation_id}")
-async def get_conversation_detail(conversation_id: str):
-    """Get the full state of a conversation."""
-    conversation = get_conversation(conversation_id)
-    if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    
-    return {
-        "id": conversation.id,
-        "status": conversation.status,
-        "message_count": len(conversation.messages),
-        "created_at": conversation.created_at,
-        "updated_at": conversation.updated_at,
-        "messages": conversation.messages
-    }
-
-
-@app.delete("/api/conversations/{conversation_id}")
-async def delete_conversation(conversation_id: str):
-    """Delete a conversation."""
-    if conversation_id in conversations:
-        del conversations[conversation_id]
-        return {"status": "deleted", "conversation_id": conversation_id}
-    raise HTTPException(status_code=404, detail="Conversation not found")
-
-
-@app.get("/api/conversations")
-async def list_conversations():
-    """List all active conversations."""
-    return {
-        "conversations": [
-            {
-                "id": conv.id,
-                "status": conv.status,
-                "message_count": len(conv.messages),
-                "created_at": conv.created_at,
-                "updated_at": conv.updated_at
-            }
-            for conv in conversations.values()
-        ]
-    }
 
 
 # ============================================================================
@@ -990,11 +854,7 @@ async def get_file_diff(conversation_id: Optional[str] = None, file_path: Option
         - Each line has: lineNumber, content, type (added/removed/null)
     """
     if not conversation_id:
-        # Try to find the most recent conversation
-        if conversations:
-            conversation_id = max(conversations.keys(), key=lambda k: conversations[k].updated_at)
-        else:
-            return {"files": [], "error": "No conversation specified"}
+        return {"files": [], "error": "No conversation_id specified"}
     
     result = get_file_diffs_for_conversation(conversation_id)
     

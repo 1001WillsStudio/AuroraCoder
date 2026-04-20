@@ -601,7 +601,7 @@ function App() {
   }
 
   const handleContinue = async () => {
-    if (!conversationId || isStreaming) return
+    if (!conversationId || isStreaming || rawMessages.length === 0) return
     
     setIsStreaming(true)
     setCanContinue(false)
@@ -609,61 +609,36 @@ function App() {
     try {
       abortControllerRef.current = new AbortController()
       
-      // Use continue endpoint - doesn't add a new user message
-      const response = await fetch('/api/chat/continue', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ conversation_id: conversationId }),
-        signal: abortControllerRef.current.signal
-      })
-
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        
-        buffer += decoder.decode(value, { stream: true })
-        const parts = buffer.split('\n\n')
-        buffer = parts.pop() || ''
-        
-        for (const part of parts) {
-          if (!part.trim()) continue
-          
-          // Parse SSE event
-          const lines = part.split('\n')
-          let eventType = 'message'
-          let eventData = null
-          
-          for (const line of lines) {
-            if (line.startsWith('event:')) {
-              eventType = line.slice(6).trim()
-            } else if (line.startsWith('data:')) {
-              try {
-                eventData = JSON.parse(line.slice(5).trim())
-              } catch (e) {}
-            }
+      await streamChat(
+        null,
+        conversationId,
+        {
+          onMessages: (frontendMessages, status, data) => {
+            setMessages(frontendMessages)
+            if (data?.raw_messages) setRawMessages(data.raw_messages)
+          },
+          onDone: (data) => {
+            setConversationId(data.conversation_id)
+            setCanContinue(data.status === 'max_iterations_reached')
+            setIsStreaming(false)
+            if (data.messages) setMessages(data.messages)
+            if (data.raw_messages) setRawMessages(data.raw_messages)
+          },
+          onError: (error) => {
+            console.error('[handleContinue] Error:', error)
+            setIsStreaming(false)
           }
-          
-          if (eventType === 'messages' && eventData?.messages) {
-            setMessages(eventData.messages)
-          } else if (eventType === 'done' && eventData) {
-            setCanContinue(eventData.status === 'max_iterations_reached')
-            if (eventData.messages) {
-              setMessages(eventData.messages)
-            }
-          }
-        }
-      }
+        },
+        abortControllerRef.current.signal,
+        rawMessages,
+        selectedProvider
+      )
     } catch (error) {
       if (error.name !== 'AbortError') {
         console.error('Continue error:', error)
       }
+      setIsStreaming(false)
     }
-    
-    setIsStreaming(false)
   }
 
   const handleClear = () => {

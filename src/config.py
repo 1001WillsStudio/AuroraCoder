@@ -12,7 +12,6 @@ RECORDING_FILE = Path(__file__).parent.parent / "data" / "conversation_log.jsonl
 
 proxy_host = 'localhost'
 proxy_port = 10794
-JINA_TOKEN = "[REDACTED]"
 
 # =============================================================================
 # Model Provider Configurations
@@ -141,12 +140,70 @@ WORKSPACE_DIR = "/workspace" if DOCKER_MODE else None
 # Set to None to create fresh sandbox envs (local development).
 DEFAULT_BASE_ENV_NAME = os.environ.get("DEFAULT_BASE_ENV_NAME", "agent" if DOCKER_MODE else None)
 
+# =============================================================================
+# Terminal Output
+# =============================================================================
+# Long command outputs are truncated to this limit (keeps head + tail).
+TERMINAL_MAX_OUTPUT_CHARS = 15_000
+
+# =============================================================================
+# Web Browser (secondary model summarization)
+# =============================================================================
+# A cheap/fast model processes raw web pages so only a concise summary
+# enters the main agent's context window.
+WEB_SECONDARY_MODEL_BASE_URL = "https://api.deepseek.com/v1"
+WEB_SECONDARY_MODEL_API_KEY = "[REDACTED]"
+WEB_SECONDARY_MODEL_NAME = "deepseek-chat"
+WEB_SECONDARY_MODEL_MAX_TOKENS = 4096
+
+# Max characters of page markdown fed to the secondary model
+WEB_MAX_MARKDOWN_LENGTH = 100_000
+# HTTP fetch timeout in seconds
+WEB_FETCH_TIMEOUT_S = 60
+# URL result cache: entries and TTL
+WEB_CACHE_MAX_ENTRIES = 64
+WEB_CACHE_TTL_S = 15 * 60  # 15 minutes
+
 # Code interpreter (Pyright) error checking on files shown to the model.
 # Set to False to disable — useful when the checker produces noisy false positives.
 CODE_INTERPRETER_ERRORS_ENABLED = False
 
+# Code interpreter display limits
+INTERPRETER_WARN_CHARS = 50_000       # Total display chars before context warning
+INTERPRETER_MAX_FILES = 5             # Max open files before context warning
+INTERPRETER_MAX_FILE_CHARS = 150_000  # Per-file char limit; larger files get truncated
+INTERPRETER_TRUNCATE_PREVIEW_LINES = 20  # Lines shown when a file is truncated
+
 # File Operation Markers
 EDIT_ZONE_MARKER = "# Edit Zone"
+
+# Terminal Environment Note — adapts to platform
+_TERMINAL_BLOCKING_NOTE = (
+    " For long-running processes (servers, training, etc.), set blocking=false "
+    "instead of using nohup or &. The command runs in the background and a log "
+    "file path is returned so you can check progress later. "
+    "If a blocking command times out, the process keeps running and a new "
+    "terminal is created automatically — read the returned log path to monitor."
+)
+if DOCKER_MODE:
+    TERMINAL_ENV_NOTE = (
+        "Environment Note: The terminal runs commands in a Bash shell inside a Docker container. "
+        "You can chain commands with '&&' (e.g. 'command_1 && command_2')."
+        + _TERMINAL_BLOCKING_NOTE
+    )
+else:
+    import sys as _sys
+    if _sys.platform == "win32":
+        TERMINAL_ENV_NOTE = (
+            "Environment Note: The terminal runs commands in a Windows Command Prompt (cmd.exe) session within a Conda environment. "
+            "You can chain commands with '&&' (e.g. 'command_1 && command_2')."
+        )
+    else:
+        TERMINAL_ENV_NOTE = (
+            "Environment Note: The terminal runs commands in a Bash shell within a Conda environment. "
+            "You can chain commands with '&&' (e.g. 'command_1 && command_2')."
+            + _TERMINAL_BLOCKING_NOTE
+        )
 
 # VNC instructions block — only included when the VNC desktop is available.
 if DOCKER_VNC:
@@ -157,7 +214,7 @@ The user can view the live desktop through the noVNC viewer (port 6080).
 
 - **matplotlib**: use `matplotlib.use("TkAgg")` BEFORE importing pyplot, then `plt.show()`. The default `Agg` backend is non-interactive and will NOT display a window.
 - **Any GUI app** (pygame, tkinter, browser, etc.): just run it — the window appears on the noVNC desktop.
-- To launch a GUI app in the background so the terminal stays responsive, use `nohup`.
+- To launch a GUI app in the background so the terminal stays responsive, use `blocking=false` in `run_terminal_command`.
 - If the user can't find the GUI output, tell them to open port 6080 of the current server address in their browser.
 """
 else:
@@ -174,6 +231,7 @@ As an autonomous agent, proactively leverage your tools to fully resolve the use
 
 Current Time: {current_time}
 {vnc_instructions}
+{terminal_env_note}
 
 **Available Tools**: You have access to file operations, web browsing, Google search, Python execution, terminal commands, and code analysis tools. Use them proactively to provide complete solutions.
 
@@ -182,6 +240,6 @@ Current Time: {current_time}
 - For code-related tasks, use file operations and Python execution tools
 - For code generation, use English exclusively in all code and comments
 - For research, use Google search and web browsing tools
-- For system operations, use terminal commands
+- For system operations, use terminal commands. For long-running processes, set `blocking=false` to run in background — do NOT use `nohup` or trailing `&` manually.
 - Always verify information through tools rather than relying on assumptions
 """

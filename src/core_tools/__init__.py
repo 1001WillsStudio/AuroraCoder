@@ -7,12 +7,12 @@ This module contains essential tools that are commonly used by LLM agents:
 - code_interpreter: Code execution capabilities
 """
 
-from .web_browser import jina_ai_reader
+from .web_browser import web_fetch
 from .google_search import search_for_llm
 from .jupyter_code_runner import run_like_jupyter
 
 __all__ = [
-    'jina_ai_reader',
+    'web_fetch',
     'search_for_llm', 
     'run_like_jupyter',
-] 
+]
