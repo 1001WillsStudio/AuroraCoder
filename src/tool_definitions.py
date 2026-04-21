@@ -329,6 +329,13 @@ NATIVE_TOOL_DEFINITIONS = [
 ]
 
 
+# Tools that are safe to run concurrently (read-only / side-effect-free)
+CONCURRENT_SAFE_TOOLS = {
+    "read_file", "list_directory", "search_files", "grep_search",
+    "google_search", "web_browser", "close_file", "tool_store",
+}
+
+
 # Tool function mappings - maps tool names to their actual functions
 TOOL_FUNCTION_MAP = {
     "google_search": search_for_llm,

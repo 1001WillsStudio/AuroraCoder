@@ -9,12 +9,14 @@ import json
 import datetime
 import copy
 import re
-from typing import Dict, List, Any, Generator, Set, Optional
+from typing import Dict, List, Any, Generator, Set, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from .tool_definitions import get_tool_definitions, execute_tool_call
+from .tool_definitions import get_tool_definitions, execute_tool_call, CONCURRENT_SAFE_TOOLS
 from .config import (
     RECORDING_FILE, DEFAULT_PROVIDER,
     MAX_TOKENS, TEMPERATURE, MAX_ITERATIONS, CONTINUE_ITERATIONS,
+    MAX_STREAMING_RETRIES, MAX_TOOL_CONCURRENCY,
     SYSTEM_MESSAGE_TEMPLATE, VNC_INSTRUCTIONS, TERMINAL_ENV_NOTE,
     INTERPRETER_WARN_CHARS, INTERPRETER_MAX_FILES,
 )
@@ -175,6 +177,54 @@ def generate_consolidated_interpreter_display(messages: List[Dict]) -> str:
     return display
 
 
+# --- Tool Concurrency ---
+
+_tool_executor = ThreadPoolExecutor(max_workers=MAX_TOOL_CONCURRENCY)
+
+
+def partition_tool_calls(tool_calls: List[Dict]) -> List[Tuple[bool, List[Dict]]]:
+    """
+    Group consecutive tool calls by concurrency safety.
+
+    Returns a list of (is_safe, [tool_call, ...]) batches.
+    Consecutive safe tools are grouped together for parallel execution;
+    unsafe tools are kept in their own sequential batches.
+    """
+    if not tool_calls:
+        return []
+
+    batches: List[Tuple[bool, List[Dict]]] = []
+    current_safe: Optional[bool] = None
+    current_batch: List[Dict] = []
+
+    for tc in tool_calls:
+        is_safe = tc["function"]["name"] in CONCURRENT_SAFE_TOOLS
+        if current_safe is not None and is_safe != current_safe:
+            batches.append((current_safe, current_batch))
+            current_batch = []
+        current_safe = is_safe
+        current_batch.append(tc)
+
+    if current_batch and current_safe is not None:
+        batches.append((current_safe, current_batch))
+
+    return batches
+
+
+def _execute_single_tool(tool_call: Dict) -> Tuple[Dict, str, str]:
+    """Execute one tool call and return (tool_call, tool_name, result)."""
+    tool_name = tool_call["function"]["name"]
+    try:
+        arguments = json.loads(tool_call["function"]["arguments"])
+    except json.JSONDecodeError as e:
+        return (tool_call, tool_name, f"Error: could not parse tool arguments — {e}")
+    try:
+        result = execute_tool_call(tool_name, arguments)
+    except Exception as e:
+        result = f"Error executing tool '{tool_name}': {type(e).__name__}: {e}"
+    return (tool_call, tool_name, result)
+
+
 # --- Conversation Recording ---
 
 def record_conversation_turn(current_messages_list: list):
@@ -239,6 +289,7 @@ def generate_chat_responses_stream_native(
         current_processing_messages[0]["content"] = system_message
     
     iteration_count = 0
+    streaming_errors = 0
     
     while iteration_count < max_iterations:
         iteration_count += 1
@@ -314,8 +365,19 @@ def generate_chat_responses_stream_native(
                 }
         
         except Exception as e:
-            print(f"Error processing chunk: {e}")
+            streaming_errors += 1
+            print(f"Streaming error ({streaming_errors}/{MAX_STREAMING_RETRIES}): {e}")
+            if streaming_errors >= MAX_STREAMING_RETRIES:
+                yield {
+                    "messages": current_processing_messages,
+                    "status": "error",
+                    "error": f"Streaming failed after {MAX_STREAMING_RETRIES} retries: {e}",
+                    "provider": provider_id
+                }
+                return
             continue
+
+        streaming_errors = 0
 
         current_tool_calls = [
             tc for tc in current_tool_calls 
@@ -360,28 +422,38 @@ def generate_chat_responses_stream_native(
         # Track if any code-related tool was called in this batch
         code_tool_called = False
         
-        # Execute tool calls
-        for tool_call in current_tool_calls:
-            tool_name = tool_call["function"]["name"]
-            try:
-                arguments = json.loads(tool_call["function"]["arguments"])
-            except json.JSONDecodeError:
-                arguments = {}
-            
-            # Execute the tool
-            result = execute_tool_call(tool_name, arguments)
-            
-            # Check if this is a code-related tool
-            if should_trigger_code_interpreter(tool_name):
-                code_tool_called = True
-            
-            # Add tool response message (without interpreter - we'll add it at the end)
-            tool_response = {
-                "role": "tool",
-                "tool_call_id": tool_call["id"],
-                "content": result
-            }
-            current_processing_messages.append(tool_response)
+        # Execute tool calls — concurrent-safe tools run in parallel
+        for is_safe, batch in partition_tool_calls(current_tool_calls):
+            if is_safe and len(batch) > 1:
+                futures = {
+                    _tool_executor.submit(_execute_single_tool, tc): tc
+                    for tc in batch
+                }
+                # Collect results keyed by tool_call id to preserve original order
+                results_by_id = {}
+                for future in as_completed(futures):
+                    tc, tool_name, result = future.result()
+                    results_by_id[tc["id"]] = (tc, tool_name, result)
+                # Append in original batch order
+                for tc in batch:
+                    tc_out, tool_name, result = results_by_id[tc["id"]]
+                    if should_trigger_code_interpreter(tool_name):
+                        code_tool_called = True
+                    current_processing_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc_out["id"],
+                        "content": result
+                    })
+            else:
+                for tc in batch:
+                    tc_out, tool_name, result = _execute_single_tool(tc)
+                    if should_trigger_code_interpreter(tool_name):
+                        code_tool_called = True
+                    current_processing_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc_out["id"],
+                        "content": result
+                    })
 
         # If any code-related tool was called, update the interpreter display
         if code_tool_called:

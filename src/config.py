@@ -125,6 +125,10 @@ MAX_TOOL_CALLS = 10  # Increased since native tool calling is more efficient
 # Iteration Limits
 MAX_ITERATIONS = 30  # Maximum iterations per turn before requiring user to continue
 CONTINUE_ITERATIONS = 30  # Additional iterations when user clicks Continue
+MAX_STREAMING_RETRIES = 10  # Consecutive streaming failures before giving up
+
+# Tool Concurrency
+MAX_TOOL_CONCURRENCY = 5  # Max parallel threads for concurrent-safe tools
 
 # =============================================================================
 # Docker Mode
