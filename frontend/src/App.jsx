@@ -5,7 +5,7 @@ import WelcomeScreen from './components/WelcomeScreen'
 import CodePanel from './components/CodePanel'
 import FileTree from './components/FileTree'
 import SessionPicker from './components/SessionPicker'
-import { streamChat, getProviders, getCurrentSession, uploadWorkspace } from './services/api'
+import { streamChat, getProviders, getCurrentSession, uploadWorkspace, cancelConversation } from './services/api'
 
 // Debug: log message structure
 const DEBUG = true
@@ -663,8 +663,11 @@ function App() {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort()
     }
+    if (conversationId) {
+      cancelConversation(conversationId)
+    }
     setIsStreaming(false)
-    setPendingInterrupt(null)  // Clear any pending interrupt
+    setPendingInterrupt(null)
     pendingInterruptRef.current = null
   }
 

@@ -150,6 +150,123 @@ export async function getProviders() {
 }
 
 // ============================================================================
+// Conversation History API (served by the conversation server)
+// ============================================================================
+
+/**
+ * Cancel an active stream on the conversation server.
+ * This actually stops the backend generation (not just the frontend connection).
+ * @param {string} conversationId
+ */
+export async function cancelConversation(conversationId) {
+  try {
+    const response = await fetch(`${API_BASE}/conversations/${conversationId}/cancel`, {
+      method: 'POST',
+    })
+    if (!response.ok && response.status !== 404) {
+      console.warn('[cancelConversation] Failed:', response.status)
+    }
+  } catch (error) {
+    console.warn('[cancelConversation] Error:', error.message)
+  }
+}
+
+/**
+ * List past conversations (metadata only).
+ * @param {object} filters - Optional { type, session_id, parent_id }
+ */
+export async function listConversations(filters = {}) {
+  const params = new URLSearchParams()
+  if (filters.type) params.append('type', filters.type)
+  if (filters.session_id) params.append('session_id', filters.session_id)
+  if (filters.parent_id) params.append('parent_id', filters.parent_id)
+
+  const response = await fetch(`${API_BASE}/conversations?${params}`)
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`)
+  }
+  return response.json()
+}
+
+/**
+ * Get a full conversation (metadata + messages).
+ * @param {string} conversationId
+ */
+export async function getConversation(conversationId) {
+  const response = await fetch(`${API_BASE}/conversations/${conversationId}`)
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`)
+  }
+  return response.json()
+}
+
+/**
+ * List currently active (streaming) conversations.
+ */
+export async function getActiveStreams() {
+  const response = await fetch(`${API_BASE}/conversations/active`)
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`)
+  }
+  return response.json()
+}
+
+/**
+ * Attach to an in-progress stream for mid-stream resume.
+ * Returns the same SSE format as streamChat.
+ * @param {string} conversationId
+ * @param {object} callbacks - { onMessages, onDone, onError }
+ * @param {AbortSignal} signal
+ */
+export async function resumeStream(conversationId, callbacks, signal) {
+  const { onMessages, onDone, onError } = callbacks
+
+  try {
+    const response = await fetch(`${API_BASE}/conversations/${conversationId}/stream`, { signal })
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const parts = buffer.split('\n\n')
+      buffer = parts.pop() || ''
+
+      for (const part of parts) {
+        if (!part.trim()) continue
+        const events = parseSSEEvents(part)
+        for (const event of events) {
+          switch (event.type) {
+            case 'messages':
+              onMessages?.(event.data.messages, event.data.status, event.data)
+              break
+            case 'done':
+              onDone?.(event.data)
+              break
+            case 'error':
+              onError?.(event.data)
+              break
+          }
+        }
+      }
+    }
+  } catch (error) {
+    if (error.name === 'AbortError') throw error
+    onError?.({ message: error.message, type: error.name })
+    throw error
+  }
+}
+
+
+// ============================================================================
 // Session Management API
 // ============================================================================
 
