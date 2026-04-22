@@ -23,6 +23,7 @@ from .code_tools.file_operations import (
 from .code_tools.grep_search import grep_search_tool
 from .code_tools.terminal_runner import run_terminal_cmd_tool
 from .core_tools.tool_store_client import tool_store_tool
+from .core_tools.subagent import run_subagent
 
 
 EDIT_FILE_DESCRIPTION = """Aider-style search and replace. Finds exact content starting from `start_line` and replaces it.
@@ -326,11 +327,56 @@ NATIVE_TOOL_DEFINITIONS = [
             }
         }
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "subagent",
+            "description": (
+                "Delegate a self-contained task to an independent agent. The subagent "
+                "gets its own context window and tools, works autonomously, and returns "
+                "only a concise summary — keeping your own context clean.\n\n"
+                "WHEN TO USE:\n"
+                "- The task requires multiple tool calls (3+) whose intermediate outputs "
+                "you don't need to see (e.g. research across several web pages, exploring "
+                "a codebase to answer a question, reading and cross-referencing many files)\n"
+                "- The task is self-contained and does not depend on your current "
+                "conversation context\n"
+                "- You want to preserve your own context window for the main task\n\n"
+                "WHEN NOT TO USE:\n"
+                "- For tasks that need only 1-2 tool calls — just call the tools directly\n"
+                "- When you need to see exact raw outputs (file contents, error details)\n"
+                "- When the subtask depends heavily on prior conversation context "
+                "(the subagent cannot see your history)\n\n"
+                "IMPORTANT: The subagent has NO knowledge of your conversation. Provide "
+                "all necessary context (file paths, requirements, constraints) in the task "
+                "description. Be specific about what it should return."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task": {
+                        "type": "string",
+                        "description": "Detailed description of what the subagent should do and what it should return. Include all necessary context — file paths, requirements, constraints — since the subagent cannot see your conversation history."
+                    },
+                    "tools": {
+                        "type": "string",
+                        "enum": ["read_only", "all"],
+                        "description": "Tool set for the subagent. 'read_only' (default): file reads, searches, web browsing — safe for exploration/research. 'all': full tool set including file writes and terminal commands — use when the subagent needs to make changes.",
+                        "default": "read_only"
+                    }
+                },
+                "required": ["task"]
+            }
+        }
+    },
 ]
 
 
-# Tools that are safe to run concurrently (read-only / side-effect-free)
-CONCURRENT_SAFE_TOOLS = {
+# Read-only / side-effect-free tools.  Used for:
+# - concurrent execution (safe to run in parallel since they don't mutate state)
+# - subagent "read_only" mode (restricted tool set for exploration/research)
+# Update this set when adding new read-only tools.
+READ_ONLY_TOOLS = {
     "read_file", "list_directory", "search_files", "grep_search",
     "google_search", "web_browser", "close_file", "tool_store",
 }
@@ -351,6 +397,7 @@ TOOL_FUNCTION_MAP = {
     "grep_search": grep_search_tool,
     "run_terminal_command": run_terminal_cmd_tool,
     "tool_store": tool_store_tool,
+    "subagent": run_subagent,
 }
 
 

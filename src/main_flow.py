@@ -12,7 +12,7 @@ import re
 from typing import Dict, List, Any, Generator, Set, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from .tool_definitions import get_tool_definitions, execute_tool_call, CONCURRENT_SAFE_TOOLS
+from .tool_definitions import get_tool_definitions, execute_tool_call, READ_ONLY_TOOLS
 from .config import (
     RECORDING_FILE, DEFAULT_PROVIDER,
     MAX_TOKENS, TEMPERATURE, MAX_ITERATIONS, CONTINUE_ITERATIONS,
@@ -198,7 +198,7 @@ def partition_tool_calls(tool_calls: List[Dict]) -> List[Tuple[bool, List[Dict]]
     current_batch: List[Dict] = []
 
     for tc in tool_calls:
-        is_safe = tc["function"]["name"] in CONCURRENT_SAFE_TOOLS
+        is_safe = tc["function"]["name"] in READ_ONLY_TOOLS
         if current_safe is not None and is_safe != current_safe:
             batches.append((current_safe, current_batch))
             current_batch = []
@@ -248,7 +248,8 @@ def record_conversation_turn(current_messages_list: list):
 def generate_chat_responses_stream_native(
     messages: list,
     max_iterations: int = MAX_ITERATIONS,
-    provider_id: Optional[str] = None
+    provider_id: Optional[str] = None,
+    tools_override: Optional[List[Dict]] = None,
 ) -> Generator[dict, None, None]:
     """
     Handles chat interaction using native OpenAI tool calling with thinking/reasoning support.
@@ -257,6 +258,8 @@ def generate_chat_responses_stream_native(
         messages (list): List of OpenAI message dicts in chat format.
         max_iterations (int): Maximum number of iterations before stopping. Default is 30.
         provider_id (str, optional): The provider to use. Defaults to DEFAULT_PROVIDER.
+        tools_override (list, optional): If provided, use these tool definitions instead
+            of the default set. Used by subagents to run with a filtered tool set.
 
     Yields:
         dict: Contains 'messages' (updated message list), 'status', and 'provider' info
@@ -273,8 +276,8 @@ def generate_chat_responses_stream_native(
     
     current_processing_messages = copy.deepcopy(messages)
     
-    # Get tool definitions
-    tools = get_tool_definitions()
+    # Get tool definitions (or use override for subagents)
+    tools = tools_override if tools_override is not None else get_tool_definitions()
     
     system_message = SYSTEM_MESSAGE_TEMPLATE.format(
         current_time=datetime.datetime.now().isoformat(),

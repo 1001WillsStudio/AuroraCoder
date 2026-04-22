@@ -130,6 +130,10 @@ MAX_STREAMING_RETRIES = 10  # Consecutive streaming failures before giving up
 # Tool Concurrency
 MAX_TOOL_CONCURRENCY = 5  # Max parallel threads for concurrent-safe tools
 
+# Subagent
+SUBAGENT_MAX_ITERATIONS = 15  # Lower cap than the parent agent
+SUBAGENT_MAX_RESULT_CHARS = 4000  # Truncate subagent final response to save parent context
+
 # =============================================================================
 # Docker Mode
 # =============================================================================
