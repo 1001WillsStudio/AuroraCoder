@@ -114,7 +114,7 @@ function CurrentSession({ currentConversationId, conversations, activeIds, onSel
 }
 
 // ─── Full history drawer (opens as a second panel) ──────────────────────
-function HistoryDrawer({ conversations, activeIds, currentConversationId, onSelect, onClose }) {
+function HistoryDrawer({ conversations, activeIds, currentConversationId, onSelect, onClose, triggerRef }) {
   const [searchQuery, setSearchQuery] = useState('')
   const searchRef = useRef(null)
   const panelRef = useRef(null)
@@ -123,9 +123,10 @@ function HistoryDrawer({ conversations, activeIds, currentConversationId, onSele
     searchRef.current?.focus()
   }, [])
 
-  // Close on click outside
+  // Close on click outside (but not on the trigger button — that toggles via its own onClick)
   useEffect(() => {
     function handleClick(e) {
+      if (triggerRef?.current?.contains(e.target)) return
       if (panelRef.current && !panelRef.current.contains(e.target)) {
         onClose()
       }
@@ -217,6 +218,7 @@ export default function ConversationHistory({ currentConversationId, onSelect, r
   const [activeIds, setActiveIds] = useState(new Set())
   const [loading, setLoading] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const triggerRef = useRef(null)
 
   useEffect(() => {
     let cancelled = false
@@ -254,6 +256,7 @@ export default function ConversationHistory({ currentConversationId, onSelect, r
 
       {/* Trigger to open the full history drawer */}
       <button
+        ref={triggerRef}
         className={`history-trigger${drawerOpen ? ' active' : ''}`}
         onClick={() => setDrawerOpen(!drawerOpen)}
       >
@@ -270,6 +273,7 @@ export default function ConversationHistory({ currentConversationId, onSelect, r
           currentConversationId={currentConversationId}
           onSelect={onSelect}
           onClose={() => setDrawerOpen(false)}
+          triggerRef={triggerRef}
         />
       )}
     </>
