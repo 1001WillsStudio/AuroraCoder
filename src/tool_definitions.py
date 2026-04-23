@@ -373,6 +373,7 @@ NATIVE_TOOL_DEFINITIONS = [
 READ_ONLY_TOOLS = {
     "read_file", "list_directory", "search_files", "grep_search",
     "google_search", "web_browser", "close_file", "tool_store",
+    "subagent",
 }
 
 

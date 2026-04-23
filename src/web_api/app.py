@@ -681,6 +681,9 @@ async def chat(chat_request: ChatRequest, request: Request):
     provider = chat_request.provider or DEFAULT_PROVIDER
 
     tools_override = get_filtered_tools(chat_request.tools) if chat_request.tools else None
+    if tools_override is not None:
+        tool_names = [td["function"]["name"] for td in tools_override]
+        logger.info(f"[API] Tool override ({chat_request.tools}): {tool_names}")
     
     # Return streaming response
     return StreamingResponse(
