@@ -1083,15 +1083,12 @@ function App() {
               />
             </div>
 
-            <div className="sidebar-section">
+            <div className="sidebar-footer">
               <ConversationHistory
                 currentConversationId={conversationId}
                 onSelect={handleLoadConversation}
                 refreshTrigger={historyRefreshTrigger}
               />
-            </div>
-
-            <div className="sidebar-footer">
               <div className="model-selector">
                 <span className="model-label">Model</span>
                 <div className="provider-dropdown-container">
