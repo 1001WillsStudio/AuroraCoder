@@ -52,13 +52,13 @@ class ChatRequest(BaseModel):
     conversation_id: Optional[str] = Field(None, description="Conversation ID for stream management")
     messages: Optional[list] = Field(None, description="Full conversation history from frontend (required for continue/resume)")
     provider: Optional[str] = Field(None, description="Model provider to use (e.g., 'deepseek', 'nvidia')")
+    tools: Optional[str] = Field(None, description="Tool mode: 'read_only' or 'all'")
 
 # Track active streams per conversation - allows cancelling previous stream when new one starts
 # Maps conversation_id -> threading.Event (cancel signal)
 import threading
 active_streams: Dict[str, threading.Event] = {}
 active_streams_lock = threading.Lock()
-
 
 def cancel_active_stream(conversation_id: str) -> bool:
     """Cancel any active stream for the given conversation. Returns True if a stream was cancelled."""
@@ -86,6 +86,21 @@ def unregister_stream(conversation_id: str, cancel_event: threading.Event):
     with active_streams_lock:
         if active_streams.get(conversation_id) is cancel_event:
             del active_streams[conversation_id]
+
+
+def get_filtered_tools(mode: str):
+    """Return tool definitions filtered by mode, excluding the subagent tool."""
+    from ..tool_definitions import NATIVE_TOOL_DEFINITIONS, READ_ONLY_TOOLS
+    defs = []
+    for td in NATIVE_TOOL_DEFINITIONS:
+        name = td["function"]["name"]
+        if name == "subagent":
+            continue
+        if mode == "read_only" and name not in READ_ONLY_TOOLS:
+            continue
+        defs.append(td)
+    return defs
+
 
 
 # ============================================================================
@@ -208,7 +223,8 @@ async def stream_chat_response(
     conversation_id: str,
     request: Request,
     max_iterations: int = 30,
-    provider: Optional[str] = None
+    provider: Optional[str] = None,
+    tools_override: Optional[list] = None,
 ) -> AsyncGenerator[str, None]:
     """
     Stream chat responses as SSE events.
@@ -246,7 +262,8 @@ async def stream_chat_response(
                 for response in generate_chat_responses_stream_native(
                     messages=messages,
                     max_iterations=max_iterations,
-                    provider_id=provider
+                    provider_id=provider,
+                    tools_override=tools_override,
                 ):
                     # Check if client has disconnected
                     if cancel_event.is_set():
@@ -662,10 +679,15 @@ async def chat(chat_request: ChatRequest, request: Request):
     
     # Use provided provider or default
     provider = chat_request.provider or DEFAULT_PROVIDER
+
+    tools_override = get_filtered_tools(chat_request.tools) if chat_request.tools else None
     
     # Return streaming response
     return StreamingResponse(
-        stream_chat_response(messages, conversation_id, request, provider=provider),
+        stream_chat_response(
+            messages, conversation_id, request,
+            provider=provider, tools_override=tools_override,
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

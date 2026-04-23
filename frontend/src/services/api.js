@@ -48,7 +48,7 @@ function parseSSEEvents(text) {
  * @param {string|null} provider - Optional: model provider to use
  */
 export async function streamChat(message, conversationId, callbacks, signal, existingMessages = null, provider = null) {
-  const { onMessages, onDone, onError } = callbacks
+  const { onMessages, onDone, onError, onSubagentEvent } = callbacks
   
   const requestBody = {
     message,
@@ -103,17 +103,19 @@ export async function streamChat(message, conversationId, callbacks, signal, exi
           
           switch (event.type) {
             case 'messages':
-              // Full message list update - pass full data including raw_messages for interrupt/resume
               onMessages?.(event.data.messages, event.data.status, event.data)
               break
               
             case 'done':
-              // Done event also includes raw_messages for final state
               onDone?.(event.data)
               break
               
             case 'error':
               onError?.(event.data)
+              break
+
+            case 'subagent_event':
+              onSubagentEvent?.(event.data)
               break
           }
         }

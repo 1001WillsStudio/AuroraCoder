@@ -9,19 +9,23 @@ import {
  * User-friendly tool activity display
  * Shows what the agent is doing in a clear, visual way
  */
-function ToolActivity({ toolCalls, toolResults, onStopTool }) {
+function ToolActivity({ toolCalls, toolResults, onStopTool, onLoadConversation, subagentChildIds }) {
   if (!toolCalls || toolCalls.length === 0) return null
 
+  let subagentIdx = 0
   return (
     <div className="tool-activity-section">
       {toolCalls.map((tc, idx) => {
         const toolResult = toolResults?.find(r => r.tool_call_id === tc.id)
+        const childId = tc.name === 'subagent' ? subagentChildIds?.[subagentIdx++] : null
         return (
           <ToolActivityItem 
             key={tc.id || idx} 
             toolCall={tc} 
             result={toolResult}
             onStop={onStopTool}
+            onLoadConversation={onLoadConversation}
+            childConversationId={childId}
           />
         )
       })}
@@ -29,7 +33,7 @@ function ToolActivity({ toolCalls, toolResults, onStopTool }) {
   )
 }
 
-function ToolActivityItem({ toolCall, result, onStop }) {
+function ToolActivityItem({ toolCall, result, onStop, onLoadConversation, childConversationId }) {
   const [expanded, setExpanded] = useState(true)  // Open by default
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const startTimeRef = useRef(Date.now())
@@ -89,12 +93,27 @@ function ToolActivityItem({ toolCall, result, onStop }) {
     }
   }
   
+  const handleHeaderClick = () => {
+    if (config.isSubagent && childConversationId && onLoadConversation) {
+      onLoadConversation(childConversationId)
+    } else if (config.hasExpandedView) {
+      setExpanded(!expanded)
+    }
+  }
+
   return (
     <div className={`tool-activity-item ${isComplete ? (isTerminated ? 'terminated' : 'complete') : 'running'}`}>
-      <div className="tool-activity-header" onClick={() => config.hasExpandedView && setExpanded(!expanded)}>
+      <div
+        className={`tool-activity-header${config.isSubagent && childConversationId ? ' clickable-subagent' : ''}`}
+        onClick={handleHeaderClick}
+      >
         <span className="tool-activity-icon">{config.icon}</span>
         <span className="tool-activity-label">{config.label}</span>
         <span className="tool-activity-detail">{config.detail}</span>
+
+        {config.isSubagent && childConversationId && (
+          <span className="subagent-view-link">View →</span>
+        )}
         
         {/* Elapsed time for running tools */}
         {!isComplete && (
@@ -245,6 +264,15 @@ function getToolConfig(toolName, args, result) {
         expandedContent: <CommandPreview command={args.command} output={resultContent} />
       }
     
+    case 'subagent':
+      return {
+        icon: <Package size={16} />,
+        label: 'Subagent',
+        detail: (args.task || '').slice(0, 60) + ((args.task || '').length > 60 ? '...' : ''),
+        hasExpandedView: false,
+        isSubagent: true,
+      }
+
     case 'tool_store':
       return {
         icon: <Package size={16} />,

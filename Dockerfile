@@ -14,7 +14,7 @@ RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 RUN sed -i 's/\r$//' /etc/supervisor/conf.d/supervisord.conf
 
-# Agent API + dev-server ports + noVNC
-EXPOSE 8080 8888 8889 8890 6080
+# Agent API + conversation history + dev-server ports + noVNC
+EXPOSE 8080 8081 8888 8889 8890 6080
 
 ENTRYPOINT ["/entrypoint.sh"]

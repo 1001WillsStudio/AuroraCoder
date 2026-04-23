@@ -318,30 +318,200 @@ body {
   margin-bottom: 12px;
 }
 
-.capability-list {
+/* ---- Conversation History ---- */
+
+.conversation-history {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  min-height: 0;
 }
 
-.capability-item {
+.conversation-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  max-height: 260px;
+  padding-right: 4px;
+}
+
+.conversation-history-empty {
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  padding: 12px 0;
+  text-align: center;
+}
+
+.conversation-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
   border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--text-secondary);
-  font-size: 0.875rem;
-  transition: all var(--transition-fast);
+  font-size: 0.8125rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 
-.capability-item:hover {
+.conversation-item:hover {
   background: var(--bg-tertiary);
   color: var(--text-primary);
 }
 
-.capability-item svg {
-  color: var(--accent-secondary);
+.conversation-item.current {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.conversation-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.conversation-item-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-item-time {
+  font-size: 0.6875rem;
+  color: var(--text-secondary);
+  opacity: 0.7;
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-dot.active {
+  background: #22c55e;
+  box-shadow: 0 0 4px #22c55e88;
+}
+
+.conversation-item.subagent {
+  padding-left: 24px;
+  font-size: 0.75rem;
+  opacity: 0.85;
+}
+
+.subagent-prefix {
+  color: var(--text-secondary);
+  opacity: 0.6;
+}
+
+.subagent-view-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border-color);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.subagent-back-btn {
+  background: none;
+  border: 1px solid var(--border-color);
+  color: var(--accent-color);
+  padding: 4px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.75rem;
+  transition: background 0.15s;
+}
+
+.subagent-back-btn:hover {
+  background: var(--bg-tertiary);
+}
+
+.tool-activity-header.clickable-subagent {
+  cursor: pointer;
+}
+
+.tool-activity-header.clickable-subagent:hover {
+  background: var(--bg-tertiary);
+}
+
+.subagent-view-link {
+  font-size: 0.7rem;
+  color: var(--accent-color);
+  margin-left: auto;
+  margin-right: 8px;
+  opacity: 0.7;
+  transition: opacity 0.15s;
+}
+
+.tool-activity-header.clickable-subagent:hover .subagent-view-link {
+  opacity: 1;
+}
+
+.sender-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--accent-color);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 2px;
+  opacity: 0.8;
+}
+
+.status-dot.error {
+  background: #ef4444;
+}
+
+/* ---- Active Conversation Warning ---- */
+
+.active-convo-warning {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  margin: 0 16px;
+  background: #78350f22;
+  border: 1px solid #d97706;
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+  animation: slideDown 0.2s ease-out;
+}
+
+.active-convo-warning span {
+  flex: 1;
+}
+
+.active-convo-warning-btn {
+  white-space: nowrap;
+  padding: 4px 10px;
+  border: 1px solid #d97706;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: #d97706;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.active-convo-warning-btn:hover {
+  background: #d9770622;
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 .sidebar-footer {

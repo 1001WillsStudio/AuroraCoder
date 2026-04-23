@@ -1,11 +1,12 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, RotateCcw, Terminal, Search, FileCode, Globe, Sun, Moon, PanelLeftClose, PanelLeft, ChevronDown, History, Upload } from 'lucide-react'
+import { Send, RotateCcw, Sun, Moon, PanelLeftClose, PanelLeft, ChevronDown, History, Upload } from 'lucide-react'
 import ChatMessage from './components/ChatMessage'
 import WelcomeScreen from './components/WelcomeScreen'
 import CodePanel from './components/CodePanel'
 import FileTree from './components/FileTree'
 import SessionPicker from './components/SessionPicker'
-import { streamChat, getProviders, getCurrentSession, uploadWorkspace, cancelConversation } from './services/api'
+import ConversationHistory from './components/ConversationHistory'
+import { streamChat, getProviders, getCurrentSession, uploadWorkspace, cancelConversation, getConversation, getActiveStreams, resumeStream } from './services/api'
 
 // Debug: log message structure
 const DEBUG = true
@@ -145,6 +146,18 @@ function App() {
   
   // Last request info for retry functionality
   const [lastRequest, setLastRequest] = useState(null)
+
+  // Conversation history state
+  const [historyRefreshTrigger, setHistoryRefreshTrigger] = useState(0)
+  const [activeConvoWarning, setActiveConvoWarning] = useState(false)
+  const draftInputsRef = useRef(new Map())
+
+  // View mode: 'main' for normal chat, 'subagent' for read-only subagent view
+  const [viewMode, setViewMode] = useState('main')
+  const [parentConversationId, setParentConversationId] = useState(null)
+
+  // Track subagent child IDs received via subagent_event (most recent first)
+  const [subagentChildIds, setSubagentChildIds] = useState([])
 
   // Workspace upload state
   const [isUploading, setIsUploading] = useState(false)
@@ -420,6 +433,18 @@ function App() {
     const messageToSend = overrideMessage || inputValue.trim()
     if (!messageToSend) return
 
+    // Gate: block send if another main conversation is still running (new-chat context only)
+    if (!conversationId && !interruptMessages) {
+      try {
+        const { active } = await getActiveStreams()
+        if (active && active.length > 0) {
+          setActiveConvoWarning(true)
+          return
+        }
+      } catch { /* server unreachable — allow send */ }
+    }
+    setActiveConvoWarning(false)
+
     const userMessageText = messageToSend
     
     // If interruptMessages is provided, this is an interrupt/resume scenario
@@ -442,6 +467,7 @@ function App() {
     setInputValue('')
     setIsStreaming(true)
     setCanContinue(false)
+    setHistoryRefreshTrigger(prev => prev + 1)
     
     // Determine which messages to send to backend
     // Priority: explicit interrupt messages > current rawMessages (for continuation) > null (new conversation)
@@ -508,18 +534,16 @@ function App() {
             setConversationId(data.conversation_id)
             setCanContinue(data.status === 'max_iterations_reached')
             setIsStreaming(false)
-            // Use final messages from done event if available
             if (data.messages) {
               setMessages(data.messages)
             }
-            // Store final raw messages
             if (data.raw_messages) {
               setRawMessages(data.raw_messages)
             }
+            setHistoryRefreshTrigger(prev => prev + 1)
           },
           onError: (error) => {
             console.error('[onError]', error)
-            // Check if it's a timeout error
             const isTimeout = error.message?.toLowerCase().includes('timeout') ||
                              error.type === 'TimeoutError' ||
                              error.message?.toLowerCase().includes('timed out') ||
@@ -532,15 +556,27 @@ function App() {
                 content: `Error: ${error.message}`, 
                 isError: true,
                 isTimeout,
-                canRetry: true  // Allow retry for all errors
+                canRetry: true
               }
             ])
             setIsStreaming(false)
+            setHistoryRefreshTrigger(prev => prev + 1)
+          },
+          onSubagentEvent: (evt) => {
+            console.log('[onSubagentEvent]', evt)
+            if (evt.child_id) {
+              setSubagentChildIds(prev =>
+                prev.includes(evt.child_id) ? prev : [...prev, evt.child_id]
+              )
+            }
+            setHistoryRefreshTrigger(prev => prev + 1)
+            setTimeout(() => setHistoryRefreshTrigger(prev => prev + 1), 1500)
+            setTimeout(() => setHistoryRefreshTrigger(prev => prev + 1), 4000)
           }
         },
         abortControllerRef.current.signal,
         messagesToSend,
-        selectedProvider  // Pass the selected provider
+        selectedProvider
       )
     } catch (error) {
       if (error.name !== 'AbortError') {
@@ -623,10 +659,22 @@ function App() {
             setIsStreaming(false)
             if (data.messages) setMessages(data.messages)
             if (data.raw_messages) setRawMessages(data.raw_messages)
+            setHistoryRefreshTrigger(prev => prev + 1)
           },
           onError: (error) => {
             console.error('[handleContinue] Error:', error)
             setIsStreaming(false)
+            setHistoryRefreshTrigger(prev => prev + 1)
+          },
+          onSubagentEvent: (evt) => {
+            if (evt.child_id) {
+              setSubagentChildIds(prev =>
+                prev.includes(evt.child_id) ? prev : [...prev, evt.child_id]
+              )
+            }
+            setHistoryRefreshTrigger(prev => prev + 1)
+            setTimeout(() => setHistoryRefreshTrigger(prev => prev + 1), 1500)
+            setTimeout(() => setHistoryRefreshTrigger(prev => prev + 1), 4000)
           }
         },
         abortControllerRef.current.signal,
@@ -642,20 +690,36 @@ function App() {
   }
 
   const handleClear = () => {
+    // Save current input as draft under the current conversation context
+    if (inputValue.trim()) {
+      draftInputsRef.current.set(conversationId ?? '__new__', inputValue)
+    }
+
+    // Detach from the stream — do NOT cancel the backend conversation
     if (abortControllerRef.current) {
       abortControllerRef.current.abort()
     }
+
     setMessages([])
-    setRawMessages([])  // Clear backend format messages too
+    setRawMessages([])
     setConversationId(null)
     setIsStreaming(false)
     setCanContinue(false)
-    setPendingInterrupt(null)  // Clear any pending interrupt
+    setPendingInterrupt(null)
     pendingInterruptRef.current = null
     setShowCodePanel(false)
     setActiveFileId(null)
     setEditedFiles([])
     setClosedFiles(new Set())
+    setActiveConvoWarning(false)
+    setViewMode('main')
+    setParentConversationId(null)
+    setSubagentChildIds([])
+    setHistoryRefreshTrigger(prev => prev + 1)
+
+    // Restore draft for the new-chat context if one exists
+    const draft = draftInputsRef.current.get('__new__') || ''
+    setInputValue(draft)
     inputRef.current?.focus()
   }
 
@@ -669,6 +733,8 @@ function App() {
     setIsStreaming(false)
     setPendingInterrupt(null)
     pendingInterruptRef.current = null
+    setActiveConvoWarning(false)
+    setHistoryRefreshTrigger(prev => prev + 1)
   }
 
   // Handle stopping a specific tool call
@@ -785,6 +851,72 @@ function App() {
     // Re-send the request
     handleSend(lastRequest.existingMessages, lastRequest.message)
   }, [lastRequest, isStreaming])
+
+  const handleLoadConversation = useCallback(async (targetConversationId) => {
+    // Save current input as draft
+    if (inputValue.trim()) {
+      draftInputsRef.current.set(conversationId ?? '__new__', inputValue)
+    }
+
+    // Detach from any current stream
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+      abortControllerRef.current = null
+    }
+
+    try {
+      const conv = await getConversation(targetConversationId)
+
+      const isSubagent = conv.type === 'subagent'
+
+      setConversationId(targetConversationId)
+      setRawMessages(conv.messages || [])
+      setMessages(conv.frontend_messages || [])
+      setCanContinue(!isSubagent && conv.status === 'max_iterations_reached')
+      setIsStreaming(false)
+      setActiveConvoWarning(false)
+      setShowCodePanel(false)
+      setActiveFileId(null)
+      setEditedFiles([])
+      setClosedFiles(new Set())
+      setViewMode(isSubagent ? 'subagent' : 'main')
+      setParentConversationId(isSubagent ? conv.parent_id : null)
+
+      // Restore draft input for this conversation (not for subagents)
+      const draft = isSubagent ? '' : (draftInputsRef.current.get(targetConversationId) || '')
+      setInputValue(draft)
+
+      // If still running, resume the live stream
+      if (conv.status === 'running') {
+        setIsStreaming(true)
+        abortControllerRef.current = new AbortController()
+        try {
+          await resumeStream(targetConversationId, {
+            onMessages: (frontendMessages, status, data) => {
+              setMessages(frontendMessages)
+              if (data?.raw_messages) setRawMessages(data.raw_messages)
+            },
+            onDone: (data) => {
+              setIsStreaming(false)
+              if (data.messages) setMessages(data.messages)
+              if (data.raw_messages) setRawMessages(data.raw_messages)
+              setCanContinue(!isSubagent && data.status === 'max_iterations_reached')
+              setHistoryRefreshTrigger(prev => prev + 1)
+            },
+            onError: () => {
+              setIsStreaming(false)
+              setHistoryRefreshTrigger(prev => prev + 1)
+            },
+          }, abortControllerRef.current.signal)
+        } catch (err) {
+          if (err.name !== 'AbortError') console.error('[resume stream]', err)
+          setIsStreaming(false)
+        }
+      }
+    } catch (e) {
+      console.error('[handleLoadConversation] Failed:', e)
+    }
+  }, [conversationId, inputValue])
 
   const handleFileClose = (fileId) => {
     setClosedFiles(prev => new Set([...prev, fileId]))
@@ -952,25 +1084,11 @@ function App() {
             </div>
 
             <div className="sidebar-section">
-              <h3 className="sidebar-title">Capabilities</h3>
-              <div className="capability-list">
-                <div className="capability-item">
-                  <Search size={16} />
-                  <span>Web Search</span>
-                </div>
-                <div className="capability-item">
-                  <Globe size={16} />
-                  <span>Browse URLs</span>
-                </div>
-                <div className="capability-item">
-                  <FileCode size={16} />
-                  <span>Code Analysis</span>
-                </div>
-                <div className="capability-item">
-                  <Terminal size={16} />
-                  <span>Execute Commands</span>
-                </div>
-              </div>
+              <ConversationHistory
+                currentConversationId={conversationId}
+                onSelect={handleLoadConversation}
+                refreshTrigger={historyRefreshTrigger}
+              />
             </div>
 
             <div className="sidebar-footer">
@@ -1029,6 +1147,13 @@ function App() {
                   isStreaming={isStreaming && idx === messages.length - 1 && msg.role === 'assistant'}
                   onRetry={msg.canRetry ? handleRetry : null}
                   onStopTool={handleStopTool}
+                  onLoadConversation={handleLoadConversation}
+                  subagentChildIds={subagentChildIds}
+                  senderLabel={
+                    viewMode === 'subagent'
+                      ? (msg.role === 'user' ? 'Main Agent' : 'Subagent')
+                      : null
+                  }
                 />
               ))}
               
@@ -1047,7 +1172,47 @@ function App() {
           )}
         </div>
 
-        {/* Input Area */}
+        {/* Active conversation warning */}
+        {activeConvoWarning && (
+          <div className="active-convo-warning">
+            <span>An agent is still running. Stop it or wait for it to finish before starting a new conversation.</span>
+            <button
+              className="active-convo-warning-btn"
+              onClick={async () => {
+                try {
+                  const { active } = await getActiveStreams()
+                  if (active && active.length > 0) {
+                    handleLoadConversation(active[0].conversation_id)
+                  }
+                } catch { /* ignore */ }
+              }}
+            >
+              View active conversation
+            </button>
+          </div>
+        )}
+
+        {/* Subagent view bar */}
+        {viewMode === 'subagent' && (
+          <div className="subagent-view-bar">
+            <span>{isStreaming ? 'Subagent is running...' : 'Subagent conversation (read-only)'}</span>
+            <button
+              className="subagent-back-btn"
+              onClick={() => {
+                if (parentConversationId) {
+                  handleLoadConversation(parentConversationId)
+                } else {
+                  handleClear()
+                }
+              }}
+            >
+              Back to parent
+            </button>
+          </div>
+        )}
+
+        {/* Input Area — hidden in subagent view */}
+        {viewMode !== 'subagent' && (
         <div className="input-container">
           <div className="input-wrapper">
             <textarea
@@ -1110,6 +1275,7 @@ function App() {
             }
           </p>
         </div>
+        )}
       </main>
 
       {/* Code Panel - Shows when code tools are used */}

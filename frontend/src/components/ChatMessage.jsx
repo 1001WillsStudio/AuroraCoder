@@ -70,7 +70,7 @@ function MarkdownContent({ content }) {
  * Main chat message component
  * Renders user messages and assistant responses with activity timeline
  */
-function ChatMessage({ message, isLatest, isStreaming, onRetry, onStopTool }) {
+function ChatMessage({ message, isLatest, isStreaming, onRetry, onStopTool, onLoadConversation, subagentChildIds, senderLabel }) {
   const isUser = message.role === 'user'
   const activities = message.activities || []
   const hasContent = message.content && message.content.length > 0
@@ -111,8 +111,10 @@ function ChatMessage({ message, isLatest, isStreaming, onRetry, onStopTool }) {
       </div>
 
       <div className="message-content">
+        {senderLabel && (
+          <div className="sender-label">{senderLabel}</div>
+        )}
         {isUser ? (
-          // User message - simple text
           <div className="message-text">
             <p>{message.content}</p>
           </div>
@@ -147,6 +149,8 @@ function ChatMessage({ message, isLatest, isStreaming, onRetry, onStopTool }) {
                     toolCalls={group.toolCalls}
                     toolResults={group.toolResults}
                     onStopTool={isStreaming && isLatest ? onStopTool : null}
+                    onLoadConversation={onLoadConversation}
+                    subagentChildIds={subagentChildIds}
                   />
                 )
               }

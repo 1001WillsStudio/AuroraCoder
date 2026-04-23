@@ -4,10 +4,11 @@ cd /d "%~dp0"
 echo ========================================
 echo   AuroraCoder
 echo ========================================
-echo   Backend API:  http://localhost:8080
-echo   API Docs:     http://localhost:8080/docs
-echo   Frontend:     http://0.0.0.0:3000
-echo   VNC Desktop:  http://localhost:6080
+echo   Backend API:    http://localhost:8080
+echo   Convo History:  http://localhost:8081
+echo   API Docs:       http://localhost:8080/docs
+echo   Frontend:       http://0.0.0.0:3000
+echo   VNC Desktop:    http://localhost:6080
 echo ========================================
 echo.
 
@@ -40,14 +41,14 @@ echo Stopping old container if any...
 docker stop thinkwithtool-agent >nul 2>&1
 docker rm thinkwithtool-agent >nul 2>&1
 
-:: Start backend container
+:: Start backend container (agent + conversation history server)
 echo [1/2] Starting backend in Docker...
-docker run --rm -d --name thinkwithtool-agent -e THINKTOOL_DOCKER=1 -e THINKTOOL_VNC=1 -p 8080:8080 -p 6080:6080 -p 8888-8890:8888-8890 thinkwithtool
+docker run --rm -d --name thinkwithtool-agent -e THINKTOOL_DOCKER=1 -e THINKTOOL_VNC=1 -p 8080:8080 -p 8081:8081 -p 6080:6080 -p 8888-8890:8888-8890 thinkwithtool
 if errorlevel 1 (
     echo Failed to start container.
     exit /b 1
 )
-echo Container started.
+echo Container started (agent API :8080 + conversation history :8081).
 
 :: Install frontend dependencies if needed
 if not exist "frontend\node_modules" (

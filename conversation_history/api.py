@@ -29,7 +29,7 @@ from typing import Optional, Dict, Any, List
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -54,9 +54,12 @@ store = ConversationStore()
 class ActiveStream:
     """In-memory state for a stream being proxied from the backend."""
     conversation_id: str
+    conv_type: str = "user_chat"
+    parent_id: Optional[str] = None
     provider: Optional[str] = None
     latest_event_type: Optional[str] = None
     latest_event_data: Optional[dict] = None
+    latest_frontend_messages: Optional[List[Dict]] = None
     status: str = "running"
     subscribers: list = field(default_factory=list)
     finished: bool = False
@@ -80,6 +83,15 @@ async def _cancel_active_stream(conversation_id: str) -> None:
                 await asyncio.wait_for(asyncio.shield(old.task), timeout=2.0)
             except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
                 pass
+
+
+async def _has_active_main_stream(exclude: Optional[str] = None) -> Optional[str]:
+    """Return the conversation ID of any running user_chat stream, or None."""
+    async with _streams_lock:
+        for cid, s in active_streams.items():
+            if cid != exclude and s.conv_type == "user_chat" and not s.finished:
+                return cid
+    return None
 
 
 # ============================================================================
@@ -157,12 +169,29 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                             if etype in ("messages", "done"):
                                 stream.status = edata.get("status", stream.status)
                                 stream.provider = edata.get("provider", stream.provider)
+                                if edata.get("messages"):
+                                    stream.latest_frontend_messages = edata["messages"]
 
                             for q in list(stream.subscribers):
                                 try:
                                     q.put_nowait((etype, edata))
                                 except asyncio.QueueFull:
                                     pass
+
+                            # Notify parent stream about child activity
+                            if stream.parent_id:
+                                parent = active_streams.get(stream.parent_id)
+                                if parent and not parent.finished:
+                                    child_evt = ("subagent_event", {
+                                        "child_id": cid,
+                                        "event_type": etype,
+                                        "status": stream.status,
+                                    })
+                                    for q in list(parent.subscribers):
+                                        try:
+                                            q.put_nowait(child_evt)
+                                        except asyncio.QueueFull:
+                                            pass
 
     except httpx.ConnectError:
         err = {"message": f"Cannot connect to backend at {BACKEND_URL}", "type": "ConnectionError"}
@@ -198,22 +227,19 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
         elif persist_status == "running":
             persist_status = "error"
 
-        # Persist conversation
+        # Persist final messages and status
         raw_messages = []
         if stream.latest_event_data:
             raw_messages = stream.latest_event_data.get("raw_messages", [])
 
-        if raw_messages:
-            try:
-                store.create_conversation(
-                    conversation_id=cid,
-                    provider_id=stream.provider,
-                    conv_type="user_chat",
-                )
+        try:
+            store.update_status(cid, persist_status)
+            if raw_messages:
                 store.save_messages(cid, raw_messages)
-                store.update_status(cid, persist_status)
-            except Exception as e:
-                logger.error(f"[proxy] Persist failed for {cid[:8]}...: {e}")
+            if stream.latest_frontend_messages:
+                store.save_frontend_messages(cid, stream.latest_frontend_messages)
+        except Exception as e:
+            logger.error(f"[proxy] Persist failed for {cid[:8]}...: {e}")
 
         # Signal end to all subscribers
         for q in list(stream.subscribers):
@@ -316,15 +342,66 @@ async def proxy_chat(request: Request):
     conversation_id = body.get("conversation_id") or str(uuid.uuid4())
     body["conversation_id"] = conversation_id
 
+    # Extract conversation-server metadata (not forwarded to backend)
+    conv_type = body.pop("conv_type", "user_chat")
+    parent_id = body.pop("parent_id", None)
+
+    # 409 guard: only for user_chat (subagents are allowed alongside a main stream)
+    if conv_type == "user_chat":
+        existing = await _has_active_main_stream(exclude=conversation_id)
+        if existing:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "detail": "Another conversation is still running",
+                    "active_conversation_id": existing,
+                },
+            )
+
+    # Cancel any previous stream for the SAME conversation (re-send / continue)
     await _cancel_active_stream(conversation_id)
 
     stream = ActiveStream(
         conversation_id=conversation_id,
+        conv_type=conv_type,
+        parent_id=parent_id,
         provider=body.get("provider"),
     )
 
+    # Persist conversation entry immediately so it appears in history right away
+    title = (body.get("message") or "Untitled")[:80]
+    store.create_conversation(
+        conversation_id=conversation_id,
+        provider_id=body.get("provider"),
+        conv_type=conv_type,
+        parent_id=parent_id,
+        title=title,
+    )
+
+    # Seed frontend_messages with the user's message so loading the conversation
+    # before the first backend event still shows something meaningful.
+    if body.get("message"):
+        store.save_frontend_messages(conversation_id, [
+            {"role": "user", "content": body["message"]}
+        ])
+
     async with _streams_lock:
         active_streams[conversation_id] = stream
+
+    # Notify the parent stream immediately so the subagent shows in the sidebar
+    if parent_id:
+        parent_stream = active_streams.get(parent_id)
+        if parent_stream and not parent_stream.finished:
+            evt = ("subagent_event", {
+                "child_id": conversation_id,
+                "event_type": "started",
+                "status": "running",
+            })
+            for q in list(parent_stream.subscribers):
+                try:
+                    q.put_nowait(evt)
+                except asyncio.QueueFull:
+                    pass
 
     stream.task = asyncio.create_task(_proxy_backend_stream(stream, body))
 
@@ -408,7 +485,12 @@ async def list_active_streams():
     """List conversation IDs that are currently streaming."""
     return {
         "active": [
-            {"conversation_id": s.conversation_id, "status": s.status}
+            {
+                "conversation_id": s.conversation_id,
+                "status": s.status,
+                "conv_type": s.conv_type,
+                "parent_id": s.parent_id,
+            }
             for s in active_streams.values()
             if not s.finished
         ]
@@ -456,11 +538,12 @@ async def list_conversations(
 
 @app.get("/api/conversations/{conversation_id}")
 async def get_conversation(conversation_id: str):
-    """Return full conversation: metadata + messages."""
+    """Return full conversation: metadata + messages + frontend_messages."""
     try:
         conv = store.get_conversation(conversation_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    conv["frontend_messages"] = store.get_frontend_messages(conversation_id)
     return conv
 
 

@@ -357,12 +357,6 @@ NATIVE_TOOL_DEFINITIONS = [
                     "task": {
                         "type": "string",
                         "description": "Detailed description of what the subagent should do and what it should return. Include all necessary context — file paths, requirements, constraints — since the subagent cannot see your conversation history."
-                    },
-                    "tools": {
-                        "type": "string",
-                        "enum": ["read_only", "all"],
-                        "description": "Tool set for the subagent. 'read_only' (default): file reads, searches, web browsing — safe for exploration/research. 'all': full tool set including file writes and terminal commands — use when the subagent needs to make changes.",
-                        "default": "read_only"
                     }
                 },
                 "required": ["task"]

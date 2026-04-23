@@ -88,6 +88,9 @@ class ConversationStore:
     def _messages_path(self, conversation_id: str) -> Path:
         return self._dir / f"{conversation_id}.json"
 
+    def _frontend_messages_path(self, conversation_id: str) -> Path:
+        return self._dir / f"{conversation_id}.frontend.json"
+
     def _load_index(self) -> None:
         path = self._index_path()
         if path.exists():
@@ -230,6 +233,22 @@ class ConversationStore:
         """List child conversations (subagents) spawned by this conversation."""
         return self.list_conversations(parent_id=conversation_id)
 
+    def save_frontend_messages(self, conversation_id: str, messages: List[Dict]) -> None:
+        """Save frontend-formatted messages to a separate file."""
+        _atomic_write_json(self._frontend_messages_path(conversation_id), messages)
+
+    def get_frontend_messages(self, conversation_id: str) -> List[Dict]:
+        """Read frontend-formatted messages, returning [] if not persisted."""
+        path = self._frontend_messages_path(conversation_id)
+        if not path.exists():
+            return []
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            logger.error(f"Failed to read frontend messages for {conversation_id}: {e}")
+            return []
+
     def delete_conversation(self, conversation_id: str) -> None:
         """Delete a conversation's metadata and message file."""
         with self._lock:
@@ -241,4 +260,7 @@ class ConversationStore:
         msg_path = self._messages_path(conversation_id)
         if msg_path.exists():
             msg_path.unlink()
+        fe_path = self._frontend_messages_path(conversation_id)
+        if fe_path.exists():
+            fe_path.unlink()
         logger.info(f"[store] Deleted conversation {conversation_id[:8]}...")
