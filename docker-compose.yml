@@ -11,6 +11,8 @@ services:
       - "8081:8081"
       - "6080:6080"
       - "8888-8890:8888-8890"
+    env_file:
+      - .env
     environment:
       - THINKTOOL_DOCKER=1
       - THINKTOOL_VNC=1

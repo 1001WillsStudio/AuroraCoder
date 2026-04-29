@@ -25,7 +25,7 @@ MODEL_PROVIDERS = {
         "name": "DeepSeek V4 Pro",
         "description": "Fast reasoning model with thinking (~2s TTFT)",
         "base_url": "https://api.deepseek.com/v1",
-        "api_key": "[REDACTED]",
+        "api_key": os.environ.get("DEEPSEEK_API_KEY", ""),
         "model": "deepseek-v4-pro",
         "supports_thinking": True,
         "extra_body": None,  # Thinking is built-in for deepseek-reasoner
@@ -35,7 +35,7 @@ MODEL_PROVIDERS = {
         "name": "NVIDIA DeepSeek V3.2",
         "description": "NVIDIA hosted model (slower thinking ~30s TTFT)",
         "base_url": "https://integrate.api.nvidia.com/v1",
-        "api_key": "[REDACTED]",
+        "api_key": os.environ.get("NVIDIA_API_KEY", ""),
         "model": "deepseek-ai/deepseek-v3.2",
         "supports_thinking": True,
         "extra_body": {"chat_template_kwargs": {"thinking": True}},
@@ -45,7 +45,7 @@ MODEL_PROVIDERS = {
         "name": "NVIDIA DeepSeek V3.2 (No Thinking)",
         "description": "NVIDIA hosted, no reasoning (~1s TTFT, faster)",
         "base_url": "https://integrate.api.nvidia.com/v1",
-        "api_key": "[REDACTED]",
+        "api_key": os.environ.get("NVIDIA_API_KEY", ""),
         "model": "deepseek-ai/deepseek-v3.2",
         "supports_thinking": False,
         "extra_body": None,
@@ -55,7 +55,7 @@ MODEL_PROVIDERS = {
         "name": "NVIDIA GLM-5",
         "description": "Z-AI GLM-5 on NVIDIA with deep thinking",
         "base_url": "https://integrate.api.nvidia.com/v1",
-        "api_key": "[REDACTED]",
+        "api_key": os.environ.get("NVIDIA_API_KEY", ""),
         "model": "z-ai/glm5",
         "supports_thinking": True,
         "extra_body": {
@@ -67,7 +67,7 @@ MODEL_PROVIDERS = {
         "name": "NVIDIA GLM-5 (No Thinking)",
         "description": "Z-AI GLM-5 on NVIDIA, no reasoning (faster)",
         "base_url": "https://integrate.api.nvidia.com/v1",
-        "api_key": "[REDACTED]",
+        "api_key": os.environ.get("NVIDIA_API_KEY", ""),
         "model": "z-ai/glm5",
         "supports_thinking": False,
         "extra_body": None,
@@ -160,7 +160,7 @@ TERMINAL_MAX_OUTPUT_CHARS = 15_000
 # A cheap/fast model processes raw web pages so only a concise summary
 # enters the main agent's context window.
 WEB_SECONDARY_MODEL_BASE_URL = "https://api.deepseek.com/v1"
-WEB_SECONDARY_MODEL_API_KEY = "[REDACTED]"
+WEB_SECONDARY_MODEL_API_KEY = os.environ.get("WEB_SECONDARY_MODEL_API_KEY", "")
 WEB_SECONDARY_MODEL_NAME = "deepseek-chat"
 WEB_SECONDARY_MODEL_MAX_TOKENS = 4096
 

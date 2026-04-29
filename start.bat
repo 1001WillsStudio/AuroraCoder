@@ -43,7 +43,13 @@ docker rm thinkwithtool-agent >nul 2>&1
 
 :: Start backend container (agent + conversation history server)
 echo [1/2] Starting backend in Docker...
-docker run --rm -d --name thinkwithtool-agent -e THINKTOOL_DOCKER=1 -e THINKTOOL_VNC=1 -p 8080:8080 -p 8081:8081 -p 6080:6080 -p 8888-8890:8888-8890 thinkwithtool
+:: Verify .env file exists (contains API keys)
+if not exist ".env" (
+    echo ERROR: .env file not found. Create it with your API keys.
+    echo See .env.example for the required variables.
+    exit /b 1
+)
+docker run --rm -d --name thinkwithtool-agent --env-file .env -e THINKTOOL_DOCKER=1 -e THINKTOOL_VNC=1 -p 8080:8080 -p 8081:8081 -p 6080:6080 -p 8888-8890:8888-8890 thinkwithtool
 if errorlevel 1 (
     echo Failed to start container.
     exit /b 1
