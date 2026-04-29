@@ -1275,8 +1275,8 @@ function App() {
         )}
       </main>
 
-      {/* Code Panel - Shows when code tools are used */}
-      {showCodePanel && (
+      {/* Code Panel - Shows only when there are files to display */}
+      {showCodePanel && editedFiles.length > 0 && (
         <CodePanel
           files={editedFiles}
           activeFileId={activeFileId}
