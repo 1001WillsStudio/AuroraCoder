@@ -301,20 +301,47 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
 # Subscriber SSE generator (shared by /api/chat and /stream)
 # ============================================================================
 
+_SSE_KEEPALIVE = ": keepalive\n\n"
+_KEEPALIVE_INTERVAL = 8  # Send keepalive every 8 timeouts (≈16 seconds)
+
+
 async def _subscriber_sse(
     stream: ActiveStream,
     queue: asyncio.Queue,
     request: Request,
     replay_latest: bool = False,
 ):
-    """Yield SSE events from *queue*, cleaning up on disconnect."""
+    """Yield SSE events from *queue*, cleaning up on disconnect.
+
+    When *replay_latest* is True (mid-stream resume), the most recent
+    state is synthesised as a ``messages`` event so the frontend can
+    render the current progress immediately.  SSE keepalive comments
+    are sent periodically to prevent proxy/browser connection timeouts.
+    """
     try:
-        if replay_latest and stream.latest_event_data:
-            yield _format_sse(stream.latest_event_type, stream.latest_event_data)
+        # Replay: always send a proper "messages" event with the latest
+        # frontend messages so the subscriber gets the current state,
+        # regardless of what the actual last SSE event type was.
+        if replay_latest:
+            replay_data = None
+            if stream.latest_event_data and stream.latest_event_type in ("messages", "done"):
+                replay_data = stream.latest_event_data
+            elif stream.latest_frontend_messages:
+                raw = stream.latest_event_data.get("raw_messages", []) if stream.latest_event_data else []
+                replay_data = {
+                    "messages": stream.latest_frontend_messages,
+                    "raw_messages": raw,
+                    "status": stream.status,
+                    "conversation_id": stream.conversation_id,
+                    "provider": stream.provider,
+                }
+            if replay_data:
+                yield _format_sse("messages", replay_data)
 
         if stream.finished:
             return
 
+        idle_ticks = 0
         while True:
             try:
                 if await request.is_disconnected():
@@ -324,9 +351,14 @@ async def _subscriber_sse(
                     break
                 etype, edata = event
                 yield _format_sse(etype, edata)
+                idle_ticks = 0
             except asyncio.TimeoutError:
                 if await request.is_disconnected():
                     break
+                idle_ticks += 1
+                if idle_ticks >= _KEEPALIVE_INTERVAL:
+                    idle_ticks = 0
+                    yield _SSE_KEEPALIVE
                 continue
     finally:
         if queue in stream.subscribers:
@@ -493,11 +525,13 @@ async def resume_stream(conversation_id: str, request: Request):
     except KeyError:
         raise HTTPException(status_code=404, detail="No active or stored conversation")
 
+    frontend_msgs = store.get_frontend_messages(conversation_id)
+
     async def _replay():
         yield _format_sse("done", {
             "conversation_id": conversation_id,
             "status": conv.get("status", "completed"),
-            "messages": conv.get("messages", []),
+            "messages": frontend_msgs or conv.get("messages", []),
             "raw_messages": conv.get("messages", []),
         })
 
