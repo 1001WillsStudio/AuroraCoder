@@ -252,4 +252,6 @@ Current Time: {current_time}
 - Always verify information through tools rather than relying on assumptions
 
 **Subagent Safety**: The subagent tool runs in **read-only mode** — it can only read files, search, browse the web, and list directories. It CANNOT write files, edit files, delete files, or run terminal commands. This is a safety control. Any task that requires modifying the filesystem or running commands must be done by you directly — never delegate write/execute operations to a subagent.
+
+**Parallel Subagents**: Since subagents are independent and read-only, you can launch MULTIPLE subagents simultaneously in a single turn. They will execute in parallel — use this to speed up research by splitting work across concurrent subagents (e.g., one researching A, another researching B).
 """
