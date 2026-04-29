@@ -72,9 +72,27 @@ _streams_lock = asyncio.Lock()
 
 
 async def _cancel_active_stream(conversation_id: str) -> None:
-    """Cancel any in-progress stream for a conversation."""
+    """Cancel any in-progress stream for a conversation, including child subagent streams."""
     async with _streams_lock:
         old = active_streams.get(conversation_id)
+        # Find child streams whose parent_id matches this conversation
+        children = [
+            s for s in active_streams.values()
+            if s.parent_id == conversation_id and not s.finished
+        ]
+
+    # Cancel child subagent streams first
+    for child in children:
+        logger.info(f"[cancel] Cascading cancel to child {child.conversation_id[:8]}...")
+        child.cancel_event.set()
+        if child.task and not child.task.done():
+            child.task.cancel()
+            try:
+                await asyncio.wait_for(asyncio.shield(child.task), timeout=2.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+                pass
+
+    # Cancel the parent stream
     if old and not old.finished:
         old.cancel_event.set()
         if old.task and not old.task.done():
@@ -130,12 +148,17 @@ def _parse_sse_blocks(text: str) -> List[tuple]:
 async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
     """
     POST to the backend, read its SSE stream, broadcast to subscribers,
-    and persist when the round ends.
+    and persist incrementally after each model round.
+
+    Saves raw_messages every time the message list grows (after each tool
+    execution batch), so that if the user stops mid-way the conversation
+    is already persisted up to the last completed round.
 
     This task runs independently of any frontend connection — the backend
     stream stays alive even if all subscribers disconnect.
     """
     cid = stream.conversation_id
+    last_saved_msg_count = 0
 
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(None)) as client:
@@ -171,6 +194,22 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                                 stream.provider = edata.get("provider", stream.provider)
                                 if edata.get("messages"):
                                     stream.latest_frontend_messages = edata["messages"]
+
+                                # --- Incremental persistence ---
+                                # Save whenever the raw message list has grown,
+                                # which happens after each tool execution round.
+                                raw_msgs = edata.get("raw_messages", [])
+                                if raw_msgs and len(raw_msgs) > last_saved_msg_count:
+                                    last_saved_msg_count = len(raw_msgs)
+                                    try:
+                                        store.save_messages(cid, raw_msgs)
+                                        if edata.get("messages"):
+                                            store.save_frontend_messages(cid, edata["messages"])
+                                    except Exception as exc:
+                                        logger.warning(
+                                            f"[proxy] Incremental save failed for "
+                                            f"{cid[:8]}... ({len(raw_msgs)} msgs): {exc}"
+                                        )
 
                             for q in list(stream.subscribers):
                                 try:
@@ -227,7 +266,9 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
         elif persist_status == "running":
             persist_status = "error"
 
-        # Persist final messages and status
+        # Final persistence pass — ensures the terminal status and any
+        # last-moment messages are captured even if the incremental saves
+        # already covered most of the data.
         raw_messages = []
         if stream.latest_event_data:
             raw_messages = stream.latest_event_data.get("raw_messages", [])
@@ -239,7 +280,7 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
             if stream.latest_frontend_messages:
                 store.save_frontend_messages(cid, stream.latest_frontend_messages)
         except Exception as e:
-            logger.error(f"[proxy] Persist failed for {cid[:8]}...: {e}")
+            logger.error(f"[proxy] Final persist failed for {cid[:8]}...: {e}")
 
         # Signal end to all subscribers
         for q in list(stream.subscribers):

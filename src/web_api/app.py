@@ -23,6 +23,7 @@ from ..providers import get_available_providers, get_default_provider
 from ..code_sandbox import init_application_session, get_session_status
 from ..code_sandbox.session_utils import session_manager, load_session_environment, list_loadable_sessions
 from ..code_tools.file_operations import set_file_tracking_callbacks, set_current_conversation
+from ..core_tools.subagent import cancel_active_subagents
 from ..config import DEFAULT_BASE_ENV_NAME, DEFAULT_PROVIDER, DOCKER_MODE, WORKSPACE_DIR
 from pathlib import Path
 import difflib
@@ -310,6 +311,7 @@ async def stream_chat_response(
                     
                 else:
                     logger.info(f"[stream] Client disconnected for {conversation_id}")
+                    cancel_active_subagents()
                 
             except Exception as e:
                 if not cancel_event.is_set():
@@ -319,6 +321,8 @@ async def stream_chat_response(
                         ("error", {"message": str(e), "type": type(e).__name__})
                     )
             finally:
+                # Cancel any running subagents before finishing
+                cancel_active_subagents()
                 # Signal completion
                 loop.call_soon_threadsafe(queue.put_nowait, None)
         

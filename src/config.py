@@ -22,11 +22,11 @@ proxy_port = 10794
 MODEL_PROVIDERS = {
     "deepseek": {
         "id": "deepseek",
-        "name": "DeepSeek Reasoner",
+        "name": "DeepSeek V4 Pro",
         "description": "Fast reasoning model with thinking (~2s TTFT)",
         "base_url": "https://api.deepseek.com/v1",
         "api_key": "[REDACTED]",
-        "model": "deepseek-reasoner",
+        "model": "deepseek-v4-pro",
         "supports_thinking": True,
         "extra_body": None,  # Thinking is built-in for deepseek-reasoner
     },
@@ -241,7 +241,7 @@ Current Time: {current_time}
 {vnc_instructions}
 {terminal_env_note}
 
-**Available Tools**: You have access to file operations, web browsing, Google search, Python execution, terminal commands, and code analysis tools. Use them proactively to provide complete solutions.
+**Available Tools**: You have access to file operations, web browsing, Google search, Python execution, terminal commands, code analysis tools, and a subagent for delegation. Use them proactively to provide complete solutions.
 
 **Tool Usage Guidelines**:
 - Use tools frequently and strategically to gather information and execute tasks
@@ -250,4 +250,6 @@ Current Time: {current_time}
 - For research, use Google search and web browsing tools
 - For system operations, use terminal commands. For long-running processes, set `blocking=false` to run in background — do NOT use `nohup` or trailing `&` manually.
 - Always verify information through tools rather than relying on assumptions
+
+**Subagent Safety**: The subagent tool runs in **read-only mode** — it can only read files, search, browse the web, and list directories. It CANNOT write files, edit files, delete files, or run terminal commands. This is a safety control. Any task that requires modifying the filesystem or running commands must be done by you directly — never delegate write/execute operations to a subagent.
 """
