@@ -92,7 +92,7 @@ web_api/app.py  ──►  main_flow.generate_chat_responses_stream_native()
 
 ### 4.1 Tool Definitions & Function Map
 
-Defined in `tool_definitions.py`. 14 tools total:
+Defined in `tool_definitions.py`. 13 tools total:
 
 | # | Tool Name | Function | Read-Only? | Side Effects |
 |---|-----------|----------|------------|--------------|
@@ -109,7 +109,7 @@ Defined in `tool_definitions.py`. 14 tools total:
 | 11 | `run_terminal_command` | `run_terminal_cmd_tool` | ❌ | Executes shell commands |
 | 12 | `tool_store` | `tool_store_tool` | ✅ | Depends on action |
 | 13 | `subagent` | `run_subagent` | ✅ | Spawns child agent |
-| 14 | *(commented out)* | `run_like_jupyter` | — | Python exec (disabled) |
+| 14 | *(removed)* | — | — | Former `python_interpreter` (dead code purged) |
 
 ### 4.2 Tool Parameter Signatures
 
@@ -183,7 +183,6 @@ Default: `deepseek`
 ### Key Limits
 ```python
 MAX_TOKENS = 8192
-TEMPERATURE = 0.6          # NOTE: not actually passed to API calls (BUG)
 MAX_ITERATIONS = 30         # loop iterations per user turn
 CONTINUE_ITERATIONS = 30    # extra iterations on "Continue"
 MAX_STREAMING_RETRIES = 10
@@ -191,6 +190,7 @@ MAX_TOOL_CONCURRENCY = 5    # parallel threads for read-only tools
 SUBAGENT_MAX_ITERATIONS = 15
 SUBAGENT_MAX_RESULT_CHARS = 4000
 ```
+(Note: TEMPERATURE was intentionally removed — modern models have proper defaults for agent tasks.)
 
 ### Environment Detection
 - `THINKTOOL_DOCKER=1` → `DOCKER_MODE=True`, workspace at `/workspace`
@@ -303,13 +303,15 @@ generate_chat_responses_stream_native(
 
 ## 10. Known Issues & Quirks
 
-1. **`TEMPERATURE` not passed to API**: Defined in config (0.6) but absent from `api_kwargs` in `main_flow.py` line 301.
-2. **`web_browser` prompt mismatch**: Tool definition marks `prompt` as required, but `web_fetch()` defaults it to `""` (optional).
-3. **`python_interpreter` dead code**: Tool is commented out of `NATIVE_TOOL_DEFINITIONS` but `run_like_jupyter` is still imported.
-4. **Hardcoded API keys** in `config.py`: DeepSeek, NVIDIA, Google CSE keys are in plain text.
-5. **`terminal_runner.py` background process stubs**: `list_background_processes_tool`, `stop_background_process_tool`, `get_process_output_tool` all return "removed" messages.
-6. **Missing `stderr` capture**: `run_in_persistent_shell` always returns `""` for stderr; stderr is merged into stdout.
-7. **Code interpreter note duplication**: The "Note: Closing a file..." text hardcoded in `generate_consolidated_interpreter_display` is appended to the display which already contains file content.
+1. ~~**`TEMPERATURE` not passed to API**~~ → **FIXED**: `TEMPERATURE` removed entirely (modern models handle defaults).
+2. ~~**`web_browser` prompt mismatch**~~ → **FIXED**: `prompt` is required in tool definition; function default `""` is a defensive fallback never reached.
+3. ~~**`python_interpreter` dead code**~~ → **FIXED**: All `run_like_jupyter` imports and commented-out definitions removed.
+5. ~~**`terminal_runner.py` background process stubs**~~ → **FIXED**: 3 stub functions + unused fields removed.
+7. ~~**Code interpreter note duplication**~~ → **VERIFIED NOT A BUG**: Note is only added once in `generate_consolidated_interpreter_display`; `display_multiple_files` does not include it.
+
+**Still present:**
+4. **Hardcoded API keys** in `config.py`: Some defaults use plain text or placeholder values (e.g., `"YOUR_GEMINI_API_KEY"`). Most keys read from env vars, but fallback values exist.
+6. **Missing `stderr` capture**: `run_in_persistent_shell` may merge stderr into stdout; `terminal_runner.py` does report both channels if returned separately.
 
 ---
 
