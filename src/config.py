@@ -117,7 +117,6 @@ MODEL_NAME = MODEL_PROVIDERS[DEFAULT_PROVIDER]["model"]
 
 # Model Parameters
 MAX_TOKENS = 8192
-TEMPERATURE = 0.6
 
 # Tool Calling Limits
 MAX_TOOL_CALLS = 10  # Increased since native tool calling is more efficient
@@ -241,11 +240,11 @@ Current Time: {current_time}
 {vnc_instructions}
 {terminal_env_note}
 
-**Available Tools**: You have access to file operations, web browsing, Google search, Python execution, terminal commands, code analysis tools, and a subagent for delegation. Use them proactively to provide complete solutions.
+**Available Tools**: You have access to file operations (read/write/edit/delete), web browsing, Google search, terminal commands (for running code, installing packages, etc.), grep search, a tool store for external APIs, and a subagent for delegation. Use them proactively to provide complete solutions.
 
 **Tool Usage Guidelines**:
 - Use tools frequently and strategically to gather information and execute tasks
-- For code-related tasks, use file operations and Python execution tools
+- For code-related tasks, use file operations and terminal commands (e.g., `python script.py` or inline Python via shell)
 - For code generation, use English exclusively in all code and comments
 - For research, use Google search and web browsing tools
 - For system operations, use terminal commands. For long-running processes, set `blocking=false` to run in background — do NOT use `nohup` or trailing `&` manually.

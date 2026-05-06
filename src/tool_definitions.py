@@ -10,7 +10,6 @@ from typing import Dict, List, Any
 # Import all the tool functions
 from .core_tools.google_search import search_for_llm
 from .core_tools.web_browser import web_fetch
-# from .core_tools.code_interpreter import run_like_jupyter
 from .code_tools.file_operations import (
     read_file_tool, 
     full_file_write_tool,
@@ -89,23 +88,6 @@ NATIVE_TOOL_DEFINITIONS = [
             }
         }
     },
-    # {
-    #     "type": "function",
-    #     "function": {
-    #         "name": "python_interpreter",
-    #         "description": "Executes Python code in a Jupyter-like environment, capturing stdout and handling the last expression automatically. This is for simple task only, and code is run in a rather simple env - diff from the terminal.",
-    #         "parameters": {
-    #             "type": "object",
-    #             "properties": {
-    #                 "code": {
-    #                     "type": "string",
-    #                     "description": "The Python code to execute"
-    #                 }
-    #             },
-    #             "required": ["code"]
-    #         }
-    #     }
-    # },
     {
         "type": "function",
         "function": {
@@ -395,7 +377,6 @@ READ_ONLY_TOOLS = {
 TOOL_FUNCTION_MAP = {
     "google_search": search_for_llm,
     "web_browser": web_fetch,
-    # "python_interpreter": run_like_jupyter,
     "read_file": read_file_tool,
     "write_file": full_file_write_tool,
     "edit_file": search_replace_edit_tool,

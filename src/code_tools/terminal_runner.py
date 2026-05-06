@@ -37,8 +37,6 @@ class TerminalRunner:
         else:
             self.workspace_root = Path(workspace_root) if workspace_root else Path.cwd()
         
-        self.background_processes = {}
-        self.process_counter = 0
     
     def run_command(
         self, command: str, timeout: int = 30, blocking: bool = True, cwd: str = None
@@ -141,12 +139,3 @@ def run_terminal_cmd_tool(
     runner = TerminalRunner(workspace_root=workspace_root)
     return runner.run_command(command, timeout=timeout, blocking=blocking)
 
-# To maintain compatibility if other parts of the codebase use these
-def list_background_processes_tool(workspace_root: str = None) -> str:
-    return "Background process functionality has been removed."
-
-def stop_background_process_tool(process_id: str, workspace_root: str = None) -> str:
-    return "Background process functionality has been removed."
-
-def get_process_output_tool(process_id: str, workspace_root: str = None) -> str:
-    return "Background process functionality has been removed." 

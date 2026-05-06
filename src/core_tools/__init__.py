@@ -9,10 +9,8 @@ This module contains essential tools that are commonly used by LLM agents:
 
 from .web_browser import web_fetch
 from .google_search import search_for_llm
-from .jupyter_code_runner import run_like_jupyter
 
 __all__ = [
     'web_fetch',
-    'search_for_llm', 
-    'run_like_jupyter',
+    'search_for_llm',
 ]
