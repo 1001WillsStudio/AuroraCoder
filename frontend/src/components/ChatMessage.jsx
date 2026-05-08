@@ -89,8 +89,8 @@ function ChatMessage({ message, isLatest, isStreaming, onRetry, onStopTool, onLo
   }
   
   // Group consecutive activities for better display
-  // Backend sends: thinking, tool_call, tool_call, tool_result, tool_result, thinking, ...
-  const groupedActivities = groupActivities(activities)
+  // Each block follows: thinking → content → tool_calls/results
+  const groupedActivities = groupActivities(activities, message.content)
   
   // Count thinking blocks for labeling
   const thinkingCount = activities.filter(a => a.type === 'thinking').length
@@ -141,8 +141,15 @@ function ChatMessage({ message, isLatest, isStreaming, onRetry, onStopTool, onLo
                 )
               }
               
+              if (group.type === 'content') {
+                return (
+                  <div key={`content-${groupIdx}`} className="message-text">
+                    <MarkdownContent content={group.content} />
+                  </div>
+                )
+              }
+              
               if (group.type === 'tool_group') {
-                // Render grouped tool calls with their results
                 return (
                   <ToolActivity 
                     key={`tools-${groupIdx}`}
@@ -157,13 +164,6 @@ function ChatMessage({ message, isLatest, isStreaming, onRetry, onStopTool, onLo
               
               return null
             })}
-            
-            {/* Final content */}
-            {hasContent && (
-              <div className="message-text">
-                <MarkdownContent content={message.content} />
-              </div>
-            )}
             
             {/* Error with retry button */}
             {isError && canRetry && (
@@ -197,17 +197,17 @@ function ChatMessage({ message, isLatest, isStreaming, onRetry, onStopTool, onLo
 }
 
 /**
- * Group activities into logical units:
- * - thinking blocks stay separate
- * - consecutive tool_call and tool_result get grouped together
+ * Group activities into logical blocks.
+ * Each block follows the order: thinking → content → tool_calls/results.
+ * Content is inserted between thinking and tool groups when present.
  */
-function groupActivities(activities) {
+function groupActivities(activities, content) {
   const groups = []
   let currentToolGroup = null
+  let contentInserted = false
   
   for (const activity of activities) {
     if (activity.type === 'thinking') {
-      // Flush any pending tool group
       if (currentToolGroup) {
         groups.push(currentToolGroup)
         currentToolGroup = null
@@ -216,6 +216,10 @@ function groupActivities(activities) {
     } 
     else if (activity.type === 'tool_call') {
       if (!currentToolGroup) {
+        if (content && !contentInserted) {
+          contentInserted = true
+          groups.push({ type: 'content', content })
+        }
         currentToolGroup = { type: 'tool_group', toolCalls: [], toolResults: [] }
       }
       currentToolGroup.toolCalls.push(activity)
@@ -228,9 +232,13 @@ function groupActivities(activities) {
     }
   }
   
-  // Flush any remaining tool group
   if (currentToolGroup) {
     groups.push(currentToolGroup)
+  }
+  
+  // If no tool calls, content goes at the end (final response)
+  if (content && !contentInserted) {
+    groups.push({ type: 'content', content })
   }
   
   return groups
