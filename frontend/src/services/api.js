@@ -352,16 +352,51 @@ export async function getWorkspaceInfo() {
  * Upload a folder to the workspace (the user selects a folder via webkitdirectory).
  * Each file's relative path is sent as the filename in multipart/form-data,
  * preserving the folder structure on the server side.
+ *
+ * Respects .gitignore: if the selected folder contains a .gitignore,
+ * matched files are excluded from the upload. .git/ is always included.
+ *
  * @param {FileList} fileList - Files from a webkitdirectory input
  * @param {boolean} clear - Clear existing workspace before writing
  */
 export async function uploadWorkspace(fileList, clear = true) {
+  const { default: ignore } = await import('ignore')
+
+  // Collect relative paths and find .gitignore content
+  const files = Array.from(fileList)
+  let gitignoreContent = ''
+  for (const file of files) {
+    const rel = file.webkitRelativePath || file.name
+    // .gitignore sits right under the root folder: "FolderName/.gitignore"
+    const parts = rel.split('/')
+    if (parts.length === 2 && parts[1] === '.gitignore') {
+      gitignoreContent = await file.text()
+      break
+    }
+  }
+
+  const ig = ignore()
+  if (gitignoreContent) {
+    ig.add(gitignoreContent)
+  }
+
   const formData = new FormData()
   formData.append('clear', clear ? 'true' : 'false')
-  for (const file of fileList) {
-    // webkitRelativePath holds the path relative to the selected folder root
-    formData.append('files', file, file.webkitRelativePath || file.name)
+
+  for (const file of files) {
+    const rel = file.webkitRelativePath || file.name
+    // Strip the top-level folder name to get the in-project path
+    const inProject = rel.split('/').slice(1).join('/')
+    if (!inProject) continue
+
+    // Always include .git/; filter the rest through .gitignore
+    if (!inProject.startsWith('.git/') && inProject !== '.git' && ig.ignores(inProject)) {
+      continue
+    }
+
+    formData.append('files', file, rel)
   }
+
   const response = await fetch(`${API_BASE}/workspace/upload`, {
     method: 'POST',
     body: formData,

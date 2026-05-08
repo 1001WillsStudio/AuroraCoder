@@ -20,7 +20,15 @@ from typing import Optional, List, Dict, Any
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_STORAGE_DIR = Path(__file__).parent.parent / "data" / "conversations"
+def _default_storage_dir() -> Path:
+    if os.environ.get("THINKTOOL_DOCKER", "0") == "1":
+        return Path("/app/data/conversations")
+    return Path(os.environ.get(
+        "THINKTOOL_DATA_DIR",
+        os.path.expanduser("~/.thinktool/data"),
+    )) / "conversations"
+
+DEFAULT_STORAGE_DIR = _default_storage_dir()
 
 TERMINAL_STATUSES = frozenset({
     "completed", "error", "max_iterations_reached", "interrupted",

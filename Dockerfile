@@ -6,6 +6,9 @@ ENV THINKTOOL_DOCKER=1 \
 WORKDIR /app
 
 # ── Application source (only layer that changes between rebuilds) ─────────
+COPY requirements.txt /app/requirements.txt
+RUN conda run -n agent pip install --no-cache-dir -r requirements.txt
+
 COPY . /app
 
 COPY entrypoint.sh /entrypoint.sh

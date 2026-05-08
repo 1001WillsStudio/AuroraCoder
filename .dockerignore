@@ -4,6 +4,8 @@ __pycache__
 .git
 .cursor
 data/
+workspace/
+.search_cache/
 *.egg-info
 .mypy_cache
 .pytest_cache

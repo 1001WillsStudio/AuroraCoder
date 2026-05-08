@@ -1013,7 +1013,7 @@ async def read_file_content(file_path: str):
 # ============================================================================
 
 WORKSPACE_EXCLUDE = {
-    '__pycache__', '.git', 'node_modules', '.venv', 'venv',
+    '__pycache__', 'node_modules', '.venv', 'venv',
     '.thinktool_sessions', '.mypy_cache', '.pytest_cache',
 }
 

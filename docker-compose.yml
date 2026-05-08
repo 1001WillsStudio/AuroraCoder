@@ -2,6 +2,12 @@
 # Then:        docker compose up --build
 #
 # Seed workspace by uncommenting the volumes line below.
+#
+# Data is stored outside the project tree (defaults to ~/.thinktool/).
+# Override via environment variables or a .env file:
+#   THINKTOOL_DATA_DIR=~/my-custom-path/data
+#   THINKTOOL_WORKSPACE_DIR=~/my-custom-path/workspace
+#   THINKTOOL_SESSIONS_DIR=~/my-custom-path/sessions
 
 services:
   agent:
@@ -17,12 +23,9 @@ services:
       - THINKTOOL_DOCKER=1
       - THINKTOOL_VNC=1
     volumes:
-      # Data persistence — survives container rebuilds
-      - ./data:/app/data                        # conversation history
-      - ./workspace:/workspace                   # workspace files
-      - thinktool_sessions:/root/.thinktool_sessions  # shell sessions
+      # Host bind mounts — stored outside the project tree
+      - ${THINKTOOL_DATA_DIR:-~/.thinktool/data}:/app/data
+      - ${THINKTOOL_WORKSPACE_DIR:-~/.thinktool/workspace}:/workspace
+      - ${THINKTOOL_SESSIONS_DIR:-~/.thinktool/sessions}:/root/.thinktool_sessions
       # Seed workspace (optional): uncomment below
       # - ./my-project:/seed:ro
-
-volumes:
-  thinktool_sessions:

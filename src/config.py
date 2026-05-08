@@ -7,8 +7,22 @@ This replaces the XML-based configuration with settings for native OpenAI functi
 from pathlib import Path
 import os
 
-# File logging
-RECORDING_FILE = Path(__file__).parent.parent / "data" / "conversation_log.jsonl"
+# ---------------------------------------------------------------------------
+# Data directory — all runtime data (conversation logs, training data, etc.)
+# In Docker: /app/data  (volume-mounted to the host)
+# Locally:   ~/.thinktool/data  (outside the project tree)
+# Override:  set THINKTOOL_DATA_DIR env var
+# ---------------------------------------------------------------------------
+if os.environ.get("THINKTOOL_DOCKER", "0") == "1":
+    DATA_DIR = Path("/app/data")
+else:
+    DATA_DIR = Path(os.environ.get(
+        "THINKTOOL_DATA_DIR",
+        os.path.expanduser("~/.thinktool/data"),
+    ))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+TRAINING_DATA_DIR = DATA_DIR / "training"
 
 proxy_host = 'localhost'
 proxy_port = 10794

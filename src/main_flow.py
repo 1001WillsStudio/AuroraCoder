@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .tool_definitions import get_tool_definitions, execute_tool_call, READ_ONLY_TOOLS
 from .config import (
-    RECORDING_FILE, DEFAULT_PROVIDER,
+    TRAINING_DATA_DIR, DEFAULT_PROVIDER,
     MAX_TOKENS, MAX_ITERATIONS, CONTINUE_ITERATIONS,
     MAX_STREAMING_RETRIES, MAX_TOOL_CONCURRENCY,
     SYSTEM_MESSAGE_TEMPLATE, VNC_INSTRUCTIONS, TERMINAL_ENV_NOTE,
@@ -225,22 +225,19 @@ def _execute_single_tool(tool_call: Dict) -> Tuple[Dict, str, str]:
     return (tool_call, tool_name, result)
 
 
-# --- Conversation Recording ---
-
-def record_conversation_turn(current_messages_list: list):
-    """Appends the current turn's latest message to a JSONL file."""
-    if not current_messages_list:
-        return
+def record_api_call(request_messages: list, response_message: dict):
+    """Append one request→response pair to today's training log."""
     try:
-        RECORDING_FILE.parent.mkdir(parents=True, exist_ok=True)
-        log_entry = {
-            "timestamp": datetime.datetime.now().isoformat(),
-            "message": current_messages_list
+        TRAINING_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        path = TRAINING_DATA_DIR / f"{datetime.datetime.now():%Y-%m-%d}.jsonl"
+        entry = {
+            "request": request_messages,
+            "response": response_message,
         }
-        with open(RECORDING_FILE, "a", encoding="utf-8") as f:
-            f.write(json.dumps(log_entry) + "\n")
-    except Exception as e:
-        print(f"Error recording conversation turn: {e}")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
+    except Exception:
+        pass
 
 
 # --- Main Chat Flow ---
@@ -382,6 +379,11 @@ def generate_chat_responses_stream_native(
 
         streaming_errors = 0
 
+        record_api_call(
+            copy.deepcopy(current_processing_messages),
+            copy.deepcopy(assistant_message),
+        )
+
         current_tool_calls = [
             tc for tc in current_tool_calls 
             if tc["function"]["name"]
@@ -416,7 +418,6 @@ def generate_chat_responses_stream_native(
                     "status": "completed",
                     "provider": provider_id
                 }
-                record_conversation_turn(current_processing_messages)
                 return
 
         # Add tool call requests to messages
@@ -486,7 +487,6 @@ def generate_chat_responses_stream_native(
         "status": "max_iterations_reached",
         "provider": provider_id
     }
-    record_conversation_turn(current_processing_messages)
 
 
 # Main function for the system
