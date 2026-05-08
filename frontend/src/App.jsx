@@ -147,6 +147,14 @@ function App() {
   // Last request info for retry functionality
   const [lastRequest, setLastRequest] = useState(null)
 
+  // System prompt (task instructions) - session-keyed, persists across chats
+  const getSystemPromptKey = (sessionId) => `systemPrompt_${sessionId || 'default'}`
+  const [systemPrompt, setSystemPrompt] = useState(() => {
+    try {
+      return localStorage.getItem('systemPrompt_default') || ''
+    } catch { return '' }
+  })
+
   // Conversation history state
   const [historyRefreshTrigger, setHistoryRefreshTrigger] = useState(0)
   const [activeConvoWarning, setActiveConvoWarning] = useState(false)
@@ -240,11 +248,11 @@ function App() {
   }, [])
 
   const handleUploadProject = async (e) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+    const fileList = e.target.files
+    if (!fileList || fileList.length === 0) return
     setIsUploading(true)
     try {
-      await uploadWorkspace(file)
+      await uploadWorkspace(fileList)
       setFileTreeRefreshTrigger(prev => prev + 1)
     } catch (err) {
       console.error('Upload failed:', err)
@@ -259,6 +267,12 @@ function App() {
   const handleSessionLoaded = (sessionInfo) => {
     console.log('Session loaded:', sessionInfo)
     setCurrentSession(sessionInfo)
+    // Load session-specific system prompt
+    const sessionId = sessionInfo?.session_id
+    const key = getSystemPromptKey(sessionId)
+    try {
+      setSystemPrompt(localStorage.getItem(key) || '')
+    } catch { setSystemPrompt('') }
     // Clear current chat state when loading a new session
     setMessages([])
     setRawMessages([])
@@ -447,6 +461,11 @@ function App() {
 
     const userMessageText = messageToSend
     
+    // If constant prompt is set, prepend it to the API message (chat display stays clean)
+    const apiMessage = systemPrompt.trim()
+      ? `${systemPrompt.trim()}\n\n${userMessageText}`
+      : userMessageText
+    
     // If interruptMessages is provided, this is an interrupt/resume scenario
     const isInterrupt = interruptMessages !== null && interruptMessages.length > 0
     
@@ -462,7 +481,7 @@ function App() {
       await new Promise(resolve => setTimeout(resolve, 100))
     }
 
-    // Optimistically add user message to UI
+    // Optimistically add user message to UI (clean display, no system prompt)
     setMessages(prev => [...prev, { role: 'user', content: userMessageText }])
     setInputValue('')
     setIsStreaming(true)
@@ -493,7 +512,7 @@ function App() {
       abortControllerRef.current = new AbortController()
       
       await streamChat(
-        userMessageText,
+        apiMessage,
         conversationId,
         {
           onMessages: (frontendMessages, status, data) => {
@@ -1050,7 +1069,7 @@ function App() {
                 className="load-session-btn"
                 onClick={() => uploadInputRef.current?.click()}
                 disabled={isUploading}
-                title="Upload a zip file into the workspace"
+                title="Select a folder to upload into the workspace"
               >
                 <Upload size={16} />
                 <span>{isUploading ? 'Uploading...' : 'Upload Project'}</span>
@@ -1058,7 +1077,9 @@ function App() {
               <input
                 ref={uploadInputRef}
                 type="file"
-                accept=".zip"
+                webkitdirectory=""
+                directory=""
+                multiple
                 style={{ display: 'none' }}
                 onChange={handleUploadProject}
               />
@@ -1073,6 +1094,34 @@ function App() {
                 </span>
               </div>
             )}
+
+            {/* System Prompt - Task Instructions */}
+            <div className="sidebar-section system-prompt-section">
+              <div className="system-prompt-header">
+                <span className="system-prompt-label">Task Instructions</span>
+                {systemPrompt && (
+                  <span className="system-prompt-indicator" title="Task instructions active">
+                    ●
+                  </span>
+                )}
+              </div>
+              <textarea
+                className="system-prompt-input"
+                value={systemPrompt}
+                onChange={(e) => {
+                  const value = e.target.value
+                  setSystemPrompt(value)
+                  const sessionId = currentSession?.session_id
+                  const key = getSystemPromptKey(sessionId)
+                  try {
+                    localStorage.setItem(key, value)
+                  } catch { /* ignore quota errors */ }
+                }}
+                placeholder="e.g., Always write tests for new code, Use TypeScript strict mode, Keep explanations concise..."
+                rows={3}
+                disabled={isStreaming && viewMode === 'subagent'}
+              />
+            </div>
 
             {/* File Tree - Workspace Explorer */}
             <div className="sidebar-section file-tree-section">
