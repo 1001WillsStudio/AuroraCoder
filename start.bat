@@ -56,12 +56,12 @@ if errorlevel 1 (
 )
 echo Container started (agent API :8080 + conversation history :8081).
 
-:: Install frontend dependencies if needed
-if not exist "frontend\node_modules" (
-    echo [2/2] Installing frontend dependencies...
-    cd frontend && call npm install && cd ..
-) else (
-    echo [2/2] Frontend dependencies already installed.
+:: Install/update frontend dependencies
+echo [2/2] Installing/updating frontend dependencies...
+cd frontend && call npm install && cd ..
+if errorlevel 1 (
+    echo Frontend dependency installation failed.
+    exit /b 1
 )
 
 :: Start frontend

@@ -1610,6 +1610,56 @@ body {
   text-decoration: underline;
 }
 
+/* Markdown Tables */
+.message-text table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1em 0;
+  font-size: 0.9rem;
+  overflow-x: auto;
+  display: block;
+}
+
+.message-text thead {
+  border-bottom: 2px solid var(--border-strong);
+}
+
+.message-text th {
+  padding: 10px 14px;
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  white-space: nowrap;
+}
+
+.message-text th:first-child {
+  border-radius: var(--radius-sm) 0 0 0;
+}
+
+.message-text th:last-child {
+  border-radius: 0 var(--radius-sm) 0 0;
+}
+
+.message-text td {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.message-text tbody tr:hover {
+  background: var(--bg-tertiary);
+}
+
+.message-text tbody tr:last-child td {
+  border-bottom: 2px solid var(--border-strong);
+}
+
+/* Inline code inside tables */
+.message-text td code.inline-code {
+  font-size: 0.85em;
+}
+
 .error-message .message-text {
   color: var(--error);
 }
@@ -2625,6 +2675,69 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* System Prompt - Task Instructions */
+.system-prompt-section {
+  margin-bottom: 16px;
+}
+
+.system-prompt-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.system-prompt-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+}
+
+.system-prompt-indicator {
+  color: var(--accent-primary);
+  font-size: 0.5rem;
+  animation: pulse 2s infinite;
+}
+
+.system-prompt-input {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  resize: vertical;
+  min-height: 42px;
+  max-height: 120px;
+  transition: all var(--transition-fast);
+}
+
+.system-prompt-input::placeholder {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-style: italic;
+}
+
+.system-prompt-input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.12);
+}
+
+[data-theme="light"] .system-prompt-input:focus {
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.12);
+}
+
+.system-prompt-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Session Picker Modal */
