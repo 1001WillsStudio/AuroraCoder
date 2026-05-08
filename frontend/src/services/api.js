@@ -349,16 +349,22 @@ export async function getWorkspaceInfo() {
 }
 
 /**
- * Upload a zip file to the workspace (for loading local code repos into Docker)
- * @param {File} zipFile - The zip file to upload
- * @param {boolean} clear - Clear existing workspace before extracting
+ * Upload a folder to the workspace (the user selects a folder via webkitdirectory).
+ * Each file's relative path is sent as the filename in multipart/form-data,
+ * preserving the folder structure on the server side.
+ * @param {FileList} fileList - Files from a webkitdirectory input
+ * @param {boolean} clear - Clear existing workspace before writing
  */
-export async function uploadWorkspace(zipFile, clear = true) {
-  const url = `${API_BASE}/workspace/upload?clear=${clear}`
-  const response = await fetch(url, {
+export async function uploadWorkspace(fileList, clear = true) {
+  const formData = new FormData()
+  formData.append('clear', clear ? 'true' : 'false')
+  for (const file of fileList) {
+    // webkitRelativePath holds the path relative to the selected folder root
+    formData.append('files', file, file.webkitRelativePath || file.name)
+  }
+  const response = await fetch(`${API_BASE}/workspace/upload`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/zip' },
-    body: zipFile,
+    body: formData,
   })
   if (!response.ok) {
     const err = await response.json().catch(() => ({ detail: 'Upload failed' }))

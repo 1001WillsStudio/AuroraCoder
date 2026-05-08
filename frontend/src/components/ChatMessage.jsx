@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { User, Bot, ChevronDown, ChevronRight, Loader2, Brain, RotateCcw, AlertCircle } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import ToolActivity from './ToolActivity'
@@ -36,6 +37,7 @@ function ThinkingBlock({ content, label, isActive, defaultOpen = false }) {
 function MarkdownContent({ content }) {
   return (
     <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
       components={{
         code({ node, inline, className, children, ...props }) {
           const match = /language-(\w+)/.exec(className || '')

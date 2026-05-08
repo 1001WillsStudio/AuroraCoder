@@ -28,6 +28,9 @@ venv/
 # Data/logs
 *.log
 data/*.jsonl
+data/conversations/
+workspace/
+.search_cache/
 
 # OS
 .DS_Store
