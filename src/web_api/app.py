@@ -9,11 +9,11 @@ import uuid
 import asyncio
 import logging
 from datetime import datetime
-from typing import Optional, Dict, Any, AsyncGenerator
+from typing import Optional, Dict, Any, AsyncGenerator, List
 from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -1019,30 +1019,19 @@ WORKSPACE_EXCLUDE = {
 
 
 @app.post("/api/workspace/upload")
-async def upload_workspace(request: Request, clear: bool = True):
-    """Upload a zip file and extract it into the agent workspace."""
-    import zipfile
-    import io
+async def upload_workspace(
+    files: List[UploadFile] = File(...),
+    clear: bool = Form(True),
+):
+    """Upload files from a folder into the agent workspace.
 
+    Accepts multipart/form-data with multiple files. Each file's filename
+    is treated as a relative path within the workspace (preserving the
+    folder structure from the client-side webkitdirectory picker).
+    """
     work_dir = session_manager.get_session_working_directory()
     if not work_dir:
         raise HTTPException(status_code=400, detail="No active workspace")
-
-    content_type = request.headers.get("content-type", "")
-    if "zip" not in content_type and "octet-stream" not in content_type:
-        raise HTTPException(
-            status_code=400,
-            detail="Expected a zip file (Content-Type: application/zip or application/octet-stream)"
-        )
-
-    body = await request.body()
-    if not body:
-        raise HTTPException(status_code=400, detail="Empty request body")
-
-    try:
-        zf = zipfile.ZipFile(io.BytesIO(body))
-    except zipfile.BadZipFile:
-        raise HTTPException(status_code=400, detail="Invalid zip file")
 
     work_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1055,13 +1044,30 @@ async def upload_workspace(request: Request, clear: bool = True):
             else:
                 child.unlink(missing_ok=True)
 
-    zf.extractall(work_dir)
-    extracted = zf.namelist()
-    zf.close()
+    count = 0
+    for upload_file in files:
+        # The filename from webkitdirectory includes the relative path
+        # (e.g. "src/main.py").  FastAPI/Starlette preserves this.
+        relative_path = getattr(upload_file, "filename", None)
+        if not relative_path:
+            continue
+
+        # Security: prevent path traversal attacks
+        safe_path = Path(relative_path)
+        if safe_path.is_absolute() or ".." in safe_path.parts:
+            logger.warning(f"[upload] Rejected unsafe path: {relative_path}")
+            continue
+
+        dest = work_dir / safe_path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        content = await upload_file.read()
+        dest.write_bytes(content)
+        count += 1
 
     return {
         "status": "success",
-        "files_extracted": len(extracted),
+        "files_uploaded": count,
         "workspace": str(work_dir),
     }
 
