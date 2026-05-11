@@ -285,8 +285,6 @@ function App() {
     setRawMessages([])
     setConversationId(null)
     setCanContinue(false)
-    setShowCodePanel(false)
-    setActiveFileId(null)
     setEditedFiles([])
     setClosedFiles(new Set())
     // Trigger file tree refresh
@@ -441,6 +439,18 @@ function App() {
       return () => clearTimeout(timer)
     }
   }, [isStreaming, showCodePanel, conversationId, fetchFileDiffs])
+
+  // Auto-close code panel whenever editedFiles becomes empty.
+  // This is the single safety-net that catches ALL empty-panel scenarios
+  // (user closing all tabs, fetchFileDiffs returning empty after all files
+  // filtered out by closedFiles, history reload, etc.) without requiring
+  // every code path to remember to set showCodePanel=false.
+  useEffect(() => {
+    if (editedFiles.length === 0 && showCodePanel) {
+      setShowCodePanel(false)
+      setActiveFileId(null)
+    }
+  }, [editedFiles.length, showCodePanel])
 
   // Close task instructions drawer on click outside or Escape
   useEffect(() => {
@@ -754,8 +764,6 @@ function App() {
     setCanContinue(false)
     setPendingInterrupt(null)
     pendingInterruptRef.current = null
-    setShowCodePanel(false)
-    setActiveFileId(null)
     setEditedFiles([])
     setClosedFiles(new Set())
     setActiveConvoWarning(false)
@@ -922,8 +930,6 @@ function App() {
       setCanContinue(!isSubagent && conv.status === 'max_iterations_reached')
       setIsStreaming(false)
       setActiveConvoWarning(false)
-      setShowCodePanel(false)
-      setActiveFileId(null)
       setEditedFiles([])
       setClosedFiles(new Set())
       setViewMode(isSubagent ? 'subagent' : 'main')
@@ -968,16 +974,10 @@ function App() {
   const handleFileClose = (fileId) => {
     setClosedFiles(prev => new Set([...prev, fileId]))
     
-    // Update editedFiles immediately
+    // Update editedFiles immediately; the auto-close effect (line 450)
+    // will handle closing the panel when the list becomes empty.
     const remaining = editedFiles.filter(f => f.id !== fileId)
     setEditedFiles(remaining)
-    
-    // If no files left, close the whole panel
-    if (remaining.length === 0) {
-      setShowCodePanel(false)
-      setActiveFileId(null)
-      return
-    }
     
     // If closing active file, switch to another
     if (fileId === activeFileId) {
