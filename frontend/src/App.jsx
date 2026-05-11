@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, RotateCcw, Sun, Moon, PanelLeftClose, PanelLeft, ChevronDown, History, Upload } from 'lucide-react'
+import { Send, RotateCcw, Sun, Moon, PanelLeftClose, PanelLeft, ChevronDown, History, Upload, FileText } from 'lucide-react'
 import ChatMessage from './components/ChatMessage'
 import WelcomeScreen from './components/WelcomeScreen'
 import CodePanel from './components/CodePanel'
@@ -146,6 +146,9 @@ function App() {
   
   // Last request info for retry functionality
   const [lastRequest, setLastRequest] = useState(null)
+
+  // Task Instructions modal state
+  const [showTaskInstructions, setShowTaskInstructions] = useState(false)
 
   // System prompt (task instructions) - session-keyed, persists across chats
   const getSystemPromptKey = (sessionId) => `systemPrompt_${sessionId || 'default'}`
@@ -461,8 +464,9 @@ function App() {
 
     const userMessageText = messageToSend
     
-    // If constant prompt is set, prepend it to the API message (chat display stays clean)
-    const apiMessage = systemPrompt.trim()
+    // If constant prompt is set, prepend it to the API message only for the first
+    // message of a new conversation (chat display stays clean either way)
+    const apiMessage = (systemPrompt.trim() && !conversationId)
       ? `${systemPrompt.trim()}\n\n${userMessageText}`
       : userMessageText
     
@@ -1095,32 +1099,21 @@ function App() {
               </div>
             )}
 
-            {/* System Prompt - Task Instructions */}
-            <div className="sidebar-section system-prompt-section">
-              <div className="system-prompt-header">
-                <span className="system-prompt-label">Task Instructions</span>
+            {/* Task Instructions — clickable button, opens modal */}
+            <div className="sidebar-section task-instructions-section">
+              <button
+                className="load-session-btn task-instructions-btn"
+                onClick={() => setShowTaskInstructions(true)}
+                title="Configure task instructions (prepended to first message)"
+              >
+                <FileText size={16} />
+                <span>Task Instructions</span>
                 {systemPrompt && (
                   <span className="system-prompt-indicator" title="Task instructions active">
                     ●
                   </span>
                 )}
-              </div>
-              <textarea
-                className="system-prompt-input"
-                value={systemPrompt}
-                onChange={(e) => {
-                  const value = e.target.value
-                  setSystemPrompt(value)
-                  const sessionId = currentSession?.session_id
-                  const key = getSystemPromptKey(sessionId)
-                  try {
-                    localStorage.setItem(key, value)
-                  } catch { /* ignore quota errors */ }
-                }}
-                placeholder="e.g., Always write tests for new code, Use TypeScript strict mode, Keep explanations concise..."
-                rows={3}
-                disabled={isStreaming && viewMode === 'subagent'}
-              />
+              </button>
             </div>
 
             {/* File Tree - Workspace Explorer */}
@@ -1344,6 +1337,50 @@ function App() {
         onSessionLoaded={handleSessionLoaded}
         currentSessionId={currentSession?.session_id}
       />
+
+      {/* Task Instructions Modal */}
+      {showTaskInstructions && (
+        <div className="session-picker-overlay" onClick={() => setShowTaskInstructions(false)}>
+          <div className="session-picker-modal task-instructions-modal" onClick={e => e.stopPropagation()}>
+            <div className="session-picker-header">
+              <h2>Task Instructions</h2>
+              <button className="session-picker-close" onClick={() => setShowTaskInstructions(false)}>
+                ✕
+              </button>
+            </div>
+            <div className="session-picker-content">
+              <p className="modal-description">
+                Prepended to the first message of each new conversation. Use this to give the agent
+                persistent context (e.g., project conventions, file locations, safety rules).
+              </p>
+              <textarea
+                className="system-prompt-input task-instructions-textarea"
+                value={systemPrompt}
+                onChange={(e) => {
+                  const value = e.target.value
+                  setSystemPrompt(value)
+                  const sessionId = currentSession?.session_id
+                  const key = getSystemPromptKey(sessionId)
+                  try {
+                    localStorage.setItem(key, value)
+                  } catch { /* ignore quota errors */ }
+                }}
+                placeholder="e.g., Always write tests for new code, Use TypeScript strict mode, Keep explanations concise..."
+                rows={8}
+                autoFocus
+              />
+            </div>
+            <div className="session-picker-footer">
+              <button
+                className="session-picker-btn-primary"
+                onClick={() => setShowTaskInstructions(false)}
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
