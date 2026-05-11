@@ -155,6 +155,7 @@ function App() {
   // Task Instructions drawer state
   const [showTaskInstructions, setShowTaskInstructions] = useState(false)
   const taskInstructionsRef = useRef(null)
+  const taskInstructionsBtnRef = useRef(null)
 
   // Close trigger for history drawer (incremented to force-close)
   const [historyCloseTrigger, setHistoryCloseTrigger] = useState(0)
@@ -450,17 +451,21 @@ function App() {
   // (user closing all tabs, fetchFileDiffs returning empty after all files
   // filtered out by closedFiles, history reload, etc.) without requiring
   // every code path to remember to set showCodePanel=false.
+  // NOTE: do NOT auto-close while streaming — file diffs are still being
+  // polled and the panel would flicker open/closed as diffs arrive.
   useEffect(() => {
-    if (editedFiles.length === 0 && showCodePanel) {
+    if (!isStreaming && editedFiles.length === 0 && showCodePanel) {
       setShowCodePanel(false)
       setActiveFileId(null)
     }
-  }, [editedFiles.length, showCodePanel])
+  }, [isStreaming, editedFiles.length, showCodePanel])
 
   // Close task instructions drawer on click outside or Escape
+  // (but not on the trigger button — that toggles via its own onClick)
   useEffect(() => {
     if (!showTaskInstructions) return
     function handleClick(e) {
+      if (taskInstructionsBtnRef.current?.contains(e.target)) return
       if (taskInstructionsRef.current && !taskInstructionsRef.current.contains(e.target)) {
         setShowTaskInstructions(false)
       }
@@ -1133,6 +1138,7 @@ function App() {
             {/* Task Instructions — clickable button, toggles drawer */}
             <div className="sidebar-section task-instructions-section">
               <button
+                ref={taskInstructionsBtnRef}
                 className="load-session-btn task-instructions-btn"
                 onClick={() => {
                   const next = !showTaskInstructions
@@ -1379,7 +1385,7 @@ function App() {
 
       {/* Task Instructions Drawer — slide-out left panel (like HistoryDrawer) */}
       {showTaskInstructions && (
-        <div className="task-instructions-drawer">
+        <div className="task-instructions-drawer" ref={taskInstructionsRef}>
           <div className="history-drawer-header">
             <h3>Task Instructions</h3>
             <button className="history-drawer-close" onClick={() => setShowTaskInstructions(false)}>
