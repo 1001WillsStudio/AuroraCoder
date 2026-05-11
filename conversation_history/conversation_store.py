@@ -38,10 +38,18 @@ TITLE_MAX_LENGTH = 100
 
 
 def _extract_title(messages: List[Dict]) -> str:
-    """Extract a title from the first user message."""
+    """Extract a title from the first user message.
+
+    If the message has a frontend-injected task instruction prefix
+    (separated by a double newline), use only the actual user message.
+    """
     for msg in messages:
         if msg.get("role") == "user" and msg.get("content"):
-            title = msg["content"].strip().replace("\n", " ")
+            content = msg["content"].strip()
+            # Strip task instruction prefix if present (frontend prepends with \\n\\n)
+            if "\n\n" in content:
+                content = content.rsplit("\n\n", 1)[-1]
+            title = content.replace("\n", " ")
             if len(title) > TITLE_MAX_LENGTH:
                 title = title[:TITLE_MAX_LENGTH] + "..."
             return title

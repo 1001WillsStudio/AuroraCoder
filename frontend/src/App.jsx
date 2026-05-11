@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, RotateCcw, Sun, Moon, PanelLeftClose, PanelLeft, ChevronDown, History, Upload, FileText } from 'lucide-react'
+import { Send, RotateCcw, Sun, Moon, PanelLeftClose, PanelLeft, ChevronDown, History, Upload, FileText, X } from 'lucide-react'
 import ChatMessage from './components/ChatMessage'
 import WelcomeScreen from './components/WelcomeScreen'
 import CodePanel from './components/CodePanel'
@@ -147,8 +147,9 @@ function App() {
   // Last request info for retry functionality
   const [lastRequest, setLastRequest] = useState(null)
 
-  // Task Instructions modal state
+  // Task Instructions drawer state
   const [showTaskInstructions, setShowTaskInstructions] = useState(false)
+  const taskInstructionsRef = useRef(null)
 
   // System prompt (task instructions) - session-keyed, persists across chats
   const getSystemPromptKey = (sessionId) => `systemPrompt_${sessionId || 'default'}`
@@ -437,6 +438,26 @@ function App() {
       return () => clearTimeout(timer)
     }
   }, [isStreaming, showCodePanel, conversationId, fetchFileDiffs])
+
+  // Close task instructions drawer on click outside or Escape
+  useEffect(() => {
+    if (!showTaskInstructions) return
+    function handleClick(e) {
+      if (taskInstructionsRef.current && !taskInstructionsRef.current.contains(e.target)) {
+        setShowTaskInstructions(false)
+      }
+    }
+    function handleKey(e) {
+      if (e.key === 'Escape') setShowTaskInstructions(false)
+    }
+    const timer = setTimeout(() => document.addEventListener('mousedown', handleClick), 0)
+    document.addEventListener('keydown', handleKey)
+    return () => {
+      clearTimeout(timer)
+      document.removeEventListener('mousedown', handleClick)
+      document.removeEventListener('keydown', handleKey)
+    }
+  }, [showTaskInstructions])
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -1338,46 +1359,35 @@ function App() {
         currentSessionId={currentSession?.session_id}
       />
 
-      {/* Task Instructions Modal */}
+      {/* Task Instructions Drawer — slide-out left panel (like HistoryDrawer) */}
       {showTaskInstructions && (
-        <div className="session-picker-overlay" onClick={() => setShowTaskInstructions(false)}>
-          <div className="session-picker-modal task-instructions-modal" onClick={e => e.stopPropagation()}>
-            <div className="session-picker-header">
-              <h2>Task Instructions</h2>
-              <button className="session-picker-close" onClick={() => setShowTaskInstructions(false)}>
-                ✕
-              </button>
-            </div>
-            <div className="session-picker-content">
-              <p className="modal-description">
-                Prepended to the first message of each new conversation. Use this to give the agent
-                persistent context (e.g., project conventions, file locations, safety rules).
-              </p>
-              <textarea
-                className="system-prompt-input task-instructions-textarea"
-                value={systemPrompt}
-                onChange={(e) => {
-                  const value = e.target.value
-                  setSystemPrompt(value)
-                  const sessionId = currentSession?.session_id
-                  const key = getSystemPromptKey(sessionId)
-                  try {
-                    localStorage.setItem(key, value)
-                  } catch { /* ignore quota errors */ }
-                }}
-                placeholder="e.g., Always write tests for new code, Use TypeScript strict mode, Keep explanations concise..."
-                rows={8}
-                autoFocus
-              />
-            </div>
-            <div className="session-picker-footer">
-              <button
-                className="session-picker-btn-primary"
-                onClick={() => setShowTaskInstructions(false)}
-              >
-                Done
-              </button>
-            </div>
+        <div className="task-instructions-drawer">
+          <div className="history-drawer-header">
+            <h3>Task Instructions</h3>
+            <button className="history-drawer-close" onClick={() => setShowTaskInstructions(false)}>
+              <X size={16} />
+            </button>
+          </div>
+          <div className="task-instructions-body">
+            <p className="task-instructions-desc">
+              Prepended to the first message of each new conversation. Use this to give the agent
+              persistent context (e.g., project conventions, file locations, safety rules).
+            </p>
+            <textarea
+              className="task-instructions-textarea"
+              value={systemPrompt}
+              onChange={(e) => {
+                const value = e.target.value
+                setSystemPrompt(value)
+                const sessionId = currentSession?.session_id
+                const key = getSystemPromptKey(sessionId)
+                try {
+                  localStorage.setItem(key, value)
+                } catch { /* ignore quota errors */ }
+              }}
+              placeholder="e.g., Always write tests for new code, Use TypeScript strict mode, Keep explanations concise..."
+              autoFocus
+            />
           </div>
         </div>
       )}
