@@ -492,9 +492,9 @@ body {
 .task-instructions-textarea {
   flex: 1;
   min-height: 150px;
-  background: var(--input-bg, #1e1e2e);
-  color: var(--text-primary, #cdd6f4);
-  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
   border-radius: 6px;
   padding: 10px;
   font-family: inherit;
@@ -505,7 +505,12 @@ body {
 
 .task-instructions-textarea:focus {
   outline: none;
-  border-color: var(--accent-color);
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.12);
+}
+
+[data-theme="light"] .task-instructions-textarea:focus {
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.12);
 }
 
 .task-instructions-textarea::placeholder {

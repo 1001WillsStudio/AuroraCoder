@@ -213,7 +213,7 @@ function HistoryDrawer({ conversations, activeIds, currentConversationId, onSele
 }
 
 // ─── Exported wrapper ───────────────────────────────────────────────────
-export default function ConversationHistory({ currentConversationId, onSelect, refreshTrigger }) {
+export default function ConversationHistory({ currentConversationId, onSelect, refreshTrigger, onDrawerToggle, closeTrigger }) {
   const [conversations, setConversations] = useState([])
   const [activeIds, setActiveIds] = useState(new Set())
   const [loading, setLoading] = useState(false)
@@ -242,6 +242,11 @@ export default function ConversationHistory({ currentConversationId, onSelect, r
     return () => { cancelled = true }
   }, [refreshTrigger])
 
+  // Close drawer when closeTrigger changes (e.g. task instructions opened)
+  useEffect(() => {
+    setDrawerOpen(false)
+  }, [closeTrigger])
+
   const mainCount = conversations.filter(c => !c.parent_id).length
 
   return (
@@ -258,7 +263,11 @@ export default function ConversationHistory({ currentConversationId, onSelect, r
       <button
         ref={triggerRef}
         className={`history-trigger${drawerOpen ? ' active' : ''}`}
-        onClick={() => setDrawerOpen(!drawerOpen)}
+        onClick={() => {
+          const next = !drawerOpen
+          setDrawerOpen(next)
+          if (onDrawerToggle) onDrawerToggle(next)
+        }}
       >
         <History size={16} />
         <span className="history-trigger-label">All History</span>

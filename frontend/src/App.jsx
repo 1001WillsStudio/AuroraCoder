@@ -151,6 +151,9 @@ function App() {
   const [showTaskInstructions, setShowTaskInstructions] = useState(false)
   const taskInstructionsRef = useRef(null)
 
+  // Close trigger for history drawer (incremented to force-close)
+  const [historyCloseTrigger, setHistoryCloseTrigger] = useState(0)
+
   // System prompt (task instructions) - session-keyed, persists across chats
   const getSystemPromptKey = (sessionId) => `systemPrompt_${sessionId || 'default'}`
   const [systemPrompt, setSystemPrompt] = useState(() => {
@@ -1124,7 +1127,10 @@ function App() {
             <div className="sidebar-section task-instructions-section">
               <button
                 className="load-session-btn task-instructions-btn"
-                onClick={() => setShowTaskInstructions(true)}
+                onClick={() => {
+                  setShowTaskInstructions(true)
+                  setHistoryCloseTrigger(prev => prev + 1) // close history drawer
+                }}
                 title="Configure task instructions (prepended to first message)"
               >
                 <FileText size={16} />
@@ -1151,6 +1157,10 @@ function App() {
                 currentConversationId={conversationId}
                 onSelect={handleLoadConversation}
                 refreshTrigger={historyRefreshTrigger}
+                closeTrigger={historyCloseTrigger}
+                onDrawerToggle={(open) => {
+                  if (open) setShowTaskInstructions(false)
+                }}
               />
               <div className="model-selector">
                 <span className="model-label">Model</span>
