@@ -303,6 +303,23 @@ generate_chat_responses_stream_native(
 
 ## 10. Known Issues & Quirks
 
+### ⚠️ Fragile title extraction — `\n\n` rsplit
+`conversation_history/conversation_store.py:_extract_title()` strips frontend-injected
+task instruction prefixes from conversation titles by doing `content.rsplit("\n\n", 1)[-1]`.
+This assumes the instruction and the actual message are separated by a double newline.
+
+**Why it's fragile**: If a user types a message containing `\n\n` (e.g. a multi-paragraph
+message without a task instruction), the title will only show the last paragraph.
+The proper fix is to either:
+- Have the frontend send the clean title separately (e.g. as a header/metadata field)
+- Use a more distinctive separator that real users won't type (e.g. `\n---\n`)
+- Have the frontend strip the prefix before sending (requires API changes)
+
+Currently it works because task instructions use `\n\n` as separator and real
+user messages rarely start with a task-instruction-like prefix followed by `\n\n`.
+
+### Fixed issues
+
 1. ~~**`TEMPERATURE` not passed to API**~~ → **FIXED**: `TEMPERATURE` removed entirely (modern models handle defaults).
 2. ~~**`web_browser` prompt mismatch**~~ → **FIXED**: `prompt` is required in tool definition; function default `""` is a defensive fallback never reached.
 3. ~~**`python_interpreter` dead code**~~ → **FIXED**: All `run_like_jupyter` imports and commented-out definitions removed.
