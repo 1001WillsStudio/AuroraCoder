@@ -33,7 +33,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from .conversation_store import ConversationStore
+from .conversation_store import ConversationStore, strip_task_instruction
 
 logging.basicConfig(
     level=logging.INFO,
@@ -441,8 +441,12 @@ async def proxy_chat(request: Request):
         provider=body.get("provider"),
     )
 
-    # Persist conversation entry immediately so it appears in history right away
-    title = (body.get("message") or "Untitled")[:80]
+    # Persist conversation entry immediately so it appears in history right away.
+    # Strip any task-instruction marker block so the title shows only the
+    # actual user message.
+    raw_message = body.get("message") or "Untitled"
+    clean_title = strip_task_instruction(raw_message) or "Untitled"
+    title = clean_title[:80]
     store.create_conversation(
         conversation_id=conversation_id,
         provider_id=body.get("provider"),
@@ -451,11 +455,13 @@ async def proxy_chat(request: Request):
         title=title,
     )
 
-    # Seed frontend_messages with the user's message so loading the conversation
-    # before the first backend event still shows something meaningful.
+    # Seed frontend_messages with the user's message (without markers) so
+    # loading the conversation before the first backend event still shows
+    # something meaningful.
     if body.get("message"):
+        clean_content = strip_task_instruction(body["message"]) or body["message"]
         store.save_frontend_messages(conversation_id, [
-            {"role": "user", "content": body["message"]}
+            {"role": "user", "content": clean_content.strip()}
         ])
 
     async with _streams_lock:

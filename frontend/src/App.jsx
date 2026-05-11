@@ -11,6 +11,11 @@ import { streamChat, getProviders, getCurrentSession, uploadWorkspace, cancelCon
 // Debug: log message structure
 const DEBUG = true
 
+// Task instruction markers — wrap the instruction so the backend can strip it
+// for conversation titles. Must match conversation_history/conversation_store.py.
+const TASK_MARKER_START = "[TASK INSTRUCTION]"
+const TASK_MARKER_END = "[/TASK INSTRUCTION]"
+
 // Code-related tool names that trigger the code panel (only create/edit, not read)
 const CODE_TOOLS = ['write_file', 'edit_file']
 
@@ -499,9 +504,11 @@ function App() {
     const userMessageText = messageToSend
     
     // If constant prompt is set, prepend it to the API message only for the first
-    // message of a new conversation (chat display stays clean either way)
+    // message of a new conversation (chat display stays clean either way).
+    // Wrap the task instruction in markers so the backend can strip it for
+    // conversation titles (see conversation_history/conversation_store.py).
     const apiMessage = (systemPrompt.trim() && !conversationId)
-      ? `${systemPrompt.trim()}\n\n${userMessageText}`
+      ? `${TASK_MARKER_START}\n${systemPrompt.trim()}\n${TASK_MARKER_END}\n\n${userMessageText}`
       : userMessageText
     
     // If interruptMessages is provided, this is an interrupt/resume scenario

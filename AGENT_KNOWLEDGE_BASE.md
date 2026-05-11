@@ -341,21 +341,6 @@ Without the volume mount (`-v`), the `--rm` flag on `docker run` causes the cont
 
 ## 11. Known Issues & Quirks
 
-### ⚠️ Fragile title extraction — `\n\n` rsplit
-`conversation_history/conversation_store.py:_extract_title()` strips frontend-injected
-task instruction prefixes from conversation titles by doing `content.rsplit("\n\n", 1)[-1]`.
-This assumes the instruction and the actual message are separated by a double newline.
-
-**Why it's fragile**: If a user types a message containing `\n\n` (e.g. a multi-paragraph
-message without a task instruction), the title will only show the last paragraph.
-The proper fix is to either:
-- Have the frontend send the clean title separately (e.g. as a header/metadata field)
-- Use a more distinctive separator that real users won't type (e.g. `\n---\n`)
-- Have the frontend strip the prefix before sending (requires API changes)
-
-Currently it works because task instructions use `\n\n` as separator and real
-user messages rarely start with a task-instruction-like prefix followed by `\n\n`.
-
 ### Fixed issues
 
 1. ~~**`TEMPERATURE` not passed to API**~~ → **FIXED**: `TEMPERATURE` removed entirely (modern models handle defaults).
@@ -363,6 +348,7 @@ user messages rarely start with a task-instruction-like prefix followed by `\n\n
 3. ~~**`python_interpreter` dead code**~~ → **FIXED**: All `run_like_jupyter` imports and commented-out definitions removed.
 5. ~~**`terminal_runner.py` background process stubs**~~ → **FIXED**: 3 stub functions + unused fields removed.
 7. ~~**Code interpreter note duplication**~~ → **VERIFIED NOT A BUG**: Note is only added once in `generate_consolidated_interpreter_display`; `display_multiple_files` does not include it.
+8. ~~**Fragile title extraction**~~ → **FIXED**: Task instructions are now wrapped in `[TASK INSTRUCTION]` / `[/TASK INSTRUCTION]` markers by the frontend (`App.jsx`). The full marked message passes through to the stateless agent backend unchanged. The conversation store (`conversation_store.py`) strips the markers via regex in `_extract_title()`, and `save_messages()` now **always** re-extracts the title (not just when "Untitled") so the first incremental persist overwrites the raw initial title from `api.py`. Legacy conversations without markers fall back to the old `\n\n` heuristic.
 
 **Still present:**
 4. **Hardcoded API keys** in `config.py`: Some defaults use plain text or placeholder values (e.g., `"YOUR_GEMINI_API_KEY"`). Most keys read from env vars, but fallback values exist.

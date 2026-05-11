@@ -10,6 +10,7 @@ Thread-safe: all public methods acquire self._lock before mutating state.
 
 import json
 import os
+import re
 import uuid
 import threading
 import tempfile
@@ -19,6 +20,19 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 logger = logging.getLogger(__name__)
+
+# Distinctive markers for task instruction blocks injected by the frontend.
+# Real users will never type these, so stripping is reliable and does not
+# affect the agent's behaviour (the markers flow to the LLM as natural text).
+TASK_INSTRUCTION_START = "[TASK INSTRUCTION]"
+TASK_INSTRUCTION_END = "[/TASK INSTRUCTION]"
+
+# Regex that removes a task-instruction block (any content between the
+# start/end markers, including newlines) and the blank line that follows it.
+_TASK_BLOCK_RE = re.compile(
+    re.escape(TASK_INSTRUCTION_START) + r".*?" + re.escape(TASK_INSTRUCTION_END) + r"\s*",
+    re.DOTALL,
+)
 
 def _default_storage_dir() -> Path:
     if os.environ.get("THINKTOOL_DOCKER", "0") == "1":
@@ -37,22 +51,41 @@ TERMINAL_STATUSES = frozenset({
 TITLE_MAX_LENGTH = 100
 
 
+def strip_task_instruction(content: str) -> str:
+    """Remove a task instruction marker block and trailing whitespace from *content*.
+
+    Returns the cleaned string.  If no markers are present the input is
+    returned unchanged (apart from leading/trailing whitespace).
+    """
+    return _TASK_BLOCK_RE.sub("", content).strip()
+
+
 def _extract_title(messages: List[Dict]) -> str:
     """Extract a title from the first user message.
 
-    If the message has a frontend-injected task instruction prefix
-    (separated by a double newline), use only the actual user message.
+    Strips any frontend-injected task instruction block (bracketed by
+    ``[TASK INSTRUCTION]`` / ``[/TASK INSTRUCTION]`` markers) so the
+    title shows the actual user message, not the instruction prefix.
+
+    Falls back to the last paragraph after a double newline only when
+    no markers are present (legacy compatibility).
     """
     for msg in messages:
         if msg.get("role") == "user" and msg.get("content"):
             content = msg["content"].strip()
-            # Strip task instruction prefix if present (frontend prepends with \\n\\n)
-            if "\n\n" in content:
+
+            # 1) Marked task instruction (new, reliable)
+            if TASK_INSTRUCTION_START in content:
+                content = strip_task_instruction(content)
+
+            # 2) Legacy fallback: frontend used plain \n\n separator
+            elif "\n\n" in content:
                 content = content.rsplit("\n\n", 1)[-1]
+
             title = content.replace("\n", " ")
             if len(title) > TITLE_MAX_LENGTH:
                 title = title[:TITLE_MAX_LENGTH] + "..."
-            return title
+            return title or "Untitled"
     return "Untitled"
 
 
@@ -169,15 +202,17 @@ class ConversationStore:
         """
         Full-replace the stored message list for a conversation.
 
-        Also back-fills the title from the first user message if still untitled.
+        Always re-extracts the title from the first user message.  This is
+        necessary because the initial title set by the API layer comes from
+        the raw request body which may contain a task-instruction marker
+        block — we fix it here once the real message list is available.
         """
         with self._lock:
             meta = self._index.get(conversation_id)
             if meta is None:
                 raise KeyError(f"Conversation {conversation_id} not found")
 
-            if meta.get("title") == "Untitled":
-                meta["title"] = _extract_title(messages)
+            meta["title"] = _extract_title(messages)
 
             meta["updated_at"] = datetime.now(timezone.utc).isoformat()
             self._save_index()
