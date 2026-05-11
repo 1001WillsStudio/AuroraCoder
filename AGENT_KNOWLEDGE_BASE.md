@@ -301,7 +301,45 @@ generate_chat_responses_stream_native(
 
 ---
 
-## 10. Known Issues & Quirks
+## 10. Deployment & Data Persistence
+
+### Host Entry Point
+
+**`start.bat` is the sole supported entry point on the host.** It:
+1. Builds the Docker image (base + app layers)
+2. Starts the container with `-v "%cd%\data:/app/data"` for persistent storage
+3. Starts the frontend dev server (`npm run dev`) on port 3000
+
+**Do NOT** run `python run_web.py` or other backend scripts directly on the host — they bypass Docker's volume mounts and will lose conversation history on restart.
+
+**Alternative:** `docker compose up --build` also works (has its own volume config in `docker-compose.yml`), but `start.bat` is the primary path.
+
+### Data Persistence Architecture
+
+All persistent runtime data lives under `/app/data` inside the container, volume-mounted to `./data` on the host:
+
+```
+data/                        ← host directory (git-ignored)
+├── conversations/
+│   ├── index.json           ← metadata index for all conversations
+│   ├── {id}.json            ← raw API messages per conversation
+│   └── {id}.frontend.json   ← UI-shaped messages per conversation
+└── training/
+    └── YYYY-MM-DD.jsonl     ← daily training data logs
+```
+
+Key implementation files:
+- `conversation_history/conversation_store.py` — file-backed store (thread-safe, atomic writes)
+- `conversation_history/api.py` — FastAPI server on port 8081, proxies to backend, persists on SSE events
+- `src/config.py` — `DATA_DIR` / `TRAINING_DATA_DIR` path resolution
+
+### Why this matters
+
+Without the volume mount (`-v`), the `--rm` flag on `docker run` causes the container to be deleted on stop, destroying all data inside. The volume mount ensures conversations and training logs survive container restarts.
+
+---
+
+## 11. Known Issues & Quirks
 
 1. ~~**`TEMPERATURE` not passed to API**~~ → **FIXED**: `TEMPERATURE` removed entirely (modern models handle defaults).
 2. ~~**`web_browser` prompt mismatch**~~ → **FIXED**: `prompt` is required in tool definition; function default `""` is a defensive fallback never reached.
@@ -315,7 +353,7 @@ generate_chat_responses_stream_native(
 
 ---
 
-## 11. Key Patterns & Conventions
+## 12. Key Patterns & Conventions
 
 - **All tools return strings** — never raise exceptions to the agent
 - **Workspace root** comes from `session_manager.get_session_working_directory()`
@@ -327,7 +365,7 @@ generate_chat_responses_stream_native(
 
 ---
 
-## 12. Quick Reference: If You Need To...
+## 13. Quick Reference: If You Need To...
 
 | Task | Where to look |
 |------|---------------|

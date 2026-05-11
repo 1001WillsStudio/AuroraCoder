@@ -27,8 +27,7 @@ venv/
 
 # Data/logs
 *.log
-data/*.jsonl
-data/conversations/
+data/
 workspace/
 .search_cache/
 

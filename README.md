@@ -110,26 +110,28 @@ ThinkWithTool provides isolated session environments:
 
 ### Running the Application
 
-**Web API + React Frontend (single script):**
+**`start.bat` is the only supported entry point on the host.** It builds and runs the Docker container (backend + conversation history server) with persistent data volumes, then starts the frontend dev server.
+
 ```powershell
-.\start.ps1
+.\start.bat
 ```
-This launches both the backend and frontend together. Press `Ctrl+C` to stop both.
 
-Or start them manually in separate terminals:
+Services started:
+- Backend API: http://localhost:8080
+- Conversation History: http://localhost:8081
+- Frontend: http://localhost:3000
+- VNC Desktop: http://localhost:6080
+
+Press `Ctrl+C` to stop the frontend. To stop the backend: `docker stop thinkwithtool-agent`.
+
+**Alternative (docker compose):**
 ```bash
-# Terminal 1 — FastAPI backend
-conda activate agent
-python run_web.py
-# Backend: http://localhost:8080
-# API docs: http://localhost:8080/docs
-
-# Terminal 2 — React frontend
-cd frontend
-npm install
-npm run dev
-# Frontend: http://localhost:3000
+docker compose up --build
+# Then in a separate terminal:
+cd frontend && npm install && npm run dev
 ```
+
+> **Important:** Do NOT run `python run_web.py` directly on the host. The backend must run inside Docker for proper session isolation, VNC support, and persistent data storage. Running outside Docker will lose conversation history on restart.
 
 **Session CLI:**
 ```bash

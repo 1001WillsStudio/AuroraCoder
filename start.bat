@@ -49,7 +49,8 @@ if not exist ".env" (
     echo See .env.example for the required variables.
     exit /b 1
 )
-docker run --rm -d --name thinkwithtool-agent --env-file .env -e THINKTOOL_DOCKER=1 -e THINKTOOL_VNC=1 -p 8080:8080 -p 8081:8081 -p 6080:6080 -p 8888-8890:8888-8890 thinkwithtool
+if not exist "data" mkdir data
+docker run --rm -d --name thinkwithtool-agent --env-file .env -e THINKTOOL_DOCKER=1 -e THINKTOOL_VNC=1 -v "%cd%\data:/app/data" -p 8080:8080 -p 8081:8081 -p 6080:6080 -p 8888-8890:8888-8890 thinkwithtool
 if errorlevel 1 (
     echo Failed to start container.
     exit /b 1
