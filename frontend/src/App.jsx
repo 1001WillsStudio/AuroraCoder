@@ -1123,13 +1123,14 @@ function App() {
               </div>
             )}
 
-            {/* Task Instructions — clickable button, opens modal */}
+            {/* Task Instructions — clickable button, toggles drawer */}
             <div className="sidebar-section task-instructions-section">
               <button
                 className="load-session-btn task-instructions-btn"
                 onClick={() => {
-                  setShowTaskInstructions(true)
-                  setHistoryCloseTrigger(prev => prev + 1) // close history drawer
+                  const next = !showTaskInstructions
+                  setShowTaskInstructions(next)
+                  if (next) setHistoryCloseTrigger(prev => prev + 1) // close history drawer when opening
                 }}
                 title="Configure task instructions (prepended to first message)"
               >
