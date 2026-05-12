@@ -147,6 +147,17 @@ MAX_TOOL_CONCURRENCY = 5  # Max parallel threads for concurrent-safe tools
 SUBAGENT_MAX_ITERATIONS = 15  # Lower cap than the parent agent
 SUBAGENT_MAX_RESULT_CHARS = 4000  # Truncate subagent final response to save parent context
 
+# Context continuation
+CONTEXT_WINDOW_TOKENS = 128_000
+CONTEXT_WARN_THRESHOLD = 0.80
+
+# One-liner notice (injected once when tool first appears)
+_CONTINUATION_NOTICE_MARKER = "[CONTEXT CONTINUATION TOOL AVAILABLE]"
+CONTINUATION_NOTICE = (
+    "⚠️ `continue_as_new_chat` is now available in your tool list — "
+    "you are at ~80% context."
+)
+
 # =============================================================================
 # Docker Mode
 # =============================================================================

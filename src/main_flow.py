@@ -12,13 +12,15 @@ import re
 from typing import Dict, List, Any, Generator, Set, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from .tool_definitions import get_tool_definitions, execute_tool_call, READ_ONLY_TOOLS
+from .tool_definitions import get_tool_definitions, execute_tool_call, PARALLEL_SAFE_TOOLS
 from .config import (
     TRAINING_DATA_DIR, DEFAULT_PROVIDER,
     MAX_TOKENS, MAX_ITERATIONS, CONTINUE_ITERATIONS,
     MAX_STREAMING_RETRIES, MAX_TOOL_CONCURRENCY,
     SYSTEM_MESSAGE_TEMPLATE, VNC_INSTRUCTIONS, TERMINAL_ENV_NOTE,
     INTERPRETER_WARN_CHARS, INTERPRETER_MAX_FILES,
+    CONTEXT_WINDOW_TOKENS, CONTEXT_WARN_THRESHOLD,
+    _CONTINUATION_NOTICE_MARKER, CONTINUATION_NOTICE,
 )
 from .providers import provider_manager
 from .code_tools.code_interpreter import (
@@ -198,7 +200,7 @@ def partition_tool_calls(tool_calls: List[Dict]) -> List[Tuple[bool, List[Dict]]
     current_batch: List[Dict] = []
 
     for tc in tool_calls:
-        is_safe = tc["function"]["name"] in READ_ONLY_TOOLS
+        is_safe = tc["function"]["name"] in PARALLEL_SAFE_TOOLS
         if current_safe is not None and is_safe != current_safe:
             batches.append((current_safe, current_batch))
             current_batch = []
@@ -238,6 +240,26 @@ def record_api_call(request_messages: list, response_message: dict):
             f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
     except Exception:
         pass
+
+
+# --- Context Continuation Helpers ---
+
+def _filter_tools_by_context(tools: list, prompt_tokens: int) -> list:
+    """
+    Filter out the continue_as_new_chat tool until context usage
+    crosses CONTEXT_WARN_THRESHOLD.
+    """
+    if prompt_tokens / CONTEXT_WINDOW_TOKENS < CONTEXT_WARN_THRESHOLD:
+        return [t for t in tools if t["function"]["name"] != "continue_as_new_chat"]
+    return tools
+
+
+def _has_continuation_notice_been_shown(messages: List[Dict]) -> bool:
+    """Check whether the continuation notice has already been injected."""
+    for msg in messages:
+        if msg.get("role") == "system" and _CONTINUATION_NOTICE_MARKER in msg.get("content", ""):
+            return True
+    return False
 
 
 # --- Main Chat Flow ---
@@ -282,26 +304,36 @@ def generate_chat_responses_stream_native(
         terminal_env_note=TERMINAL_ENV_NOTE,
     )
     
-    # Add system message if not already present
+    # Add system message if not already present.
+    # Preserve [CONTINUED FROM PREVIOUS SESSION] context package if it exists.
     if not current_processing_messages or current_processing_messages[0].get("role") != "system":
         current_processing_messages.insert(0, {"role": "system", "content": system_message})
     else:
-        current_processing_messages[0]["content"] = system_message
+        existing = current_processing_messages[0]["content"]
+        if "[CONTINUED FROM PREVIOUS SESSION]" in existing:
+            current_processing_messages[0]["content"] = existing + "\n\n---\n\n" + system_message
+        else:
+            current_processing_messages[0]["content"] = system_message
     
     iteration_count = 0
     streaming_errors = 0
+    prompt_tokens = 0  # Track accumulated prompt tokens across iterations
     
     while iteration_count < max_iterations:
         iteration_count += 1
+        
+        # Filter tools based on current context usage
+        tools_for_iteration = _filter_tools_by_context(tools, prompt_tokens)
         
         # Build API call kwargs
         api_kwargs = {
             "model": model_name,
             "messages": current_processing_messages,
-            "tools": tools,
+            "tools": tools_for_iteration,
             "tool_choice": "auto",
             "max_tokens": MAX_TOKENS,
             "stream": True,
+            "stream_options": {"include_usage": True},
         }
         
         # Add extra_body if provider requires it (e.g., NVIDIA thinking mode)
@@ -315,10 +347,14 @@ def generate_chat_responses_stream_native(
         current_reasoning = ""
         assistant_message = {"role": "assistant"}
         current_tool_calls = []
+        current_usage = None
         
         try:
             for chunk in completion_stream:
                 if not chunk.choices:
+                    # Usage info may come on a chunk with no choices
+                    if hasattr(chunk, "usage") and chunk.usage:
+                        current_usage = chunk.usage.model_dump()
                     continue
                     
                 delta = chunk.choices[0].delta
@@ -353,6 +389,10 @@ def generate_chat_responses_stream_native(
                             if tool_call_delta.function.arguments:
                                 current_tool_call["function"]["arguments"] += tool_call_delta.function.arguments
 
+                # Capture usage from the final chunk
+                if hasattr(chunk, "usage") and chunk.usage:
+                    current_usage = chunk.usage.model_dump()
+
                 assistant_message["thinking"] = current_reasoning
                 assistant_message["reasoning_content"] = current_reasoning
                 assistant_message["content"] = current_content
@@ -378,6 +418,10 @@ def generate_chat_responses_stream_native(
             continue
 
         streaming_errors = 0
+
+        # Update prompt_tokens from the usage response
+        if current_usage:
+            prompt_tokens = current_usage.get("prompt_tokens", prompt_tokens)
 
         record_api_call(
             copy.deepcopy(current_processing_messages),
@@ -423,6 +467,13 @@ def generate_chat_responses_stream_native(
         # Add tool call requests to messages
         current_processing_messages.append(assistant_message)
         
+        # Inject continuation notice once when context threshold is crossed
+        if prompt_tokens / CONTEXT_WINDOW_TOKENS >= CONTEXT_WARN_THRESHOLD:
+            if not _has_continuation_notice_been_shown(current_processing_messages):
+                current_processing_messages[0]["content"] += (
+                    "\n\n" + _CONTINUATION_NOTICE_MARKER + "\n" + CONTINUATION_NOTICE
+                )
+        
         # Track if any code-related tool was called in this batch
         code_tool_called = False
         
@@ -458,6 +509,15 @@ def generate_chat_responses_stream_native(
                         "tool_call_id": tc_out["id"],
                         "content": result
                     })
+
+        # If continue_as_new_chat was called, end the loop immediately
+        if any(tc["function"]["name"] == "continue_as_new_chat" for tc in current_tool_calls):
+            yield {
+                "messages": current_processing_messages,
+                "status": "completed",
+                "provider": provider_id
+            }
+            return
 
         # If any code-related tool was called, update the interpreter display
         if code_tool_called:

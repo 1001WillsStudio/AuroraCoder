@@ -188,6 +188,7 @@ function App() {
   const inputRef = useRef(null)
   const abortControllerRef = useRef(null)
   const pendingInterruptRef = useRef(null)  // Ref for closure-safe access to pending interrupt
+  const continuationNavigatedRef = useRef(new Set())  // Track conversations already auto-navigated
 
   // Apply theme to document
   useEffect(() => {
@@ -597,6 +598,14 @@ function App() {
             if (data?.conversation_id) {
               setConversationId(data.conversation_id)
             }
+            // Auto-navigate to continuation conversation
+            if (data?.new_conversation_id && !continuationNavigatedRef.current.has(data.new_conversation_id)) {
+              continuationNavigatedRef.current.add(data.new_conversation_id)
+              console.log('[onMessages] Auto-navigating to continuation:', data.new_conversation_id.slice(0, 8))
+              setTimeout(() => {
+                handleLoadConversation(data.new_conversation_id)
+              }, 500)
+            }
           },
           onDone: (data) => {
             console.log('[onDone] Conversation:', data.conversation_id, 'Status:', data.status)
@@ -935,21 +944,28 @@ function App() {
       const conv = await getConversation(targetConversationId)
 
       const isSubagent = conv.type === 'subagent'
+      const isContinued = conv.type === 'user_chat_continued'
 
       setConversationId(targetConversationId)
       setRawMessages(conv.messages || [])
       setMessages(conv.frontend_messages || [])
-      setCanContinue(!isSubagent && conv.status === 'max_iterations_reached')
+      setCanContinue(!isSubagent && !isContinued && conv.status === 'max_iterations_reached')
       setIsStreaming(false)
       setActiveConvoWarning(false)
       setEditedFiles([])
       setClosedFiles(new Set())
-      setViewMode(isSubagent ? 'subagent' : 'main')
-      setParentConversationId(isSubagent ? conv.parent_id : null)
+      setViewMode(isSubagent ? 'subagent' : (isContinued ? 'continued' : 'main'))
+      setParentConversationId((isSubagent || isContinued) ? conv.parent_id : null)
 
-      // Restore draft input for this conversation (not for subagents)
-      const draft = isSubagent ? '' : (draftInputsRef.current.get(targetConversationId) || '')
+      // Restore draft input for this conversation (not for subagents or continuations)
+      const draft = (isSubagent || isContinued) ? '' : (draftInputsRef.current.get(targetConversationId) || '')
       setInputValue(draft)
+
+      // Auto-launch continued conversations immediately (like normal chat)
+      if (isContinued) {
+        // Small delay to let state settle, then auto-start
+        setTimeout(() => handleStartContinued(), 300)
+      }
 
       // If still running, resume the live stream
       if (conv.status === 'running') {
@@ -982,6 +998,67 @@ function App() {
       console.error('[handleLoadConversation] Failed:', e)
     }
   }, [conversationId, inputValue])
+
+  // Start a continued conversation by sending pre-seeded messages to the backend
+  const handleStartContinued = async () => {
+    if (!conversationId || isStreaming || rawMessages.length === 0) return
+    
+    setIsStreaming(true)
+    setViewMode('main')  // Switch to main mode so input area appears
+    
+    try {
+      abortControllerRef.current = new AbortController()
+      
+      await streamChat(
+        null,  // No new message — process existing messages
+        conversationId,
+        {
+          onMessages: (frontendMessages, status, data) => {
+            setMessages(frontendMessages)
+            if (data?.raw_messages) setRawMessages(data.raw_messages)
+            // Auto-navigate to continuation if detected
+            if (data?.new_conversation_id && !continuationNavigatedRef.current.has(data.new_conversation_id)) {
+              continuationNavigatedRef.current.add(data.new_conversation_id)
+              setTimeout(() => {
+                handleLoadConversation(data.new_conversation_id)
+              }, 500)
+            }
+          },
+          onDone: (data) => {
+            setConversationId(data.conversation_id)
+            setCanContinue(data.status === 'max_iterations_reached')
+            setIsStreaming(false)
+            if (data.messages) setMessages(data.messages)
+            if (data.raw_messages) setRawMessages(data.raw_messages)
+            setHistoryRefreshTrigger(prev => prev + 1)
+          },
+          onError: (error) => {
+            console.error('[handleStartContinued] Error:', error)
+            setIsStreaming(false)
+            setHistoryRefreshTrigger(prev => prev + 1)
+          },
+          onSubagentEvent: (evt) => {
+            if (evt.child_id) {
+              setSubagentChildIds(prev =>
+                prev.includes(evt.child_id) ? prev : [...prev, evt.child_id]
+              )
+            }
+            setHistoryRefreshTrigger(prev => prev + 1)
+            setTimeout(() => setHistoryRefreshTrigger(prev => prev + 1), 1500)
+            setTimeout(() => setHistoryRefreshTrigger(prev => prev + 1), 4000)
+          }
+        },
+        abortControllerRef.current.signal,
+        rawMessages,
+        selectedProvider
+      )
+    } catch (error) {
+      if (error.name !== 'AbortError') {
+        console.error('[handleStartContinued] Error:', error)
+      }
+      setIsStreaming(false)
+    }
+  }
 
   const handleFileClose = (fileId) => {
     setClosedFiles(prev => new Set([...prev, fileId]))
@@ -1295,8 +1372,34 @@ function App() {
           </div>
         )}
 
-        {/* Input Area — hidden in subagent view */}
-        {viewMode !== 'subagent' && (
+        {/* Continuation view bar */}
+        {viewMode === 'continued' && (
+          <div className="subagent-view-bar continued-view-bar">
+            <span>{isStreaming ? 'Agent is working...' : '⬆️ Continued from previous conversation — click Start to resume'}</span>
+            <div className="continued-actions">
+              {!isStreaming && (
+                <button
+                  className="continue-btn"
+                  onClick={handleStartContinued}
+                >
+                  <RotateCcw size={18} />
+                  <span>Start</span>
+                </button>
+              )}
+              {parentConversationId && (
+                <button
+                  className="subagent-back-btn"
+                  onClick={() => handleLoadConversation(parentConversationId)}
+                >
+                  Back to parent
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Input Area — hidden in subagent and continued view (until started) */}
+        {viewMode !== 'subagent' && viewMode !== 'continued' && (
         <div className="input-container">
           <div className="input-wrapper">
             <textarea

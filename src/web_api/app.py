@@ -91,13 +91,13 @@ def unregister_stream(conversation_id: str, cancel_event: threading.Event):
 
 def get_filtered_tools(mode: str):
     """Return tool definitions filtered by mode, excluding the subagent tool."""
-    from ..tool_definitions import NATIVE_TOOL_DEFINITIONS, READ_ONLY_TOOLS
+    from ..tool_definitions import NATIVE_TOOL_DEFINITIONS, SUBAGENT_READ_ONLY_TOOLS
     defs = []
     for td in NATIVE_TOOL_DEFINITIONS:
         name = td["function"]["name"]
         if name == "subagent":
             continue
-        if mode == "read_only" and name not in READ_ONLY_TOOLS:
+        if mode == "read_only" and name not in SUBAGENT_READ_ONLY_TOOLS:
             continue
         defs.append(td)
     return defs

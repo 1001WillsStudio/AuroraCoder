@@ -13,6 +13,7 @@ Key behaviors:
   - Frontend can reconnect mid-stream via GET /api/conversations/{id}/stream
   - Persists conversations automatically when rounds complete
   - Serves conversation history via REST endpoints
+  - Detects continue_as_new_chat tool calls and creates continuation conversations
 
 Start with::
 
@@ -65,6 +66,7 @@ class ActiveStream:
     finished: bool = False
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
     task: Optional[asyncio.Task] = None
+    new_conversation_id: Optional[str] = None   # set when continuation detected
 
 
 active_streams: Dict[str, ActiveStream] = {}
@@ -101,6 +103,21 @@ async def _cancel_active_stream(conversation_id: str) -> None:
                 await asyncio.wait_for(asyncio.shield(old.task), timeout=2.0)
             except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
                 pass
+
+    # Cancel any continuation child created by this stream
+    async with _streams_lock:
+        parent = active_streams.get(conversation_id)
+        if parent and parent.new_conversation_id:
+            continuation = active_streams.get(parent.new_conversation_id)
+            if continuation and not continuation.finished:
+                logger.info(f"[cancel] Cascading cancel to continuation {continuation.conversation_id[:8]}...")
+                continuation.cancel_event.set()
+                if continuation.task and not continuation.task.done():
+                    continuation.task.cancel()
+                    try:
+                        await asyncio.wait_for(asyncio.shield(continuation.task), timeout=2.0)
+                    except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+                        pass
 
 
 async def _has_active_main_stream(exclude: Optional[str] = None) -> Optional[str]:
@@ -139,6 +156,44 @@ def _parse_sse_blocks(text: str) -> List[tuple]:
             except json.JSONDecodeError:
                 pass
     return results
+
+
+# ============================================================================
+# Continuation Helpers
+# ============================================================================
+
+def _scan_for_continuation(raw_messages: list) -> dict | None:
+    """
+    Scan assistant messages for a continue_as_new_chat tool call.
+    Returns the tool arguments dict, or None.
+    """
+    for msg in raw_messages:
+        if msg.get("role") != "assistant":
+            continue
+        for tc in msg.get("tool_calls", []):
+            if tc.get("function", {}).get("name") == "continue_as_new_chat":
+                try:
+                    return json.loads(tc["function"]["arguments"])
+                except json.JSONDecodeError:
+                    return None
+    return None
+
+
+def _find_original_user_task(cid: str) -> str:
+    """Find the first user message in the parent conversation."""
+    try:
+        msgs = store.get_messages(cid)
+        for msg in msgs:
+            if msg.get("role") == "user":
+                return msg.get("content", "Continue the previous task.")
+    except Exception:
+        pass
+    return "[Original task — see parent conversation]"
+
+
+def _build_context_package(prompt: str) -> str:
+    """Wrap the agent's prompt with the continuation marker."""
+    return f"[CONTINUED FROM PREVIOUS SESSION]\n{prompt}"
 
 
 # ============================================================================
@@ -188,6 +243,38 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                         for etype, edata in _parse_sse_blocks(raw + "\n\n"):
                             stream.latest_event_type = etype
                             stream.latest_event_data = edata
+
+                            # --- Continuation detection ---
+                            if not stream.new_conversation_id:
+                                args = _scan_for_continuation(edata.get("raw_messages", []))
+                                if args:
+                                    new_cid = str(uuid.uuid4())
+                                    context_pkg = _build_context_package(**args)
+
+                                    store.create_conversation(
+                                        conversation_id=new_cid,
+                                        parent_id=cid,
+                                        conv_type="user_chat_continued",
+                                        title=args.get("prompt", "Continued conversation")[:80],
+                                        provider_id=stream.provider,
+                                    )
+                                    # Find the original user message from the parent
+                                    original_task = _find_original_user_task(cid)
+                                    store.save_messages(new_cid, [
+                                        {"role": "system", "content": context_pkg},
+                                        {"role": "user", "content": original_task},
+                                    ])
+                                    store.save_frontend_messages(new_cid, [
+                                        {"role": "system", "content": context_pkg},
+                                        {"role": "user", "content": original_task},
+                                    ])
+                                    store.update_status(cid, "continued")
+                                    stream.new_conversation_id = new_cid
+                                    logger.info(f"[proxy] Created continuation {new_cid[:8]}... from {cid[:8]}...")
+
+                            # Annotate events with new_conversation_id if continuation was detected
+                            if stream.new_conversation_id:
+                                edata["new_conversation_id"] = stream.new_conversation_id
 
                             if etype in ("messages", "done"):
                                 stream.status = edata.get("status", stream.status)
@@ -274,7 +361,15 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
             raw_messages = stream.latest_event_data.get("raw_messages", [])
 
         try:
-            store.update_status(cid, persist_status)
+            # Don't overwrite "continued" status if the proxy already set it
+            current_status = None
+            try:
+                conv = store.get_conversation(cid)
+                current_status = conv.get("status")
+            except Exception:
+                pass
+            if current_status != "continued":
+                store.update_status(cid, persist_status)
             if raw_messages:
                 store.save_messages(cid, raw_messages)
             if stream.latest_frontend_messages:

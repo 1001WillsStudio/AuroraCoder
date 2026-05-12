@@ -23,6 +23,7 @@ from .code_tools.grep_search import grep_search_tool
 from .code_tools.terminal_runner import run_terminal_cmd_tool
 from .core_tools.tool_store_client import tool_store_tool
 from .core_tools.subagent import run_subagent
+from .core_tools.continue_chat import continue_as_new_chat
 
 
 EDIT_FILE_DESCRIPTION = """Aider-style search and replace. Finds exact content starting from `start_line` and replaces it.
@@ -359,18 +360,60 @@ NATIVE_TOOL_DEFINITIONS = [
             }
         }
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "continue_as_new_chat",
+            "description": (
+                "Continue the current task in a fresh conversation with full context. "
+                "Call this when the context window is nearly full (~80%+) to hand off "
+                "to a new agent instance. Your prompt will be passed directly to the "
+                "new agent as its system message — include all essential context.\n\n"
+                "WHEN TO CALL: Your context is approaching the limit. You have made "
+                "significant progress and need a fresh context window to continue "
+                "working efficiently.\n\n"
+                "The tool call itself IS the signal — no result processing needed. "
+                "The system will create a continuation conversation automatically. "
+                "IMPORTANT: This should be the ONLY tool call in the turn. The loop "
+                "ends after this call."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "A comprehensive prompt covering all the context the next agent needs: what was accomplished, what remains to be done, key files, important decisions made, and any nuanced understanding required."
+                    }
+                },
+                "required": ["prompt"]
+            }
+        }
+    },
 ]
 
 
-# Read-only / side-effect-free tools.  Used for:
-# - concurrent execution (safe to run in parallel since they don't mutate state)
-# - subagent "read_only" mode (restricted tool set for exploration/research)
-# Update this set when adding new read-only tools.
-READ_ONLY_TOOLS = {
+# Tools safe to execute in parallel via ThreadPoolExecutor.
+# These have no conflicting side effects / race conditions.
+# Used by partition_tool_calls() in main_flow.py to decide what can run concurrently.
+PARALLEL_SAFE_TOOLS = {
     "read_file", "list_directory", "search_files", "grep_search",
-    "google_search", "web_browser", "close_file", "tool_store",
+    "google_search", "web_browser", "tool_store",
     "subagent",
 }
+
+# Tools available to subagents in "read_only" mode.
+# Subagents must NOT write/edit/delete files, run terminal commands, or mutate
+# system state.  Used by get_filtered_tools() in web_api/app.py.
+# "subagent" itself is excluded by get_filtered_tools() to prevent nesting.
+SUBAGENT_READ_ONLY_TOOLS = {
+    "read_file", "list_directory", "search_files", "grep_search",
+    "google_search", "web_browser", "close_file",
+    # "tool_store",  # TODO: candidate — needs review.  Many external APIs
+    #                 # are write-capable, so this can bypass subagent safety.
+}
+
+# Backward-compatible alias — kept so any external references don't break immediately.
+READ_ONLY_TOOLS = PARALLEL_SAFE_TOOLS
 
 
 # Tool function mappings - maps tool names to their actual functions
@@ -388,6 +431,7 @@ TOOL_FUNCTION_MAP = {
     "run_terminal_command": run_terminal_cmd_tool,
     "tool_store": tool_store_tool,
     "subagent": run_subagent,
+    "continue_as_new_chat": continue_as_new_chat,
 }
 
 

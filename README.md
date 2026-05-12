@@ -141,8 +141,8 @@ Defined in `tool_definitions.py`. 13 tools total:
 | 9 | `search_files` | `file_search_tool` | ✅ | None |
 | 10 | `grep_search` | `grep_search_tool` | ✅ | None |
 | 11 | `run_terminal_command` | `run_terminal_cmd_tool` | ❌ | Executes shell commands |
-| 12 | `tool_store` | `tool_store_tool` | ✅ | Depends on action |
-| 13 | `subagent` | `run_subagent` | ✅ | Spawns child agent |
+| 12 | `tool_store` | `tool_store_tool` | ⚠️ | Parallel-safe; excluded from subagent (can run write APIs) |
+| 13 | `subagent` | `run_subagent` | ✅ | Spawns child agent (excluded from subagent tool list) |
 | 14 | *(removed)* | — | — | Former `python_interpreter` (dead code purged) |
 
 ### 4.2 Tool Parameter Signatures
@@ -291,7 +291,7 @@ generate_chat_responses_stream_native(
 
 **Yield format**: `{"messages": [...], "status": "running"|"completed"|"error"|"max_iterations_reached", "provider": str}`
 
-**Tool execution**: Read-only tools (set `READ_ONLY_TOOLS`) can run in parallel via `ThreadPoolExecutor`. Write tools run sequentially. Batches are partitioned by `partition_tool_calls()`.
+**Tool execution**: Two separate tool sets control behavior: `PARALLEL_SAFE_TOOLS` (tools safe for concurrent `ThreadPoolExecutor` execution) and `SUBAGENT_READ_ONLY_TOOLS` (tools granted to subagents in read-only mode). Write tools run sequentially. Batches are partitioned by `partition_tool_calls()`.
 
 **Error handling**: Streaming errors trigger retry up to `MAX_STREAMING_RETRIES` (10). Empty responses with no tool calls get a corrective system message.
 
