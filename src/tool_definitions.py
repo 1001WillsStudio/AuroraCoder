@@ -315,38 +315,13 @@ NATIVE_TOOL_DEFINITIONS = [
         "function": {
             "name": "subagent",
             "description": (
-                "Delegate a self-contained task to an independent agent. The subagent "
-                "gets its own context window and tools, works autonomously, and returns "
-                "only a concise summary — keeping your own context clean.\n\n"
-                "PARALLEL EXECUTION: Subagents are independent and read-only. You CAN "
-                "and SHOULD launch multiple subagents in a single turn to handle several "
-                "independent research tasks concurrently — they will run in parallel, "
-                "saving time. For example, you could launch 2-3 subagents simultaneously "
-                "to research different topics, then merge their findings.\n\n"
-                "SAFETY: The subagent runs in READ-ONLY mode for safety. It can read "
-                "files, search, browse the web, and list directories, but it CANNOT "
-                "write/edit/delete files, run terminal commands, or make any changes to "
-                "the system. Use it strictly for information gathering and analysis.\n\n"
-                "WHEN TO USE:\n"
-                "- The task requires multiple read/search calls (3+) whose intermediate "
-                "outputs you don't need to see (e.g. research across several web pages, "
-                "exploring a codebase to answer a question, reading and cross-referencing "
-                "many files)\n"
-                "- The task is self-contained and does not depend on your current "
-                "conversation context\n"
-                "- You want to preserve your own context window for the main task\n"
-                "- You have multiple INDEPENDENT research tasks — launch them in parallel "
-                "as separate subagent calls\n\n"
-                "WHEN NOT TO USE:\n"
-                "- For tasks that need only 1-2 tool calls — just call the tools directly\n"
-                "- When you need to see exact raw outputs (file contents, error details)\n"
-                "- When the subtask depends heavily on prior conversation context "
-                "(the subagent cannot see your history)\n"
-                "- When the task requires writing files, running commands, or any "
-                "modifications — you must do those yourself\n\n"
-                "IMPORTANT: The subagent has NO knowledge of your conversation. Provide "
-                "all necessary context (file paths, requirements, constraints) in the task "
-                "description. Be specific about what it should return."
+                "Delegate a self-contained research task to a read-only agent. "
+                "It runs independently with its own context and tools, then returns a concise summary.\n\n"
+                "- READ-ONLY: can read files, search, and browse the web — cannot write, edit, or run commands.\n"
+                "- PARALLEL: launch multiple subagents in one turn for independent tasks.\n"
+                "- Use when a task needs 3+ read/search calls whose intermediate outputs you don't need.\n"
+                "- Don't use for 1-2 tool calls (do those directly) or tasks needing conversation history.\n"
+                "- Include all necessary context in the task — the subagent cannot see your conversation."
             ),
             "parameters": {
                 "type": "object",
@@ -365,15 +340,13 @@ NATIVE_TOOL_DEFINITIONS = [
         "function": {
             "name": "continue_as_new_chat",
             "description": (
-                "Continue the current task in a fresh conversation with full context. "
+                "Continue the current task in a fresh conversation. "
                 "Call this when the context window is nearly full (~80%+) to hand off "
                 "to a new agent instance. Your prompt will be passed directly to the "
                 "new agent as its user message — include all essential context.\n\n"
                 "WHEN TO CALL: Your context is approaching the limit. You have made "
                 "significant progress and need a fresh context window to continue "
                 "working efficiently.\n\n"
-                "The tool call itself IS the signal — no result processing needed. "
-                "The system will create a continuation conversation automatically. "
                 "IMPORTANT: This should be the ONLY tool call in the turn. The loop "
                 "ends after this call."
             ),
