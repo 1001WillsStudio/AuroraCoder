@@ -22,12 +22,12 @@ The tool creates a **brand-new conversation** seeded with a structured context p
 │  2. At ≥80% → one-time hint injected into system message            │
 │  3. Agent sees hint, continues working until ready                  │
 │  4. Agent calls continue_as_new_chat(summary, files, tasks, ctx)    │
-│  5. Tool implementation:                                            │
-│     a. Persists current conversation as "continued"                 │
-│     b. Creates new conversation with context package                │
-│     c. Returns new_conversation_id in tool result                   │
-│  6. Backend emits special SSE event with new_conversation_id        │
-│  7. Frontend auto-navigates to the new conversation                 │
+│  5. Tool (pure signal): builds context package, returns JSON        │
+│  6. main_flow.py detects it, yields continue_requested status       │
+│     with new_conversation_id + context_package in SSE event         │
+│  7. Proxy (8081) creates child conversation, seeds messages,        │
+│     marks parent as "continued", forwards event to frontend         │
+│  8. Frontend auto-navigates to the new conversation                 │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
                                     │
@@ -247,28 +247,21 @@ Do NOT delay — if context overflows, information will be lost.
 
 ### Implementation (`src/core_tools/continue_chat.py`)
 
+**Architecture note**: This tool is a **pure signal generator**. It does NOT access the
+conversation store, the filesystem, or any external state. It builds a context package
+and returns a JSON signal. All persistence (creating the new conversation, seeding
+messages, marking the parent as "continued") is handled by the **proxy** (8081) when
+it detects the `continue_requested` status in the SSE stream. This keeps `src/`
+completely stateless.
+
 ```python
 """
-continue_as_new_chat tool — hands off the current task to a fresh agent session.
+continue_as_new_chat tool — pure signal: build context package, return JSON.
+All persistence is handled by the conversation history proxy (8081).
 """
 
 import json
 import uuid
-import logging
-from pathlib import Path
-from typing import Dict, Any
-
-logger = logging.getLogger(__name__)
-
-# Will be set by the web API at startup to point to the conversation store
-_conversation_store = None
-_get_current_conversation_id = None
-
-def set_continuation_dependencies(store, get_cid_fn):
-    """Called by web_api/app.py during startup to inject dependencies."""
-    global _conversation_store, _get_current_conversation_id
-    _conversation_store = store
-    _get_current_conversation_id = get_cid_fn
 
 
 def continue_as_new_chat(
@@ -278,58 +271,29 @@ def continue_as_new_chat(
     important_context: str = "",
 ) -> str:
     """
-    Creates a new conversation seeded with context from the current one.
+    Signal that the conversation should continue in a brand-new agent session.
 
-    The new conversation starts with:
-    - A system message containing the context package
-    - The original user's task message (replayed)
-    - Full context window available
+    Returns a JSON signal with the context package. The proxy (8081) detects
+    this signal in the SSE stream and handles all persistence:
+      - Creates a new conversation entry (parent_id = current conversation)
+      - Seeds it with the context package as a system message
+      - Replays the original user task as the first user message
+      - Marks the current conversation as "continued"
 
-    The current conversation is persisted and marked as "continued".
+    This function is PURE — no side effects, no store access.
     """
     if key_files is None:
         key_files = []
 
     new_conversation_id = str(uuid.uuid4())
-    current_id = _get_current_conversation_id() if _get_current_conversation_id else None
 
-    # Build the context package that the new agent will receive
     context_package = _build_context_package(
         summary=summary,
         key_files=key_files,
         pending_tasks=pending_tasks,
         important_context=important_context,
-        parent_conversation_id=current_id,
     )
 
-    # Create the new conversation in the store
-    if _conversation_store:
-        try:
-            _conversation_store.create_conversation(
-                conversation_id=new_conversation_id,
-                parent_id=current_id,
-                conv_type="user_chat_continued",
-                title=f"[Continued] {summary[:80]}",
-            )
-
-            # Seed with context package and replayed user task
-            # The actual user message will be injected by the frontend
-            # when it navigates to the new conversation.
-            # For now, store minimal metadata.
-            _conversation_store.save_messages(new_conversation_id, [])
-
-        except Exception as e:
-            logger.error(f"Failed to create continuation conversation: {e}")
-            return f"Error: Could not create continuation — {e}"
-
-    # Mark current conversation as continued
-    if _conversation_store and current_id:
-        try:
-            _conversation_store.update_status(current_id, "continued")
-        except Exception:
-            pass
-
-    # Return structured result that the backend can parse
     result = {
         "status": "continue_requested",
         "new_conversation_id": new_conversation_id,
@@ -515,46 +479,9 @@ if _pending_continuation:
 
 ### 5.4 `src/web_api/app.py`
 
-- In `convert_messages_for_frontend()`, handle `status == "continue_requested"` by including `new_conversation_id` and `context_package` in the frontend message.
-- In the SSE streaming, when status is `"continue_requested"`, the frontend will receive a `done` event with `new_conversation_id`.
-- Register the continuation dependencies during startup:
-
-```python
-from ..core_tools.continue_chat import set_continuation_dependencies
-
-# In lifespan startup:
-set_continuation_dependencies(
-    store=store,  # Need to import or create store reference
-    get_cid_fn=lambda: current_conversation_id  # Thread-local or similar
-)
-```
-
-Wait — there's a challenge: the backend (`web_api/app.py` on port 8080) is stateless and doesn't have direct access to the conversation store (which lives in the proxy on port 8081). The continuation tool needs to write to the store.
-
-**Solution**: The `continue_as_new_chat` tool should communicate the continuation request via the SSE stream. The **proxy** (port 8081) already intercepts SSE events and persists them. So:
-
-1. Backend tool returns a specially-formatted JSON result
-2. Backend yields the status `continue_requested` with `new_conversation_id`
-3. **Proxy** (8081) sees this, creates the new conversation in the store, and forwards the event to the frontend
-4. Frontend navigates to the new conversation
-
-Actually, looking at the existing architecture more carefully — the subagent tool already posts to the proxy at `http://localhost:8081/api/chat`. We can do something similar. But `continue_as_new_chat` is simpler — it doesn't need to start a new stream, just create a conversation entry.
-
-**Better approach**: Have the `continue_as_new_chat` tool implementation directly call the conversation store. We can import the store from `conversation_history/conversation_store.py` which is a file-backed singleton that both the backend and proxy can access (they share the same filesystem in Docker).
-
-Let me revise:
-
-```python
-# In continue_chat.py
-from conversation_history.conversation_store import ConversationStore
-
-_store = ConversationStore()
-
-def continue_as_new_chat(...):
-    # ... use _store directly ...
-```
-
-This avoids needing IPC between backend and proxy for this operation. Both services mount the same `/app/data` volume.
+- In `convert_messages_for_frontend()`, forward `new_conversation_id` and `context_package` when status is `"continue_requested"`.
+- No other changes needed — the backend remains stateless. The tool is a pure signal,
+  the proxy (8081) handles all persistence. No `set_continuation_dependencies` needed.
 
 ### 5.5 `conversation_history/api.py` (Proxy)
 
@@ -761,7 +688,7 @@ GET /api/conversations/{id}/continuation-chain
 
 2. **Agent autonomy**: The agent decides when and whether to use the tool. This is consistent with the existing "MAX_ITERATIONS / Continue" pattern where the agent is informed but not forced.
 
-3. **Read-only tool**: `continue_as_new_chat` is marked read-only so it can run in parallel with other read operations. Its only side effect is writing to the conversation store.
+3. **Pure signal tool**: `continue_as_new_chat` is a pure function — it builds a JSON signal with zero side effects. No store access, no filesystem writes. Marked read-only so it can run in parallel with other reads. All persistence is handled by the proxy (8081).
 
 4. **Proxy handles persistence**: The proxy (8081) already owns conversation storage. The backend signals intent via SSE status; the proxy acts on it. This maintains the existing separation of concerns.
 

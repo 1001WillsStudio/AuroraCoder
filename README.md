@@ -8,7 +8,27 @@
 
 ## Core Philosophy
 
-This project implements a **Code Agent** architecture, prioritizing powerful, direct tools over restricted environments. Unlike sandboxed code interpreters that only run snippets, ThinkWithTool provides:
+This project implements a **Code Agent** architecture with a strict separation of concerns:
+
+### Architectural Layers
+
+```
+src/                          ← Stateless agent loop (messages in → messages out)
+    main_flow.py              ← Pure: takes messages, streams responses, yields statuses
+    tool_definitions.py       ← Pure: tool schemas + dispatch, all return strings
+    All tools are stateless   ← No conversation-store access, no direct persistence
+
+conversation_history/         ← All state & persistence (the "dirty work")
+    api.py                    ← SSE proxy between frontend and backend (port 8081)
+    conversation_store.py     ← File-backed store (thread-safe, atomic writes)
+
+frontend/                     ← UI + conversation ownership
+    App.jsx                   ← React SPA, owns conversation state
+```
+
+**The rule**: `src/` never touches the conversation store. It just processes messages and returns signals. The proxy (8081) intercepts SSE events and handles all persistence, conversation creation, status management, and context-window monitoring. This keeps the agent loop testable, swappable, and dead-simple.
+
+### Capabilities
 
 - **Persistent Terminal Access**: Stateful Bash sessions for running system commands, git operations, and environment management.
 - **Direct File Manipulation**: Full read/write capabilities on the codebase with intelligent code display.
