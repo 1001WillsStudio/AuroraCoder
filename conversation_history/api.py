@@ -179,21 +179,35 @@ def _scan_for_continuation(raw_messages: list) -> dict | None:
     return None
 
 
-def _find_original_user_task(cid: str) -> str:
-    """Find the first user message in the parent conversation."""
-    try:
-        msgs = store.get_messages(cid)
-        for msg in msgs:
-            if msg.get("role") == "user":
-                return msg.get("content", "Continue the previous task.")
-    except Exception:
-        pass
-    return "[Original task — see parent conversation]"
+async def _start_continuation(new_cid: str, provider_id: str, user_msg: str):
+    """
+    Simulate a user opening a new chat, typing the continuation message,
+    and pressing Send.  POSTs to the backend via the normal proxy flow.
+
+    This makes the continuation conversation indistinguishable from
+    a human-initiated chat — the agent's prompt IS the user message.
+    """
+    body = {
+        "conversation_id": new_cid,
+        "message": user_msg,
+        "provider": provider_id,
+    }
+
+    stream = ActiveStream(
+        conversation_id=new_cid,
+        conv_type="user_chat",
+        parent_id=None,
+        provider=provider_id,
+    )
+
+    async with _streams_lock:
+        active_streams[new_cid] = stream
+
+    stream.task = asyncio.create_task(_proxy_backend_stream(stream, body))
+
+    logger.info(f"[proxy] Continuation {new_cid[:8]}... auto-started")
 
 
-def _build_context_package(prompt: str) -> str:
-    """Wrap the agent's prompt with the continuation marker."""
-    return f"[CONTINUED FROM PREVIOUS SESSION]\n{prompt}"
 
 
 # ============================================================================
@@ -248,28 +262,31 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                             if not stream.new_conversation_id:
                                 args = _scan_for_continuation(edata.get("raw_messages", []))
                                 if args:
+                                    prompt = args.get("prompt", "")
                                     new_cid = str(uuid.uuid4())
-                                    context_pkg = _build_context_package(**args)
+
+                                    # Build the user message: just the agent's prompt with a note
+                                    user_msg = f"[Continued from previous agent session]\n\n{prompt}"
 
                                     store.create_conversation(
                                         conversation_id=new_cid,
                                         parent_id=cid,
-                                        conv_type="user_chat_continued",
+                                        conv_type="user_chat",          # normal chat, not "user_chat_continued"
                                         provider_id=stream.provider,
                                     )
-                                    # Find the original user message from the parent
-                                    original_task = _find_original_user_task(cid)
                                     store.save_messages(new_cid, [
-                                        {"role": "system", "content": context_pkg},
-                                        {"role": "user", "content": original_task},
+                                        {"role": "user", "content": user_msg},
                                     ])
                                     store.save_frontend_messages(new_cid, [
-                                        {"role": "system", "content": context_pkg},
-                                        {"role": "user", "content": original_task},
+                                        {"role": "user", "content": user_msg},
                                     ])
                                     store.update_status(cid, "continued")
                                     stream.new_conversation_id = new_cid
-                                    logger.info(f"[proxy] Created continuation {new_cid[:8]}... from {cid[:8]}...")
+
+                                    # Simulate user pressing Send — POST to backend immediately
+                                    asyncio.create_task(_start_continuation(new_cid, stream.provider, user_msg))
+
+                                    logger.info(f"[proxy] Created continuation {new_cid[:8]}... from {cid[:8]}... — auto-started")
 
                             # Annotate events with new_conversation_id if continuation was detected
                             if stream.new_conversation_id:

@@ -305,15 +305,10 @@ def generate_chat_responses_stream_native(
     )
     
     # Add system message if not already present.
-    # Preserve [CONTINUED FROM PREVIOUS SESSION] context package if it exists.
     if not current_processing_messages or current_processing_messages[0].get("role") != "system":
         current_processing_messages.insert(0, {"role": "system", "content": system_message})
     else:
-        existing = current_processing_messages[0]["content"]
-        if "[CONTINUED FROM PREVIOUS SESSION]" in existing:
-            current_processing_messages[0]["content"] = existing + "\n\n---\n\n" + system_message
-        else:
-            current_processing_messages[0]["content"] = system_message
+        current_processing_messages[0]["content"] = system_message
     
     iteration_count = 0
     streaming_errors = 0
