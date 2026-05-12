@@ -992,7 +992,6 @@ function App() {
     }
   }, [conversationId, inputValue])
 
-  // Start a continued conversation by sending pre-seeded messages to the backend
   const handleFileClose = (fileId) => {
     setClosedFiles(prev => new Set([...prev, fileId]))
     
@@ -1305,7 +1304,7 @@ function App() {
           </div>
         )}
 
-        {/* Input Area — hidden in subagent and continued view (until started) */}
+        {/* Input Area — hidden in subagent view */}
         {viewMode !== 'subagent' && (
         <div className="input-container">
           <div className="input-wrapper">

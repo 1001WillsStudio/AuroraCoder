@@ -368,7 +368,7 @@ NATIVE_TOOL_DEFINITIONS = [
                 "Continue the current task in a fresh conversation with full context. "
                 "Call this when the context window is nearly full (~80%+) to hand off "
                 "to a new agent instance. Your prompt will be passed directly to the "
-                "new agent as its system message — include all essential context.\n\n"
+                "new agent as its user message — include all essential context.\n\n"
                 "WHEN TO CALL: Your context is approaching the limit. You have made "
                 "significant progress and need a fresh context window to continue "
                 "working efficiently.\n\n"
