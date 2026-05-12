@@ -118,75 +118,42 @@ The threshold should also be **per-provider** eventually, but start with a globa
 
 ---
 
-## 3. The One-Time Hint
+## 3. Dynamic Tool Availability (No Hint Needed)
 
-### Where it lives
+The `continue_as_new_chat` tool is **hidden from the agent's tool list** until context
+usage crosses 80%. The tool appearing IS the notification — no verbose hint required.
 
-The hint is **not** in `SYSTEM_MESSAGE_TEMPLATE` (that's static). Instead, it's injected dynamically by `main_flow.py` when usage crosses 80% — and only once per conversation.
+### Mechanism
 
-### Injection mechanism
-
-In `generate_chat_responses_stream_native()`, after building the system message:
+In `main_flow.py`, the tool list is filtered each iteration based on context usage:
 
 ```python
-# Check if context continuation hint should be shown
-hint_shown = _has_continuation_hint_been_shown(current_processing_messages)
-usage_pct = estimate_context_usage_pct(current_processing_messages)
-
-if not hint_shown and usage_pct >= CONTEXT_WARN_THRESHOLD:
-    if usage_pct >= CONTEXT_CRITICAL_THRESHOLD:
-        hint = CONTINUATION_HINT_URGENT
-    else:
-        hint = CONTINUATION_HINT_NORMAL
-    # Append hint to system message
-    current_processing_messages[0]["content"] += "\n\n" + hint
+def _filter_tools_by_context(tools: list, messages: list) -> list:
+    """Remove continue_as_new_chat if context is below threshold."""
+    usage_pct = estimate_context_usage_pct(messages)
+    if usage_pct < CONTEXT_WARN_THRESHOLD:
+        return [t for t in tools if t["function"]["name"] != "continue_as_new_chat"]
+    return tools  # Tool appears at ≥80%
 ```
 
-The hint is detected as "shown" by scanning for a marker string in any system message:
+And when the tool first appears, a brief one-liner is appended to the system message
+(only once, detected by a marker):
 
 ```python
-_CONTINUATION_HINT_MARKER = "[CONTEXT CONTINUATION AVAILABLE]"
-
-def _has_continuation_hint_been_shown(messages: list) -> bool:
-    for msg in messages:
-        if msg.get("role") == "system" and _CONTINUATION_HINT_MARKER in msg.get("content", ""):
-            return True
-    return False
+    # --- Maybe inject a brief notification when the tool first appears ---
+    if not _has_continuation_notice_been_shown(current_processing_messages):
+        tools = _filter_tools_by_context(tools, current_processing_messages, with_notice=True)
 ```
 
-### Hint text (in `config.py`)
+Where `with_notice=True` returns both the filtered tools and whether the tool
+just became available (for the one-liner injection):
 
-```python
-CONTINUATION_HINT_NORMAL = """
-[CONTEXT CONTINUATION AVAILABLE]
-⚠️ **Context Window Notice**: You have used approximately 80%+ of your context window.
-You have access to a **`continue_as_new_chat`** tool that allows you to pass all the
-information you've gathered (key findings, file states, pending tasks, and a summary)
-to a brand-new agent session with a fresh context window.
+```
+⚠️ `continue_as_new_chat` is now available in your tool list — you are at ~80% context.
+```
 
-**How it works**:
-- Call `continue_as_new_chat` with a comprehensive summary, key file paths,
-  pending tasks, and any other critical context.
-- The new session will pick up exactly where you left off — same workspace,
-  same files, same task, but with a full context window.
-- This is optional — use it when you determine it's the right strategic moment.
-- Ideal timing: after completing a logical unit of work, before starting the next.
-
-**Recommendation**: If you anticipate needing many more tool calls or iterations,
-consider using this tool now to avoid hitting context limits mid-task.
-"""
-
-CONTINUATION_HINT_URGENT = """
-[CONTEXT CONTINUATION AVAILABLE]
-🚨 **CRITICAL Context Warning**: You have used approximately 95%+ of your context window.
-You are at risk of truncated responses or context overflow.
-
-**Strongly recommended**: Call `continue_as_new_chat` NOW with a comprehensive
-summary of everything accomplished, key files, pending tasks, and essential context.
-The new session will continue with a completely fresh context window.
-
-Do NOT delay — if context overflows, information will be lost.
-"""
+That's it. No verbose hint blocks. The tool simply didn't exist before — now it does.
+The agent's description of the tool itself explains what it does and when to use it.
 ```
 
 ---
@@ -476,22 +443,15 @@ the previous agent left them.
 
 ### 5.1 `src/config.py`
 
-Add these entries:
-
 ```python
 # Context continuation
-CONTEXT_WINDOW_TOKENS = 128_000
-CONTEXT_WARN_THRESHOLD = 0.80
-CONTEXT_CRITICAL_THRESHOLD = 0.95
+CONTEXT_WINDOW_TOKENS = 128_000          # Default for most models
+CONTEXT_WARN_THRESHOLD = 0.80            # 80% — tool becomes available
 
-# One-time hint (injected into system message when threshold crossed)
-_CONTINUATION_HINT_MARKER = "[CONTEXT CONTINUATION AVAILABLE]"
-
-CONTINUATION_HINT_NORMAL = """..."""  # as shown above
-CONTINUATION_HINT_URGENT = """..."""  # as shown above
+# One-liner notice when tool first appears (injected once, detected by marker)
+_CONTINUATION_NOTICE_MARKER = "[CONTEXT CONTINUATION TOOL AVAILABLE]"
+CONTINUATION_NOTICE = "⚠️ `continue_as_new_chat` is now available in your tool list — you are at ~80% context."
 ```
-
-Add `{continuation_hint}` placeholder to `SYSTEM_MESSAGE_TEMPLATE` (defaults to empty string).
 
 ### 5.2 `src/main_flow.py`
 
@@ -794,7 +754,7 @@ GET /api/conversations/{id}/continuation-chain
 
 ## 9. Key Design Decisions
 
-1. **One-time hint**: Injected into the system message dynamically, flagged with a marker so it's never shown twice. This prevents the hint from wasting context space on repeated appearances.
+1. **Tool hidden until needed**: `continue_as_new_chat` is filtered out of the tool list until context hits 80%. The tool appearing IS the notification — a brief one-liner in the system message. No verbose hint blocks, no premature calls. Saves context space and keeps the agent focused.
 
 2. **Agent autonomy**: The agent decides when and whether to use the tool. This is consistent with the existing "MAX_ITERATIONS / Continue" pattern where the agent is informed but not forced.
 
