@@ -14,9 +14,10 @@ The tool creates a **brand-new conversation** seeded with a structured context p
 
 ## 1. Architecture & Data Flow
 
-**Key principle**: The agent loop (`src/`) doesn't know or care about "continuation." It's
-just another tool call. The proxy (8081) does all the dirty work of detecting the signal
-and managing conversation lifecycle.
+**Key principle**: `continue_as_new_chat` works like `subagent` — the tool actually POSTs
+to the conversation server, starts the new agent loop, streams the SSE response, and
+reports the result back to the current agent. Success → agent ends naturally. Error →
+agent can retry. The proxy handles persistence; `main_flow.py` sees just another tool call.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -255,21 +256,39 @@ Do NOT delay — if context overflows, information will be lost.
 
 ### Implementation (`src/core_tools/continue_chat.py`)
 
-**Architecture note**: This tool is a **pure signal generator**. It does NOT access the
-conversation store, the filesystem, or any external state. It builds a context package
-and returns a JSON string — just like any other tool. All persistence (creating the new
-conversation, seeding messages, marking the parent as "continued") is handled by the
-**proxy** (8081) when it scans the SSE `raw_messages` and finds this tool's result.
-The agent loop is completely oblivious — it just sees another tool result and continues.
+**Architecture note**: This tool works like `subagent` — it actually POSTs to the
+conversation server (8081), starts the new agent loop, streams the SSE response,
+and returns the result. The current agent gets the outcome directly:
+
+- **Success**: returns "✅ Continuation completed. The new session finished the task."
+  The agent can end its turn naturally. The frontend auto-navigates to the new convo.
+- **Error**: returns "❌ Continuation failed: [error details]". The agent can fix
+  the issue and retry — or try a different approach entirely.
+
+The proxy handles conversation creation (parent_id linking) and persistence.
+`main_flow.py` needs NO changes — it just sees another tool result.
 
 ```python
 """
-continue_as_new_chat tool — pure signal: build context package, return JSON.
-All persistence is handled by the conversation history proxy (8081).
+continue_as_new_chat tool — starts a new agent loop with fresh context,
+streams the result, and reports back (success or error) to the current agent.
 """
 
 import json
+import logging
+import os
 import uuid
+
+import requests
+
+from ..config import SUBAGENT_MAX_RESULT_CHARS
+
+logger = logging.getLogger(__name__)
+
+CONVO_SERVER_URL = os.environ.get("CONVO_SERVER_URL", "http://localhost:8081")
+
+# Reuse the subagent's cancellation infrastructure
+from .subagent import _active_subagents, _active_lock
 
 
 def continue_as_new_chat(
@@ -279,21 +298,22 @@ def continue_as_new_chat(
     important_context: str = "",
 ) -> str:
     """
-    Signal that the conversation should continue in a brand-new agent session.
+    Start a new agent loop seeded with context, wait for the result.
 
-    Returns a JSON signal with the context package. The proxy (8081) detects
-    this signal in the SSE stream and handles all persistence:
-      - Creates a new conversation entry (parent_id = current conversation)
-      - Seeds it with the context package as a system message
-      - Replays the original user task as the first user message
-      - Marks the current conversation as "continued"
+    Posts to the conversation server which creates the child conversation,
+    forwards to the backend, and streams the SSE response back. The current
+    agent gets the final result.
 
-    This function is PURE — no side effects, no store access.
+    Returns:
+        Success message if the new agent completed the task.
+        Error message if it failed — the agent can retry with different context.
     """
+    from ..code_tools.file_operations import _current_conversation_id as parent_cid
+
     if key_files is None:
         key_files = []
 
-    new_conversation_id = str(uuid.uuid4())
+    new_cid = str(uuid.uuid4())
 
     context_package = _build_context_package(
         summary=summary,
@@ -302,22 +322,101 @@ def continue_as_new_chat(
         important_context=important_context,
     )
 
-    result = {
-        "status": "continue_requested",
-        "new_conversation_id": new_conversation_id,
-        "context_package": context_package,
-        "message": (
-            f"✅ Continuation initiated. A new agent session will start with "
-            f"all the context you provided. Conversation ID: {new_conversation_id[:8]}...\n\n"
-            f"The new agent will receive:\n"
-            f"- Your summary ({len(summary)} chars)\n"
-            f"- {len(key_files)} key file paths\n"
-            f"- Pending tasks ({len(pending_tasks)} chars)\n"
-            f"- Additional context ({len(important_context)} chars)"
-        ),
+    # Request body: seeded messages (no "message" field — backend processes
+    # the pre-built message list which contains the context package + user task)
+    body = {
+        "conversation_id": new_cid,
+        "messages": [
+            {"role": "system", "content": context_package},
+            {"role": "user", "content": "[ORIGINAL TASK REPLAYED BY CONTINUATION]"},
+        ],
+        "conv_type": "user_chat_continued",
+        "parent_id": parent_cid,
     }
 
-    return json.dumps(result, ensure_ascii=False)
+    cancel_event = threading.Event()
+    with _active_lock:
+        _active_subagents[new_cid] = (cancel_event, None)
+
+    try:
+        resp = requests.post(
+            f"{CONVO_SERVER_URL}/api/chat",
+            json=body,
+            stream=True,
+            timeout=None,
+        )
+
+        with _active_lock:
+            if new_cid in _active_subagents:
+                _active_subagents[new_cid] = (cancel_event, resp)
+
+        if resp.status_code != 200:
+            return (
+                f"❌ Continuation failed: conversation server returned "
+                f"{resp.status_code}: {resp.text[:500]}\n\n"
+                f"You may want to retry with different context or handle the "
+                f"remaining tasks yourself."
+            )
+
+        final_text = ""
+        final_status = "unknown"
+
+        for line in resp.iter_lines(decode_unicode=True):
+            if cancel_event.is_set():
+                break
+            if not line or not line.startswith("data:"):
+                continue
+            try:
+                data = json.loads(line[5:].strip())
+            except json.JSONDecodeError:
+                continue
+
+            if data.get("status"):
+                final_status = data["status"]
+
+            for msg in reversed(data.get("raw_messages", [])):
+                if msg.get("role") == "assistant" and msg.get("content"):
+                    final_text = msg["content"]
+                    break
+
+    except Exception as e:
+        logger.exception(f"Continuation HTTP error for {new_cid[:8]}")
+        return (
+            f"❌ Continuation error: {type(e).__name__}: {e}\n\n"
+            f"The new session could not be started. You may want to:\n"
+            f"- Retry with different context\n"
+            f"- Handle the remaining tasks yourself\n"
+            f"- Ask the user for guidance"
+        )
+
+    finally:
+        with _active_lock:
+            _active_subagents.pop(new_cid, None)
+
+    if cancel_event.is_set():
+        return "[Continuation was stopped by user.]"
+
+    if final_status == "completed":
+        if final_text:
+            if len(final_text) > SUBAGENT_MAX_RESULT_CHARS:
+                final_text = final_text[:SUBAGENT_MAX_RESULT_CHARS] + "\n... [truncated]"
+            return (
+                f"✅ Continuation succeeded. The new session completed the task.\n\n"
+                f"Result:\n{final_text}\n\n"
+                f"New conversation ID: {new_cid[:8]}..."
+            )
+        return (
+            f"✅ Continuation succeeded. The new session completed the task "
+            f"(no text summary produced). New conversation ID: {new_cid[:8]}..."
+        )
+
+    # Non-completed status (error, max_iterations, interrupted)
+    return (
+        f"❌ Continuation ended with status '{final_status}'.\n\n"
+        f"Last output:\n{final_text[:2000] if final_text else '(none)'}\n\n"
+        f"You may want to retry with adjusted context or handle the "
+        f"remaining tasks yourself. New conversation ID: {new_cid[:8]}..."
+    )
 
 
 def _build_context_package(
@@ -699,7 +798,7 @@ GET /api/conversations/{id}/continuation-chain
 
 2. **Agent autonomy**: The agent decides when and whether to use the tool. This is consistent with the existing "MAX_ITERATIONS / Continue" pattern where the agent is informed but not forced.
 
-3. **Pure signal tool**: `continue_as_new_chat` is a pure function — it builds a JSON signal with zero side effects. No store access, no filesystem writes. Marked read-only so it can run in parallel with other reads. All persistence is handled by the proxy (8081).
+3. **Subagent-like execution**: `continue_as_new_chat` actually POSTs to the conversation server, starts the new agent loop, streams the SSE response, and reports back. Success → agent ends. Error → agent retries. Like `run_subagent` but with full tools and context seeding instead of a plain task string.
 
 4. **Agent-loop-oblivious**: `main_flow.py` has zero awareness of continuation. The `continue_as_new_chat` tool is just another function returning a string. The proxy (8081) scans `raw_messages` in SSE events, detects the JSON signal in the tool result, and handles all persistence. The loop never sees a special status, never returns early.
 
