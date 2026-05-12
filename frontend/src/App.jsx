@@ -730,6 +730,13 @@ function App() {
           onMessages: (frontendMessages, status, data) => {
             setMessages(frontendMessages)
             if (data?.raw_messages) setRawMessages(data.raw_messages)
+            if (data?.new_conversation_id && !continuationNavigatedRef.current.has(data.new_conversation_id)) {
+              continuationNavigatedRef.current.add(data.new_conversation_id)
+              console.log('[handleContinue] Auto-navigating to continuation:', data.new_conversation_id.slice(0, 8))
+              setTimeout(() => {
+                handleLoadConversation(data.new_conversation_id)
+              }, 500)
+            }
           },
           onDone: (data) => {
             setConversationId(data.conversation_id)
@@ -969,6 +976,13 @@ function App() {
             onMessages: (frontendMessages, status, data) => {
               setMessages(frontendMessages)
               if (data?.raw_messages) setRawMessages(data.raw_messages)
+              if (data?.new_conversation_id && !continuationNavigatedRef.current.has(data.new_conversation_id)) {
+                continuationNavigatedRef.current.add(data.new_conversation_id)
+                console.log('[resumeStream] Auto-navigating to continuation:', data.new_conversation_id.slice(0, 8))
+                setTimeout(() => {
+                  handleLoadConversation(data.new_conversation_id)
+                }, 500)
+              }
             },
             onDone: (data) => {
               setIsStreaming(false)

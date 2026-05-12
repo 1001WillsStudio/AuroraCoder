@@ -104,11 +104,9 @@ The frontend treats continuations as ordinary `user_chat` conversations.
 
 ---
 
-## Unfinished / notes
+## Notes
 
-1. **`tool_definitions.py` line 370**: The description says the prompt is passed
-   as a **system message** — it is actually passed as a **user message**.
-   Update the description to say "user message" instead of "system message".
+1. ~~**`tool_definitions.py`**: The description said "system message" — **fixed**, now says "user message".~~
 
 2. **`_start_continuation`** sets `parent_id=None` on the ActiveStream (line 199)
    even though the store record has `parent_id=cid`.  This is intentional:
