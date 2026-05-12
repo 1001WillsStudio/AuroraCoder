@@ -455,46 +455,44 @@ CONTINUATION_NOTICE = "⚠️ `continue_as_new_chat` is now available in your to
 
 ### 5.2 `src/main_flow.py`
 
-**Only two changes** — both are pure message-level operations, no continuation awareness:
+Three changes:
 
-#### A) Context estimation + hint injection
+#### A) Tool filtering by context (hide until 80%)
 
 ```python
 from .config import (
     # ... existing imports ...
-    CONTEXT_WINDOW_TOKENS, CONTEXT_WARN_THRESHOLD, CONTEXT_CRITICAL_THRESHOLD,
-    CONTINUATION_HINT_NORMAL, CONTINUATION_HINT_URGENT,
-    _CONTINUATION_HINT_MARKER,
+    CONTEXT_WINDOW_TOKENS, CONTEXT_WARN_THRESHOLD,
+    _CONTINUATION_NOTICE_MARKER, CONTINUATION_NOTICE,
 )
 
 def estimate_token_count(messages: list) -> int:
     serialized = json.dumps(messages, ensure_ascii=False, default=str)
     return len(serialized) // 2.5
 
-def estimate_context_usage_pct(messages: list, context_window: int = None) -> float:
-    if context_window is None:
-        context_window = CONTEXT_WINDOW_TOKENS
-    return estimate_token_count(messages) / context_window
+def estimate_context_usage_pct(messages: list) -> float:
+    return estimate_token_count(messages) / CONTEXT_WINDOW_TOKENS
 
-def _has_continuation_hint_been_shown(messages: list) -> bool:
+def _filter_tools_by_context(tools: list, messages: list) -> list:
+    """Remove continue_as_new_chat if context is below threshold."""
+    if estimate_context_usage_pct(messages) < CONTEXT_WARN_THRESHOLD:
+        return [t for t in tools if t["function"]["name"] != "continue_as_new_chat"]
+    return tools
+
+def _has_continuation_notice_been_shown(messages: list) -> bool:
     for msg in messages:
-        if msg.get("role") == "system" and _CONTINUATION_HINT_MARKER in msg.get("content", ""):
+        if msg.get("role") == "system" and _CONTINUATION_NOTICE_MARKER in msg.get("content", ""):
             return True
     return False
 ```
 
-After the system message is set (~line 289), add:
+In the loop, filter tools and inject the one-liner when the tool first appears:
 
 ```python
-    # --- Inject context continuation hint (one-time, at 80%+) ---
-    if not _has_continuation_hint_been_shown(current_processing_messages):
-        usage_pct = estimate_context_usage_pct(current_processing_messages)
-        if usage_pct >= CONTEXT_WARN_THRESHOLD:
-            if usage_pct >= CONTEXT_CRITICAL_THRESHOLD:
-                hint = CONTINUATION_HINT_URGENT
-            else:
-                hint = CONTINUATION_HINT_NORMAL
-            current_processing_messages[0]["content"] += "\n\n" + hint
+    tools = _filter_tools_by_context(tools, current_processing_messages)
+    if not _has_continuation_notice_been_shown(current_processing_messages):
+        if estimate_context_usage_pct(current_processing_messages) >= CONTEXT_WARN_THRESHOLD:
+            current_processing_messages[0]["content"] += "\n\n" + CONTINUATION_NOTICE
 ```
 
 #### B) System message preservation for continued sessions
@@ -508,15 +506,28 @@ instead of replacing it:
     else:
         existing = current_processing_messages[0]["content"]
         if "[CONTINUED FROM PREVIOUS SESSION]" in existing:
-            # Preserve the continuation context, append the standard prompt
             current_processing_messages[0]["content"] = existing + "\n\n---\n\n" + system_message
         else:
             current_processing_messages[0]["content"] = system_message
 ```
 
-**That's it for `main_flow.py`**. No status detection, no special yielding, no early return.
-The `continue_as_new_chat` tool result flows through the loop just like any other tool.
-The proxy (8081) handles everything else.
+#### C) End loop immediately on continuation success
+
+After appending the `continue_as_new_chat` tool result, if it succeeded (starts with "✅"),
+stop iterating — don't waste tokens calling the model again just to say "great, done":
+
+```python
+    # In the tool execution section, after appending the result:
+    if tool_name == "continue_as_new_chat" and result.startswith("✅"):
+        yield {
+            "messages": current_processing_messages,
+            "status": "completed",
+            "provider": provider_id
+        }
+        return
+```
+
+On failure ("❌"), the loop continues normally so the agent can handle the error.
 
 ### 5.3 `src/tool_definitions.py`
 
