@@ -255,7 +255,6 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                                         conversation_id=new_cid,
                                         parent_id=cid,
                                         conv_type="user_chat_continued",
-                                        title=args.get("prompt", "Continued conversation")[:80],
                                         provider_id=stream.provider,
                                     )
                                     # Find the original user message from the parent
@@ -537,17 +536,13 @@ async def proxy_chat(request: Request):
     )
 
     # Persist conversation entry immediately so it appears in history right away.
-    # Strip any task-instruction marker block so the title shows only the
-    # actual user message.
-    raw_message = body.get("message") or "Untitled"
-    clean_title = strip_task_instruction(raw_message) or "Untitled"
-    title = clean_title[:80]
+    # The title is intentionally NOT set here — save_frontend_messages extracts
+    # it from the real message content a few lines below.
     store.create_conversation(
         conversation_id=conversation_id,
         provider_id=body.get("provider"),
         conv_type=conv_type,
         parent_id=parent_id,
-        title=title,
     )
 
     # Seed frontend_messages with the user's message (without markers) so

@@ -167,13 +167,16 @@ class ConversationStore:
         session_id: Optional[str] = None,
         provider_id: Optional[str] = None,
         conv_type: str = "user_chat",
-        title: Optional[str] = None,
     ) -> str:
         """
         Create a new conversation and return its ID.
 
         Idempotent: if *conversation_id* already exists, returns it unchanged
         (supports the resume / continue flow).
+
+        The ``title`` key is intentionally NOT set here — it is only ever
+        extracted from the actual message list by ``save_messages`` or
+        ``save_frontend_messages``.
         """
         cid = conversation_id or str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
@@ -189,7 +192,6 @@ class ConversationStore:
                 "type": conv_type,
                 "status": "running",
                 "provider_id": provider_id,
-                "title": title or "Untitled",
                 "created_at": now,
                 "updated_at": now,
             }
@@ -202,10 +204,10 @@ class ConversationStore:
         """
         Full-replace the stored message list for a conversation.
 
-        Always re-extracts the title from the first user message.  This is
-        necessary because the initial title set by the API layer comes from
-        the raw request body which may contain a task-instruction marker
-        block — we fix it here once the real message list is available.
+        Always extracts the title from the first user message and sets it
+        in the index.  This is the primary path for title extraction — the
+        title key does not exist at all until this point (or until
+        ``save_frontend_messages`` is called).
         """
         with self._lock:
             meta = self._index.get(conversation_id)
@@ -285,7 +287,22 @@ class ConversationStore:
         return self.list_conversations(parent_id=conversation_id)
 
     def save_frontend_messages(self, conversation_id: str, messages: List[Dict]) -> None:
-        """Save frontend-formatted messages to a separate file."""
+        """Save frontend-formatted messages to a separate file.
+
+        If the conversation does not yet have a title, one is extracted from
+        the provided messages and persisted into the index.  This is the
+        first opportunity to set a title when the frontend seeds a user
+        message before the backend starts streaming.
+        """
+        # Try to extract a title before writing the file — if the
+        # conversation is brand new there won't be one yet.
+        with self._lock:
+            meta = self._index.get(conversation_id)
+            if meta is not None and "title" not in meta:
+                meta["title"] = _extract_title(messages)
+                meta["updated_at"] = datetime.now(timezone.utc).isoformat()
+                self._save_index()
+
         _atomic_write_json(self._frontend_messages_path(conversation_id), messages)
 
     def get_frontend_messages(self, conversation_id: str) -> List[Dict]:
