@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, RotateCcw, Sun, Moon, PanelLeftClose, PanelLeft, ChevronDown, History, Upload, FileText, X } from 'lucide-react'
+import { Send, RotateCcw, Sun, Moon, PanelLeftClose, PanelLeft, ChevronDown, History, Upload, FileText, X, ArrowRightFromLine } from 'lucide-react'
 import ChatMessage from './components/ChatMessage'
 import WelcomeScreen from './components/WelcomeScreen'
 import CodePanel from './components/CodePanel'
@@ -491,7 +491,7 @@ function App() {
     scrollToBottom()
   }, [messages, scrollToBottom])
 
-  const handleSend = async (interruptMessages = null, overrideMessage = null) => {
+  const handleSend = async (interruptMessages = null, overrideMessage = null, options = {}) => {
     const messageToSend = overrideMessage || inputValue.trim()
     if (!messageToSend) return
 
@@ -654,7 +654,8 @@ function App() {
         },
         abortControllerRef.current.signal,
         messagesToSend,
-        selectedProvider
+        selectedProvider,
+        options
       )
     } catch (error) {
       if (error.name !== 'AbortError') {
@@ -1373,14 +1374,32 @@ function App() {
               )}
             </div>
           </div>
-          <p className="input-hint">
+          <div className="input-hint">
             {pendingInterrupt
               ? `Interrupt queued: "${pendingInterrupt.message.substring(0, 50)}${pendingInterrupt.message.length > 50 ? '...' : ''}" - Waiting for tool calls to complete...`
               : isStreaming 
                 ? "Type a message to interrupt and redirect the agent with your new instructions."
-                : "AuroraCoder can search, browse, write code, and execute commands."
+                : messages.length > 0
+                  ? <>
+                      AuroraCoder can search, browse, write code, and execute commands.
+                      <button
+                        className="continue-new-chat-link"
+                        onClick={() => handleSend(null,
+                          'Please use the `continue_as_new_chat` tool to hand off this task to a new chat with fresh context. ' +
+                          'In your prompt, provide a comprehensive summary of: (1) what has been accomplished so far, ' +
+                          '(2) what remains to be done, (3) key files and decisions made, and ' +
+                          '(4) any important context the next agent needs to continue effectively.',
+                          { tools: 'force_continuation' }
+                        )}
+                        title="Ask the agent to summarize progress and continue in a fresh context"
+                      >
+                        <ArrowRightFromLine size={13} />
+                        Continue in new chat
+                      </button>
+                    </>
+                  : "AuroraCoder can search, browse, write code, and execute commands."
             }
-          </p>
+          </div>
         </div>
         )}
       </main>

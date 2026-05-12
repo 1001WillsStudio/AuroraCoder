@@ -42,7 +42,8 @@ MODEL_PROVIDERS = {
         "api_key": os.environ.get("DEEPSEEK_API_KEY", ""),
         "model": "deepseek-v4-pro",
         "supports_thinking": True,
-        "extra_body": None,  # Thinking is built-in for deepseek-reasoner
+        "extra_body": None,
+        "context_window": 1_048_576,
     },
     "nvidia": {
         "id": "nvidia",
@@ -53,6 +54,7 @@ MODEL_PROVIDERS = {
         "model": "deepseek-ai/deepseek-v3.2",
         "supports_thinking": True,
         "extra_body": {"chat_template_kwargs": {"thinking": True}},
+        "context_window": 128_000,
     },
     "nvidia-fast": {
         "id": "nvidia-fast",
@@ -63,6 +65,7 @@ MODEL_PROVIDERS = {
         "model": "deepseek-ai/deepseek-v3.2",
         "supports_thinking": False,
         "extra_body": None,
+        "context_window": 128_000,
     },
     "nvidia-glm5": {
         "id": "nvidia-glm5",
@@ -75,6 +78,7 @@ MODEL_PROVIDERS = {
         "extra_body": {
             "chat_template_kwargs": {"enable_thinking": True, "clear_thinking": False}
         },
+        "context_window": 128_000,
     },
     "nvidia-glm5-fast": {
         "id": "nvidia-glm5-fast",
@@ -85,6 +89,7 @@ MODEL_PROVIDERS = {
         "model": "z-ai/glm5",
         "supports_thinking": False,
         "extra_body": None,
+        "context_window": 128_000,
     },
     # ==========================================================================
     # Vertex AI Gemini Models (Google Cloud)
@@ -101,8 +106,8 @@ MODEL_PROVIDERS = {
         "location": "global",  # Vertex AI region - global for best availability
         "model": "google/gemini-3-pro-preview",
         "supports_thinking": True,
-        # thinking_level can be "low" or "high" via extra_body
         "extra_body": None,
+        "context_window": 1_048_576,
     },
     # ==========================================================================
     # Google AI Studio (API Key based)
@@ -118,6 +123,7 @@ MODEL_PROVIDERS = {
         "model": "gemini-3-pro-preview",
         "supports_thinking": True,
         "extra_body": None,
+        "context_window": 1_048_576,
     },
 }
 
@@ -147,7 +153,8 @@ MAX_TOOL_CONCURRENCY = 5  # Max parallel threads for concurrent-safe tools
 SUBAGENT_MAX_ITERATIONS = 15  # Lower cap than the parent agent
 SUBAGENT_MAX_RESULT_CHARS = 4000  # Truncate subagent final response to save parent context
 
-# Context continuation
+# Context continuation (CONTEXT_WINDOW_TOKENS is the fallback; per-provider
+# values live in MODEL_PROVIDERS[provider]["context_window"])
 CONTEXT_WINDOW_TOKENS = 128_000
 CONTEXT_WARN_THRESHOLD = 0.80
 

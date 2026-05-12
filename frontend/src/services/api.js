@@ -47,14 +47,15 @@ function parseSSEEvents(text) {
  * @param {array|null} existingMessages - Optional: existing raw messages to continue from (for interrupt/resume)
  * @param {string|null} provider - Optional: model provider to use
  */
-export async function streamChat(message, conversationId, callbacks, signal, existingMessages = null, provider = null) {
+export async function streamChat(message, conversationId, callbacks, signal, existingMessages = null, provider = null, options = {}) {
   const { onMessages, onDone, onError, onSubagentEvent } = callbacks
   
   const requestBody = {
     message,
     conversation_id: conversationId || null,
     messages: existingMessages,
-    provider: provider
+    provider: provider,
+    ...options
   }
   console.log('[streamChat] Request:', JSON.stringify(requestBody))
   

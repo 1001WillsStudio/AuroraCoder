@@ -244,12 +244,13 @@ def record_api_call(request_messages: list, response_message: dict):
 
 # --- Context Continuation Helpers ---
 
-def _filter_tools_by_context(tools: list, prompt_tokens: int) -> list:
+def _filter_tools_by_context(tools: list, prompt_tokens: int, context_window: int) -> list:
     """
-    Filter out the continue_as_new_chat tool until context usage
-    crosses CONTEXT_WARN_THRESHOLD.
+    Hide continue_as_new_chat from the tool list until context usage
+    crosses CONTEXT_WARN_THRESHOLD.  Keeps the model focused and avoids
+    wasting a tool slot when context is still plentiful.
     """
-    if prompt_tokens / CONTEXT_WINDOW_TOKENS < CONTEXT_WARN_THRESHOLD:
+    if context_window and prompt_tokens / context_window < CONTEXT_WARN_THRESHOLD:
         return [t for t in tools if t["function"]["name"] != "continue_as_new_chat"]
     return tools
 
@@ -295,8 +296,12 @@ def generate_chat_responses_stream_native(
     
     current_processing_messages = copy.deepcopy(messages)
     
-    # Get tool definitions (or use override for subagents)
+    # Get tool definitions (or use override for subagents / force_continuation)
     tools = tools_override if tools_override is not None else get_tool_definitions()
+    filter_continuation = tools_override is None  # only filter the default set
+    
+    # Per-provider context window (falls back to global default)
+    context_window = config.get("context_window", CONTEXT_WINDOW_TOKENS)
     
     system_message = SYSTEM_MESSAGE_TEMPLATE.format(
         current_time=datetime.datetime.now().isoformat(),
@@ -317,10 +322,14 @@ def generate_chat_responses_stream_native(
     while iteration_count < max_iterations:
         iteration_count += 1
         
-        # Filter tools based on current context usage
-        tools_for_iteration = _filter_tools_by_context(tools, prompt_tokens)
+        # Filter continuation tool out of the default tool set until context
+        # is high enough.  Skipped when tools_override is set (e.g. subagent
+        # tool set, or force_continuation from the UI).
+        tools_for_iteration = (
+            _filter_tools_by_context(tools, prompt_tokens, context_window)
+            if filter_continuation else tools
+        )
         
-        # Build API call kwargs
         api_kwargs = {
             "model": model_name,
             "messages": current_processing_messages,
@@ -463,7 +472,7 @@ def generate_chat_responses_stream_native(
         current_processing_messages.append(assistant_message)
         
         # Inject continuation notice once when context threshold is crossed
-        if prompt_tokens / CONTEXT_WINDOW_TOKENS >= CONTEXT_WARN_THRESHOLD:
+        if context_window and prompt_tokens / context_window >= CONTEXT_WARN_THRESHOLD:
             if not _has_continuation_notice_been_shown(current_processing_messages):
                 current_processing_messages[0]["content"] += (
                     "\n\n" + _CONTINUATION_NOTICE_MARKER + "\n" + CONTINUATION_NOTICE

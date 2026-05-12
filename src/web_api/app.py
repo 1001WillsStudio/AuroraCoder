@@ -90,7 +90,15 @@ def unregister_stream(conversation_id: str, cancel_event: threading.Event):
 
 
 def get_filtered_tools(mode: str):
-    """Return tool definitions filtered by mode, excluding the subagent tool."""
+    """Return tool definitions filtered by mode.
+
+    Modes:
+      - "read_only"          → subset safe for subagents (no writes)
+      - "force_continuation" → full tool set; becomes a tools_override so
+                                _filter_tools_by_context is bypassed and
+                                continue_as_new_chat is always available.
+    The subagent tool is excluded in every mode.
+    """
     from ..tool_definitions import NATIVE_TOOL_DEFINITIONS, SUBAGENT_READ_ONLY_TOOLS
     defs = []
     for td in NATIVE_TOOL_DEFINITIONS:

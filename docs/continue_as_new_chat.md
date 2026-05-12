@@ -10,10 +10,25 @@ frontend view mode — just a normal `user_chat`.
 
 ---
 
+## Triggers
+
+1. **Automatic (proactive):** When context usage crosses ~80% of the
+   provider's `context_window`, a notice is injected into the system
+   message prompting the agent to use the tool.
+2. **Manual (user-initiated):** The user clicks the "Continue in New Chat"
+   button in the UI, which sends a templated user message instructing
+   the agent to call `continue_as_new_chat`.
+
+The tool is **always included** in the tool list regardless of context
+usage, so it is available whenever the user requests it.
+
+---
+
 ## Flow
 
 ```
-Agent calls continue_as_new_chat(prompt="...")   (only when context ≥ 80%)
+Agent calls continue_as_new_chat(prompt="...")
+  (proactively after 80% notice, or on user request via UI button)
         │
         ▼
 main_flow.py: loop exits immediately with status="completed"
@@ -45,29 +60,33 @@ Frontend:
 
 | Location | Responsibility |
 |----------|---------------|
-| `_scan_for_continuation(raw_messages)` → line 165 | Scan assistant messages for `continue_as_new_chat` tool call; return `{"prompt": "..."}` |
-| `_start_continuation(new_cid, provider_id, user_msg)` → line 182 | Create ActiveStream + POST user message to backend (simulates user Send) |
-| `_proxy_backend_stream` continuation block → lines 261–293 | Detect, create child conv, seed message, fire `_start_continuation`, annotate events with `new_conversation_id` |
+| `_scan_for_continuation(raw_messages)` | Scan assistant messages for `continue_as_new_chat` tool call; return `{"prompt": "..."}` |
+| `_start_continuation(new_cid, provider_id, user_msg)` | Create ActiveStream + POST user message to backend (simulates user Send) |
+| `_proxy_backend_stream` continuation block | Detect, create child conv, seed message, fire `_start_continuation`, annotate events with `new_conversation_id` |
 
 ### `src/main_flow.py`
 
+The tool is **always included** in the tool list (no filtering). The 80%
+notice prompts the agent to use it proactively; users can trigger it at any
+time via the UI "Continue in New Chat" button.
+
 | Location | Responsibility |
 |----------|---------------|
-| `_filter_tools_by_context()` → line 247 | Hides `continue_as_new_chat` tool until context ≥ 80% |
-| System message assignment → lines 307–311 | Standard assignment — no `[CONTINUED FROM PREVIOUS SESSION]` marker |
-| Line 508–515 | When `continue_as_new_chat` is called, exit loop with `status="completed"` |
-| `_CONTINUATION_NOTICE_MARKER` injection → lines 466–470 | Once context crosses threshold, inject notice into system message informing agent the tool is available |
+| System message assignment | Standard — no `[CONTINUED FROM PREVIOUS SESSION]` marker |
+| `continue_as_new_chat` exit check | When called, exit loop with `status="completed"` |
+| `_CONTINUATION_NOTICE_MARKER` injection | Once context crosses per-provider threshold (~80%), inject notice prompting proactive use |
 
 ### `src/config.py`
 
 | Constant | Purpose |
 |----------|---------|
-| `CONTEXT_WINDOW_TOKENS` = 128 000 | Total context window |
-| `CONTEXT_WARN_THRESHOLD` = 0.80 | Show tool at 80% usage |
+| `MODEL_PROVIDERS[*]["context_window"]` | Per-provider context window size (e.g. 1 048 576 for DS V4 Pro, 128 000 for NVIDIA models) |
+| `CONTEXT_WINDOW_TOKENS` = 128 000 | Fallback when provider has no `context_window` key |
+| `CONTEXT_WARN_THRESHOLD` = 0.80 | Inject proactive-use notice at 80% usage |
 | `_CONTINUATION_NOTICE_MARKER` | `[CONTEXT CONTINUATION TOOL AVAILABLE]` — injected into system message header once |
 | `CONTINUATION_NOTICE` | One-liner telling the agent the tool is now available |
 
-### `src/tool_definitions.py` → lines 363–391
+### `src/tool_definitions.py`
 
 Tool definition with single `prompt` parameter.
 
@@ -79,9 +98,10 @@ No-op function — the tool call itself is the signal; proxy handles everything.
 
 | Location | Responsibility |
 |----------|---------------|
-| `handleLoadConversation` → line 946 | Only checks for `subagent` type — all conversations are either `user_chat` or `subagent` |
-| `onMessages` → lines 601–608 | Receives `new_conversation_id` → auto-navigates to continuation |
-| `continuationNavigatedRef` → line 191 | Tracks already-navigated conversations to avoid double-navigation |
+| "Continue in New Chat" button | Sends a templated user message asking the agent to call `continue_as_new_chat` |
+| `handleLoadConversation` | Only checks for `subagent` type — all conversations are either `user_chat` or `subagent` |
+| `onMessages` (in `handleSend`, `handleContinue`, `resumeStream`) | Receives `new_conversation_id` → auto-navigates to continuation |
+| `continuationNavigatedRef` | Tracks already-navigated conversations to avoid double-navigation |
 
 There is no special `user_chat_continued` type, no `viewMode === 'continued'`,
 no `handleStartContinued`, no continuation view bar, and no Start button.
@@ -101,6 +121,7 @@ The frontend treats continuations as ordinary `user_chat` conversations.
 | `handleStartContinued()` | App.jsx | No Start button needed — auto-started server-side |
 | Continuation view bar | App.jsx | Dead code |
 | `viewMode !== 'continued'` in input hiding | App.jsx | Dead code |
+| `_filter_tools_by_context()` | main_flow.py | Tool is now always included; removed gating |
 
 ---
 
@@ -108,8 +129,8 @@ The frontend treats continuations as ordinary `user_chat` conversations.
 
 1. ~~**`tool_definitions.py`**: The description said "system message" — **fixed**, now says "user message".~~
 
-2. **`_start_continuation`** sets `parent_id=None` on the ActiveStream (line 199)
+2. **`_start_continuation`** sets `parent_id=None` on the ActiveStream
    even though the store record has `parent_id=cid`.  This is intentional:
    the continuation is an independent `user_chat`, not a subagent, so it
    should not be cascaded in parent-sidebar hierarchy.  The cascading cancel
-   code (api.py lines 108–120) handles it explicitly via `new_conversation_id`.
+   code in api.py handles it explicitly via `new_conversation_id`.

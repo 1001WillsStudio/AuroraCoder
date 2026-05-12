@@ -2455,6 +2455,33 @@ body {
   margin-top: 12px;
 }
 
+.continue-new-chat-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  font-family: inherit;
+  font-size: inherit;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity var(--transition-fast), color var(--transition-fast);
+  vertical-align: baseline;
+}
+
+.continue-new-chat-link::before {
+  content: "·";
+  margin-right: 2px;
+}
+
+.continue-new-chat-link:hover {
+  opacity: 1;
+  color: var(--text-secondary);
+}
+
 /* ============================================================================
    Welcome Screen
    ============================================================================ */
