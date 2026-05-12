@@ -413,7 +413,7 @@ def get_tool_definitions() -> List[Dict[str, Any]]:
     return NATIVE_TOOL_DEFINITIONS
 
 
-def get_tool_function_map() -> Dict[str, callable]:
+def get_tool_function_map() -> Dict[str, Any]:
     """Returns the mapping of tool names to their implementation functions."""
     return TOOL_FUNCTION_MAP
 
