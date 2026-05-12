@@ -14,6 +14,10 @@ The tool creates a **brand-new conversation** seeded with a structured context p
 
 ## 1. Architecture & Data Flow
 
+**Key principle**: The agent loop (`src/`) doesn't know or care about "continuation." It's
+just another tool call. The proxy (8081) does all the dirty work of detecting the signal
+and managing conversation lifecycle.
+
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                         CURRENT SESSION                              │
@@ -22,12 +26,15 @@ The tool creates a **brand-new conversation** seeded with a structured context p
 │  2. At ≥80% → one-time hint injected into system message            │
 │  3. Agent sees hint, continues working until ready                  │
 │  4. Agent calls continue_as_new_chat(summary, files, tasks, ctx)    │
-│  5. Tool (pure signal): builds context package, returns JSON        │
-│  6. main_flow.py detects it, yields continue_requested status       │
-│     with new_conversation_id + context_package in SSE event         │
-│  7. Proxy (8081) creates child conversation, seeds messages,        │
-│     marks parent as "continued", forwards event to frontend         │
-│  8. Frontend auto-navigates to the new conversation                 │
+│     → Tool returns JSON string (just like any other tool)           │
+│  5. Agent finishes naturally, loop ends with normal "completed"     │
+│  6. Proxy (8081) notices the signal in the tool result within       │
+│     the SSE stream — creates child conversation, seeds messages,    │
+│     marks parent "continued", annotates events with new_convo_id    │
+│  7. Frontend sees new_conversation_id, auto-navigates               │
+│                                                                     │
+│  ⚠️ src/ changes NONE for the tool execution flow.                 │
+│     The loop is completely oblivious to continuation.               │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
                                     │
@@ -53,25 +60,26 @@ Backend (8080)                          Proxy (8081)                    Frontend
      ├─────────────────────────────────────►│  messages event              │
      │                                      ├─────────────────────────────►│
      │  ... agent calls continue_as_new_chat ...                           │
+     │  (just another tool call, loop       │                              │
+     │   continues as normal)               │                              │
      │                                      │                              │
-     │  messages event                      │                              │
-     │  status: "continue_requested"        │                              │
-     │  new_conversation_id: "abc123"       │                              │
-     ├─────────────────────────────────────►│                              │
+     │  messages event (status: running)    │                              │
+     │  [tool result contains JSON signal]  │  Proxy scans raw_messages,   │
+     ├─────────────────────────────────────►│  detects continue_as_new_chat │
+     │                                      │  signal → creates child convo │
+     │                                      │  seeds messages, marks parent │
+     │                                      │                              │
      │                                      │  messages event              │
-     │                                      │  (with new_conversation_id)  │
+     │                                      │  + new_conversation_id        │
      │                                      ├─────────────────────────────►│
-     │  done event (current convo)          │                              │
-     ├─────────────────────────────────────►│                              │
-     │                                      │  done event                  │
+     │                                      │                              │
+     │  done event (status: completed)      │                              │
+     ├─────────────────────────────────────►│  done event                  │
+     │                                      │  + new_conversation_id        │
      │                                      ├─────────────────────────────►│
      │                                      │                              │
      │                                      │  Frontend navigates to       │
-     │                                      │  new conversation, sends     │
-     │                                      │  POST /api/chat with         │
-     │                                      │  conversation_id=abc123      │
-     │                                      │  (no user message — backend  │
-     │                                      │   uses pre-seeded messages)  │
+     │                                      │  new conversation             │
      │                                      │                              │
 ```
 
@@ -249,10 +257,10 @@ Do NOT delay — if context overflows, information will be lost.
 
 **Architecture note**: This tool is a **pure signal generator**. It does NOT access the
 conversation store, the filesystem, or any external state. It builds a context package
-and returns a JSON signal. All persistence (creating the new conversation, seeding
-messages, marking the parent as "continued") is handled by the **proxy** (8081) when
-it detects the `continue_requested` status in the SSE stream. This keeps `src/`
-completely stateless.
+and returns a JSON string — just like any other tool. All persistence (creating the new
+conversation, seeding messages, marking the parent as "continued") is handled by the
+**proxy** (8081) when it scans the SSE `raw_messages` and finds this tool's result.
+The agent loop is completely oblivious — it just sees another tool result and continues.
 
 ```python
 """
@@ -388,7 +396,9 @@ Add `{continuation_hint}` placeholder to `SYSTEM_MESSAGE_TEMPLATE` (defaults to 
 
 ### 5.2 `src/main_flow.py`
 
-Add these functions:
+**Only two changes** — both are pure message-level operations, no continuation awareness:
+
+#### A) Context estimation + hint injection
 
 ```python
 from .config import (
@@ -399,28 +409,22 @@ from .config import (
 )
 
 def estimate_token_count(messages: list) -> int:
-    """Estimate token count from the message list using character ratio."""
     serialized = json.dumps(messages, ensure_ascii=False, default=str)
     return len(serialized) // 2.5
 
 def estimate_context_usage_pct(messages: list, context_window: int = None) -> float:
-    """Return estimated context usage as a fraction (0.0 to 1.0)."""
     if context_window is None:
         context_window = CONTEXT_WINDOW_TOKENS
-    tokens = estimate_token_count(messages)
-    return tokens / context_window
+    return estimate_token_count(messages) / context_window
 
 def _has_continuation_hint_been_shown(messages: list) -> bool:
-    """Check if the one-time continuation hint has already been injected."""
     for msg in messages:
         if msg.get("role") == "system" and _CONTINUATION_HINT_MARKER in msg.get("content", ""):
             return True
     return False
 ```
 
-Modify `generate_chat_responses_stream_native()`:
-
-After the system message is set (around line 289), add:
+After the system message is set (~line 289), add:
 
 ```python
     # --- Inject context continuation hint (one-time, at 80%+) ---
@@ -434,41 +438,26 @@ After the system message is set (around line 289), add:
             current_processing_messages[0]["content"] += "\n\n" + hint
 ```
 
-Also, after executing the `continue_as_new_chat` tool, detect its result and yield a special status. Modify the tool execution section (around line 446) to check for the continuation result:
+#### B) System message preservation for continued sessions
+
+When the incoming system message contains `[CONTINUED FROM PREVIOUS SESSION]`, preserve it
+instead of replacing it:
 
 ```python
-# After appending tool results, detect continuation
-for tc in batch:
-    tc_out, tool_name, result = _execute_single_tool(tc)
-    # ... existing code to append tool result ...
-    
-    # If this was a continue_as_new_chat call, mark the status
-    if tool_name == "continue_as_new_chat":
-        try:
-            parsed = json.loads(result)
-            if parsed.get("status") == "continue_requested":
-                _pending_continuation = parsed
-        except (json.JSONDecodeError, KeyError):
-            pass
+    if not current_processing_messages or current_processing_messages[0].get("role") != "system":
+        current_processing_messages.insert(0, {"role": "system", "content": system_message})
+    else:
+        existing = current_processing_messages[0]["content"]
+        if "[CONTINUED FROM PREVIOUS SESSION]" in existing:
+            # Preserve the continuation context, append the standard prompt
+            current_processing_messages[0]["content"] = existing + "\n\n---\n\n" + system_message
+        else:
+            current_processing_messages[0]["content"] = system_message
 ```
 
-Then at the yield point, include it:
-
-```python
-yield_dict = {
-    "messages": current_processing_messages,
-    "status": "continue_requested" if _pending_continuation else "running",
-    "provider": provider_id,
-}
-if _pending_continuation:
-    yield_dict["new_conversation_id"] = _pending_continuation["new_conversation_id"]
-    yield_dict["context_package"] = _pending_continuation.get("context_package", "")
-yield yield_dict
-
-if _pending_continuation:
-    # Don't loop further — let the frontend handle the transition
-    return
-```
+**That's it for `main_flow.py`**. No status detection, no special yielding, no early return.
+The `continue_as_new_chat` tool result flows through the loop just like any other tool.
+The proxy (8081) handles everything else.
 
 ### 5.3 `src/tool_definitions.py`
 
@@ -479,48 +468,71 @@ if _pending_continuation:
 
 ### 5.4 `src/web_api/app.py`
 
-- In `convert_messages_for_frontend()`, forward `new_conversation_id` and `context_package` when status is `"continue_requested"`.
-- No other changes needed — the backend remains stateless. The tool is a pure signal,
-  the proxy (8081) handles all persistence. No `set_continuation_dependencies` needed.
+No changes needed. The backend remains completely stateless. The tool returns a string
+like any other. The proxy does all the work.
 
-### 5.5 `conversation_history/api.py` (Proxy)
+### 5.5 `conversation_history/api.py` (Proxy — where the magic happens)
 
-The proxy needs to:
+The proxy scans `raw_messages` in each SSE event for the `continue_as_new_chat` tool
+result. When it finds the JSON signal (`"status": "continue_requested"`), it:
 
-1. Recognize the `continue_requested` status in proxied SSE events
-2. When seen, transition the current stream to "continued" and close it
-3. The frontend will then receive the `done` event with `new_conversation_id`
-
-Modify `_proxy_backend_stream()` to handle this:
+1. Extracts `new_conversation_id` and `context_package`
+2. Creates the child conversation via `store.create_conversation(parent_id=cid)`
+3. Seeds messages: context package as system, original user task as first user message
+4. Marks parent conversation as `"continued"`
+5. **Annotates** all subsequently-forwarded SSE events with `new_conversation_id`
+   so the frontend knows where to navigate
 
 ```python
-if etype in ("messages", "done"):
-    status = edata.get("status", stream.status)
-    if status == "continue_requested":
-        new_cid = edata.get("new_conversation_id")
-        if new_cid:
-            # Create the new conversation entry
-            context_pkg = edata.get("context_package", "")
-            store.create_conversation(
-                conversation_id=new_cid,
-                parent_id=cid,
-                conv_type="user_chat_continued",
-                title=extract_continuation_title(context_pkg),
-            )
-            # Seed the new conversation with the context package as a system message
-            # and the original task as the user message
-            original_task = _find_original_user_task(cid)
-            seed_messages = [
-                {"role": "system", "content": context_pkg},
-                {"role": "user", "content": original_task},
-            ]
-            store.save_messages(new_cid, seed_messages)
-            store.save_frontend_messages(new_cid, [
-                {"role": "user", "content": original_task}
-            ])
+# In _proxy_backend_stream(), after parsing each SSE event:
+
+# Scan for continuation signal in raw messages
+continuation_signal = _scan_for_continuation(edata.get("raw_messages", []))
+if continuation_signal:
+    new_cid = continuation_signal["new_conversation_id"]
+    context_pkg = continuation_signal["context_package"]
+    
+    store.create_conversation(
+        conversation_id=new_cid,
+        parent_id=cid,
+        conv_type="user_chat_continued",
+        title=_extract_title_from_context(context_pkg),
+    )
+    original_task = _find_original_user_task(cid)
+    store.save_messages(new_cid, [
+        {"role": "system", "content": context_pkg},
+        {"role": "user", "content": original_task},
+    ])
+    store.update_status(cid, "continued")
+    
+    # Attach new_conversation_id to this stream so subsequent events
+    # forwarded to frontend include it
+    stream.new_conversation_id = new_cid
+
+
+def _scan_for_continuation(raw_messages: list) -> dict | None:
+    """Scan tool results in raw_messages for the continue_as_new_chat JSON signal."""
+    for msg in raw_messages:
+        if msg.get("role") != "tool":
+            continue
+        content = msg.get("content", "")
+        if '"continue_as_new_chat"' in content or '"continue_requested"' in content:
+            try:
+                parsed = json.loads(content)
+                if parsed.get("status") == "continue_requested":
+                    return parsed
+            except json.JSONDecodeError:
+                pass
+    return None
 ```
 
-The proxy needs a helper to find the original user task from the parent conversation's stored messages.
+When forwarding events to frontend subscribers, if `stream.new_conversation_id` is set,
+annotate the event data with it:
+
+```python
+if stream.new_conversation_id:
+    edata["new_conversation_id"] = stream.new_conversation_id
+```
 
 ---
 
@@ -636,18 +648,17 @@ GET /api/conversations/{id}/continuation-chain
 - [ ] **`main_flow.py`**: Add `estimate_token_count()`, `estimate_context_usage_pct()`, `_has_continuation_hint_been_shown()`
 - [ ] **`main_flow.py`**: Inject hint into system message at 80%+ (one-time)
 - [ ] **`main_flow.py`**: Handle `[CONTINUED FROM PREVIOUS SESSION]` marker — preserve continuation context
-- [ ] **`main_flow.py`**: Detect `continue_as_new_chat` result and yield `continue_requested` status
-- [ ] **`src/core_tools/continue_chat.py`**: New file — tool implementation
+- [ ] **`src/core_tools/continue_chat.py`**: New file — pure signal tool implementation
 - [ ] **`tool_definitions.py`**: Register the new tool
 
 ### Phase 2: Proxy & Storage
 
-- [ ] **`conversation_history/api.py`**: Handle `continue_requested` status — create child conversation, seed messages, update parent status
+- [ ] **`conversation_history/api.py`**: Add `_scan_for_continuation()` — scan raw_messages for the signal; create child convo, seed messages, mark parent "continued", annotate events with `new_conversation_id`
 - [ ] **`conversation_history/conversation_store.py`**: Add `conv_type="user_chat_continued"` support if needed
 
 ### Phase 3: Frontend
 
-- [ ] **`App.jsx`**: SSE handler for `continue_requested` status
+- [ ] **`App.jsx`**: SSE handler for `new_conversation_id` in events
 - [ ] **`App.jsx`**: Auto-navigate to new conversation
 - [ ] **`App.jsx`**: Sidebar — parent/child relationship display
 - [ ] **`App.jsx`**: Chat view — continuation banner
@@ -674,7 +685,7 @@ GET /api/conversations/{id}/continuation-chain
 | **Agent calls tool too early** | The hint only appears at 80%+, but the tool is always available in the tool list. The agent can call it any time. If called too early, the new session still works — just a minor efficiency loss. |
 | **Agent calls tool at 99%** | The urgent hint variant warns strongly. If the call succeeds before context overflow, transition is clean. If context overflows mid-response, the tool call may be malformed — the backend will surface the error. |
 | **Frontend disconnected during transition** | The proxy (8081) keeps the backend connection alive. The new conversation is created server-side. When the frontend reconnects, it discovers the new conversation via the store. |
-| **Multiple continue_as_new_chat in one turn** | After the first call, the stream ends with `continue_requested`. The agent cannot call it again in the same turn. |
+| **Multiple continue_as_new_chat in one turn** | The agent can technically call it multiple times, but the proxy only acts on the first signal it detects. Subsequent calls are just JSON in tool results. |
 | **Continue from a continued conversation** | Fully supported — each continuation creates a new child with `parent_id` pointing to the immediate parent, forming a chain. |
 | **Workspace file state** | The new conversation uses the same Docker container and session — all files, running processes, and shell state persist. This is already how "Continue" (after max_iterations) works today. |
 | **Provider/model mismatch** | The new conversation uses whatever provider the frontend selects (defaults to the same as parent). Changeable in UI. |
@@ -690,7 +701,7 @@ GET /api/conversations/{id}/continuation-chain
 
 3. **Pure signal tool**: `continue_as_new_chat` is a pure function — it builds a JSON signal with zero side effects. No store access, no filesystem writes. Marked read-only so it can run in parallel with other reads. All persistence is handled by the proxy (8081).
 
-4. **Proxy handles persistence**: The proxy (8081) already owns conversation storage. The backend signals intent via SSE status; the proxy acts on it. This maintains the existing separation of concerns.
+4. **Agent-loop-oblivious**: `main_flow.py` has zero awareness of continuation. The `continue_as_new_chat` tool is just another function returning a string. The proxy (8081) scans `raw_messages` in SSE events, detects the JSON signal in the tool result, and handles all persistence. The loop never sees a special status, never returns early.
 
 5. **System message preservation**: The `[CONTINUED FROM PREVIOUS SESSION]` marker ensures the context package survives the system message regeneration in `main_flow.py`.
 
