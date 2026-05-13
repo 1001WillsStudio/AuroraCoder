@@ -472,7 +472,7 @@ def generate_chat_responses_stream_native(
 
         # Update prompt_tokens from the usage response
         if current_usage:
-            prompt_tokens = current_usage.get("prompt_tokens", prompt_tokens)
+            prompt_tokens = current_usage.get("prompt_tokens", 0)
 
         record_api_call(messages, assistant_message)
 
@@ -515,12 +515,14 @@ def generate_chat_responses_stream_native(
         # Add tool call requests to messages
         messages.append(assistant_message)
         
-        # Inject continuation notice once when context threshold is crossed
-        if context_window and prompt_tokens / context_window >= CONTEXT_WARN_THRESHOLD:
-            if not _has_continuation_notice_been_shown(messages):
-                messages[0]["content"] += (
-                    "\n\n" + _CONTINUATION_NOTICE_MARKER + "\n" + CONTINUATION_NOTICE
-                )
+        # Warn once when estimated context nears the model's window.
+        # prompt_tokens already covers all messages sent.  Add completion_tokens
+        # because the assistant response + tool results just appended will become
+        # input on the next turn.
+        if context_window and current_usage and not _has_continuation_notice_been_shown(messages):
+            estimated = current_usage.get("prompt_tokens", 0) + current_usage.get("completion_tokens", 0)
+            if estimated / context_window >= CONTEXT_WARN_THRESHOLD:
+                messages.append({"role": "system", "content": _CONTINUATION_NOTICE_MARKER + "\n" + CONTINUATION_NOTICE})
         
         code_tool_called = _execute_tool_calls(current_tool_calls, messages)
 
