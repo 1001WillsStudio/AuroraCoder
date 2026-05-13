@@ -140,6 +140,18 @@ class FileOperations:
                 end_content = str(edit.get("end_line_content") or edit.get("end_content") or "")
                 replace_content = str(edit.get("replace_content", ""))
 
+                # --- Multiline guard: reject start_line_content / end_line_content ---
+                # --- that contain newlines.  These fields must be exactly one   ---
+                # --- line to serve as anchors for line-range verification.     ---
+                if "\n" in start_content:
+                    return (f"Error in edit #{i + 1}: start_line_content must be a single line "
+                            f"(no newlines).  You passed multi-line content.  Please provide "
+                            f"only the SINGLE LINE of text at start_line as it appears in the file.")
+                if "\n" in end_content:
+                    return (f"Error in edit #{i + 1}: end_line_content must be a single line "
+                            f"(no newlines).  You passed multi-line content.  Please provide "
+                            f"only the SINGLE LINE of text at end_line as it appears in the file.")
+
                 # --- Defaults: end_line → start_line, end_content → file ---
                 if end_line is None:
                     end_line = start_line
