@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { CODE_TOOLS, FILE_SYSTEM_TOOLS } from '../utils/streamUtils'
+import { uploadWorkspace } from '../services/api'
 
 /**
  * Manages all file-related state: edited files (code panel), file tree refresh
@@ -210,7 +211,6 @@ export function useFileTracking(conversationId, messages, isStreaming) {
     if (!fileList || fileList.length === 0) return
     setIsUploading(true)
     try {
-      const { uploadWorkspace } = await import('../services/api')
       await uploadWorkspace(fileList)
       setFileTreeRefreshTrigger(prev => prev + 1)
     } catch (err) {
