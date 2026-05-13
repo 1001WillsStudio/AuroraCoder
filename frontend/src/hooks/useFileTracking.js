@@ -65,9 +65,12 @@ export function useFileTracking(conversationId, messages, isStreaming) {
     }
   }, [conversationId, closedFiles])
 
-  // ── Auto-show code panel when code tools are detected ───────────────────
+  // ── Shared helper: open the code panel IF there are files to show ──────
+  // Called at two points — when a code tool starts AND when its result
+  // arrives — so the panel only appears when there is actual content.
 
-  useEffect(() => {
+  const maybeOpenCodePanel = useCallback(() => {
+    if (editedFiles.length === 0) return                     // nothing to show → stay closed
     const hasCodeActivity = messages.some(msg =>
       msg.activities?.some(a =>
         a.type === 'tool_call' && CODE_TOOLS.includes(a.name)
@@ -76,7 +79,38 @@ export function useFileTracking(conversationId, messages, isStreaming) {
     if (hasCodeActivity) {
       setShowCodePanel(true)
     }
-  }, [messages])
+  }, [messages, editedFiles])
+
+  // ── (A) Tool START — code tool call appears; kick off diff fetch & try open ──
+
+  useEffect(() => {
+    const hasCodeCall = messages.some(msg =>
+      msg.activities?.some(a =>
+        a.type === 'tool_call' && CODE_TOOLS.includes(a.name)
+      )
+    )
+    if (hasCodeCall) {
+      if (conversationId) fetchFileDiffs()                   // start fetching so diffs are ready at tool end
+      maybeOpenCodePanel()
+    }
+  }, [messages, maybeOpenCodePanel, conversationId, fetchFileDiffs])
+
+  // ── (B) Tool END — code tool result arrives; diffs should be ready by now ──
+
+  useEffect(() => {
+    const hasCodeResult = messages.some(msg =>
+      msg.activities?.some(a => {
+        if (a.type !== 'tool_result') return false
+        const toolCall = msg.activities?.find(
+          tc => tc.type === 'tool_call' && tc.id === a.tool_call_id
+        )
+        return toolCall && CODE_TOOLS.includes(toolCall.name)
+      })
+    )
+    if (hasCodeResult) {
+      maybeOpenCodePanel()
+    }
+  }, [messages, maybeOpenCodePanel])
 
   // ── File tree refresh tracking ──────────────────────────────────────────
 

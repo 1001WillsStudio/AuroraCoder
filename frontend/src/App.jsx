@@ -479,7 +479,7 @@ function App() {
   // ── Render ──────────────────────────────────────────────────────────────
 
   return (
-    <div className={`app ${showCodePanel ? 'code-mode' : ''} ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+    <div className={`app ${(showCodePanel && editedFiles.length > 0) ? 'code-mode' : ''} ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
       <Sidebar
         collapsed={sidebarCollapsed}
         onToggleCollapse={toggleSidebar}
