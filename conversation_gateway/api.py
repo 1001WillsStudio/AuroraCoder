@@ -25,6 +25,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 import uuid
 import shutil
 import tempfile
@@ -94,7 +95,14 @@ _streams_lock = asyncio.Lock()
 
 
 async def _cancel_active_stream(conversation_id: str) -> None:
-    """Cancel any in-progress stream for a conversation, including child subagent streams."""
+    """Cancel any in-progress stream for a conversation, including child subagent streams.
+
+    All cancellations are initiated concurrently so the total wait is bounded to a
+    single timeout regardless of how many subagent children exist.
+    """
+    t_start = time.perf_counter()
+    tasks_to_await: List[asyncio.Task] = []
+
     async with _streams_lock:
         old = active_streams.get(conversation_id)
         # Find child streams whose parent_id matches this conversation
@@ -103,26 +111,20 @@ async def _cancel_active_stream(conversation_id: str) -> None:
             if s.parent_id == conversation_id and not s.finished
         ]
 
-    # Cancel child subagent streams first
+    # Cancel child subagent streams — signal all first, then await together
     for child in children:
         logger.info(f"[cancel] Cascading cancel to child {child.conversation_id[:8]}...")
         child.cancel_event.set()
         if child.task and not child.task.done():
             child.task.cancel()
-            try:
-                await asyncio.wait_for(asyncio.shield(child.task), timeout=2.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
-                pass
+            tasks_to_await.append(child.task)
 
     # Cancel the parent stream
     if old and not old.finished:
         old.cancel_event.set()
         if old.task and not old.task.done():
             old.task.cancel()
-            try:
-                await asyncio.wait_for(asyncio.shield(old.task), timeout=2.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
-                pass
+            tasks_to_await.append(old.task)
 
     # Cancel any continuation child created by this stream
     async with _streams_lock:
@@ -134,10 +136,20 @@ async def _cancel_active_stream(conversation_id: str) -> None:
                 continuation.cancel_event.set()
                 if continuation.task and not continuation.task.done():
                     continuation.task.cancel()
-                    try:
-                        await asyncio.wait_for(asyncio.shield(continuation.task), timeout=2.0)
-                    except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
-                        pass
+                    tasks_to_await.append(continuation.task)
+
+    # Await all cancelled tasks concurrently — total wait bounded to 2 s
+    if tasks_to_await:
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*tasks_to_await, return_exceptions=True),
+                timeout=2.0,
+            )
+        except (asyncio.TimeoutError, Exception):
+            pass
+    elapsed = time.perf_counter() - t_start
+    if elapsed > 0.1:
+        logger.info(f"[cancel] [{conversation_id[:8]}...] duration={elapsed:.3f}s tasks_awaited={len(tasks_to_await)}")
 
 
 async def _has_active_main_stream(exclude: Optional[str] = None) -> Optional[str]:
@@ -248,7 +260,7 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
     """
     cid = stream.conversation_id
     last_saved_msg_count = 0
-
+    backend_connect_start = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(None)) as client:
             async with client.stream(
@@ -257,6 +269,8 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                 json=request_body,
                 headers={"Content-Type": "application/json"},
             ) as response:
+                backend_connect_elapsed = time.perf_counter() - backend_connect_start
+                logger.info(f"[proxy] [{cid[:8]}...] backend_connect={backend_connect_elapsed:.3f}s status={response.status_code}")
                 if response.status_code != 200:
                     body = (await response.aread()).decode(errors="replace")
                     err = {"message": f"Backend returned {response.status_code}: {body[:500]}", "type": "BackendError"}
@@ -560,7 +574,12 @@ async def proxy_chat(request: Request):
     The backend connection is maintained by this server — the frontend
     can disconnect and reconnect without losing the stream.
     """
+    t0 = time.perf_counter()
     body = await request.json()
+    t1 = time.perf_counter()
+    body_size = len(json.dumps(body)) if body else 0
+    cid_tag = body.get('conversation_id', 'new')[:8]
+    logger.info(f"[proxy] [{cid_tag}...] json_parse={t1-t0:.3f}s body_size={body_size}")
     conversation_id = body.get("conversation_id") or str(uuid.uuid4())
     body["conversation_id"] = conversation_id
 
@@ -581,7 +600,10 @@ async def proxy_chat(request: Request):
             )
 
     # Cancel any previous stream for the SAME conversation (re-send / continue)
+    t2 = time.perf_counter()
     await _cancel_active_stream(conversation_id)
+    t3 = time.perf_counter()
+    logger.info(f"[proxy] [{cid_tag}...] cancel_stream={t3-t2:.3f}s")
 
     stream = ActiveStream(
         conversation_id=conversation_id,
@@ -590,9 +612,7 @@ async def proxy_chat(request: Request):
         provider=body.get("provider"),
     )
 
-    # Persist conversation entry immediately so it appears in history right away.
-    # The title is intentionally NOT set here — save_frontend_messages extracts
-    # it from the real message content a few lines below.
+    t4 = time.perf_counter()
     store.create_conversation(
         conversation_id=conversation_id,
         provider_id=body.get("provider"),
@@ -608,6 +628,8 @@ async def proxy_chat(request: Request):
         store.save_frontend_messages(conversation_id, [
             {"role": "user", "content": clean_content.strip()}
         ])
+    t5 = time.perf_counter()
+    logger.info(f"[proxy] [{cid_tag}...] store_ops={t5-t4:.3f}s")
 
     async with _streams_lock:
         active_streams[conversation_id] = stream
@@ -631,6 +653,9 @@ async def proxy_chat(request: Request):
 
     queue: asyncio.Queue = asyncio.Queue(maxsize=256)
     stream.subscribers.append(queue)
+
+    t_total = time.perf_counter() - t0
+    logger.info(f"[proxy] [{cid_tag}...] total_pre_backend={t_total:.3f}s json={t1-t0:.3f}s cancel={t3-t2:.3f}s store={t5-t4:.3f}s")
 
     return StreamingResponse(
         _subscriber_sse(stream, queue, request),
