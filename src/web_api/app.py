@@ -194,6 +194,7 @@ async def stream_chat_response(
     max_iterations: int = 30,
     provider: Optional[str] = None,
     tools_override: Optional[list] = None,
+    restart_shell: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Stream chat responses as SSE events."""
     cancel_event = threading.Event()
@@ -207,6 +208,12 @@ async def stream_chat_response(
 
         def run_generator():
             try:
+                if restart_shell:
+                    try:
+                        shell.restart()
+                    except Exception as e:
+                        logger.warning(f"[stream] Failed to restart shell: {e}")
+
                 current_messages = messages
                 status = "running"
                 current_provider = provider
@@ -406,15 +413,11 @@ async def chat(chat_request: ChatRequest, request: Request):
 
     set_current_conversation(conversation_id)
 
+    is_new_conversation = not chat_request.conversation_id
     is_continue = bool(chat_request.messages and not chat_request.message)
 
-    if not is_continue:
+    if is_new_conversation:
         clear_conversation_snapshots(conversation_id)
-        try:
-            shell.restart()
-            logger.info(f"[API] Restarted persistent shell for new conversation {conversation_id}")
-        except Exception as e:
-            logger.warning(f"[API] Failed to restart shell: {e}")
 
     messages = (chat_request.messages or []).copy()
     if chat_request.message:
@@ -430,7 +433,7 @@ async def chat(chat_request: ChatRequest, request: Request):
         logger.info(f"[API] Tool override ({chat_request.tools}): {tool_names}")
 
     return StreamingResponse(
-        stream_chat_response(messages, conversation_id, request, provider=provider, tools_override=tools_override),
+        stream_chat_response(messages, conversation_id, request, provider=provider, tools_override=tools_override, restart_shell=is_new_conversation),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
