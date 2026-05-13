@@ -44,15 +44,14 @@ from .core_tools.continue_chat import continue_as_new_chat
 # """
 # ========================================================================
 
-EDIT_FILE_DESCRIPTION = """Aider-style search and replace. Finds exact content starting from `start_line` and replaces it. Now supports multiple edits per call using range-based anchors.
+EDIT_FILE_DESCRIPTION = """Aider-style search and replace. Now supports multiple edits per call using range-based anchors.
 
 RULES:
-- Each edit in `edits` specifies start_line+start_content and end_line+end_content as boundary anchors
-- `start_content` and `end_content` must match file content at those exact line numbers (trailing spaces are ignored)
-- Everything between and including the start and end lines is replaced with `replace_content`
-- Multiple edits can be specified in one call; edits are applied bottom-to-top automatically
+- Each edit in `edits` specifies a line range (start_line..end_line) and replacement content
+- `start_content` and `end_content` are safety anchors — they verify you see the same file; trailing spaces are ignored, but leading whitespace (indentation) MUST match
+- `end_line` defaults to `start_line` (single-line edit); `end_content` auto-fills from file if omitted (save tokens)
+- Multiple edits are applied bottom-to-top; ranges must not overlap
 - Use empty `replace_content` to delete the range
-- Anchors (`start_content`,`end_content`) must each be a SINGLE line exactly matching that line in the file
 """
 
 
@@ -219,7 +218,7 @@ NATIVE_TOOL_DEFINITIONS = [
                                     "description": "New content that replaces everything from start_line through end_line (inclusive). Use empty string to delete the range."
                                 }
                             },
-                            "required": ["start_line", "start_content", "end_line", "end_content", "replace_content"]
+                            "required": ["start_line", "start_content", "replace_content"]
                         }
                     }
                 },

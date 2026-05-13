@@ -141,22 +141,25 @@ class FileOperations:
                 end_content = str(edit.get("end_content", ""))
                 replace_content = str(edit.get("replace_content", ""))
 
-                # Validate line numbers
-                if not isinstance(start_line, int) or start_line < 1:
-                    return (f"Error in edit #{i + 1}: start_line must be a positive integer, "
-                            f"got {start_line}")
+                # --- Defaults: end_line → start_line, end_content → file ---
+                if end_line is None:
+                    end_line = start_line
                 if not isinstance(end_line, int) or end_line < 1:
                     return (f"Error in edit #{i + 1}: end_line must be a positive integer, "
                             f"got {end_line}")
-                if start_line > total_lines:
-                    return (f"Error in edit #{i + 1}: start_line {start_line} exceeds "
-                            f"file length ({total_lines} lines)")
                 if end_line > total_lines:
                     return (f"Error in edit #{i + 1}: end_line {end_line} exceeds "
                             f"file length ({total_lines} lines)")
                 if start_line > end_line:
                     return (f"Error in edit #{i + 1}: start_line ({start_line}) must be "
                             f"<= end_line ({end_line})")
+                if not end_content:
+                    end_content = _normalise_line(original_lines[end_line - 1])
+
+                # Validate line numbers
+                if not isinstance(start_line, int) or start_line < 1:
+                    return (f"Error in edit #{i + 1}: start_line must be a positive integer, "
+                            f"got {start_line}")
 
                 start_idx = start_line - 1  # 0-based
                 end_idx = end_line - 1      # 0-based
