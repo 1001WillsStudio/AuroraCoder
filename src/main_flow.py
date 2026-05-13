@@ -7,7 +7,7 @@ Supports multiple model providers that can be switched at runtime.
 
 import json
 import datetime
-import copy
+
 import re
 from typing import Dict, List, Any, Generator, Set, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -294,7 +294,10 @@ def generate_chat_responses_stream_native(
     model_name = config["model"]
     extra_body = config.get("extra_body")
     
-    current_processing_messages = copy.deepcopy(messages)
+    # Strip old code interpreter blocks from tool messages before copying
+    clean_previous_interpreter_blocks(messages)
+    
+    current_processing_messages = list(messages)
     
     # Get tool definitions (or use override for subagents / force_continuation)
     tools = tools_override if tools_override is not None else get_tool_definitions()
@@ -312,8 +315,7 @@ def generate_chat_responses_stream_native(
     # Add system message if not already present.
     if not current_processing_messages or current_processing_messages[0].get("role") != "system":
         current_processing_messages.insert(0, {"role": "system", "content": system_message})
-    else:
-        current_processing_messages[0]["content"] = system_message
+    # System message already present -- leave immutable
     
     iteration_count = 0
     streaming_errors = 0
@@ -427,10 +429,7 @@ def generate_chat_responses_stream_native(
         if current_usage:
             prompt_tokens = current_usage.get("prompt_tokens", prompt_tokens)
 
-        record_api_call(
-            copy.deepcopy(current_processing_messages),
-            copy.deepcopy(assistant_message),
-        )
+        record_api_call(current_processing_messages, assistant_message)
 
         current_tool_calls = [
             tc for tc in current_tool_calls 

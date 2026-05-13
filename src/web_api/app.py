@@ -207,7 +207,6 @@ async def stream_chat_response(
 
         def run_generator():
             try:
-                last_sent_hash = None
                 current_messages = messages
                 status = "running"
                 current_provider = provider
@@ -228,10 +227,7 @@ async def stream_chat_response(
 
                     frontend_messages = convert_messages_for_frontend(current_messages)
 
-                    msg_hash = hash(json.dumps(frontend_messages, default=str))
-                    if msg_hash != last_sent_hash:
-                        last_sent_hash = msg_hash
-                        loop.call_soon_threadsafe(
+                    loop.call_soon_threadsafe(
                             queue.put_nowait,
                             ("messages", {
                                 "messages": frontend_messages,
