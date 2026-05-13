@@ -363,8 +363,9 @@ def generate_chat_responses_stream_native(
     # System message already present -- leave immutable
     
     iteration_count = 0
+    prompt_tokens = 0  # latest API call's prompt tokens, persists across iterations
+    current_usage = None  # full usage dict from latest streaming chunk
     streaming_errors = 0
-    prompt_tokens = 0  # Track accumulated prompt tokens across iterations
     
     while iteration_count < max_iterations:
         iteration_count += 1
@@ -398,7 +399,6 @@ def generate_chat_responses_stream_native(
         current_reasoning = ""
         assistant_message = {"role": "assistant"}
         current_tool_calls = []
-        current_usage = None
         
         try:
             for chunk in completion_stream:
@@ -470,9 +470,10 @@ def generate_chat_responses_stream_native(
 
         streaming_errors = 0
 
-        # Update prompt_tokens from the usage response
+        # Remember latest prompt tokens for next iteration's tool filtering
         if current_usage:
             prompt_tokens = current_usage.get("prompt_tokens", 0)
+
 
         record_api_call(messages, assistant_message)
 
