@@ -226,6 +226,52 @@ def _execute_single_tool(tool_call: Dict) -> Tuple[Dict, str, str]:
         result = f"Error executing tool '{tool_name}': {type(e).__name__}: {e}"
     return (tool_call, tool_name, result)
 
+def _execute_tool_calls(
+    current_tool_calls: List[Dict],
+    messages: List[Dict],
+) -> bool:
+    """
+    Execute tool calls, running concurrent-safe tools in parallel.
+    Appends tool response messages to `messages` in place.
+
+    Returns:
+        True if any code-related tool was called
+    """
+    code_tool_called = False
+
+    for is_safe, batch in partition_tool_calls(current_tool_calls):
+        if is_safe and len(batch) > 1:
+            futures = {
+                _tool_executor.submit(_execute_single_tool, tc): tc
+                for tc in batch
+            }
+            # Collect results keyed by tool_call id to preserve original order
+            results_by_id = {}
+            for future in as_completed(futures):
+                tc, tool_name, result = future.result()
+                results_by_id[tc["id"]] = (tc, tool_name, result)
+            # Append in original batch order
+            for tc in batch:
+                tc_out, tool_name, result = results_by_id[tc["id"]]
+                if should_trigger_code_interpreter(tool_name):
+                    code_tool_called = True
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc_out["id"],
+                    "content": result
+                })
+        else:
+            for tc in batch:
+                tc_out, tool_name, result = _execute_single_tool(tc)
+                if should_trigger_code_interpreter(tool_name):
+                    code_tool_called = True
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc_out["id"],
+                    "content": result
+                })
+
+    return code_tool_called
 
 def record_api_call(request_messages: list, response_message: dict):
     """Append one request→response pair to today's training log."""
@@ -297,7 +343,6 @@ def generate_chat_responses_stream_native(
     # Strip old code interpreter blocks from tool messages before copying
     clean_previous_interpreter_blocks(messages)
     
-    current_processing_messages = list(messages)
     
     # Get tool definitions (or use override for subagents / force_continuation)
     tools = tools_override if tools_override is not None else get_tool_definitions()
@@ -313,8 +358,8 @@ def generate_chat_responses_stream_native(
     )
     
     # Add system message if not already present.
-    if not current_processing_messages or current_processing_messages[0].get("role") != "system":
-        current_processing_messages.insert(0, {"role": "system", "content": system_message})
+    if not messages or messages[0].get("role") != "system":
+        messages.insert(0, {"role": "system", "content": system_message})
     # System message already present -- leave immutable
     
     iteration_count = 0
@@ -334,7 +379,7 @@ def generate_chat_responses_stream_native(
         
         api_kwargs = {
             "model": model_name,
-            "messages": current_processing_messages,
+            "messages": messages,
             "tools": tools_for_iteration,
             "tool_choice": "auto",
             "max_tokens": MAX_TOKENS,
@@ -405,7 +450,7 @@ def generate_chat_responses_stream_native(
                 if current_tool_calls:
                     assistant_message["tool_calls"] = current_tool_calls
                 yield {
-                    "messages": current_processing_messages + [assistant_message],
+                    "messages": messages + [assistant_message],
                     "status": "running",
                     "provider": provider_id
                 }
@@ -415,7 +460,7 @@ def generate_chat_responses_stream_native(
             print(f"Streaming error ({streaming_errors}/{MAX_STREAMING_RETRIES}): {e}")
             if streaming_errors >= MAX_STREAMING_RETRIES:
                 yield {
-                    "messages": current_processing_messages,
+                    "messages": messages,
                     "status": "error",
                     "error": f"Streaming failed after {MAX_STREAMING_RETRIES} retries: {e}",
                     "provider": provider_id
@@ -429,7 +474,7 @@ def generate_chat_responses_stream_native(
         if current_usage:
             prompt_tokens = current_usage.get("prompt_tokens", prompt_tokens)
 
-        record_api_call(current_processing_messages, assistant_message)
+        record_api_call(messages, assistant_message)
 
         current_tool_calls = [
             tc for tc in current_tool_calls 
@@ -452,71 +497,37 @@ def generate_chat_responses_stream_native(
         # If no tool calls, we're done (or retry if empty)
         if not current_tool_calls:
             if not current_content:
-                current_processing_messages.append({
+                messages.append({
                     "role": "system",
                     "content": """This message only appears when you made this mistake in previous (removed) responses.
                     You did not provide any tool call or reply last time."""
                 })
                 continue
             else:
-                current_processing_messages.append(assistant_message)
+                messages.append(assistant_message)
                 yield {
-                    "messages": current_processing_messages,
+                    "messages": messages,
                     "status": "completed",
                     "provider": provider_id
                 }
                 return
 
         # Add tool call requests to messages
-        current_processing_messages.append(assistant_message)
+        messages.append(assistant_message)
         
         # Inject continuation notice once when context threshold is crossed
         if context_window and prompt_tokens / context_window >= CONTEXT_WARN_THRESHOLD:
-            if not _has_continuation_notice_been_shown(current_processing_messages):
-                current_processing_messages[0]["content"] += (
+            if not _has_continuation_notice_been_shown(messages):
+                messages[0]["content"] += (
                     "\n\n" + _CONTINUATION_NOTICE_MARKER + "\n" + CONTINUATION_NOTICE
                 )
         
-        # Track if any code-related tool was called in this batch
-        code_tool_called = False
-        
-        # Execute tool calls — concurrent-safe tools run in parallel
-        for is_safe, batch in partition_tool_calls(current_tool_calls):
-            if is_safe and len(batch) > 1:
-                futures = {
-                    _tool_executor.submit(_execute_single_tool, tc): tc
-                    for tc in batch
-                }
-                # Collect results keyed by tool_call id to preserve original order
-                results_by_id = {}
-                for future in as_completed(futures):
-                    tc, tool_name, result = future.result()
-                    results_by_id[tc["id"]] = (tc, tool_name, result)
-                # Append in original batch order
-                for tc in batch:
-                    tc_out, tool_name, result = results_by_id[tc["id"]]
-                    if should_trigger_code_interpreter(tool_name):
-                        code_tool_called = True
-                    current_processing_messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc_out["id"],
-                        "content": result
-                    })
-            else:
-                for tc in batch:
-                    tc_out, tool_name, result = _execute_single_tool(tc)
-                    if should_trigger_code_interpreter(tool_name):
-                        code_tool_called = True
-                    current_processing_messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc_out["id"],
-                        "content": result
-                    })
+        code_tool_called = _execute_tool_calls(current_tool_calls, messages)
 
         # If continue_as_new_chat was called, end the loop immediately
         if any(tc["function"]["name"] == "continue_as_new_chat" for tc in current_tool_calls):
             yield {
-                "messages": current_processing_messages,
+                "messages": messages,
                 "status": "completed",
                 "provider": provider_id
             }
@@ -525,28 +536,28 @@ def generate_chat_responses_stream_native(
         # If any code-related tool was called, update the interpreter display
         if code_tool_called:
             # Clean previous interpreter blocks from all tool messages
-            clean_previous_interpreter_blocks(current_processing_messages)
+            clean_previous_interpreter_blocks(messages)
             
             # Generate consolidated interpreter display for all open files
-            interpreter_display = generate_consolidated_interpreter_display(current_processing_messages)
+            interpreter_display = generate_consolidated_interpreter_display(messages)
             
             # Append interpreter to the last tool response
-            if interpreter_display and current_processing_messages:
+            if interpreter_display and messages:
                 # Find the last tool message and append interpreter
-                for i in range(len(current_processing_messages) - 1, -1, -1):
-                    if current_processing_messages[i].get("role") == "tool":
-                        current_processing_messages[i]["content"] += "\n\n" + interpreter_display
+                for i in range(len(messages) - 1, -1, -1):
+                    if messages[i].get("role") == "tool":
+                        messages[i]["content"] += "\n\n" + interpreter_display
                         break
 
         yield {
-            "messages": current_processing_messages,
+            "messages": messages,
             "status": "running",
             "provider": provider_id
         }
     
     # Max iterations reached - yield special status so UI can show Continue button
     yield {
-        "messages": current_processing_messages,
+        "messages": messages,
         "status": "max_iterations_reached",
         "provider": provider_id
     }
