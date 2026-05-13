@@ -308,6 +308,15 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                                         store.save_messages(cid, raw_msgs)
                                         if edata.get("messages"):
                                             store.save_frontend_messages(cid, edata["messages"])
+                                        # Keep the on-disk status in sync with the
+                                        # live stream so that a page refresh during
+                                        # a running continuation doesn't show a stale
+                                        # "max_iterations_reached" / Continue button.
+                                        # Don't overwrite "continued" — it was set
+                                        # intentionally by the continuation detection
+                                        # and the stream will finish soon anyway.
+                                        if stream.status != "continued":
+                                            store.update_status(cid, stream.status)
                                     except Exception as exc:
                                         logger.warning(
                                             f"[proxy] Incremental save failed for "
