@@ -13,12 +13,17 @@ from .core_tools.web_browser import web_fetch
 from .code_tools.file_operations import (
     read_file_tool, 
     full_file_write_tool,
-    search_replace_edit_tool,
+    range_replace_edit_tool,
     delete_file_tool,
     list_dir_tool,
     file_search_tool,
     close_file_tool,
 )
+# ========================================================================
+# [COMMENTED OUT — legacy aider-style import, preserved for
+#  potential restoration.]
+#     search_replace_edit_tool,
+# ========================================================================
 from .code_tools.grep_search import grep_search_tool
 from .code_tools.terminal_runner import run_terminal_cmd_tool
 from .core_tools.tool_store_client import tool_store_tool
@@ -26,13 +31,28 @@ from .core_tools.subagent import run_subagent
 from .core_tools.continue_chat import continue_as_new_chat
 
 
-EDIT_FILE_DESCRIPTION = """Aider-style search and replace. Finds exact content starting from `start_line` and replaces it.
+# ========================================================================
+# [COMMENTED OUT — legacy aider-style description, preserved for
+#  potential restoration.  Replaced by range-based description below.]
+# EDIT_FILE_DESCRIPTION = """Aider-style search and replace. Finds exact content starting from `start_line` and replaces it.
+#
+# RULES:
+# - `search_content` must match file content (indentation, newlines matter; trailing spaces are ignored)
+# - Include 1-3 lines of context to uniquely identify the location
+# - One edit per call; make multiple calls for multiple edits
+# - Use empty `replace_content` to delete; include a landmark line to insert after it
+# """
+# ========================================================================
+
+EDIT_FILE_DESCRIPTION = """Aider-style search and replace. Finds exact content starting from `start_line` and replaces it. Now supports multiple edits per call using range-based anchors.
 
 RULES:
-- `search_content` must match file content (indentation, newlines matter; trailing spaces are ignored)
-- Include 1-3 lines of context to uniquely identify the location
-- One edit per call; make multiple calls for multiple edits
-- Use empty `replace_content` to delete; include a landmark line to insert after it
+- Each edit in `edits` specifies start_line+start_content and end_line+end_content as boundary anchors
+- `start_content` and `end_content` must match file content at those exact line numbers (trailing spaces are ignored)
+- Everything between and including the start and end lines is replaced with `replace_content`
+- Multiple edits can be specified in one call; edits are applied bottom-to-top automatically
+- Use empty `replace_content` to delete the range
+- Include 1-3 lines of context in content anchors to uniquely identify the location
 """
 
 
@@ -127,6 +147,39 @@ NATIVE_TOOL_DEFINITIONS = [
             }
         }
     },
+    # ========================================================================
+    # [COMMENTED OUT — legacy aider-style edit_file definition, preserved for
+    #  potential restoration.  Replaced by range-based definition below.]
+    # {
+    #     "type": "function",
+    #     "function": {
+    #         "name": "edit_file",
+    #         "description": EDIT_FILE_DESCRIPTION,
+    #         "parameters": {
+    #             "type": "object",
+    #             "properties": {
+    #                 "target_file": {
+    #                     "type": "string",
+    #                     "description": "Path to the file to edit (relative to workspace)"
+    #                 },
+    #                 "start_line": {
+    #                     "type": "integer",
+    #                     "description": "The line number to start searching from (1-based). The search begins at this line and looks forward."
+    #                 },
+    #                 "search_content": {
+    #                     "type": "string",
+    #                     "description": "The exact content to find and replace. Must match the file content exactly, including whitespace and indentation."
+    #                 },
+    #                 "replace_content": {
+    #                     "type": "string",
+    #                     "description": "The replacement content. Use empty string to delete the matched content."
+    #                 }
+    #             },
+    #             "required": ["target_file", "start_line", "search_content", "replace_content"]
+    #         }
+    #     }
+    # },
+    # ========================================================================
     {
         "type": "function",
         "function": {
@@ -139,20 +192,38 @@ NATIVE_TOOL_DEFINITIONS = [
                         "type": "string",
                         "description": "Path to the file to edit (relative to workspace)"
                     },
-                    "start_line": {
-                        "type": "integer",
-                        "description": "The line number to start searching from (1-based). The search begins at this line and looks forward."
-                    },
-                    "search_content": {
-                        "type": "string",
-                        "description": "The exact content to find and replace. Must match the file content exactly, including whitespace and indentation."
-                    },
-                    "replace_content": {
-                        "type": "string",
-                        "description": "The replacement content. Use empty string to delete the matched content."
+                    "edits": {
+                        "type": "array",
+                        "description": "List of edits to apply. Edits are applied bottom-to-top (highest line numbers first) so that earlier line numbers stay valid.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "start_line": {
+                                    "type": "integer",
+                                    "description": "1-based line number where the range begins"
+                                },
+                                "start_content": {
+                                    "type": "string",
+                                    "description": "The content at start_line to verify the boundary. Must match file content exactly (trailing spaces are ignored)."
+                                },
+                                "end_line": {
+                                    "type": "integer",
+                                    "description": "1-based line number where the range ends"
+                                },
+                                "end_content": {
+                                    "type": "string",
+                                    "description": "The content at end_line to verify the boundary. Must match file content exactly (trailing spaces are ignored)."
+                                },
+                                "replace_content": {
+                                    "type": "string",
+                                    "description": "New content that replaces everything from start_line through end_line (inclusive). Use empty string to delete the range."
+                                }
+                            },
+                            "required": ["start_line", "start_content", "end_line", "end_content", "replace_content"]
+                        }
                     }
                 },
-                "required": ["target_file", "start_line", "search_content", "replace_content"]
+                "required": ["target_file", "edits"]
             }
         }
     },
@@ -395,7 +466,12 @@ TOOL_FUNCTION_MAP = {
     "web_browser": web_fetch,
     "read_file": read_file_tool,
     "write_file": full_file_write_tool,
-    "edit_file": search_replace_edit_tool,
+    "edit_file": range_replace_edit_tool,
+    # ========================================================================
+    # [COMMENTED OUT — legacy aider-style mapping, preserved for
+    #  potential restoration.]
+    # "edit_file": search_replace_edit_tool,
+    # ========================================================================
     "delete_file": delete_file_tool,
     "close_file": close_file_tool,
     "list_directory": list_dir_tool,
