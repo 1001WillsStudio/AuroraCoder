@@ -119,7 +119,7 @@ class FileOperations:
             if not file_path.exists() or not file_path.is_file():
                 return f"Error: File '{target_file}' not found."
 
-            original_text = file_path.read_text(encoding="utf-8", errors="ignore")
+            original_text = file_path.read_text(encoding="utf-8", errors="ignore").replace('\r\n', '\n')
 
             # Snapshot original content for diff tracking
             _notify_file_read(target_file, original_text)
@@ -297,7 +297,7 @@ class FileOperations:
                 return f"Created new file: {target_file}"
             
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                current_content = f.read()
+                current_content = f.read().replace('\r\n', '\n')
             
             _notify_file_read(target_file, current_content)
             

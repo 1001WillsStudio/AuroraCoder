@@ -228,15 +228,15 @@ async def stream_chat_response(
                     frontend_messages = convert_messages_for_frontend(current_messages)
 
                     loop.call_soon_threadsafe(
-                            queue.put_nowait,
-                            ("messages", {
-                                "messages": frontend_messages,
-                                "raw_messages": current_messages,
-                                "status": status,
-                                "conversation_id": conversation_id,
-                                "provider": current_provider
-                            })
-                        )
+                        queue.put_nowait,
+                        ("messages", {
+                            "messages": frontend_messages,
+                            "raw_messages": current_messages,
+                            "status": status,
+                            "conversation_id": conversation_id,
+                            "provider": current_provider
+                        })
+                    )
 
                 if not cancel_event.is_set():
                     final_status = status
