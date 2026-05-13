@@ -200,20 +200,30 @@ function getToolConfig(toolName, args, result) {
         expandedContent: <FilePreview content={args.code_edit} isNew={true} />
       }
     
-    case 'edit_file':
+    case 'edit_file': {
+      const edits = args.edits || []
+      const editCount = edits.length
       return {
         icon: <FileEdit size={16} />,
         label: 'Editing file',
-        detail: args.target_file || 'file',
-        hasExpandedView: true,
+        detail: `${args.target_file || 'file'}${editCount > 1 ? ` (${editCount} edits)` : ''}`,
+        hasExpandedView: editCount > 0,
         expandedContent: (
-          <DiffView 
-            removed={args.search_content} 
-            added={args.replace_content}
-            startLine={args.start_line}
-          />
+          <div className="multi-edit-view">
+            {edits.map((edit, i) => (
+              <DiffView
+                key={i}
+                removed={`${edit.start_content || ''}  ← … →  ${edit.end_content || ''}`}
+                added={edit.replace_content || ''}
+                startLine={edit.start_line}
+                endLine={edit.end_line}
+                editIndex={edits.length > 1 ? i + 1 : null}
+              />
+            ))}
+          </div>
         )
       }
+    }
     
     case 'delete_file':
       return {
@@ -292,9 +302,10 @@ function getToolConfig(toolName, args, result) {
 }
 
 /**
- * Diff view for file edits - shows removed lines in red, added lines in green
+ * Diff view for file edits - shows removed lines in red, added lines in green.
+ * Now supports the new range-based edit format with start/end anchors.
  */
-function DiffView({ removed, added, startLine }) {
+function DiffView({ removed, added, startLine, endLine, editIndex }) {
   if (!removed && !added) {
     return <div className="diff-empty">No changes</div>
   }
@@ -302,16 +313,28 @@ function DiffView({ removed, added, startLine }) {
   const removedLines = (removed || '').split('\n')
   const addedLines = (added || '').split('\n')
   
+  // Build the location label
+  let locationLabel = ''
+  if (startLine && endLine) {
+    locationLabel = startLine === endLine ? `Line ${startLine}` : `Lines ${startLine}–${endLine}`
+  } else if (startLine) {
+    locationLabel = `Line ${startLine}`
+  }
+  
   return (
     <div className="diff-view">
-      {startLine && (
-        <div className="diff-location">Line {startLine}</div>
+      {(editIndex || locationLabel) && (
+        <div className="diff-location">
+          {editIndex && <span className="diff-edit-index">Edit #{editIndex}</span>}
+          {editIndex && locationLabel && <span className="diff-location-sep"> · </span>}
+          {locationLabel && <span>{locationLabel}</span>}
+        </div>
       )}
       {removed && (
         <div className="diff-removed">
           {removedLines.map((line, idx) => (
             <div key={`r-${idx}`} className="diff-line removed">
-              <span className="diff-prefix">-</span>
+              <span className="diff-prefix">−</span>
               <span className="diff-content">{line || ' '}</span>
             </div>
           ))}
