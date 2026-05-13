@@ -290,13 +290,13 @@ def record_api_call(request_messages: list, response_message: dict):
 
 # --- Context Continuation Helpers ---
 
-def _filter_tools_by_context(tools: list, prompt_tokens: int, context_window: int) -> list:
+def _filter_tools_by_context(tools: list, total_tokens: int, context_window: int) -> list:
     """
     Hide continue_as_new_chat from the tool list until context usage
     crosses CONTEXT_WARN_THRESHOLD.  Keeps the model focused and avoids
     wasting a tool slot when context is still plentiful.
     """
-    if context_window and prompt_tokens / context_window < CONTEXT_WARN_THRESHOLD:
+    if context_window and total_tokens / context_window < CONTEXT_WARN_THRESHOLD:
         return [t for t in tools if t["function"]["name"] != "continue_as_new_chat"]
     return tools
 
@@ -363,8 +363,7 @@ def generate_chat_responses_stream_native(
     # System message already present -- leave immutable
     
     iteration_count = 0
-    prompt_tokens = 0  # latest API call's prompt tokens, persists across iterations
-    current_usage = None  # full usage dict from latest streaming chunk
+    total_tokens = 0  # latest API call's total_tokens (prompt + completion)
     streaming_errors = 0
     
     while iteration_count < max_iterations:
@@ -374,7 +373,7 @@ def generate_chat_responses_stream_native(
         # is high enough.  Skipped when tools_override is set (e.g. subagent
         # tool set, or force_continuation from the UI).
         tools_for_iteration = (
-            _filter_tools_by_context(tools, prompt_tokens, context_window)
+            _filter_tools_by_context(tools, total_tokens, context_window)
             if filter_continuation else tools
         )
         
@@ -399,6 +398,7 @@ def generate_chat_responses_stream_native(
         current_reasoning = ""
         assistant_message = {"role": "assistant"}
         current_tool_calls = []
+        current_usage = None
         
         try:
             for chunk in completion_stream:
@@ -470,10 +470,8 @@ def generate_chat_responses_stream_native(
 
         streaming_errors = 0
 
-        # Remember latest prompt tokens for next iteration's tool filtering
         if current_usage:
-            prompt_tokens = current_usage.get("prompt_tokens", 0)
-
+            total_tokens = current_usage.get("total_tokens", 0)
 
         record_api_call(messages, assistant_message)
 
@@ -516,16 +514,14 @@ def generate_chat_responses_stream_native(
         # Add tool call requests to messages
         messages.append(assistant_message)
         
-        # Warn once when estimated context nears the model's window.
-        # prompt_tokens already covers all messages sent.  Add completion_tokens
-        # because the assistant response + tool results just appended will become
-        # input on the next turn.
-        if context_window and current_usage and not _has_continuation_notice_been_shown(messages):
-            estimated = current_usage.get("prompt_tokens", 0) + current_usage.get("completion_tokens", 0)
-            if estimated / context_window >= CONTEXT_WARN_THRESHOLD:
-                messages.append({"role": "system", "content": _CONTINUATION_NOTICE_MARKER + "\n" + CONTINUATION_NOTICE})
-        
         code_tool_called = _execute_tool_calls(current_tool_calls, messages)
+
+        # Warn once when estimated context nears the model's window.
+        # Placed AFTER tool results so we don't break the
+        # [assistant tool_calls] -> [tool results] ordering required by the API.
+        if context_window and current_usage and not _has_continuation_notice_been_shown(messages):
+            if total_tokens / context_window >= CONTEXT_WARN_THRESHOLD:
+                messages.append({"role": "system", "content": _CONTINUATION_NOTICE_MARKER + "\n" + CONTINUATION_NOTICE})
 
         # If continue_as_new_chat was called, end the loop immediately
         if any(tc["function"]["name"] == "continue_as_new_chat" for tc in current_tool_calls):
