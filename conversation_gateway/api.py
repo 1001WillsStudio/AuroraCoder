@@ -39,8 +39,7 @@ from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from src.code_sandbox.session_utils import session_manager
-from src.config import DOCKER_MODE
+from src.config import WORKSPACE_DIR
 
 from .conversation_store import ConversationStore, strip_task_instruction
 from .workspace import (
@@ -524,6 +523,15 @@ class ConversationSave(BaseModel):
 # FastAPI Application
 # ============================================================================
 
+def _get_workspace() -> Optional[Path]:
+    """Return the workspace directory (``/workspace`` in Docker, None otherwise)."""
+    if WORKSPACE_DIR:
+        p = Path(WORKSPACE_DIR)
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+    return None
+
+
 app = FastAPI(
     title="Conversation History",
     description="SSE proxy + conversation storage",
@@ -792,7 +800,7 @@ async def get_file_diff(conversation_id: Optional[str] = None, file_path: Option
     if not conversation_id:
         return {"files": [], "error": "No conversation_id specified"}
 
-    work_dir = session_manager.get_session_working_directory()
+    work_dir = _get_workspace()
     result = get_file_diffs_for_conversation(conversation_id, work_dir)
 
     if file_path and result["files"]:
@@ -811,7 +819,7 @@ async def create_snapshot(conversation_id: str):
 @app.get("/api/files/tree")
 async def get_file_tree(max_depth: int = 5):
     """Get the folder structure of the agent's working space."""
-    work_dir = session_manager.get_session_working_directory()
+    work_dir = _get_workspace()
     if not work_dir or not work_dir.exists():
         return {"tree": [], "root": None, "error": "No active session"}
 
@@ -822,7 +830,7 @@ async def get_file_tree(max_depth: int = 5):
 @app.get("/api/files/read")
 async def read_file_content(file_path: str):
     """Read content of a file from the agent's working space."""
-    work_dir = session_manager.get_session_working_directory()
+    work_dir = _get_workspace()
     if not work_dir or not work_dir.exists():
         raise HTTPException(status_code=400, detail="No active session")
 
@@ -860,7 +868,7 @@ async def upload_workspace(
     clear: bool = Form(True),
 ):
     """Upload files from a folder into the agent workspace."""
-    work_dir = session_manager.get_session_working_directory()
+    work_dir = _get_workspace()
     if not work_dir:
         raise HTTPException(status_code=400, detail="No active workspace")
 
@@ -893,7 +901,7 @@ async def upload_workspace(
 @app.post("/api/files/delete")
 async def delete_workspace_item(req: DeleteRequest):
     """Delete a file or folder from the agent workspace."""
-    work_dir = session_manager.get_session_working_directory()
+    work_dir = _get_workspace()
     if not work_dir or not work_dir.exists():
         raise HTTPException(status_code=400, detail="No active session")
 
@@ -920,7 +928,7 @@ async def delete_workspace_item(req: DeleteRequest):
 @app.get("/api/files/download")
 async def download_workspace_file(file_path: str):
     """Download a file from the agent workspace."""
-    work_dir = session_manager.get_session_working_directory()
+    work_dir = _get_workspace()
     if not work_dir or not work_dir.exists():
         raise HTTPException(status_code=400, detail="No active session")
 
@@ -942,7 +950,7 @@ async def download_workspace_file(file_path: str):
 @app.get("/api/files/export")
 async def export_workspace_folder(folder_path: str):
     """Export a folder from the workspace as a .zip archive."""
-    work_dir = session_manager.get_session_working_directory()
+    work_dir = _get_workspace()
     if not work_dir or not work_dir.exists():
         raise HTTPException(status_code=400, detail="No active session")
 
@@ -971,7 +979,7 @@ async def export_workspace_folder(folder_path: str):
 @app.get("/api/workspace/info")
 async def workspace_info():
     """Return metadata about the current workspace."""
-    work_dir = session_manager.get_session_working_directory()
+    work_dir = _get_workspace()
     file_count = count_workspace_files(work_dir)
     return {
         "docker_mode": DOCKER_MODE,
