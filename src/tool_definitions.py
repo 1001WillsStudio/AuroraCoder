@@ -49,8 +49,8 @@ EDIT_FILE_DESCRIPTION = """Range-based file editing. Supports multiple edits per
 Each edit replaces a line range (start_line through end_line inclusive) with new content.
 
 RULES:
-- `start_content` and `end_content` verify that the file hasn't changed at those lines before editing; trailing spaces are ignored, but leading whitespace (indentation) MUST match
-- `end_line` defaults to `start_line` (single-line edit); `end_content` auto-fills from file if omitted
+- `start_line_content` is the SINGLE LINE of text at start_line (no newlines). `end_line_content` is the SINGLE LINE at end_line. They verify the file hasn't drifted. Trailing spaces are ignored but leading whitespace MUST match.
+- `end_line` defaults to `start_line` (single-line edit); `end_line_content` auto-fills from file if omitted
 - Multiple edits in one call are supported; ranges must not overlap
 - Use empty `replace_content` to delete the range
 """
@@ -194,7 +194,7 @@ NATIVE_TOOL_DEFINITIONS = [
                     },
                     "edits": {
                         "type": "array",
-                        "description": "List of edits to apply. Edits are applied bottom-to-top (highest line numbers first) so that earlier line numbers stay valid.",
+                        "description": "List of edits to apply.",
                         "items": {
                             "type": "object",
                             "properties": {
@@ -202,24 +202,24 @@ NATIVE_TOOL_DEFINITIONS = [
                                     "type": "integer",
                                     "description": "1-based line number where the range begins"
                                 },
-                                "start_content": {
+                                "start_line_content": {
                                     "type": "string",
-                                    "description": "The content at start_line to verify the boundary. Must match file content exactly (trailing spaces are ignored)."
+                                    "description": "The SINGLE LINE of text at start_line — exactly one line, NO newlines. Used to verify the file boundary. Trailing spaces are ignored."
                                 },
                                 "end_line": {
                                     "type": "integer",
                                     "description": "1-based line number where the range ends"
                                 },
-                                "end_content": {
+                                "end_line_content": {
                                     "type": "string",
-                                    "description": "The content at end_line to verify the boundary. Must match file content exactly (trailing spaces are ignored)."
+                                    "description": "The SINGLE LINE of text at end_line — exactly one line, NO newlines. Used to verify the file boundary. Trailing spaces are ignored."
                                 },
                                 "replace_content": {
                                     "type": "string",
                                     "description": "New content that replaces everything from start_line through end_line (inclusive). Use empty string to delete the range."
                                 }
                             },
-                            "required": ["start_line", "start_content", "replace_content"]
+                            "required": ["start_line", "start_line_content", "replace_content"]
                         }
                     }
                 },

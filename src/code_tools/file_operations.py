@@ -95,20 +95,19 @@ class FileOperations:
     # --- Range Replace Edit (multi-edit, anchor-based) ---
     def range_replace_edit(self, target_file: str, edits: List[Dict[str, Any]]) -> str:
         """
-        Apply one or more range-based edits to a file using line-number anchors.
+        Apply one or more range-based edits to a file.
 
-        Each edit specifies start_line+start_content and end_line+end_content as
-        boundary anchors; everything between (and including) those lines is replaced
-        with replace_content.  Edits are applied from bottom to top so that earlier
-        line numbers remain valid throughout the operation.
+        Each edit specifies a line range (start_line..end_line) and replacement
+        content.  start_line_content / end_line_content are single-line verification
+        strings to ensure the file hasn't drifted.
 
         Args:
             target_file: Path to the file to edit (relative to workspace)
             edits: List of edit dicts, each with:
-                start_line (int): 1-based line number for the start anchor
-                start_content (str): Content at start_line to verify the boundary
-                end_line (int): 1-based line number for the end anchor
-                end_content (str): Content at end_line to verify the boundary
+                start_line (int): 1-based line number where the range begins
+                start_line_content (str): Single line of text at start_line for verification
+                end_line (int): 1-based line number where the range ends
+                end_line_content (str): Single line of text at end_line for verification
                 replace_content (str): New content to insert (replaces everything
                     from start_line through end_line inclusive; empty string to delete)
 
@@ -136,9 +135,9 @@ class FileOperations:
             validated_edits = []  # (start_idx, end_idx, replace_content, edit_idx)
             for i, edit in enumerate(edits):
                 start_line = edit.get("start_line")
-                start_content = str(edit.get("start_content", ""))
+                start_content = str(edit.get("start_line_content") or edit.get("start_content") or "")
                 end_line = edit.get("end_line")
-                end_content = str(edit.get("end_content", ""))
+                end_content = str(edit.get("end_line_content") or edit.get("end_content") or "")
                 replace_content = str(edit.get("replace_content", ""))
 
                 # --- Defaults: end_line → start_line, end_content → file ---

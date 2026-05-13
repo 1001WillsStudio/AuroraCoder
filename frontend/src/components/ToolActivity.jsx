@@ -303,7 +303,9 @@ function getToolConfig(toolName, args, result) {
  * and the full replacement content with line numbers.
  */
 function EditRangeView({ edit, editIndex }) {
-  const { start_line, end_line, start_content, end_content, replace_content } = edit
+  const { start_line, end_line, replace_content } = edit
+  const start_content = edit.start_line_content || edit.start_content || ''
+  const end_content = edit.end_line_content || edit.end_content || ''
   const isDelete = !replace_content
   const effectiveEnd = end_line || start_line
 
