@@ -2277,6 +2277,34 @@ body {
   box-shadow: var(--shadow-lg), 0 0 60px var(--accent-glow);
 }
 
+/* Scroll to Bottom Button */
+.scroll-to-bottom-btn {
+  position: absolute;
+  bottom: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: 50%;
+  color: var(--text-primary);
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+  z-index: 10;
+  transition: all var(--transition-fast);
+  animation: fadeIn var(--transition-fast);
+}
+
+.scroll-to-bottom-btn:hover {
+  background: var(--accent-primary);
+  color: white;
+  border-color: var(--accent-primary);
+  box-shadow: var(--shadow-glow);
+}
 /* ============================================================================
    Input Area
    ============================================================================ */

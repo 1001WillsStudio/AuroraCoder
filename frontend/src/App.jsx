@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { RotateCcw, X } from 'lucide-react'
+import { RotateCcw, X, ArrowDown } from 'lucide-react'
 import ChatMessage from './components/ChatMessage'
 import ChatInput from './components/ChatInput'
 import Sidebar from './components/Sidebar'
@@ -63,6 +63,7 @@ function App() {
   const [subagentChildIds, setSubagentChildIds] = useState([])
 
   const messagesEndRef = useRef(null)
+  const chatContainerRef = useRef(null)
   const inputRef = useRef(null)
   const abortControllerRef = useRef(null)
   const pendingInterruptRef = useRef(null)
@@ -129,11 +130,49 @@ function App() {
     }
   }, [showTaskInstructions])
 
-  const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  const [isUserScrolledUp, setIsUserScrolledUp] = useState(false)
+  const [showScrollButton, setShowScrollButton] = useState(false)
+
+  const scrollToBottom = useCallback((smooth = true) => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTo({
+        top: chatContainerRef.current.scrollHeight,
+        behavior: smooth ? 'smooth' : 'auto'
+      })
+    }
   }, [])
 
-  useEffect(() => { scrollToBottom() }, [messages, scrollToBottom])
+  // Track user scroll position on the chat container
+  useEffect(() => {
+    const container = chatContainerRef.current
+    if (!container) return
+    const handleScroll = () => {
+      const threshold = 100
+      const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
+      const scrolledUp = distanceFromBottom > threshold
+      setIsUserScrolledUp(scrolledUp)
+      setShowScrollButton(scrolledUp && isStreaming)
+    }
+    container.addEventListener('scroll', handleScroll, { passive: true })
+    return () => container.removeEventListener('scroll', handleScroll)
+  }, [isStreaming])
+
+  // Auto-scroll when messages update, but only if user hasn't scrolled up
+  useEffect(() => {
+    if (!isUserScrolledUp) {
+      scrollToBottom()
+    }
+  }, [messages, isUserScrolledUp, scrollToBottom])
+
+  // When streaming state changes, force scroll to bottom and reset state
+  useEffect(() => {
+    if (isStreaming) {
+      setIsUserScrolledUp(false)
+      scrollToBottom(false)
+    } else {
+      setShowScrollButton(false)
+    }
+  }, [isStreaming, scrollToBottom])
 
   // ── Handlers ────────────────────────────────────────────────────────────
 
@@ -474,7 +513,7 @@ function App() {
       />
 
       <main className="main-content">
-        <div className="chat-container">
+        <div className="chat-container" ref={chatContainerRef}>
           {messages.length === 0 ? (
             <WelcomeScreen onExampleClick={(text) => setInputValue(text)} />
           ) : (
@@ -509,6 +548,12 @@ function App() {
             </div>
           )}
         </div>
+
+        {showScrollButton && (
+          <button className="scroll-to-bottom-btn" onClick={() => { scrollToBottom(true); setIsUserScrolledUp(false) }}>
+            <ArrowDown size={18} />
+          </button>
+        )}
 
         {activeConvoWarning && (
           <div className="active-convo-warning">
