@@ -28,7 +28,7 @@ from .code_tools.code_interpreter import (
     CODE_INTERPRETER_START, 
     CODE_INTERPRETER_END
 )
-from .sandbox import WORKSPACE
+from .code_sandbox import WORKSPACE
 
 
 # --- Code Interpreter Management ---

@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable
 from ..config import EDIT_ZONE_MARKER
-from ..sandbox import WORKSPACE
+from ..code_sandbox import WORKSPACE
 
 # --- Constants ---
 WILDCARD_SENTINEL = EDIT_ZONE_MARKER  # Backward compatibility with old constant name

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 import json
 
-from ..sandbox import shell, WORKSPACE
+from ..code_sandbox import shell, WORKSPACE
 from ..config import TERMINAL_MAX_OUTPUT_CHARS
 
 

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 import fnmatch
 
-from ..sandbox import WORKSPACE
+from ..code_sandbox import WORKSPACE
 
 
 class GrepSearch:

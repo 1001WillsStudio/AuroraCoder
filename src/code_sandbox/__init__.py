@@ -1,8 +1,24 @@
 """
-Code Sandbox — legacy session management.
+Code Sandbox — Docker workspace and persistent shell.
 
-The session_manager and session_utils modules are retained for the
-``session_cli.py`` administration tool but are no longer used by the
-main application.  Runtime code should import from ``src.sandbox``
-instead.
+Provides a fixed workspace path (``/workspace``) and a long-lived Bash
+shell for the Docker deployment model.
 """
+
+from .sandbox import (
+    WORKSPACE,
+    get_workspace,
+    get_python_path,
+    get_conda_env_path,
+    shell,
+    PersistentShell,
+)
+
+__all__ = [
+    "WORKSPACE",
+    "get_workspace",
+    "get_python_path",
+    "get_conda_env_path",
+    "shell",
+    "PersistentShell",
+]

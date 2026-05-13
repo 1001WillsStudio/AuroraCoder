@@ -35,7 +35,7 @@ frontend/                     ← UI + conversation ownership
 - **Direct File Manipulation**: Full read/write capabilities on the codebase with intelligent code display.
 - **Native Tool Calling**: Structured, reliable OpenAI function calling format.
 - **Extended Thinking**: Supports models with reasoning/thinking capabilities (e.g., DeepSeek, GLM).
-- **Session Isolation**: Each session gets its own cloned conda environment and working directory.
+- **Docker Sandbox**: Runs in a container with a fixed `/workspace` directory and pre-built conda environment.
 
 ---
 
@@ -76,9 +76,7 @@ ThinkWithTool/
 │   │   ├── tool_store_client.py← ToolStore integration (optional)
 │   │   └── jupyter_code_runner.py ← Jupyter-style Python execution (UNUSED)
 │   ├── code_sandbox/
-│   │   ├── session_manager.py  ← Session lifecycle, conda envs, persistent shell
-│   │   ├── session_utils.py    ← High-level session helpers
-│   │   └── session_cli.py      ← CLI for session management
+│   │   └── sandbox.py          ← Workspace path (/workspace) + persistent shell
 │   └── web_api/
 │       └── app.py              ← FastAPI backend server (port 8080, agent loop only)
 ├── conversation_gateway/       ← Middleware layer (the "dirty work")
@@ -250,18 +248,20 @@ SUBAGENT_MAX_RESULT_CHARS = 4000
 
 ---
 
-## 7. Session Management (`session_manager.py`)
+## 7. Sandbox (`code_sandbox/sandbox.py`)
 
-### Session Lifecycle
-1. `create_session()` — generates UUID8 id, creates session dir under `~/.thinktool_sessions/`
-2. Clones (or reuses) a conda environment
-3. Starts a persistent shell (`bash -i` on Linux, `cmd.exe /D` on Windows)
-4. Activates conda env in the shell via `_run_init_command()`
+The Docker-first sandbox replaces the former heavyweight session manager. It provides:
+
+- **`WORKSPACE`** — `Path("/workspace")` (from `WORKSPACE_DIR` env var, falls back to `cwd`)
+- **`get_workspace()`** — returns `WORKSPACE`, creating it if needed
+- **`get_python_path()` / `get_conda_env_path()`** — resolve the pre-built conda `agent` environment
+- **`shell`** — module-level `PersistentShell` singleton
 
 ### Persistent Shell
-- `run_in_persistent_shell(command, timeout, blocking)` — writes command to shell stdin, waits for boundary marker on stdout, reads output from temp file
+- `shell.run(command, timeout, blocking)` — writes command to bash stdin, waits for boundary marker, reads output from temp file
 - `blocking=False` → wraps in `nohup bash -c ... > logfile 2>&1 &`, returns log path
-- On timeout → spawns new shell, returns note about log file
+- On timeout → spawns a new shell, returns note about log file
+- Conda environment is auto-activated on shell start
 
 ---
 
@@ -358,14 +358,6 @@ cd frontend && npm install && npm run dev
 
 > **Important:** Do NOT run `python run_web.py` directly on the host. The backend must run inside Docker for proper session isolation, VNC support, and persistent data storage. Running outside Docker will lose conversation history on restart.
 
-**Session CLI:**
-```bash
-conda activate agent
-python -m src.code_sandbox.session_cli
-```
-
-Available subcommands: `create`, `list`, `cleanup`, `info`, `test`
-
 ### Data Persistence
 
 All persistent runtime data lives under `/app/data` inside the container, volume-mounted to `./data` on the host:
@@ -413,17 +405,17 @@ Core dependencies (see `requirements.txt`):
 
 **Still present:**
 1. **Hardcoded API keys** in `config.py`: Some defaults use plain text or placeholder values (e.g., `"YOUR_GEMINI_API_KEY"`). Most keys read from env vars, but fallback values exist.
-2. **Missing `stderr` capture**: `run_in_persistent_shell` may merge stderr into stdout; `terminal_runner.py` does report both channels if returned separately.
+2. **Merged `stderr`**: The persistent shell redirects stderr into stdout (`stderr=subprocess.STDOUT`), so error output is interleaved with normal output.
 
 ---
 
 ## 13. Key Patterns & Conventions
 
 - **All tools return strings** — never raise exceptions to the agent
-- **Workspace root** comes from `session_manager.get_session_working_directory()`
+- **Workspace root** comes from `code_sandbox.WORKSPACE` (`/workspace` in Docker)
 - **Atomic writes** — temp file + `os.replace()` pattern
 - **Tool wrappers** — each tool has a `_tool` suffix function for the registry
-- **Global singletons** — `session_manager`, `provider_manager`, `code_interpreter`
+- **Global singletons** — `shell` (PersistentShell), `provider_manager`, `code_interpreter`
 - **No async** — everything is synchronous, concurrency via threads
 - **Streaming** — SSE from main_flow to web API to frontend
 
@@ -439,12 +431,12 @@ Core dependencies (see `requirements.txt`):
 | Change iteration limits | `config.py` → `MAX_ITERATIONS`, `CONTINUE_ITERATIONS` |
 | Fix tool execution | `tool_definitions.py` → `execute_tool_call()` |
 | Change subagent behavior | `core_tools/subagent.py` |
-| Modify session isolation | `code_sandbox/session_manager.py` |
+| Modify sandbox / workspace | `code_sandbox/sandbox.py` |
 | Change the web API | `web_api/app.py` |
 | Change the frontend | `frontend/src/` (React + Vite) |
 | Understand the edit_file algorithm | `file_operations.py` → `search_replace_edit()` lines 105-223 |
 | Understand web fetch pipeline | `web_browser.py` → `web_fetch()` |
-| Understand shell execution | `session_manager.py` → `run_in_persistent_shell()` |
+| Understand shell execution | `code_sandbox/sandbox.py` → `PersistentShell.run()` |
 
 ---
 

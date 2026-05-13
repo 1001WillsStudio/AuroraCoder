@@ -9,7 +9,7 @@ from typing import Optional, List, Set
 import subprocess
 import logging
 
-from ..sandbox import WORKSPACE, get_python_path, get_conda_env_path
+from ..code_sandbox import WORKSPACE, get_python_path, get_conda_env_path
 from ..config import CODE_INTERPRETER_ERRORS_ENABLED
 
 logger = logging.getLogger(__name__)
