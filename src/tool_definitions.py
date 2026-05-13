@@ -52,7 +52,7 @@ RULES:
 - Everything between and including the start and end lines is replaced with `replace_content`
 - Multiple edits can be specified in one call; edits are applied bottom-to-top automatically
 - Use empty `replace_content` to delete the range
-- Include 1-3 lines of context in content anchors to uniquely identify the location
+- Anchors (`start_content`,`end_content`) must each be a SINGLE line exactly matching that line in the file
 """
 
 
