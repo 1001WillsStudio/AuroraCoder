@@ -1,11 +1,11 @@
 """
-Conversation History Server — SSE proxy + conversation storage.
+Conversation Gateway — SSE proxy + conversation storage + file display.
 
 Sits between the frontend and the agent backend as an independent gate:
 
-    Frontend  ←SSE→  Conversation Server (8081)  ←SSE→  Backend (8080)
-                              ↕
-                      data/conversations/
+    Frontend  ←SSE→  Gateway Server (8081)  ←SSE→  Backend (8080)
+                           ↕
+                   data/conversations/
 
 Key behaviors:
   - Proxies POST /api/chat to the backend, capturing the SSE stream
@@ -14,10 +14,11 @@ Key behaviors:
   - Persists conversations automatically when rounds complete
   - Serves conversation history via REST endpoints
   - Detects continue_as_new_chat tool calls and creates continuation conversations
+  - Serves file-display endpoints: diff, tree, read, workspace upload/delete/export
 
 Start with::
 
-    uvicorn conversation_history.api:app --host 0.0.0.0 --port 8081
+    uvicorn conversation_gateway.api:app --host 0.0.0.0 --port 8081
 """
 
 import asyncio
@@ -25,16 +26,36 @@ import json
 import logging
 import os
 import uuid
+import shutil
+import tempfile
+import zipfile
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional, Dict, Any, List
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from src.code_sandbox.session_utils import session_manager
+from src.config import DOCKER_MODE
+
 from .conversation_store import ConversationStore, strip_task_instruction
+from .workspace import (
+    file_snapshots,
+    files_touched,
+    snapshot_file,
+    mark_file_touched,
+    clear_conversation_snapshots,
+    compute_unified_diff,
+    get_file_diffs_for_conversation,
+    build_file_tree,
+    clear_workspace,
+    count_workspace_files,
+    WORKSPACE_EXCLUDE,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -759,6 +780,204 @@ async def delete_conversation(conversation_id: str):
     except KeyError:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return {"deleted": conversation_id}
+
+
+# ============================================================================
+# Endpoints — File Display (diff, tree, read)
+# ============================================================================
+
+@app.get("/api/files/diff")
+async def get_file_diff(conversation_id: Optional[str] = None, file_path: Optional[str] = None):
+    """Get diff for files modified since the start of the current conversation turn."""
+    if not conversation_id:
+        return {"files": [], "error": "No conversation_id specified"}
+
+    work_dir = session_manager.get_session_working_directory()
+    result = get_file_diffs_for_conversation(conversation_id, work_dir)
+
+    if file_path and result["files"]:
+        result["files"] = [f for f in result["files"] if f["path"] == file_path]
+
+    return result
+
+
+@app.post("/api/files/snapshot")
+async def create_snapshot(conversation_id: str):
+    """Create a new baseline snapshot for the conversation."""
+    clear_conversation_snapshots(conversation_id)
+    return {"status": "success", "message": "Snapshots cleared for new turn"}
+
+
+@app.get("/api/files/tree")
+async def get_file_tree(max_depth: int = 5):
+    """Get the folder structure of the agent's working space."""
+    work_dir = session_manager.get_session_working_directory()
+    if not work_dir or not work_dir.exists():
+        return {"tree": [], "root": None, "error": "No active session"}
+
+    tree = build_file_tree(work_dir, work_dir, max_depth=max_depth)
+    return {"tree": tree, "root": str(work_dir), "error": None}
+
+
+@app.get("/api/files/read")
+async def read_file_content(file_path: str):
+    """Read content of a file from the agent's working space."""
+    work_dir = session_manager.get_session_working_directory()
+    if not work_dir or not work_dir.exists():
+        raise HTTPException(status_code=400, detail="No active session")
+
+    try:
+        full_path = (work_dir / file_path).resolve()
+        if not str(full_path).startswith(str(work_dir.resolve())):
+            raise HTTPException(status_code=403, detail="Access denied: path outside working directory")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    if not full_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+    if not full_path.is_file():
+        raise HTTPException(status_code=400, detail="Path is not a file")
+
+    try:
+        content = full_path.read_text(encoding="utf-8", errors="replace")
+        return {"path": file_path, "content": content, "size": full_path.stat().st_size}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
+
+
+# ============================================================================
+# Endpoints — Workspace (upload, delete, download, export, info)
+# ============================================================================
+
+class DeleteRequest(BaseModel):
+    """Request body for deleting a file or folder."""
+    path: str = Field(..., description="Relative path within the workspace")
+
+
+@app.post("/api/workspace/upload")
+async def upload_workspace(
+    files: List[UploadFile] = File(...),
+    clear: bool = Form(True),
+):
+    """Upload files from a folder into the agent workspace."""
+    work_dir = session_manager.get_session_working_directory()
+    if not work_dir:
+        raise HTTPException(status_code=400, detail="No active workspace")
+
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    if clear:
+        clear_workspace(work_dir)
+
+    count = 0
+    for upload_file in files:
+        relative_path = getattr(upload_file, "filename", None)
+        if not relative_path:
+            continue
+
+        safe_path = Path(relative_path)
+        if safe_path.is_absolute() or ".." in safe_path.parts:
+            logger.warning(f"[upload] Rejected unsafe path: {relative_path}")
+            continue
+
+        dest = work_dir / safe_path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        content = await upload_file.read()
+        dest.write_bytes(content)
+        count += 1
+
+    return {"status": "success", "files_uploaded": count, "workspace": str(work_dir)}
+
+
+@app.post("/api/files/delete")
+async def delete_workspace_item(req: DeleteRequest):
+    """Delete a file or folder from the agent workspace."""
+    work_dir = session_manager.get_session_working_directory()
+    if not work_dir or not work_dir.exists():
+        raise HTTPException(status_code=400, detail="No active session")
+
+    try:
+        full_path = (work_dir / req.path).resolve()
+        if not str(full_path).startswith(str(work_dir.resolve())):
+            raise HTTPException(status_code=403, detail="Access denied: path outside working directory")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    if not full_path.exists():
+        raise HTTPException(status_code=404, detail="Path not found")
+
+    try:
+        if full_path.is_dir():
+            shutil.rmtree(full_path)
+        else:
+            full_path.unlink()
+        return {"status": "deleted", "path": req.path}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete: {str(e)}")
+
+
+@app.get("/api/files/download")
+async def download_workspace_file(file_path: str):
+    """Download a file from the agent workspace."""
+    work_dir = session_manager.get_session_working_directory()
+    if not work_dir or not work_dir.exists():
+        raise HTTPException(status_code=400, detail="No active session")
+
+    try:
+        full_path = (work_dir / file_path).resolve()
+        if not str(full_path).startswith(str(work_dir.resolve())):
+            raise HTTPException(status_code=403, detail="Access denied: path outside working directory")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    if not full_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+    if not full_path.is_file():
+        raise HTTPException(status_code=400, detail="Path is not a file (use export for folders)")
+
+    return FileResponse(path=str(full_path), filename=full_path.name, media_type="application/octet-stream")
+
+
+@app.get("/api/files/export")
+async def export_workspace_folder(folder_path: str):
+    """Export a folder from the workspace as a .zip archive."""
+    work_dir = session_manager.get_session_working_directory()
+    if not work_dir or not work_dir.exists():
+        raise HTTPException(status_code=400, detail="No active session")
+
+    try:
+        full_path = (work_dir / folder_path).resolve()
+        if not str(full_path).startswith(str(work_dir.resolve())):
+            raise HTTPException(status_code=403, detail="Access denied: path outside working directory")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    if not full_path.exists() or not full_path.is_dir():
+        raise HTTPException(status_code=404, detail="Folder not found")
+
+    try:
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+        tmp.close()
+        with zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_DEFLATED) as zf:
+            for file in full_path.rglob("*"):
+                if file.is_file():
+                    zf.write(file, file.relative_to(full_path))
+        return FileResponse(path=tmp.name, filename=f"{full_path.name}.zip", media_type="application/zip", background=None)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to export: {str(e)}")
+
+
+@app.get("/api/workspace/info")
+async def workspace_info():
+    """Return metadata about the current workspace."""
+    work_dir = session_manager.get_session_working_directory()
+    file_count = count_workspace_files(work_dir)
+    return {
+        "docker_mode": DOCKER_MODE,
+        "workspace": str(work_dir) if work_dir else None,
+        "file_count": file_count,
+    }
 
 
 # ============================================================================

@@ -18,9 +18,10 @@ src/                          ← Stateless agent loop (messages in → messages
     tool_definitions.py       ← Pure: tool schemas + dispatch, all return strings
     All tools are stateless   ← No conversation-store access, no direct persistence
 
-conversation_history/         ← All state & persistence (the "dirty work")
-    api.py                    ← SSE proxy between frontend and backend (port 8081)
+conversation_gateway/         ← Middleware between frontend and backend (the "dirty work")
+    api.py                    ← SSE proxy + file display endpoints (port 8081)
     conversation_store.py     ← File-backed store (thread-safe, atomic writes)
+    workspace.py              ← File diff, tree, upload/delete/export utilities
 
 frontend/                     ← UI + conversation ownership
     App.jsx                   ← React SPA, owns conversation state
@@ -79,12 +80,16 @@ ThinkWithTool/
 │   │   ├── session_utils.py    ← High-level session helpers
 │   │   └── session_cli.py      ← CLI for session management
 │   └── web_api/
-│       └── app.py              ← FastAPI conversation server (~44KB)
+│       └── app.py              ← FastAPI backend server (port 8080, agent loop only)
+├── conversation_gateway/       ← Middleware layer (the "dirty work")
+│   ├── api.py                  ← SSE proxy + file display endpoints (port 8081)
+│   ├── conversation_store.py   ← File-backed store (thread-safe, atomic writes)
+│   └── workspace.py            ← File diff, tree, upload/delete/export utilities
 ├── frontend/                   ← React + Vite web UI
 ├── Dockerfile
 ├── docker-compose.yml
 ├── requirements.txt
-└── run_web.py                  ← Entry point for web server
+└── run_web.py                  ← Entry point for backend server
 ```
 
 ---
@@ -330,15 +335,15 @@ generate_chat_responses_stream_native(
 
 ### Running the Application
 
-**`start.bat` is the sole supported entry point on the host.** It builds and runs the Docker container (backend + conversation history server) with persistent data volumes, then starts the frontend dev server.
+**`start.bat` is the sole supported entry point on the host.** It builds and runs the Docker container (backend + gateway server) with persistent data volumes, then starts the frontend dev server.
 
 ```powershell
 .\start.bat
 ```
 
 Services started:
-- Backend API: http://localhost:8080
-- Conversation History: http://localhost:8081
+- Backend API: http://localhost:8080 (agent loop)
+- Gateway: http://localhost:8081 (SSE proxy, file display, conversation persistence)
 - Frontend: http://localhost:3000
 - VNC Desktop: http://localhost:6080
 
@@ -376,8 +381,9 @@ data/                        ← host directory (git-ignored)
 ```
 
 Key implementation files:
-- `conversation_history/conversation_store.py` — file-backed store (thread-safe, atomic writes)
-- `conversation_history/api.py` — FastAPI server on port 8081, proxies to backend, persists on SSE events
+- `conversation_gateway/conversation_store.py` — file-backed store (thread-safe, atomic writes)
+- `conversation_gateway/api.py` — FastAPI server on port 8081, proxies to backend, persists on SSE events, serves file-display endpoints
+- `conversation_gateway/workspace.py` — file snapshots, diffs, tree building, workspace upload/delete/export
 - `src/config.py` — `DATA_DIR` / `TRAINING_DATA_DIR` path resolution
 
 Without the volume mount (`-v`), the `--rm` flag on `docker run` causes the container to be deleted on stop, destroying all data inside. The volume mount ensures conversations and training logs survive container restarts.
