@@ -57,7 +57,8 @@ export async function streamChat(message, conversationId, callbacks, signal, exi
     provider: provider,
     ...options
   }
-  console.log('[streamChat] Request:', JSON.stringify(requestBody))
+  console.log('[streamChat] Request: conversation_id=%s, messages=%d, provider=%s',
+    requestBody.conversation_id, requestBody.messages?.length ?? 0, requestBody.provider)
   
   try {
     const response = await fetch(`${API_BASE}/chat`, {
@@ -99,8 +100,9 @@ export async function streamChat(message, conversationId, callbacks, signal, exi
         const events = parseSSEEvents(part)
         
         for (const event of events) {
-          console.log('[streamChat] Event:', event.type, 
-            event.type === 'messages' ? `(${event.data?.messages?.length} msgs)` : '')
+          if (event.type !== 'messages') {
+            console.log('[streamChat] Event:', event.type)
+          }
           
           switch (event.type) {
             case 'messages':

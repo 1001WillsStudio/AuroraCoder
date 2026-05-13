@@ -578,7 +578,7 @@ async def proxy_chat(request: Request):
     body = await request.json()
     t1 = time.perf_counter()
     body_size = len(json.dumps(body)) if body else 0
-    cid_tag = body.get('conversation_id', 'new')[:8]
+    cid_tag = (body.get('conversation_id') or 'new')[:8]
     logger.info(f"[proxy] [{cid_tag}...] json_parse={t1-t0:.3f}s body_size={body_size}")
     conversation_id = body.get("conversation_id") or str(uuid.uuid4())
     body["conversation_id"] = conversation_id

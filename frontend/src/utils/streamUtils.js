@@ -1,6 +1,3 @@
-// Debug: log message structure
-const DEBUG = true
-
 // Task instruction markers — wrap the instruction so the backend can strip it
 // for conversation titles. Must match conversation_history/conversation_store.py.
 export const TASK_MARKER_START = "[TASK INSTRUCTION]"
@@ -31,19 +28,11 @@ export const FILE_SYSTEM_TOOLS = [
  * @returns {boolean} - True if safe to interrupt
  */
 export function isInterruptible(messages) {
-  if (!messages || messages.length === 0) {
-    console.log('[isInterruptible] No messages, safe to interrupt')
-    return true
-  }
-  
-  // Check the last message to understand current state
+  if (!messages || messages.length === 0) return true
+
   const lastMessage = messages[messages.length - 1]
-  console.log('[isInterruptible] Last message role:', lastMessage.role)
-  
-  // If the last message is a tool response, we just completed a tool call - SAFE
+
   if (lastMessage.role === 'tool') {
-    // But we need to check if ALL tool calls from the preceding assistant have responses
-    // Find the assistant message that made these tool calls
     let assistantIndex = -1
     for (let i = messages.length - 2; i >= 0; i--) {
       if (messages[i].role === 'assistant' && messages[i].tool_calls?.length > 0) {
@@ -51,49 +40,29 @@ export function isInterruptible(messages) {
         break
       }
     }
-    
-    if (assistantIndex === -1) {
-      console.log('[isInterruptible] Tool response but no assistant with tool_calls found, safe')
-      return true
-    }
-    
+
+    if (assistantIndex === -1) return true
+
     const assistant = messages[assistantIndex]
     const expectedIds = new Set(assistant.tool_calls.filter(tc => tc.id).map(tc => tc.id))
     const receivedIds = new Set()
-    
+
     for (let i = assistantIndex + 1; i < messages.length; i++) {
       if (messages[i].role === 'tool' && messages[i].tool_call_id) {
         receivedIds.add(messages[i].tool_call_id)
       }
     }
-    
-    const allReceived = [...expectedIds].every(id => receivedIds.has(id))
-    console.log('[isInterruptible] Tool responses - expected:', expectedIds.size, 'received:', receivedIds.size, 'allReceived:', allReceived)
-    return allReceived
+
+    return [...expectedIds].every(id => receivedIds.has(id))
   }
-  
-  // If the last message is an assistant message
+
   if (lastMessage.role === 'assistant') {
-    // Check if it has tool_calls with valid IDs
     const toolCalls = lastMessage.tool_calls || []
     const validToolCalls = toolCalls.filter(tc => tc.id && tc.id.length > 0)
-    
-    console.log('[isInterruptible] Assistant message - total tool_calls:', toolCalls.length, 'with valid IDs:', validToolCalls.length)
-    
-    // If no valid tool call IDs, model is still generating content/reasoning or tool call is being built - SAFE
-    // (We'll catch it once the tool call ID arrives)
-    if (validToolCalls.length === 0) {
-      console.log('[isInterruptible] No valid tool call IDs, safe to interrupt (generating content/reasoning)')
-      return true
-    }
-    
-    // Has valid tool calls but no tool responses yet - NOT SAFE
-    console.log('[isInterruptible] Has tool calls with IDs but no responses yet, NOT safe')
+    if (validToolCalls.length === 0) return true
     return false
   }
-  
-  // If last message is user or system, safe to interrupt
-  console.log('[isInterruptible] Last message is', lastMessage.role, ', safe to interrupt')
+
   return true
 }
 

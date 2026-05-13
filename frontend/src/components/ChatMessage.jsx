@@ -80,16 +80,6 @@ function ChatMessage({ message, isLatest, isStreaming, onRetry, onStopTool, onLo
   const isTimeout = message.isTimeout
   const canRetry = message.canRetry && onRetry
   
-  // Debug logging
-  if (!isUser && isLatest) {
-    console.log('[ChatMessage] Rendering assistant message:', {
-      activitiesCount: activities.length,
-      activities: activities.map(a => ({ type: a.type, hasContent: !!a.content, name: a.name })),
-      hasContent,
-      contentPreview: message.content?.slice(0, 50)
-    })
-  }
-  
   // Group consecutive activities for better display
   // Each block follows: thinking → content → tool_calls/results
   const groupedActivities = groupActivities(activities, message.content)

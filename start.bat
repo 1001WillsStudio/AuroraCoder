@@ -57,12 +57,24 @@ if errorlevel 1 (
 )
 echo Container started (agent API :8080 + conversation history :8081).
 
-:: Install/update frontend dependencies
-echo [2/2] Installing/updating frontend dependencies...
-cd frontend && call npm install && cd ..
-if errorlevel 1 (
-    echo Frontend dependency installation failed.
-    exit /b 1
+:: Install frontend dependencies only if package.json changed since last install
+set "_need_install=0"
+if not exist "frontend\node_modules" set "_need_install=1"
+if not exist "frontend\node_modules\.package.json.cached" set "_need_install=1"
+if "%_need_install%"=="0" (
+    fc /b "frontend\package.json" "frontend\node_modules\.package.json.cached" >nul 2>&1
+    if errorlevel 1 set "_need_install=1"
+)
+if "%_need_install%"=="1" (
+    echo [2/2] package.json changed — running npm install...
+    cd frontend && call npm install && cd ..
+    if errorlevel 1 (
+        echo Frontend dependency installation failed.
+        exit /b 1
+    )
+    copy /y "frontend\package.json" "frontend\node_modules\.package.json.cached" >nul
+) else (
+    echo [2/2] package.json unchanged, skipping npm install.
 )
 
 :: Start frontend
