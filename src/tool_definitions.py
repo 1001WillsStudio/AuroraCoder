@@ -47,14 +47,15 @@ from .core_tools.continue_chat import continue_as_new_chat
 EDIT_FILE_DESCRIPTION = """Range-based file editing. Supports multiple edits per call.
 
 Each edit replaces a line range (start_line through end_line inclusive) with new content.
+Edits are atomic: if ANY edit in the call fails validation, NONE are applied and the file is unchanged.
 
 RULES:
-- `start_line_content` is the SINGLE LINE of text at start_line (no newlines). `end_line_content` is the SINGLE LINE at end_line. They verify the file hasn't drifted. Trailing spaces are ignored but leading whitespace MUST match.
-- `end_line` defaults to `start_line` (single-line edit); `end_line_content` auto-fills from file if omitted
-- Multiple edits in one call are supported; ranges must not overlap
-- Use empty `replace_content` to delete the range
-- ALWAYS batch all edits to the same file into ONE call using the original line numbers. Do NOT split same-file edits across multiple calls.
-- After edits, the tool reports the new line count. Use it for any follow-up edits.
+- ALWAYS get line numbers and content from the code interpreter display. NEVER use memorised or assumed line numbers.
+- `start_line_content` / `end_line_content` are SINGLE LINE verification anchors (no newlines). Leading whitespace MUST match; trailing spaces are ignored.
+- `end_line` defaults to `start_line`; `end_line_content` auto-fills from file if omitted.
+- Multiple edits per call: all line numbers refer to the file as it was BEFORE this call. Ranges must not overlap.
+- Use empty `replace_content` to delete the range.
+- Do NOT edit the same file more than once per turn. After an edit, read the refreshed code interpreter for correct line numbers before editing that file again.
 """
 
 

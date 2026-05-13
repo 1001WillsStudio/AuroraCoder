@@ -6,10 +6,13 @@ import tempfile
 import difflib
 import json
 import re
+import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable
 from ..config import EDIT_ZONE_MARKER
 from ..code_sandbox import WORKSPACE
+
+logger = logging.getLogger(__name__)
 
 # --- Constants ---
 WILDCARD_SENTINEL = EDIT_ZONE_MARKER  # Backward compatibility with old constant name
@@ -131,6 +134,18 @@ class FileOperations:
                 """Strip trailing whitespace (trailing spaces usually have no meaning)."""
                 return line.rstrip('\n').rstrip()
 
+            def _indentation_hint(expected: str, actual: str) -> str:
+                """If content matches ignoring leading whitespace, return a hint."""
+                if expected.strip() == actual.strip() and expected != actual:
+                    exp_indent = len(expected) - len(expected.lstrip())
+                    act_indent = len(actual) - len(actual.lstrip())
+                    return (f"\n⚠️  Content matches but indentation differs — "
+                            f"expected {exp_indent} leading spaces, "
+                            f"got {act_indent}.")
+                return ""
+
+            _NO_CHANGES = "\nNo edits were applied — the file is unchanged."
+
             # --- Validate every edit before applying any ---
             validated_edits = []  # (start_idx, end_idx, replace_content, edit_idx)
             for i, edit in enumerate(edits):
@@ -182,12 +197,15 @@ class FileOperations:
                     context_start = max(0, start_idx - 1)
                     context_end = min(total_lines, start_idx + 3)
                     context = ''.join(original_lines[context_start:context_end])
+                    indent_hint = _indentation_hint(expected_start, actual_start)
                     return (f"Error in edit #{i + 1}: start_content does not match "
                             f"file at line {start_line}.\n"
                             f"Expected: {repr(start_content.rstrip())}\n"
                             f"Actual:   {repr(original_lines[start_idx].rstrip())}\n"
                             f"File context around line {start_line}:\n"
-                            f"---\n{context}---")
+                            f"---\n{context}---"
+                            f"{indent_hint}"
+                            f"{_NO_CHANGES}")
 
                 # Verify end anchor
                 actual_end = _normalise_line(original_lines[end_idx])
@@ -196,12 +214,15 @@ class FileOperations:
                     context_start = max(0, end_idx - 1)
                     context_end = min(total_lines, end_idx + 3)
                     context = ''.join(original_lines[context_start:context_end])
+                    indent_hint = _indentation_hint(expected_end, actual_end)
                     return (f"Error in edit #{i + 1}: end_content does not match "
                             f"file at line {end_line}.\n"
                             f"Expected: {repr(end_content.rstrip())}\n"
                             f"Actual:   {repr(original_lines[end_idx].rstrip())}\n"
                             f"File context around line {end_line}:\n"
-                            f"---\n{context}---")
+                            f"---\n{context}---"
+                            f"{indent_hint}"
+                            f"{_NO_CHANGES}")
 
                 validated_edits.append((start_idx, end_idx, replace_content, i))
 
@@ -215,7 +236,8 @@ class FileOperations:
                         return (f"Error: overlapping edit ranges detected — "
                                 f"edit #{a_num + 1} (lines {a_start + 1}-{a_end + 1}) "
                                 f"overlaps edit #{b_num + 1} (lines {b_start + 1}-{b_end + 1}). "
-                                f"Split overlapping edits into separate edit_file calls.")
+                                f"Split overlapping edits into separate edit_file calls."
+                                f"{_NO_CHANGES}")
 
             # --- Apply edits bottom-to-top to preserve line numbers ---
             validated_edits.sort(key=lambda e: e[0], reverse=True)
@@ -271,9 +293,8 @@ class FileOperations:
             result += (f"\n📏 File: {total_lines} → {new_total} lines "
                        f"({'+' if line_delta >= 0 else ''}{line_delta})")
             if line_delta != 0:
-                result += (f"\n⚠️  Line numbers after the edited region(s) have shifted by "
-                           f"{'+' if line_delta >= 0 else ''}{line_delta}. "
-                           f"If you need to make further edits, use the NEW line numbers.")
+                result += (f"\n⚠️  Line numbers have shifted by "
+                           f"{'+' if line_delta >= 0 else ''}{line_delta}.")
             return result
 
         except Exception as e:

@@ -165,7 +165,7 @@ def generate_consolidated_interpreter_display(messages: List[Dict]) -> str:
     
     display = code_interpreter.display_multiple_files(sorted_files)
 
-    notes = "\n\nNote: Closing a file removes it from this display, including previous tool responses — you will no longer see its contents unless you open it again. Only close a file after you have fully extracted all information you need from it."
+    notes = "\n\nNote: This display shows the LATEST state of each file with accurate line numbers. Always use these line numbers for edit_file calls — never use memorised line numbers. Closing a file removes it from this display, including previous tool responses — you will no longer see its contents unless you open it again. Only close a file after you have fully extracted all information you need from it."
 
     if len(open_files) > INTERPRETER_MAX_FILES or len(display) > INTERPRETER_WARN_CHARS:
         file_list = ", ".join(sorted_files)
@@ -229,6 +229,38 @@ def _execute_single_tool(tool_call: Dict) -> Tuple[Dict, str, str]:
         result = f"Error executing tool '{tool_name}': {type(e).__name__}: {e}"
     return (tool_call, tool_name, result)
 
+def _check_same_file_edit_guard(
+    tool_call: Dict,
+    files_edited_this_turn: set,
+) -> Optional[str]:
+    """
+    If this tool call is an edit_file targeting a file already edited in this
+    turn, return an error message.  Otherwise return None and register the file.
+
+    The agent cannot see the updated code interpreter between tool calls in
+    the same turn, so a second edit to the same file would use stale line
+    numbers.  Force it to wait for the next turn.
+    """
+    tool_name = tool_call["function"]["name"]
+    if tool_name != "edit_file":
+        return None
+    try:
+        args = json.loads(tool_call["function"]["arguments"])
+    except (json.JSONDecodeError, TypeError):
+        return None
+    target = args.get("target_file")
+    if not target:
+        return None
+    if target in files_edited_this_turn:
+        return (f"Error: '{target}' was already edited earlier in this turn. "
+                f"You cannot edit the same file twice in one turn because the "
+                f"code interpreter has not refreshed yet — your line numbers "
+                f"are stale. Wait for the next turn and use the updated code "
+                f"interpreter display for correct line numbers.")
+    files_edited_this_turn.add(target)
+    return None
+
+
 def _execute_tool_calls(
     current_tool_calls: List[Dict],
     messages: List[Dict],
@@ -241,6 +273,7 @@ def _execute_tool_calls(
         True if any code-related tool was called
     """
     code_tool_called = False
+    files_edited_this_turn: set = set()
 
     for is_safe, batch in partition_tool_calls(current_tool_calls):
         if is_safe and len(batch) > 1:
@@ -265,6 +298,17 @@ def _execute_tool_calls(
                 })
         else:
             for tc in batch:
+                guard_err = _check_same_file_edit_guard(tc, files_edited_this_turn)
+                if guard_err:
+                    tool_name = tc["function"]["name"]
+                    if should_trigger_code_interpreter(tool_name):
+                        code_tool_called = True
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": guard_err
+                    })
+                    continue
                 tc_out, tool_name, result = _execute_single_tool(tc)
                 if should_trigger_code_interpreter(tool_name):
                     code_tool_called = True

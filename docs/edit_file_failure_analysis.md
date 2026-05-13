@@ -148,3 +148,20 @@ The following patterns succeeded on the first try:
 - **Single-target, isolated edits**: Changing `uvicorn` log levels in `conversation_gateway/api.py` (one-line change, no side effects) succeeded instantly.
 - **Small, non-overlapping batches**: The `web_api/app.py` edit (single-line change from `logger.info` to `logger.debug`) succeeded because it was isolated and didn't shift any lines that other edits depended on.
 - **Post-fix verification**: After discovering the double-`try:` bug in `providers.py`, the fix was a single, precise edit targeting exactly the two duplicated lines — no ambiguity.
+
+---
+
+## 6. Corrections (added 2026-05-13)
+
+The "Category C: Intra-Batch Line Drift" diagnosis above is **incorrect**. The edit tool validates ALL anchors against the ORIGINAL file before applying any changes, then applies edits bottom-to-top. This means intra-batch line drift cannot occur at the tool level.
+
+The real root cause for incidents #3, #5, #6, and #7 is **stale mental model**: the agent provided anchor content from memory (based on the file state before a prior successful edit) instead of reading the current line numbers from the code interpreter display. The tool correctly rejected these — no data was corrupted.
+
+### Hardening applied
+
+The following changes were made to `file_operations.py` and `tool_definitions.py`:
+
+1. **Error messages now point to the code interpreter**: every anchor mismatch error appends "Check the code interpreter display below for the current file content and correct line numbers."
+2. **Indentation-only mismatches get a specific hint**: "Content matches but indentation differs — expected N leading spaces, got M."
+3. **Python syntax validation**: for `.py` files, `compile()` is run on the result before writing. If the edit would break syntax (e.g. wrong indentation), the file is NOT modified and the SyntaxError is returned.
+4. **Tool description updated**: explicitly states the code interpreter is the ONLY reliable source for line numbers. Clarifies that batched edits use original line numbers and are applied bottom-to-top.
