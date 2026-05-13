@@ -67,6 +67,7 @@ function App() {
   const inputRef = useRef(null)
   const abortControllerRef = useRef(null)
   const pendingInterruptRef = useRef(null)
+  const conversationIdRef = useRef(null)
   const continuationNavigatedRef = useRef(new Set())
 
   // ── Effects ─────────────────────────────────────────────────────────────
@@ -111,6 +112,11 @@ function App() {
   useEffect(() => {
     if (selectedProvider) localStorage.setItem('selectedProvider', selectedProvider)
   }, [selectedProvider])
+
+  // Keep conversationIdRef in sync so useCallback handlers always have the latest value
+  useEffect(() => {
+    conversationIdRef.current = conversationId
+  }, [conversationId])
 
   useEffect(() => {
     if (!showTaskInstructions) return
@@ -355,9 +361,13 @@ function App() {
     inputRef.current?.focus()
   }
 
-  const handleStop = () => {
+  const handleStop = async () => {
     if (abortControllerRef.current) abortControllerRef.current.abort()
-    if (conversationId) cancelConversation(conversationId)
+    if (conversationId) {
+      try {
+        await cancelConversation(conversationId)
+      } catch { /* ignore — best-effort cancel */ }
+    }
     setIsStreaming(false)
     setPendingInterrupt(null)
     pendingInterruptRef.current = null
@@ -367,6 +377,9 @@ function App() {
 
   const handleStopTool = useCallback((toolInfo) => {
     if (abortControllerRef.current) abortControllerRef.current.abort()
+    const cid = conversationIdRef.current
+    if (cid) cancelConversation(cid)
+
     const terminationMessage = `Tool terminated by user after ${formatElapsedTime(toolInfo.elapsedSeconds)}`
 
     setRawMessages(prev => {
