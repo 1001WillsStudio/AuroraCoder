@@ -262,9 +262,19 @@ class FileOperations:
 
             _notify_file_write(target_file)
 
+            new_total = len(new_content.splitlines())
+            line_delta = new_total - total_lines
+
             summary = "; ".join(summary_parts)
-            return (f"✅ Applied {len(validated_edits)} edit(s) to '{target_file}': "
-                    f"{summary}")
+            result = (f"✅ Applied {len(validated_edits)} edit(s) to '{target_file}': "
+                      f"{summary}")
+            result += (f"\n📏 File: {total_lines} → {new_total} lines "
+                       f"({'+' if line_delta >= 0 else ''}{line_delta})")
+            if line_delta != 0:
+                result += (f"\n⚠️  Line numbers after the edited region(s) have shifted by "
+                           f"{'+' if line_delta >= 0 else ''}{line_delta}. "
+                           f"If you need to make further edits, use the NEW line numbers.")
+            return result
 
         except Exception as e:
             return f"Error applying range replace edits to '{target_file}': {str(e)}"
