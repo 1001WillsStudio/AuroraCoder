@@ -129,11 +129,8 @@ class FileOperations:
 
             # --- Helper: normalise a single line for comparison ---
             def _normalise_line(line: str) -> str:
-                """Strip trailing whitespace; take first line only for anchor comparison."""
-                # If caller accidentally passes multi-line anchor content, only
-                # compare the first line — start/end anchors are single-line.
-                first_line = line.split('\n')[0]
-                return first_line.rstrip('\n').rstrip()
+                """Strip trailing whitespace (trailing spaces usually have no meaning)."""
+                return line.rstrip('\n').rstrip()
 
             # --- Validate every edit before applying any ---
             validated_edits = []  # (start_idx, end_idx, replace_content, edit_idx)
