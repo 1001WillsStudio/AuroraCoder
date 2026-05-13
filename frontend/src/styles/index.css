@@ -2062,9 +2062,40 @@ body {
   user-select: none;
 }
 
+.diff-line-num {
+  width: 40px;
+  flex-shrink: 0;
+  text-align: right;
+  padding-right: 10px;
+  color: var(--diff-line-number);
+  user-select: none;
+  opacity: 0.7;
+}
+
 .diff-content {
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+.diff-delete-badge {
+  color: var(--diff-removed-text);
+  font-weight: 600;
+  font-size: 0.8em;
+}
+
+.diff-line-ellipsis {
+  opacity: 0.6;
+}
+
+.diff-ellipsis-text {
+  font-style: italic;
+}
+
+.diff-more {
+  padding: 6px 14px;
+  color: var(--text-tertiary);
+  font-style: italic;
+  font-size: 0.85em;
 }
 
 .diff-empty {

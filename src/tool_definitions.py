@@ -44,13 +44,14 @@ from .core_tools.continue_chat import continue_as_new_chat
 # """
 # ========================================================================
 
-EDIT_FILE_DESCRIPTION = """Aider-style search and replace. Now supports multiple edits per call using range-based anchors.
+EDIT_FILE_DESCRIPTION = """Range-based file editing. Supports multiple edits per call.
+
+Each edit replaces a line range (start_line through end_line inclusive) with new content.
 
 RULES:
-- Each edit in `edits` specifies a line range (start_line..end_line) and replacement content
-- `start_content` and `end_content` are safety anchors — they verify you see the same file; trailing spaces are ignored, but leading whitespace (indentation) MUST match
-- `end_line` defaults to `start_line` (single-line edit); `end_content` auto-fills from file if omitted (save tokens)
-- Multiple edits are applied bottom-to-top; ranges must not overlap
+- `start_content` and `end_content` verify that the file hasn't changed at those lines before editing; trailing spaces are ignored, but leading whitespace (indentation) MUST match
+- `end_line` defaults to `start_line` (single-line edit); `end_content` auto-fills from file if omitted
+- Multiple edits in one call are supported; ranges must not overlap
 - Use empty `replace_content` to delete the range
 """
 

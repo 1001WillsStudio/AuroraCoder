@@ -211,12 +211,9 @@ function getToolConfig(toolName, args, result) {
         expandedContent: (
           <div className="multi-edit-view">
             {edits.map((edit, i) => (
-              <DiffView
+              <EditRangeView
                 key={i}
-                removed={`${edit.start_content || ''}  ← … →  ${edit.end_content || ''}`}
-                added={edit.replace_content || ''}
-                startLine={edit.start_line}
-                endLine={edit.end_line}
+                edit={edit}
                 editIndex={edits.length > 1 ? i + 1 : null}
               />
             ))}
@@ -302,25 +299,28 @@ function getToolConfig(toolName, args, result) {
 }
 
 /**
- * Diff view for file edits - shows removed lines in red, added lines in green.
- * Now supports the new range-based edit format with start/end anchors.
+ * Displays a range-based edit: shows the replaced range context
+ * and the full replacement content with line numbers.
  */
-function DiffView({ removed, added, startLine, endLine, editIndex }) {
-  if (!removed && !added) {
-    return <div className="diff-empty">No changes</div>
+function EditRangeView({ edit, editIndex }) {
+  const { start_line, end_line, start_content, end_content, replace_content } = edit
+  const isDelete = !replace_content
+  const effectiveEnd = end_line || start_line
+
+  let locationLabel = ''
+  if (start_line && effectiveEnd && start_line !== effectiveEnd) {
+    locationLabel = `Lines ${start_line}–${effectiveEnd}`
+  } else if (start_line) {
+    locationLabel = `Line ${start_line}`
   }
 
-  const removedLines = (removed || '').split('\n')
-  const addedLines = (added || '').split('\n')
-  
-  // Build the location label
-  let locationLabel = ''
-  if (startLine && endLine) {
-    locationLabel = startLine === endLine ? `Line ${startLine}` : `Lines ${startLine}–${endLine}`
-  } else if (startLine) {
-    locationLabel = `Line ${startLine}`
-  }
-  
+  const rangeSpan = effectiveEnd - (start_line || 1) + 1
+
+  const lines = isDelete ? [] : (replace_content || '').split('\n')
+  const maxPreview = 30
+  const hasMore = lines.length > maxPreview
+  const displayLines = hasMore ? lines.slice(0, maxPreview) : lines
+
   return (
     <div className="diff-view">
       {(editIndex || locationLabel) && (
@@ -328,26 +328,42 @@ function DiffView({ removed, added, startLine, endLine, editIndex }) {
           {editIndex && <span className="diff-edit-index">Edit #{editIndex}</span>}
           {editIndex && locationLabel && <span className="diff-location-sep"> · </span>}
           {locationLabel && <span>{locationLabel}</span>}
+          {isDelete && <span className="diff-delete-badge"> (deleted)</span>}
         </div>
       )}
-      {removed && (
-        <div className="diff-removed">
-          {removedLines.map((line, idx) => (
-            <div key={`r-${idx}`} className="diff-line removed">
-              <span className="diff-prefix">−</span>
-              <span className="diff-content">{line || ' '}</span>
-            </div>
-          ))}
-        </div>
-      )}
-      {added && (
+      {/* Show the removed range as context */}
+      <div className="diff-removed">
+        {start_content && (
+          <div className="diff-line removed">
+            <span className="diff-line-num">{start_line}</span>
+            <span className="diff-content">{start_content}</span>
+          </div>
+        )}
+        {rangeSpan > 2 && (
+          <div className="diff-line removed diff-line-ellipsis">
+            <span className="diff-line-num">⋮</span>
+            <span className="diff-content diff-ellipsis-text">({rangeSpan - 2} more line{rangeSpan - 2 > 1 ? 's' : ''})</span>
+          </div>
+        )}
+        {end_content && effectiveEnd !== start_line && (
+          <div className="diff-line removed">
+            <span className="diff-line-num">{effectiveEnd}</span>
+            <span className="diff-content">{end_content}</span>
+          </div>
+        )}
+      </div>
+      {/* Show the full replacement content */}
+      {!isDelete && (
         <div className="diff-added">
-          {addedLines.map((line, idx) => (
-            <div key={`a-${idx}`} className="diff-line added">
-              <span className="diff-prefix">+</span>
+          {displayLines.map((line, idx) => (
+            <div key={idx} className="diff-line added">
+              <span className="diff-line-num">{(start_line || 1) + idx}</span>
               <span className="diff-content">{line || ' '}</span>
             </div>
           ))}
+          {hasMore && (
+            <div className="diff-more">... {lines.length - maxPreview} more lines</div>
+          )}
         </div>
       )}
     </div>
