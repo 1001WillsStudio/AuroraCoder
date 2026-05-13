@@ -53,6 +53,8 @@ RULES:
 - `end_line` defaults to `start_line` (single-line edit); `end_line_content` auto-fills from file if omitted
 - Multiple edits in one call are supported; ranges must not overlap
 - Use empty `replace_content` to delete the range
+- ALWAYS batch all edits to the same file into ONE call using the original line numbers. Do NOT split same-file edits across multiple calls.
+- After edits, the tool reports the new line count. Use it for any follow-up edits.
 """
 
 
