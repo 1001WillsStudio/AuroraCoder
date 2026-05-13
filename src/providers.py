@@ -8,8 +8,11 @@ For Vertex AI providers, handles Google Cloud authentication with automatic toke
 """
 
 import os
+import logging
 from typing import Dict, List, Optional, Any
 from openai import OpenAI
+
+logger = logging.getLogger(__name__)
 
 from .config import MODEL_PROVIDERS, DEFAULT_PROVIDER
 
@@ -54,15 +57,15 @@ class VertexAIClient:
         try:
             from google.auth import default
             import google.auth.transport.requests
-            
+
             self._credentials, _ = default(
                 scopes=["https://www.googleapis.com/auth/cloud-platform"]
             )
             self._auth_request = google.auth.transport.requests.Request()
-            print(f"[VertexAI] Credentials initialized for project: {self.project_id}")
+            logger.info("[VertexAI] Credentials initialized for project: %s", self.project_id)
         except Exception as e:
-            print(f"[VertexAI] WARNING: Failed to initialize credentials: {e}")
-            print("[VertexAI] Run 'gcloud auth application-default login' to authenticate")
+            logger.warning("[VertexAI] Failed to initialize credentials: %s", e)
+            logger.warning("[VertexAI] Run 'gcloud auth application-default login' to authenticate")
             self._credentials = None
     
     def _refresh_token(self) -> str:
@@ -147,16 +150,16 @@ class ProviderManager:
                         # Skip if API key is missing or is a placeholder
                         # This prevents unconfigured providers from appearing in the list
                         if config.get("id") == "gemini-3-pro-api":
-                            print(f"[ProviderManager] Skipping {provider_id}: API key not configured (GEMINI_API_KEY env var missing)")
+                            logger.info("[ProviderManager] Skipping %s: API key not configured (GEMINI_API_KEY env var missing)", provider_id)
                             continue
                             
                     self._clients[provider_id] = OpenAI(
                         base_url=config["base_url"],
                         api_key=api_key
                     )
-                    print(f"[ProviderManager] Initialized: {provider_id} ({config['name']})")
+                    logger.info("[ProviderManager] Initialized: %s (%s)", provider_id, config['name'])
             except Exception as e:
-                print(f"[ProviderManager] Failed to initialize {provider_id}: {e}")
+                logger.warning("[ProviderManager] Failed to initialize %s: %s", provider_id, e)
     
     def _init_vertex_client(self, provider_id: str, config: dict):
         """Initialize a Vertex AI client with Google Cloud auth."""
@@ -164,8 +167,8 @@ class ProviderManager:
         project_id = config.get("project_id") or os.environ.get("VERTEX_AI_PROJECT_ID")
         
         if not project_id:
-            print(f"[ProviderManager] WARNING: {provider_id} requires VERTEX_AI_PROJECT_ID env var")
-            print(f"[ProviderManager] Skipping {provider_id} - set VERTEX_AI_PROJECT_ID to enable")
+            logger.warning("[ProviderManager] %s requires VERTEX_AI_PROJECT_ID env var", provider_id)
+            logger.warning("[ProviderManager] Skipping %s - set VERTEX_AI_PROJECT_ID to enable", provider_id)
             return
         
         location = config.get("location", "us-central1")
@@ -173,9 +176,9 @@ class ProviderManager:
         try:
             client = VertexAIClient(project_id=project_id, location=location)
             self._clients[provider_id] = client
-            print(f"[ProviderManager] Initialized Vertex AI: {provider_id} ({config['name']})")
+            logger.info("[ProviderManager] Initialized Vertex AI: %s (%s)", provider_id, config['name'])
         except Exception as e:
-            print(f"[ProviderManager] Failed to initialize Vertex AI {provider_id}: {e}")
+            logger.warning("[ProviderManager] Failed to initialize Vertex AI %s: %s", provider_id, e)
     
     def get_client(self, provider_id: str) -> OpenAI:
         """Get the client for a specific provider."""

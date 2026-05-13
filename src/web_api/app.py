@@ -164,7 +164,7 @@ def convert_messages_for_frontend(messages: list) -> list:
                 "content": content,
                 "activities": activities
             }
-            logger.info(f"[convert] Assistant message with {len(activities)} activities, content_len={len(content)}")
+            logger.debug(f"[convert] Assistant message with {len(activities)} activities, content_len={len(content)}")
             frontend_messages.append(assistant_msg)
             i = j
 

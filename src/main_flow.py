@@ -6,8 +6,9 @@ Supports multiple model providers that can be switched at runtime.
 """
 
 import json
+import time
 import datetime
-
+import logging
 import re
 from typing import Dict, List, Any, Generator, Set, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -29,6 +30,8 @@ from .code_tools.code_interpreter import (
     CODE_INTERPRETER_END
 )
 from .code_sandbox import WORKSPACE
+
+_main_logger = logging.getLogger(__name__)
 
 
 # --- Code Interpreter Management ---
@@ -392,6 +395,7 @@ def generate_chat_responses_stream_native(
             api_kwargs["extra_body"] = extra_body
         
         # Create chat completion with tools
+        t_api_start = time.time()
         completion_stream = client.chat.completions.create(**api_kwargs)
         
         current_content = ""
@@ -401,6 +405,8 @@ def generate_chat_responses_stream_native(
         current_usage = None
         
         try:
+            t_first_chunk = time.time()
+            t_first_content = None
             for chunk in completion_stream:
                 if not chunk.choices:
                     # Usage info may come on a chunk with no choices
@@ -414,6 +420,8 @@ def generate_chat_responses_stream_native(
                     current_reasoning += delta.reasoning_content
 
                 if delta.content:
+                    if t_first_content is None:
+                        t_first_content = time.time()
                     current_content += delta.content
 
                 # Handle tool calls
@@ -454,10 +462,22 @@ def generate_chat_responses_stream_native(
                     "status": "running",
                     "provider": provider_id
                 }
+
+            # Log timing for this API call (after streaming loop finishes)
+            t_now = time.time()
+            api_latency = t_first_chunk - t_api_start
+            content_latency = (t_first_content - t_first_chunk) if t_first_content else None
+            _main_logger.info(
+                "[main_flow] iter=%d model=%s api_ttfb=%.0fms first_content=%s total=%.0fms",
+                iteration_count, model_name,
+                api_latency * 1000,
+                ("%.0fms" % ((t_first_content - t_first_chunk) * 1000)) if t_first_content else "N/A",
+                (t_now - t_api_start) * 1000,
+            )
         
         except Exception as e:
             streaming_errors += 1
-            print(f"Streaming error ({streaming_errors}/{MAX_STREAMING_RETRIES}): {e}")
+            _main_logger.warning("Streaming error (%s/%s): %s", streaming_errors, MAX_STREAMING_RETRIES, e)
             if streaming_errors >= MAX_STREAMING_RETRIES:
                 yield {
                     "messages": messages,
