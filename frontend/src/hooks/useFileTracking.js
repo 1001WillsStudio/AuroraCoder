@@ -65,12 +65,12 @@ export function useFileTracking(conversationId, messages, isStreaming) {
     }
   }, [conversationId, closedFiles])
 
-  // ── Shared helper: open the code panel IF there are files to show ──────
+  // ── Shared helper: open the code panel when a code tool is active ──────
   // Called at two points — when a code tool starts AND when its result
-  // arrives — so the panel only appears when there is actual content.
+  // arrives.  Does NOT require editedFiles to already be populated — the
+  // polling effect below will fetch diffs once showCodePanel becomes true.
 
   const maybeOpenCodePanel = useCallback(() => {
-    if (editedFiles.length === 0) return                     // nothing to show → stay closed
     const hasCodeActivity = messages.some(msg =>
       msg.activities?.some(a =>
         a.type === 'tool_call' && CODE_TOOLS.includes(a.name)
@@ -79,7 +79,7 @@ export function useFileTracking(conversationId, messages, isStreaming) {
     if (hasCodeActivity) {
       setShowCodePanel(true)
     }
-  }, [messages, editedFiles])
+  }, [messages])
 
   // ── (A) Tool START — code tool call appears; kick off diff fetch & try open ──
 
