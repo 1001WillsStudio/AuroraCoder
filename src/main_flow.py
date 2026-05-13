@@ -28,7 +28,7 @@ from .code_tools.code_interpreter import (
     CODE_INTERPRETER_START, 
     CODE_INTERPRETER_END
 )
-from .code_sandbox.session_manager import session_manager
+from .sandbox import WORKSPACE
 
 
 # --- Code Interpreter Management ---
@@ -157,7 +157,7 @@ def generate_consolidated_interpreter_display(messages: List[Dict]) -> str:
     sorted_files = sorted(open_files)
     
     # Set root path and generate display
-    root_path = session_manager.get_session_working_directory()
+    root_path = WORKSPACE
     code_interpreter.set_root_path(root_path)
     
     display = code_interpreter.display_multiple_files(sorted_files)

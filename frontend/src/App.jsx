@@ -5,8 +5,7 @@ import ChatInput from './components/ChatInput'
 import Sidebar from './components/Sidebar'
 import WelcomeScreen from './components/WelcomeScreen'
 import CodePanel from './components/CodePanel'
-import SessionPicker from './components/SessionPicker'
-import { streamChat, getProviders, getCurrentSession, cancelConversation, getConversation, getActiveStreams, resumeStream } from './services/api'
+import { streamChat, getProviders, cancelConversation, getConversation, getActiveStreams, resumeStream } from './services/api'
 import { isInterruptible, TASK_MARKER_START, TASK_MARKER_END, formatElapsedTime } from './utils/streamUtils'
 import { useFileTracking } from './hooks/useFileTracking'
 
@@ -48,16 +47,13 @@ function App() {
 
   // Other state
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [showSessionPicker, setShowSessionPicker] = useState(false)
-  const [currentSession, setCurrentSession] = useState(null)
   const [lastRequest, setLastRequest] = useState(null)
   const [showTaskInstructions, setShowTaskInstructions] = useState(false)
   const taskInstructionsRef = useRef(null)
   const taskInstructionsBtnRef = useRef(null)
   const [historyCloseTrigger, setHistoryCloseTrigger] = useState(0)
-  const getSystemPromptKey = (sessionId) => `systemPrompt_${sessionId || 'default'}`
   const [systemPrompt, setSystemPrompt] = useState(() => {
-    try { return localStorage.getItem('systemPrompt_default') || '' } catch { return '' }
+    try { return localStorage.getItem('systemPrompt') || '' } catch { return '' }
   })
   const [historyRefreshTrigger, setHistoryRefreshTrigger] = useState(0)
   const [activeConvoWarning, setActiveConvoWarning] = useState(false)
@@ -116,16 +112,6 @@ function App() {
   }, [selectedProvider])
 
   useEffect(() => {
-    async function fetchCurrentSession() {
-      try {
-        const session = await getCurrentSession()
-        if (session.status === 'active') setCurrentSession(session)
-      } catch { /* ignore */ }
-    }
-    fetchCurrentSession()
-  }, [])
-
-  useEffect(() => {
     if (!showTaskInstructions) return
     function handleClick(e) {
       if (taskInstructionsBtnRef.current?.contains(e.target)) return
@@ -150,20 +136,6 @@ function App() {
   useEffect(() => { scrollToBottom() }, [messages, scrollToBottom])
 
   // ── Handlers ────────────────────────────────────────────────────────────
-
-  const handleSessionLoaded = (sessionInfo) => {
-    setCurrentSession(sessionInfo)
-    const sessionId = sessionInfo?.session_id
-    const key = getSystemPromptKey(sessionId)
-    try { setSystemPrompt(localStorage.getItem(key) || '') } catch { setSystemPrompt('') }
-    setMessages([])
-    setRawMessages([])
-    setConversationId(null)
-    setCanContinue(false)
-    setEditedFiles([])
-    setClosedFiles(new Set())
-    setFileTreeRefreshTrigger(prev => prev + 1)
-  }
 
   const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark')
   const toggleSidebar = () => setSidebarCollapsed(prev => !prev)
@@ -475,11 +447,9 @@ function App() {
         theme={theme}
         onToggleTheme={toggleTheme}
         onNewChat={handleClear}
-        onShowSessionPicker={() => setShowSessionPicker(true)}
         uploadInputRef={uploadInputRef}
         isUploading={isUploading}
         onUploadProject={handleUploadProject}
-        currentSession={currentSession}
         taskInstructionsBtnRef={taskInstructionsBtnRef}
         showTaskInstructions={showTaskInstructions}
         onToggleTaskInstructions={() => {
@@ -606,13 +576,6 @@ function App() {
         />
       )}
 
-      <SessionPicker
-        isOpen={showSessionPicker}
-        onClose={() => setShowSessionPicker(false)}
-        onSessionLoaded={handleSessionLoaded}
-        currentSessionId={currentSession?.session_id}
-      />
-
       {showTaskInstructions && (
         <div className="task-instructions-drawer" ref={taskInstructionsRef}>
           <div className="history-drawer-header">
@@ -632,9 +595,7 @@ function App() {
               onChange={(e) => {
                 const value = e.target.value
                 setSystemPrompt(value)
-                const sessionId = currentSession?.session_id
-                const key = getSystemPromptKey(sessionId)
-                try { localStorage.setItem(key, value) } catch { /* ignore */ }
+                try { localStorage.setItem('systemPrompt', value) } catch { /* ignore */ }
               }}
               placeholder="e.g., Always write tests for new code, Use TypeScript strict mode, Keep explanations concise..."
               autoFocus

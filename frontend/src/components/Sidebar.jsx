@@ -1,10 +1,10 @@
 import React from 'react'
-import { Sun, Moon, PanelLeftClose, PanelLeft, ChevronDown, History, Upload, FileText } from 'lucide-react'
+import { Sun, Moon, PanelLeftClose, PanelLeft, ChevronDown, Upload, FileText } from 'lucide-react'
 import FileTree from './FileTree'
 import ConversationHistory from './ConversationHistory'
 
 /**
- * Full sidebar: logo, theme toggle, new chat, upload, session info,
+ * Full sidebar: logo, theme toggle, new chat, upload,
  * task instructions button, file tree, conversation history, model selector.
  */
 export default function Sidebar({
@@ -13,11 +13,9 @@ export default function Sidebar({
   theme,
   onToggleTheme,
   onNewChat,
-  onShowSessionPicker,
   uploadInputRef,
   isUploading,
   onUploadProject,
-  currentSession,
   taskInstructionsBtnRef,
   showTaskInstructions,
   onToggleTaskInstructions,
@@ -69,14 +67,6 @@ export default function Sidebar({
             <button className="new-chat-btn" onClick={onNewChat}>
               <span>+ New Chat</span>
             </button>
-            <button 
-              className="load-session-btn" 
-              onClick={onShowSessionPicker}
-              title="Load a previous session"
-            >
-              <History size={16} />
-              <span>Load Session</span>
-            </button>
             <button
               className="load-session-btn"
               onClick={() => uploadInputRef.current?.click()}
@@ -96,16 +86,6 @@ export default function Sidebar({
               onChange={onUploadProject}
             />
           </div>
-
-          {/* Current Session Info */}
-          {currentSession && (
-            <div className="current-session-info">
-              <span className="current-session-label">Session:</span>
-              <span className="current-session-id" title={currentSession.session_name}>
-                {currentSession.session_id}
-              </span>
-            </div>
-          )}
 
           {/* Task Instructions — clickable button, toggles drawer */}
           <div className="sidebar-section task-instructions-section">

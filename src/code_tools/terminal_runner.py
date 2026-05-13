@@ -7,12 +7,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 import json
 
-# Import session manager
-try:
-    from ..code_sandbox import session_manager
-except ImportError:
-    session_manager = None
-
+from ..sandbox import shell, WORKSPACE
 from ..config import TERMINAL_MAX_OUTPUT_CHARS
 
 
@@ -31,12 +26,7 @@ class TerminalRunner:
     """Terminal command runner with support for background processes."""
     
     def __init__(self, workspace_root: str = None):
-        # Use session directory if available, otherwise use provided workspace or current directory
-        if session_manager and session_manager.session_dir:
-            self.workspace_root = session_manager.get_session_working_directory()
-        else:
-            self.workspace_root = Path(workspace_root) if workspace_root else Path.cwd()
-        
+        self.workspace_root = WORKSPACE
     
     def run_command(
         self, command: str, timeout: int = 30, blocking: bool = True, cwd: str = None
@@ -54,18 +44,13 @@ class TerminalRunner:
             Command output or process information
         """
         try:
-            if not session_manager:
-                return "Error: Session manager is not available."
-
             if command.strip() == "start_new_terminal":
-                return session_manager.restart_persistent_shell()
+                return shell.restart()
 
-            if not session_manager.persistent_shell:
+            if not shell.is_alive:
                 return "Error: Persistent shell is not available. Try running 'start_new_terminal'."
 
-            stdout, stderr = session_manager.run_in_persistent_shell(
-                command, timeout=timeout, blocking=blocking,
-            )
+            stdout, stderr = shell.run(command, timeout=timeout, blocking=blocking)
 
             output = []
             output.append(f"Command: {command}")
@@ -88,13 +73,11 @@ class TerminalRunner:
         try:
             use_shell = sys.platform == "win32"
 
-            # This fallback logic remains but should be used less frequently
             if use_shell:
                 shell_command = command
             else:
                 shell_command = ["bash", "-c", command]
 
-            # Run the command
             result = subprocess.run(
                 shell_command,
                 cwd=str(work_dir),
@@ -104,7 +87,6 @@ class TerminalRunner:
                 shell=use_shell
             )
             
-            # Format output
             output = []
             output.append(f"Command: {command}")
             output.append(f"Working Directory: {work_dir}")
@@ -138,4 +120,3 @@ def run_terminal_cmd_tool(
     """Run terminal command tool wrapper."""
     runner = TerminalRunner(workspace_root=workspace_root)
     return runner.run_command(command, timeout=timeout, blocking=blocking)
-

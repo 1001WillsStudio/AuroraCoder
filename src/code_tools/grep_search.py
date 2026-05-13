@@ -3,7 +3,8 @@ import os
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import fnmatch
-from ..code_sandbox import session_manager  # Local import
+
+from ..sandbox import WORKSPACE
 
 
 class GrepSearch:
@@ -12,10 +13,8 @@ class GrepSearch:
     def __init__(self, workspace_root: str = None):
         if workspace_root:
             self.workspace_root = Path(workspace_root)
-        elif session_manager and session_manager.session_dir:
-            self.workspace_root = session_manager.get_session_working_directory()
         else:
-            self.workspace_root = Path.cwd()
+            self.workspace_root = WORKSPACE
     
     def search(self, query: str, include_pattern: str = None, exclude_pattern: str = None, 
                case_sensitive: bool = True, max_results: int = 50) -> str:
@@ -202,4 +201,4 @@ def grep_search_tool(query: str, include_pattern: str = None, exclude_pattern: s
         Formatted search results as a string
     """
     searcher = GrepSearch()
-    return searcher.search(query, include_pattern, exclude_pattern, case_sensitive) 
+    return searcher.search(query, include_pattern, exclude_pattern, case_sensitive)

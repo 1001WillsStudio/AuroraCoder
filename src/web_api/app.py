@@ -15,7 +15,6 @@ from datetime import datetime
 from typing import Optional, Dict, Any, AsyncGenerator, List
 from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -24,11 +23,10 @@ from pydantic import BaseModel, Field
 
 from ..main_flow import generate_chat_responses_stream_native
 from ..providers import get_available_providers, get_default_provider
-from ..code_sandbox import init_application_session, get_session_status
-from ..code_sandbox.session_utils import session_manager, load_session_environment, list_loadable_sessions
+from ..sandbox import shell, get_workspace, WORKSPACE
 from ..code_tools.file_operations import set_file_tracking_callbacks, set_current_conversation
 from ..core_tools.subagent import cancel_active_subagents
-from ..config import DEFAULT_BASE_ENV_NAME, DEFAULT_PROVIDER, DOCKER_MODE, WORKSPACE_DIR
+from ..config import DEFAULT_PROVIDER
 
 from conversation_gateway.workspace import snapshot_file, mark_file_touched, clear_conversation_snapshots
 
@@ -311,28 +309,14 @@ async def stream_chat_response(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager - handles startup and shutdown."""
-    logger.info("Initializing session environment...")
+    logger.info("Initializing sandbox...")
     try:
-        if DOCKER_MODE and WORKSPACE_DIR:
-            workspace = Path(WORKSPACE_DIR)
-            workspace.mkdir(parents=True, exist_ok=True)
-            session_manager.working_directory_override = workspace
-            logger.info(f"Docker mode: workspace override set to {workspace}")
+        workspace = get_workspace()
+        logger.info(f"Workspace: {workspace}")
 
-        session_info = init_application_session(
-            app_name="web_api_assistant",
-            cleanup_on_exit=False,
-            max_old_sessions=10,
-            base_env_name=DEFAULT_BASE_ENV_NAME,
-            reuse_env=DOCKER_MODE
-        )
+        shell.start()
+        logger.info("Persistent shell started")
 
-        if session_info['status'] == 'failed':
-            logger.error(f"Session creation failed: {session_info.get('error', 'Unknown error')}")
-        else:
-            logger.info(f"Session initialized: {session_info['session_dir']}")
-
-        # Register file tracking callbacks for diff support
         set_file_tracking_callbacks(
             on_read=snapshot_file,
             on_write=mark_file_touched
@@ -340,11 +324,12 @@ async def lifespan(app: FastAPI):
         logger.info("File tracking callbacks registered")
 
     except Exception as e:
-        logger.error(f"Failed to initialize session: {e}")
+        logger.error(f"Failed to initialize sandbox: {e}")
 
     yield
 
     logger.info("Shutting down...")
+    shell.stop()
     executor.shutdown(wait=False)
 
 
@@ -386,11 +371,12 @@ async def root():
 
 @app.get("/api/health")
 async def health_check():
-    try:
-        session_status = get_session_status()
-        return {"status": "healthy", "timestamp": datetime.now().isoformat(), "session": session_status}
-    except Exception as e:
-        return JSONResponse(status_code=503, content={"status": "unhealthy", "error": str(e)})
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "workspace": str(WORKSPACE),
+        "shell_alive": shell.is_alive,
+    }
 
 
 @app.get("/api/providers")
@@ -400,90 +386,16 @@ async def list_providers():
 
 
 # ============================================================================
-# Session Management Endpoints
+# Workspace Info
 # ============================================================================
 
-class LoadSessionRequest(BaseModel):
-    session_id: Optional[str] = Field(None, description="Session ID to load")
-    session_name: Optional[str] = Field(None, description="Session name to load")
-
-
-@app.get("/api/sessions")
-async def list_sessions(loadable_only: bool = True):
-    try:
-        if loadable_only:
-            result = list_loadable_sessions()
-        else:
-            sessions = session_manager.list_sessions(include_loadable_only=False)
-            result = {"status": "success", "sessions": sessions, "total_sessions": len(sessions)}
-
-        result["current_session"] = {
-            "session_id": session_manager.session_id,
-            "session_name": session_manager.session_info.get("session_name") if session_manager.session_info else None,
-            "session_dir": str(session_manager.get_session_working_directory())
-        }
-        return result
-    except Exception as e:
-        logger.error(f"Failed to list sessions: {e}")
-        return JSONResponse(status_code=500, content={"status": "error", "error": str(e)})
-
-
-@app.post("/api/sessions/load")
-async def load_session(request: LoadSessionRequest):
-    if not request.session_id and not request.session_name:
-        raise HTTPException(status_code=400, detail="Either session_id or session_name must be provided")
-    try:
-        result = load_session_environment(
-            session_id=request.session_id, session_name=request.session_name, auto_cleanup=False
-        )
-        if result.get("status") == "failed":
-            raise HTTPException(status_code=400, detail=result.get("error", "Failed to load session"))
-        return {"status": "success", "message": f"Session loaded successfully: {result.get('session_name')}", "session": result}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to load session: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/sessions/current")
-async def get_current_session():
-    if not session_manager.session_id:
-        return {"status": "no_session", "message": "No active session"}
+@app.get("/api/workspace")
+async def get_workspace_info():
+    """Return basic workspace info."""
     return {
-        "status": "active",
-        "session_id": session_manager.session_id,
-        "session_name": session_manager.session_info.get("session_name"),
-        "session_dir": str(session_manager.get_session_working_directory()),
-        "conda_env_name": session_manager.conda_env_name,
-        "base_env_name": session_manager.base_env_name,
-        "created_at": session_manager.session_info.get("created_at"),
-        "loaded_at": session_manager.session_info.get("loaded_at")
+        "workspace": str(WORKSPACE),
+        "shell_alive": shell.is_alive,
     }
-
-
-@app.post("/api/sessions/new")
-async def create_new_session(session_name: Optional[str] = None, base_env_name: Optional[str] = None):
-    try:
-        if session_manager.persistent_shell:
-            try:
-                session_manager.persistent_shell.terminate()
-                session_manager.persistent_shell.wait(timeout=5)
-            except Exception:
-                pass
-            session_manager.persistent_shell = None
-
-        result = session_manager.create_session(
-            session_name=session_name, base_env_name=base_env_name or DEFAULT_BASE_ENV_NAME
-        )
-        if result.get("status") == "failed":
-            raise HTTPException(status_code=500, detail=result.get("error", "Failed to create session"))
-        return {"status": "success", "message": f"New session created: {result.get('session_name')}", "session": result}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to create new session: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================================
@@ -503,7 +415,7 @@ async def chat(chat_request: ChatRequest, request: Request):
     if not is_continue:
         clear_conversation_snapshots(conversation_id)
         try:
-            session_manager.restart_persistent_shell()
+            shell.restart()
             logger.info(f"[API] Restarted persistent shell for new conversation {conversation_id}")
         except Exception as e:
             logger.warning(f"[API] Failed to restart shell: {e}")

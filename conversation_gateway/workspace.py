@@ -3,7 +3,7 @@ Workspace file-display utilities — file snapshots, diffs, tree building,
 and workspace operations.  Used by the gateway's REST endpoints to serve
 the frontend's file browser, diff viewer, and upload/download features.
 
-Depends on ``src.code_sandbox.session_manager`` for the working directory.
+The gateway resolves the workspace directory via ``src.config.WORKSPACE_DIR``.
 """
 
 import logging

@@ -9,12 +9,7 @@ import re
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable
 from ..config import EDIT_ZONE_MARKER
-
-# Import session manager
-try:
-    from ..code_sandbox import session_manager
-except ImportError:
-    session_manager = None
+from ..sandbox import WORKSPACE
 
 # --- Constants ---
 WILDCARD_SENTINEL = EDIT_ZONE_MARKER  # Backward compatibility with old constant name
@@ -71,11 +66,7 @@ class FileOperations:
     """File operations tool for reading, editing, and managing files."""
 
     def __init__(self, workspace_root: str = None):
-        # Use session directory if available, otherwise use provided workspace or current directory
-        if session_manager and session_manager.session_dir:
-            self.workspace_root = session_manager.get_session_working_directory()
-        else:
-            self.workspace_root = Path(workspace_root) if workspace_root else Path.cwd()
+        self.workspace_root = WORKSPACE
 
     # --- File Reading ---
     def read_file(self, target_file: str) -> str:
@@ -100,130 +91,6 @@ class FileOperations:
             return f"The file '{target_file}' is opened in the code interpreter."
         except Exception as e:
             return f"Error reading file '{target_file}': {str(e)}"
-
-    # ========================================================================
-    # [COMMENTED OUT — legacy aider-style search_replace_edit, preserved for
-    #  potential restoration.  Replaced by range_replace_edit below.]
-    # ========================================================================
-    # def search_replace_edit(self, target_file: str, start_line: int, search_content: str, replace_content: str) -> str:
-    #     """
-    #     Apply an Aider-style search and replace edit to a file.
-    #     
-    #     Args:
-    #         target_file: Path to the file to edit
-    #         start_line: Starting line number to begin searching for the content (1-based)
-    #         search_content: The exact content to find and replace (can be multi-line)
-    #         replace_content: The replacement content (can be multi-line, empty string for deletion)
-    #         
-    #     Returns:
-    #         Success message or error description
-    #     """
-    #     try:
-    #         file_path = self._resolve_path(target_file)
-    #         if not file_path.exists() or not file_path.is_file():
-    #             return f"Error: File '{target_file}' not found."
-    #         
-    #         original_text = file_path.read_text(encoding="utf-8", errors="ignore")
-    #         
-    #         # Snapshot original content for diff tracking
-    #         _notify_file_read(target_file, original_text)
-    #         original_lines = original_text.splitlines(keepends=True)
-    #         
-    #         # Normalize search content - handle both with and without trailing newlines
-    #         search_lines = search_content.splitlines(keepends=True)
-    #         # Ensure last line has proper ending for comparison
-    #         if search_lines and not search_lines[-1].endswith('\n'):
-    #             search_lines[-1] = search_lines[-1]
-    #         
-    #         # Validate start_line
-    #         if start_line < 1:
-    #             return f"Error: start_line must be >= 1, got {start_line}"
-    #         if start_line > len(original_lines):
-    #             return f"Error: start_line {start_line} exceeds file length ({len(original_lines)} lines)"
-    #         
-    #         # Search for the content starting from start_line
-    #         start_idx = start_line - 1  # Convert to 0-based index
-    #         search_len = len(search_lines)
-    #         
-    #         # Helper function to normalize lines for comparison
-    #         # Strips trailing whitespace from each line (trailing spaces usually have no meaning in Python)
-    #         def normalize_for_comparison(lines):
-    #             return '\n'.join(line.rstrip() for line in ''.join(lines).rstrip('\n').split('\n'))
-    #         
-    #         # Build the normalized search text
-    #         search_text_normalized = normalize_for_comparison(search_lines)
-    #         
-    #         found_idx = None
-    #         
-    #         # Search from start_line onwards
-    #         for i in range(start_idx, len(original_lines) - search_len + 1):
-    #             # Extract candidate block
-    #             candidate_lines = original_lines[i:i + search_len]
-    #             candidate_text = normalize_for_comparison(candidate_lines)
-    #             
-    #             if candidate_text == search_text_normalized:
-    #                 found_idx = i
-    #                 break
-    #         
-    #         if found_idx is None:
-    #             # Try a more flexible search - maybe whitespace differences
-    #             # Show what we found near start_line for debugging
-    #             context_start = max(0, start_idx)
-    #             context_end = min(len(original_lines), start_idx + search_len + 3)
-    #             context = ''.join(original_lines[context_start:context_end])
-    #             
-    #             return (f"Error: Could not find the search content starting from line {start_line}.\n"
-    #                     f"Search content ({len(search_lines)} lines):\n"
-    #                     f"---\n{search_content}\n---\n"
-    #                     f"File content near line {start_line}:\n"
-    #                     f"---\n{context}---\n\n"
-    #                     f"Hint: If partial edit keeps failing, use write_file to rewrite the entire file instead.")
-    #         
-    #         # Prepare replacement
-    #         replace_lines = replace_content.splitlines(keepends=True)
-    #         # Ensure last line has newline if original section ended with one
-    #         if replace_lines:
-    #             if original_lines[found_idx + search_len - 1].endswith('\n') and not replace_lines[-1].endswith('\n'):
-    #                 replace_lines[-1] = replace_lines[-1] + '\n'
-    #         elif original_lines[found_idx + search_len - 1].endswith('\n'):
-    #             # Deletion case - no replacement lines, but we're removing content that had newline
-    #             pass
-    #         
-    #         # Apply the replacement
-    #         new_lines = original_lines[:found_idx] + replace_lines + original_lines[found_idx + search_len:]
-    #         new_content = ''.join(new_lines)
-    #         
-    #         # Preserve trailing newline behavior
-    #         if original_text.endswith('\n') and not new_content.endswith('\n'):
-    #             new_content += '\n'
-    #         
-    #         if new_content == original_text:
-    #             return f"Edit processed but resulted in no change for '{target_file}'."
-    #         
-    #         # Write back using temp file for atomic operation.
-    #         # Use dir=file_path.parent so the temp file is on the same
-    #         # filesystem — avoids EXDEV (cross-device link) when workspace
-    #         # and /tmp are on different mounts (e.g. Docker volumes).
-    #         with tempfile.NamedTemporaryFile('w', delete=False, encoding='utf-8', newline='',
-    #                                         dir=str(file_path.parent)) as tmp:
-    #             tmp.write(new_content)
-    #             temp_path = tmp.name
-    #         os.replace(temp_path, file_path)
-    #         
-    #         # Notify that file was written for diff tracking
-    #         _notify_file_write(target_file)
-    #         
-    #         # Generate result message
-    #         found_line = found_idx + 1  # Convert back to 1-based
-    #         if not replace_content:
-    #             return f"✅ Successfully deleted {search_len} lines starting at line {found_line} in '{target_file}'"
-    #         elif not search_content:
-    #             return f"✅ Successfully inserted {len(replace_lines)} lines at line {found_line} in '{target_file}'"
-    #         else:
-    #             return f"✅ Successfully replaced {search_len} lines with {len(replace_lines)} lines starting at line {found_line} in '{target_file}'"
-    #         
-    #     except Exception as e:
-    #         return f"Error applying search/replace edit: {str(e)}"
 
     # --- Range Replace Edit (multi-edit, anchor-based) ---
     def range_replace_edit(self, target_file: str, edits: List[Dict[str, Any]]) -> str:
@@ -325,8 +192,6 @@ class FileOperations:
                 validated_edits.append((start_idx, end_idx, replace_content, i))
 
             # --- Detect overlapping edit ranges ---
-            # Overlapping edits are ambiguous (whose replacement wins?)
-            # so we reject them explicitly rather than silently corrupting output.
             if len(validated_edits) > 1:
                 sorted_by_pos = sorted(validated_edits, key=lambda e: e[0])
                 for idx in range(len(sorted_by_pos) - 1):
@@ -339,7 +204,6 @@ class FileOperations:
                                 f"Split overlapping edits into separate edit_file calls.")
 
             # --- Apply edits bottom-to-top to preserve line numbers ---
-            # Sort by start_idx descending
             validated_edits.sort(key=lambda e: e[0], reverse=True)
 
             new_lines = list(original_lines)
@@ -351,13 +215,11 @@ class FileOperations:
                 # Build replacement lines, preserving newline conventions
                 if replace_content:
                     replace_lines = replace_content.splitlines(keepends=True)
-                    # If the original end line had a trailing newline, ensure replacement does too
                     if original_lines[end_idx].endswith('\n') and replace_lines and not replace_lines[-1].endswith('\n'):
                         replace_lines[-1] = replace_lines[-1] + '\n'
                 else:
                     replace_lines = []
 
-                # Apply the replacement
                 new_lines[start_idx:end_idx + 1] = replace_lines
 
                 new_range_len = len(replace_lines)
@@ -384,7 +246,6 @@ class FileOperations:
                 temp_path = tmp.name
             os.replace(temp_path, file_path)
 
-            # Notify that file was written for diff tracking
             _notify_file_write(target_file)
 
             summary = "; ".join(summary_parts)
@@ -402,28 +263,24 @@ class FileOperations:
         try:
             file_path = self._resolve_path(target_file)
             if not file_path.exists():
-                # Snapshot empty content for new files
                 _notify_file_read(target_file, "")
                 
                 file_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(file_path, 'w', encoding='utf-8') as f:
                     f.write(code_edit)
                 
-                # Notify file was written
                 _notify_file_write(target_file)
                 return f"Created new file: {target_file}"
             
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 current_content = f.read()
             
-            # Snapshot original content for diff tracking
             _notify_file_read(target_file, current_content)
             
             new_content = self._apply_edit(current_content, code_edit)
             with open(file_path, 'w', encoding='utf-8') as f:
                 f.write(new_content)
             
-            # Notify file was written
             _notify_file_write(target_file)
             return f"Successfully edited {target_file}"
         except Exception as e:
@@ -439,7 +296,6 @@ class FileOperations:
             if not file_path.exists():
                 return f"File '{target_file}' does not exist"
             if file_path.is_file():
-                # Snapshot content before deletion for diff tracking
                 try:
                     content = file_path.read_text(encoding='utf-8', errors='replace')
                     _notify_file_read(target_file, content)
@@ -448,7 +304,6 @@ class FileOperations:
                 
                 file_path.unlink()
                 
-                # Notify file was "written" (deleted) for diff tracking
                 _notify_file_write(target_file)
                 return f"Successfully deleted file: {target_file}"
             elif file_path.is_dir():
@@ -531,24 +386,11 @@ class FileOperations:
         return code_edit
 
 # --- Public Tool Wrappers ---
-# def anchor_edit_file_tool(target_file: str, code_edit: str) -> str:
-#     """Public wrapper to expose anchor_edit_file via tool system."""
-#     ops = FileOperations()
-#     return ops.anchor_edit_file(target_file, code_edit)
 
 def read_file_tool(target_file: str) -> str:
     """Read file tool wrapper."""
     file_ops = FileOperations()
     return file_ops.read_file(target_file)
-
-# ========================================================================
-# [COMMENTED OUT — legacy aider-style tool wrapper, preserved for
-#  potential restoration.  Replaced by range_replace_edit_tool below.]
-# ========================================================================
-# def search_replace_edit_tool(target_file: str, start_line: int, search_content: str, replace_content: str) -> str:
-#     """Aider-style search and replace edit tool wrapper."""
-#     ops = FileOperations()
-#     return ops.search_replace_edit(target_file, start_line, search_content, replace_content)
 
 def range_replace_edit_tool(target_file: str, edits: List[Dict[str, Any]]) -> str:
     """Range-based multi-edit tool wrapper."""
@@ -581,4 +423,4 @@ def close_file_tool(target_file: str) -> str:
     This removes the file from the consolidated interpreter display.
     The file itself is not modified or deleted.
     """
-    return f"Closed '{target_file}' from code interpreter view." 
+    return f"Closed '{target_file}' from code interpreter view."

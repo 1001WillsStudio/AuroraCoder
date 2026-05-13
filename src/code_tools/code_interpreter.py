@@ -9,7 +9,7 @@ from typing import Optional, List, Set
 import subprocess
 import logging
 
-from ..code_sandbox.session_manager import session_manager
+from ..sandbox import WORKSPACE, get_python_path, get_conda_env_path
 from ..config import CODE_INTERPRETER_ERRORS_ENABLED
 
 logger = logging.getLogger(__name__)
@@ -74,8 +74,7 @@ class CodeInterpreter:
             return ""
         
         if not self.root_path:
-            # Try to get root path from session manager
-            self.root_path = session_manager.get_session_working_directory()
+            self.root_path = WORKSPACE
         
         file_sections = []
         for filepath in filepaths:
@@ -117,7 +116,7 @@ class CodeInterpreter:
         if self._cached_python_path is not None:
             return self._cached_python_path
         
-        python_path = session_manager.get_conda_env_python_path()
+        python_path = get_python_path()
         if python_path:
             self._cached_python_path = python_path
             logger.debug(f"Using Python path for pyright: {python_path}")
@@ -128,7 +127,7 @@ class CodeInterpreter:
         if self._cached_venv_path is not None:
             return self._cached_venv_path
         
-        venv_path = session_manager.get_conda_env_path()
+        venv_path = get_conda_env_path()
         if venv_path:
             self._cached_venv_path = venv_path
             logger.debug(f"Using venv path for pyright: {venv_path}")

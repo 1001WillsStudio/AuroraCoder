@@ -35,7 +35,7 @@ export default defineConfig({
         target: 'http://localhost:8081',
         changeOrigin: true,
       },
-      // Everything else (sessions, providers, health) → backend
+      // Everything else (providers, health, workspace info) → backend
       '/api': {
         target: 'http://localhost:8080',
         changeOrigin: true,

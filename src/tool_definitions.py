@@ -271,7 +271,7 @@ NATIVE_TOOL_DEFINITIONS = [
                 "properties": {
                     "relative_workspace_path": {
                         "type": "string",
-                        "description": "Path to directory to list (relative to workspace). Empty string for root.",
+                        "description": "Path to directory to list (relative to /workspace). Empty string for workspace root.",
                         "default": ""
                     }
                 },
@@ -330,7 +330,7 @@ NATIVE_TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "run_terminal_command",
-            "description": "Executes terminal/shell commands in a persistent, stateful shell session with Conda. The shell's environment and working directory are preserved between commands. For long-running processes (servers, training, etc.), set blocking=false so the command runs in the background — output streams to a log file whose path is returned. You can read that log file later to check progress. Do NOT use nohup or trailing & yourself; use blocking=false instead. If a blocking command times out, the command keeps running in the old terminal and a new terminal is started automatically — the log file path is returned so you can check progress.",
+            "description": "Executes terminal/shell commands in a persistent, stateful Bash shell. The shell starts in /workspace and its environment and working directory are preserved between commands. For long-running processes (servers, training, etc.), set blocking=false so the command runs in the background — output streams to a log file whose path is returned. You can read that log file later to check progress. Do NOT use nohup or trailing & yourself; use blocking=false instead. If a blocking command times out, the command keeps running in the old terminal and a new terminal is started automatically — the log file path is returned so you can check progress.",
             "parameters": {
                 "type": "object",
                 "properties": {
