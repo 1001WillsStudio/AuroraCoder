@@ -1,0 +1,188 @@
+/* ============================================================================
+   ThinkWithTool — Chat Input Area
+   ============================================================================ */
+
+.input-container {
+  position: relative;
+  z-index: 2;
+  padding: 16px 24px 24px;
+  background: linear-gradient(to top, var(--bg-primary) 80%, transparent);
+}
+
+.input-wrapper {
+  max-width: var(--chat-max-width);
+  margin: 0 auto;
+  position: relative;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  transition: all var(--transition-fast);
+}
+
+.input-wrapper:focus-within {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.15), var(--shadow-md);
+}
+
+[data-theme="light"] .input-wrapper:focus-within {
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15), var(--shadow-md);
+}
+
+.chat-input {
+  width: 100%;
+  padding: 18px 60px 18px 20px;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 1rem;
+  line-height: 1.5;
+  resize: none;
+  outline: none;
+  min-height: 56px;
+  max-height: 200px;
+}
+
+.chat-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.chat-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Streaming mode — input enabled but styled */
+.chat-input.streaming-mode {
+  border-left: 3px solid var(--accent-primary);
+  padding-left: 17px;
+}
+
+.chat-input.streaming-mode::placeholder {
+  color: var(--accent-primary);
+  opacity: 0.7;
+}
+
+/* Pending interrupt — disabled while waiting for safe point */
+.chat-input.pending-interrupt {
+  border-left: 3px solid var(--warning);
+  padding-left: 17px;
+  opacity: 0.7;
+}
+
+.chat-input.pending-interrupt::placeholder {
+  color: var(--warning);
+  opacity: 0.8;
+}
+
+/* ── Action Buttons ──────────────────────────────────────────── */
+.input-actions {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  gap: 8px;
+}
+
+.send-btn, .stop-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.send-btn {
+  background: var(--accent-gradient);
+  color: white;
+}
+
+.send-btn:hover:not(:disabled) {
+  transform: scale(1.05);
+  box-shadow: var(--shadow-glow);
+}
+
+.send-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Interrupt button — sends message while agent is running */
+.send-btn.interrupt-btn {
+  background: linear-gradient(135deg, var(--warning) 0%, var(--accent-primary) 100%);
+  animation: pulse-interrupt 1.5s ease-in-out infinite;
+}
+
+.send-btn.interrupt-btn:hover {
+  transform: scale(1.05);
+  box-shadow: 0 0 20px rgba(255, 170, 0, 0.4);
+}
+
+/* Pending interrupt — waiting for safe point */
+.send-btn.pending-btn {
+  background: var(--warning);
+  animation: spin-pending 1.5s linear infinite;
+}
+
+.send-btn.pending-btn:hover {
+  background: var(--error);
+  animation: none;
+}
+
+.stop-btn {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+}
+
+.stop-btn:hover {
+  background: var(--error);
+  border-color: var(--error);
+}
+
+.stop-icon {
+  width: 12px;
+  height: 12px;
+  background: currentColor;
+  border-radius: 2px;
+}
+
+/* ── Hint & Continue Link ────────────────────────────────────── */
+.input-hint {
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--text-tertiary);
+  margin-top: 12px;
+}
+
+.continue-new-chat-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  font-family: inherit;
+  font-size: inherit;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity var(--transition-fast), color var(--transition-fast);
+  vertical-align: baseline;
+}
+
+.continue-new-chat-link::before {
+  content: "·";
+  margin-right: 2px;
+}
+
+.continue-new-chat-link:hover {
+  opacity: 1;
+  color: var(--text-secondary);
+}

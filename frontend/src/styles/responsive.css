@@ -1,0 +1,63 @@
+/* ============================================================================
+   ThinkWithTool — Responsive Breakpoints
+   ============================================================================ */
+
+@media (max-width: 1200px) {
+  .app.code-mode .main-content {
+    flex: 0.4 1 0;
+    min-width: 300px;
+  }
+
+  .code-panel {
+    flex: 0.6 1 0;
+    min-width: 300px;
+  }
+}
+
+@media (max-width: 768px) {
+  .sidebar {
+    display: none;
+  }
+
+  .messages-container {
+    padding: 16px;
+  }
+
+  .message {
+    gap: 12px;
+    padding: 16px 0;
+  }
+
+  .avatar {
+    width: 32px;
+    height: 32px;
+  }
+
+  .welcome-header h1 {
+    font-size: 2rem;
+  }
+
+  .examples-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .input-container {
+    padding: 12px 16px 16px;
+  }
+
+  /* Stack code panel below chat on mobile */
+  .app.code-mode {
+    flex-direction: column;
+  }
+
+  .app.code-mode .main-content {
+    flex: 1 1 50%;
+    min-width: auto;
+  }
+
+  .code-panel {
+    flex: 1 1 50%;
+    min-width: 0;
+    border-left: none;
+  }
+}

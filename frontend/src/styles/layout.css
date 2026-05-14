@@ -1,0 +1,89 @@
+/* ============================================================================
+   ThinkWithTool — App Layout & Main Content
+   ============================================================================ */
+
+.app {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Split Layout when code panel is active */
+.app.code-mode {
+  --chat-max-width: 100%;
+}
+
+.app.code-mode .main-content {
+  flex: 0 0 42%;
+  min-width: 350px;
+}
+
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-primary);
+  position: relative;
+  transition: flex var(--transition-slow);
+}
+
+/* Subtle radial gradient background */
+.main-content::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: 
+    radial-gradient(circle at 20% 20%, rgba(139, 92, 246, 0.08) 0%, transparent 50%),
+    radial-gradient(circle at 80% 80%, rgba(6, 182, 212, 0.08) 0%, transparent 50%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+[data-theme="light"] .main-content::before {
+  background: 
+    radial-gradient(circle at 20% 20%, rgba(99, 102, 241, 0.06) 0%, transparent 50%),
+    radial-gradient(circle at 80% 80%, rgba(8, 145, 178, 0.06) 0%, transparent 50%);
+}
+
+.chat-container {
+  flex: 1;
+  overflow-y: auto;
+  position: relative;
+  z-index: 1;
+}
+
+/* ── Shared Scrollbar Styling ────────────────────────────────── */
+.chat-container::-webkit-scrollbar,
+.code-panel::-webkit-scrollbar,
+.code-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.chat-container::-webkit-scrollbar-track,
+.code-panel::-webkit-scrollbar-track,
+.code-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chat-container::-webkit-scrollbar-thumb,
+.code-panel::-webkit-scrollbar-thumb,
+.code-content::-webkit-scrollbar-thumb {
+  background: var(--bg-elevated);
+  border-radius: var(--radius-full);
+}
+
+.chat-container::-webkit-scrollbar-thumb:hover,
+.code-panel::-webkit-scrollbar-thumb:hover,
+.code-content::-webkit-scrollbar-thumb:hover {
+  background: var(--bg-hover);
+}
+
+.messages-container {
+  max-width: var(--chat-max-width);
+  margin: 0 auto;
+  padding: 24px;
+}

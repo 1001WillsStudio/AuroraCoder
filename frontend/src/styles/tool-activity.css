@@ -1,0 +1,340 @@
+/* ============================================================================
+   ThinkWithTool — Tool Activity Display
+   ============================================================================ */
+
+.tool-activity-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tool-activity-item {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  transition: all var(--transition-fast);
+}
+
+.tool-activity-item.running {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 12px rgba(139, 92, 246, 0.15);
+}
+
+.tool-activity-item.complete {
+  opacity: 0.85;
+}
+
+.tool-activity-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.tool-activity-header:hover {
+  background: var(--bg-hover);
+}
+
+.tool-activity-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-sm);
+  color: var(--accent-secondary);
+}
+
+.tool-activity-label {
+  font-weight: 500;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+}
+
+.tool-activity-detail {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tool-activity-status {
+  display: flex;
+  align-items: center;
+}
+
+.status-complete {
+  color: var(--success);
+}
+
+.status-running {
+  color: var(--accent-primary);
+}
+
+.tool-activity-expand {
+  color: var(--text-tertiary);
+}
+
+/* Tool elapsed time */
+.tool-activity-elapsed {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--text-tertiary);
+  background: var(--bg-elevated);
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  margin-left: auto;
+}
+
+/* Tool stop button */
+.tool-stop-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: var(--radius-sm);
+  color: #ef4444;
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  margin-left: 8px;
+}
+
+.tool-stop-btn:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.5);
+  transform: scale(1.02);
+}
+
+.tool-stop-btn:active {
+  transform: scale(0.98);
+}
+
+/* Terminated tool state */
+.tool-activity-item.terminated {
+  opacity: 0.7;
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.tool-activity-item.terminated .tool-activity-header {
+  background: rgba(239, 68, 68, 0.05);
+}
+
+.status-terminated {
+  color: #ef4444;
+}
+
+.tool-activity-content {
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+}
+
+/* ── Diff View (in chat tool activity) ──────────────────────── */
+.diff-view {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.diff-location {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 14px;
+  background: var(--bg-tertiary);
+  color: var(--text-tertiary);
+  font-size: 0.8rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.diff-edit-index {
+  font-weight: 600;
+  color: var(--accent-primary);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.diff-location-sep {
+  color: var(--text-muted);
+  margin: 0 2px;
+}
+
+.multi-edit-view .diff-view + .diff-view {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.diff-removed, .diff-added {
+  padding: 4px 0;
+}
+
+.diff-line {
+  display: flex;
+  padding: 2px 14px;
+}
+
+.diff-line.removed {
+  background: var(--diff-removed-bg);
+  color: var(--diff-removed-text);
+}
+
+.diff-line.added {
+  background: var(--diff-added-bg);
+  color: var(--diff-added-text);
+}
+
+.diff-prefix {
+  width: 20px;
+  flex-shrink: 0;
+  font-weight: 600;
+  user-select: none;
+}
+
+.diff-line-num {
+  width: 40px;
+  flex-shrink: 0;
+  text-align: right;
+  padding-right: 10px;
+  color: var(--diff-line-number);
+  user-select: none;
+  opacity: 0.7;
+}
+
+.diff-content {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.diff-delete-badge {
+  color: var(--diff-removed-text);
+  font-weight: 600;
+  font-size: 0.8em;
+}
+
+.diff-line-ellipsis {
+  opacity: 0.6;
+}
+
+.diff-ellipsis-text {
+  font-style: italic;
+}
+
+.diff-more {
+  padding: 6px 14px;
+  color: var(--text-tertiary);
+  font-style: italic;
+  font-size: 0.85em;
+}
+
+.diff-empty {
+  padding: 12px 14px;
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+/* ── File Preview ────────────────────────────────────────────── */
+.file-preview {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.file-preview-content {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.file-line {
+  display: flex;
+  padding: 1px 14px;
+}
+
+.file-line.new {
+  background: rgba(16, 185, 129, 0.08);
+}
+
+.line-number {
+  width: 40px;
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  text-align: right;
+  padding-right: 12px;
+  user-select: none;
+}
+
+.line-content {
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-secondary);
+}
+
+.file-preview-more {
+  padding: 8px 14px;
+  color: var(--text-tertiary);
+  font-size: 0.8rem;
+  font-style: italic;
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* ── Command Preview ─────────────────────────────────────────── */
+.command-preview {
+  padding: 12px 14px;
+}
+
+.command-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+}
+
+.command-prompt {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.command-line code {
+  color: var(--text-primary);
+}
+
+.command-output-toggle {
+  margin-top: 10px;
+  padding: 6px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.command-output-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.command-output {
+  margin-top: 10px;
+  padding: 12px;
+  background: var(--bg-primary);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+}

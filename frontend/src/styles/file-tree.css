@@ -1,0 +1,302 @@
+/* ============================================================================
+   ThinkWithTool — File Tree & Context Menu
+   ============================================================================ */
+
+.file-tree-section {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.file-tree {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.file-tree-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px 8px;
+}
+
+.file-tree-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+}
+
+.file-tree-refresh {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.file-tree-refresh:hover:not(:disabled) {
+  background: var(--bg-tertiary);
+  color: var(--accent-primary);
+}
+
+.file-tree-refresh:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.file-tree-content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.file-tree-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.file-tree-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.file-tree-content::-webkit-scrollbar-thumb {
+  background: var(--bg-elevated);
+  border-radius: var(--radius-full);
+}
+
+.file-tree-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  color: var(--text-tertiary);
+  font-size: 0.85rem;
+}
+
+.file-tree-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 12px;
+  text-align: center;
+  color: var(--text-tertiary);
+}
+
+.file-tree-empty svg {
+  margin-bottom: 12px;
+  opacity: 0.5;
+}
+
+.file-tree-empty p {
+  font-size: 0.85rem;
+  margin-bottom: 4px;
+}
+
+.file-tree-empty span {
+  font-size: 0.75rem;
+  opacity: 0.7;
+}
+
+.file-tree-empty button {
+  margin-top: 12px;
+  padding: 6px 14px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.file-tree-empty button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.file-tree-nodes {
+  padding-bottom: 8px;
+}
+
+.tree-node {
+  user-select: none;
+}
+
+.tree-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.tree-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.tree-item.folder {
+  color: var(--text-primary);
+}
+
+.tree-item.file {
+  color: var(--text-secondary);
+}
+
+.tree-item.file:hover {
+  color: var(--text-primary);
+}
+
+.tree-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+}
+
+.tree-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  flex-shrink: 0;
+}
+
+.tree-icon.folder-icon {
+  color: var(--accent-secondary);
+}
+
+.tree-name {
+  font-size: 0.85rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tree-children {
+  /* Children are indented via paddingLeft in JS */
+}
+
+/* ── Context Menu (right-click) ──────────────────────────────── */
+.tree-context-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 160px;
+  padding: 4px 0;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 12px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.context-menu-item:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.context-menu-item:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.context-menu-item.danger {
+  color: #ef4444;
+}
+
+.context-menu-item.danger:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.1);
+}
+
+/* ── Delete Confirmation Overlay ─────────────────────────────── */
+.tree-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.tree-confirm-dialog {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 20px 24px;
+  max-width: 360px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+}
+
+.tree-confirm-dialog p {
+  margin: 0 0 16px;
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.tree-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.tree-confirm-cancel,
+.tree-confirm-delete {
+  padding: 6px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--border-default);
+  transition: all var(--transition-fast);
+}
+
+.tree-confirm-cancel {
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+
+.tree-confirm-cancel:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.tree-confirm-delete {
+  background: #ef4444;
+  color: white;
+  border-color: #ef4444;
+}
+
+.tree-confirm-delete:hover {
+  background: #dc2626;
+  border-color: #dc2626;
+}
