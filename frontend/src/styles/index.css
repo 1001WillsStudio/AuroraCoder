@@ -157,8 +157,8 @@ body {
 }
 
 .app.code-mode .main-content {
-  flex: 0 0 45%;
-  min-width: 400px;
+  flex: 0.45 1 0;
+  min-width: 350px;
 }
 
 /* ============================================================================
@@ -1228,7 +1228,8 @@ body {
    ============================================================================ */
 
 .code-panel {
-  flex: 0 0 var(--code-panel-width);
+  flex: 0.55 1 0;
+  min-width: 350px;
   display: flex;
   flex-direction: column;
   background: var(--code-bg);
@@ -2716,12 +2717,13 @@ body {
 
 @media (max-width: 1200px) {
   .app.code-mode .main-content {
-    flex: 0 0 40%;
-    min-width: 350px;
+    flex: 0.4 1 0;
+    min-width: 300px;
   }
   
   .code-panel {
-    flex: 0 0 60%;
+    flex: 0.6 1 0;
+    min-width: 300px;
   }
 }
 
@@ -2762,14 +2764,14 @@ body {
   }
   
   .app.code-mode .main-content {
-    flex: 0 0 50%;
+    flex: 1 1 50%;
     min-width: auto;
   }
   
   .code-panel {
-    flex: 0 0 50%;
+    flex: 1 1 50%;
+    min-width: 0;
     border-left: none;
-    border-top: 1px solid var(--border-default);
   }
 }
 
