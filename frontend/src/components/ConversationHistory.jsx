@@ -220,26 +220,37 @@ export default function ConversationHistory({ currentConversationId, onSelect, r
   const [drawerOpen, setDrawerOpen] = useState(false)
   const triggerRef = useRef(null)
 
+  const loadTimerRef = useRef(null)
+  const loadAbortRef = useRef(null)
+
   useEffect(() => {
-    let cancelled = false
-    async function load() {
+    if (loadTimerRef.current) clearTimeout(loadTimerRef.current)
+    if (loadAbortRef.current) loadAbortRef.current.abort()
+
+    loadTimerRef.current = setTimeout(() => {
+      const controller = new AbortController()
+      loadAbortRef.current = controller
+
       setLoading(true)
-      try {
-        const [convResult, activeResult] = await Promise.all([
-          listConversations(),
-          getActiveStreams(),
-        ])
-        if (cancelled) return
+      Promise.all([
+        listConversations(),
+        getActiveStreams(),
+      ]).then(([convResult, activeResult]) => {
+        if (controller.signal.aborted) return
         setConversations(convResult.conversations || [])
         setActiveIds(new Set((activeResult.active || []).map(a => a.conversation_id)))
-      } catch (e) {
+      }).catch(e => {
+        if (controller.signal.aborted) return
         console.warn('[ConversationHistory] Failed to load:', e.message)
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
+      }).finally(() => {
+        if (!controller.signal.aborted) setLoading(false)
+      })
+    }, 400)
+
+    return () => {
+      clearTimeout(loadTimerRef.current)
+      if (loadAbortRef.current) loadAbortRef.current.abort()
     }
-    load()
-    return () => { cancelled = true }
   }, [refreshTrigger])
 
   // Close drawer when closeTrigger changes (e.g. task instructions opened)

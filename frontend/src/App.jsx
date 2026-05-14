@@ -186,12 +186,18 @@ function App() {
   const toggleSidebar = () => setSidebarCollapsed(prev => !prev)
 
   const handleSend = async (interruptMessages = null, overrideMessage = null, options = {}) => {
+    const sendT0 = performance.now()
+    const log = (label) => console.log(`[timing][handleSend] ${performance.now().toFixed(1)}ms | ${label} (+${(performance.now() - sendT0).toFixed(1)}ms)`)
+    log('entered')
+
     const messageToSend = overrideMessage || inputValue.trim()
     if (!messageToSend) return
 
     if (!conversationId && !interruptMessages) {
+      log('getActiveStreams check start')
       try {
         const { active } = await getActiveStreams()
+        log('getActiveStreams check done')
         if (active && active.length > 0) {
           setActiveConvoWarning(true)
           return
@@ -208,11 +214,14 @@ function App() {
     const isInterrupt = interruptMessages !== null && interruptMessages.length > 0
 
     if (abortControllerRef.current) {
+      log('aborting previous controller')
       abortControllerRef.current.abort()
       abortControllerRef.current = null
       await new Promise(resolve => setTimeout(resolve, 100))
+      log('abort settle done')
     }
 
+    log('setState batch (messages, streaming, etc.)')
     setMessages(prev => [...prev, { role: 'user', content: userMessageText }])
     setInputValue('')
     setIsStreaming(true)
@@ -228,6 +237,7 @@ function App() {
 
     setLastRequest({ message: userMessageText, conversationId, provider: selectedProvider, existingMessages: messagesToSend })
 
+    log('about to call streamChat()')
     try {
       abortControllerRef.current = new AbortController()
       await streamChat(apiMessage, conversationId, {
@@ -274,8 +284,6 @@ function App() {
             setSubagentChildIds(prev => prev.includes(evt.child_id) ? prev : [...prev, evt.child_id])
           }
           setHistoryRefreshTrigger(prev => prev + 1)
-          setTimeout(() => setHistoryRefreshTrigger(prev => prev + 1), 1500)
-          setTimeout(() => setHistoryRefreshTrigger(prev => prev + 1), 4000)
         }
       }, abortControllerRef.current.signal, messagesToSend, selectedProvider, options)
     } catch (error) {
@@ -329,8 +337,6 @@ function App() {
             setSubagentChildIds(prev => prev.includes(evt.child_id) ? prev : [...prev, evt.child_id])
           }
           setHistoryRefreshTrigger(prev => prev + 1)
-          setTimeout(() => setHistoryRefreshTrigger(prev => prev + 1), 1500)
-          setTimeout(() => setHistoryRefreshTrigger(prev => prev + 1), 4000)
         }
       }, abortControllerRef.current.signal, rawMessages, selectedProvider)
     } catch (error) {

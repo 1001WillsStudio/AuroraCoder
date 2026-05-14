@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useRef, useLayoutEffect } from 'react'
 import { 
   X, FileCode, Plus, Minus, Code2, FolderOpen, 
   Maximize2, Minimize2, RefreshCw
@@ -10,6 +10,7 @@ import {
  */
 function CodePanel({ files, activeFileId, onFileSelect, onFileClose, onClose, onRefresh, isLoading }) {
   const [isMinimized, setIsMinimized] = useState(false)
+  const codeContentRef = useRef(null)
   
   const activeFile = files.find(f => f.id === activeFileId)
   
@@ -23,7 +24,22 @@ function CodePanel({ files, activeFileId, onFileSelect, onFileClose, onClose, on
     
     return { added, removed, total }
   }, [activeFile])
-
+  // ── Scroll to the first edit section when panel opens or file changes ──
+  useLayoutEffect(() => {
+    if (!activeFile || !codeContentRef.current || isMinimized) return
+    
+    // Use requestAnimationFrame so the DOM has definitely painted
+    const raf = requestAnimationFrame(() => {
+      const container = codeContentRef.current
+      if (!container) return
+      const diffLines = container.querySelectorAll('.diff-added, .diff-removed')
+      if (diffLines.length > 0) {
+        const firstEdit = diffLines[0]
+        firstEdit.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      }
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [activeFile, isMinimized])
   if (files.length === 0) {
     return (
       <div className="code-panel">
@@ -131,7 +147,7 @@ function CodePanel({ files, activeFileId, onFileSelect, onFileClose, onClose, on
           </div>
 
           {/* Code content with git-style diff */}
-          <div className="code-content">
+          <div className="code-content" ref={codeContentRef}>
             <div className="code-file-view">
               {activeFile.lines?.map((line, idx) => (
                 <div 

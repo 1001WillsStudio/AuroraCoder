@@ -228,9 +228,13 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0 }) => {
     }
   }, [refreshTrigger, fetchTree])
   
-  // Also refresh when streaming stops (final catch-all)
+  // Also refresh once when streaming stops (catch files written in the final tool batch)
+  const wasStreamingRef = useRef(false)
   useEffect(() => {
-    if (!isStreaming) {
+    if (isStreaming) {
+      wasStreamingRef.current = true
+    } else if (wasStreamingRef.current) {
+      wasStreamingRef.current = false
       const timer = setTimeout(fetchTree, 500)
       return () => clearTimeout(timer)
     }

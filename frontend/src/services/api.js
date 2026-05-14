@@ -6,6 +6,13 @@
 
 const API_BASE = '/api'
 
+let _reqSeq = 0
+function _ts() { return performance.now().toFixed(1) }
+function _tlog(label, seq, startMs) {
+  const elapsed = startMs != null ? ` (+${(performance.now() - startMs).toFixed(1)}ms)` : ''
+  console.log(`[timing][#${seq}] ${_ts()}ms | ${label}${elapsed}`)
+}
+
 /**
  * Parse SSE events from a text chunk
  */
@@ -48,6 +55,10 @@ function parseSSEEvents(text) {
  * @param {string|null} provider - Optional: model provider to use
  */
 export async function streamChat(message, conversationId, callbacks, signal, existingMessages = null, provider = null, options = {}) {
+  const seq = ++_reqSeq
+  const t0 = performance.now()
+  _tlog('streamChat() called', seq)
+
   const { onMessages, onDone, onError, onSubagentEvent } = callbacks
   
   const requestBody = {
@@ -57,19 +68,22 @@ export async function streamChat(message, conversationId, callbacks, signal, exi
     provider: provider,
     ...options
   }
-  console.log('[streamChat] Request: conversation_id=%s, messages=%d, provider=%s',
-    requestBody.conversation_id, requestBody.messages?.length ?? 0, requestBody.provider)
-  
+
+  _tlog('request body built, JSON.stringify next', seq, t0)
+  const bodyJson = JSON.stringify(requestBody)
+  _tlog(`JSON.stringify done (${(bodyJson.length / 1024).toFixed(1)}KB)`, seq, t0)
+
   try {
+    _tlog('fetch() about to fire', seq, t0)
     const response = await fetch(`${API_BASE}/chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(requestBody),
+      body: bodyJson,
       signal
     })
-
+    _tlog(`fetch() resolved, status=${response.status}`, seq, t0)
     console.log('[streamChat] Response status:', response.status)
     
     if (!response.ok) {
@@ -79,13 +93,20 @@ export async function streamChat(message, conversationId, callbacks, signal, exi
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
+    let firstChunk = true
 
     while (true) {
       const { done, value } = await reader.read()
       
       if (done) {
+        _tlog('stream done', seq, t0)
         console.log('[streamChat] Stream done')
         break
+      }
+
+      if (firstChunk) {
+        _tlog('first SSE chunk received', seq, t0)
+        firstChunk = false
       }
       
       buffer += decoder.decode(value, { stream: true })
@@ -126,6 +147,7 @@ export async function streamChat(message, conversationId, callbacks, signal, exi
     }
     
   } catch (error) {
+    _tlog(`error: ${error.name} — ${error.message}`, seq, t0)
     console.error('[streamChat] Error:', error)
     if (error.name === 'AbortError') {
       throw error
@@ -209,7 +231,10 @@ export async function getConversation(conversationId) {
  * List currently active (streaming) conversations.
  */
 export async function getActiveStreams() {
+  const t0 = performance.now()
+  console.log(`[timing] getActiveStreams() called at ${_ts()}ms`)
   const response = await fetch(`${API_BASE}/conversations/active`)
+  console.log(`[timing] getActiveStreams() responded in ${(performance.now() - t0).toFixed(1)}ms`)
   if (!response.ok) {
     throw new Error(`HTTP error! status: ${response.status}`)
   }
