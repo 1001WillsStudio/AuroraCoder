@@ -20,9 +20,6 @@
   padding: 16px 8px;
 }
 
-.app.sidebar-collapsed .main-content {
-  /* When sidebar is collapsed, main content gets more space */
-}
 
 /* ── Sidebar Header ──────────────────────────────────────────── */
 .sidebar-header {
@@ -206,7 +203,7 @@
 
 .current-session-main.selected {
   background: var(--bg-tertiary);
-  color: var(--accent-color, var(--text-primary));
+  color: var(--accent-primary);
 }
 
 .current-session-children {
@@ -243,7 +240,7 @@
 
 .current-session-child.selected {
   background: var(--bg-tertiary);
-  color: var(--accent-color, var(--text-primary));
+  color: var(--accent-primary);
 }
 
 .current-session-child-title {
@@ -498,7 +495,7 @@
 }
 
 .history-drawer-item-status {
-  color: #22c55e;
+  color: var(--status-active);
   font-weight: 500;
 }
 
@@ -515,12 +512,12 @@
 }
 
 .status-dot.active {
-  background: #22c55e;
-  box-shadow: 0 0 4px #22c55e88;
+  background: var(--status-active);
+  box-shadow: 0 0 4px var(--status-active-glow);
 }
 
 .status-dot.error {
-  background: #ef4444;
+  background: var(--error);
 }
 
 .subagent-prefix {
@@ -534,15 +531,15 @@
   justify-content: space-between;
   padding: 8px 16px;
   background: var(--bg-secondary);
-  border-top: 1px solid var(--border-color);
+  border-top: 1px solid var(--border-default);
   font-size: 0.8rem;
   color: var(--text-secondary);
 }
 
 .subagent-back-btn {
   background: none;
-  border: 1px solid var(--border-color);
-  color: var(--accent-color);
+  border: 1px solid var(--border-default);
+  color: var(--accent-primary);
   padding: 4px 12px;
   border-radius: 4px;
   cursor: pointer;
@@ -564,7 +561,7 @@
 
 .subagent-view-link {
   font-size: 0.7rem;
-  color: var(--accent-color);
+  color: var(--accent-primary);
   margin-left: auto;
   margin-right: 8px;
   opacity: 0.7;
@@ -578,7 +575,7 @@
 .sender-label {
   font-size: 0.7rem;
   font-weight: 600;
-  color: var(--accent-color);
+  color: var(--accent-primary);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   margin-bottom: 2px;
@@ -592,8 +589,8 @@
   gap: 12px;
   padding: 10px 16px;
   margin: 0 16px;
-  background: #78350f22;
-  border: 1px solid #d97706;
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   font-size: 0.8125rem;
@@ -607,17 +604,17 @@
 .active-convo-warning-btn {
   white-space: nowrap;
   padding: 4px 10px;
-  border: 1px solid #d97706;
+  border: 1px solid var(--warning-border);
   border-radius: var(--radius-sm);
   background: transparent;
-  color: #d97706;
+  color: var(--warning-border);
   font-size: 0.75rem;
   cursor: pointer;
   transition: background var(--transition-fast);
 }
 
 .active-convo-warning-btn:hover {
-  background: #d9770622;
+  background: var(--warning-hover-bg);
 }
 
 /* ── Sidebar Footer ──────────────────────────────────────────── */

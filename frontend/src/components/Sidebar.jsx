@@ -91,7 +91,7 @@ export default function Sidebar({
           <div className="sidebar-section task-instructions-section">
             <button
               ref={taskInstructionsBtnRef}
-              className="load-session-btn task-instructions-btn"
+              className="load-session-btn"
               onClick={onToggleTaskInstructions}
               title="Configure task instructions (prepended to first message)"
             >

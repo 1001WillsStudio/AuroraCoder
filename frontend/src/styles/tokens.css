@@ -30,6 +30,15 @@
   --error: #ef4444;
   --info: #3b82f6;
 
+  /* Extended semantic — used in status badges, warnings, hover states */
+  --accent-text: white;
+  --status-active: #22c55e;
+  --status-active-glow: rgba(34, 197, 94, 0.53);
+  --warning-border: #d97706;
+  --warning-hover-bg: rgba(217, 119, 6, 0.13);
+  --warning-bg: rgba(120, 53, 15, 0.13);
+  --error-hover: #dc2626;
+
   /* Diffs */
   --diff-added-bg: rgba(16, 185, 129, 0.15);
   --diff-added-text: #34d399;

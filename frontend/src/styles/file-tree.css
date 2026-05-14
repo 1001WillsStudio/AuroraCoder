@@ -229,7 +229,7 @@
 }
 
 .context-menu-item.danger {
-  color: #ef4444;
+  color: var(--error);
 }
 
 .context-menu-item.danger:hover:not(:disabled) {
@@ -291,12 +291,12 @@
 }
 
 .tree-confirm-delete {
-  background: #ef4444;
+  background: var(--error);
   color: white;
-  border-color: #ef4444;
+  border-color: var(--error);
 }
 
 .tree-confirm-delete:hover {
-  background: #dc2626;
-  border-color: #dc2626;
+  background: var(--error-hover);
+  border-color: var(--error-hover);
 }

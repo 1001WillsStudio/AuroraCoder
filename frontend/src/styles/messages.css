@@ -202,7 +202,7 @@
   padding: 10px 18px;
   background: var(--bg-tertiary);
   color: var(--text-primary);
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   font-family: var(--font-sans);
   font-size: 0.875rem;
@@ -214,7 +214,7 @@
 
 .retry-btn:hover {
   background: var(--accent-primary);
-  color: var(--accent-text);
+  color: white;
   border-color: var(--accent-primary);
 }
 
