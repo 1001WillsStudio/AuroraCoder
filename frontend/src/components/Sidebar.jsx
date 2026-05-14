@@ -1,5 +1,5 @@
 import React from 'react'
-import { Sun, Moon, PanelLeftClose, PanelLeft, ChevronDown, Upload, FileText } from 'lucide-react'
+import { Sun, Moon, ChevronDown, Upload, FileText } from 'lucide-react'
 import FileTree from './FileTree'
 import ConversationHistory from './ConversationHistory'
 
@@ -8,8 +8,6 @@ import ConversationHistory from './ConversationHistory'
  * task instructions button, file tree, conversation history, model selector.
  */
 export default function Sidebar({
-  collapsed,
-  onToggleCollapse,
   theme,
   onToggleTheme,
   onNewChat,
@@ -35,14 +33,12 @@ export default function Sidebar({
   onToggleProviderDropdown,
 }) {
   return (
-    <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
+    <aside className="sidebar">
       <div className="sidebar-header">
-        {!collapsed && (
-          <div className="logo">
-            <img src="/assets/logo.png" alt="1001 Wills AI Lab" className="logo-image" />
-            <span className="logo-text">AuroraCoder</span>
-          </div>
-        )}
+        <div className="logo">
+          <img src="/assets/logo.png" alt="1001 Wills AI Lab" className="logo-image" />
+          <span className="logo-text">AuroraCoder</span>
+        </div>
         <div className="sidebar-header-actions">
           <button 
             className="theme-toggle" 
@@ -51,114 +47,103 @@ export default function Sidebar({
           >
             {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
           </button>
-          <button 
-            className="sidebar-toggle" 
-            onClick={onToggleCollapse}
-            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          >
-            {collapsed ? <PanelLeft size={18} /> : <PanelLeftClose size={18} />}
-          </button>
         </div>
       </div>
       
-      {!collapsed && (
-        <>
-          <div className="sidebar-actions">
-            <button className="new-chat-btn" onClick={onNewChat}>
-              <span>+ New Chat</span>
-            </button>
-            <button
-              className="load-session-btn"
-              onClick={() => uploadInputRef.current?.click()}
-              disabled={isUploading}
-              title="Select a folder to upload into the workspace"
+      <div className="sidebar-actions">
+        <button className="new-chat-btn" onClick={onNewChat}>
+          <span>+ New Chat</span>
+        </button>
+        <button
+          className="load-session-btn"
+          onClick={() => uploadInputRef.current?.click()}
+          disabled={isUploading}
+          title="Select a folder to upload into the workspace"
+        >
+          <Upload size={16} />
+          <span>{isUploading ? 'Uploading...' : 'Upload Project'}</span>
+        </button>
+        <input
+          ref={uploadInputRef}
+          type="file"
+          webkitdirectory=""
+          directory=""
+          multiple
+          style={{ display: 'none' }}
+          onChange={onUploadProject}
+        />
+      </div>
+
+      {/* Task Instructions — clickable button, toggles drawer */}
+      <div className="sidebar-section task-instructions-section">
+        <button
+          ref={taskInstructionsBtnRef}
+          className="load-session-btn"
+          onClick={onToggleTaskInstructions}
+          title="Configure task instructions (prepended to first message)"
+        >
+          <FileText size={16} />
+          <span>Task Instructions</span>
+          {systemPrompt && (
+            <span className="system-prompt-indicator" title="Task instructions active">
+              ●
+            </span>
+          )}
+        </button>
+      </div>
+
+      {/* File Tree - Workspace Explorer */}
+      <div className="sidebar-section file-tree-section">
+        <FileTree 
+          onFileClick={onFileClick}
+          isStreaming={isStreaming}
+          refreshTrigger={fileTreeRefreshTrigger}
+        />
+      </div>
+
+      <div className="sidebar-footer">
+        <ConversationHistory
+          currentConversationId={conversationId}
+          onSelect={onLoadConversation}
+          refreshTrigger={historyRefreshTrigger}
+          closeTrigger={historyCloseTrigger}
+          onDrawerToggle={onDrawerToggle}
+        />
+        <div className="model-selector">
+          <span className="model-label">Model</span>
+          <div className="provider-dropdown-container">
+            <button 
+              className="provider-dropdown-btn"
+              onClick={onToggleProviderDropdown}
+              disabled={isStreaming}
             >
-              <Upload size={16} />
-              <span>{isUploading ? 'Uploading...' : 'Upload Project'}</span>
+              <span className="provider-name">
+                {providers.find(p => p.id === selectedProvider)?.name || 'Select Model'}
+              </span>
+              <ChevronDown size={16} className={showProviderDropdown ? 'rotated' : ''} />
             </button>
-            <input
-              ref={uploadInputRef}
-              type="file"
-              webkitdirectory=""
-              directory=""
-              multiple
-              style={{ display: 'none' }}
-              onChange={onUploadProject}
-            />
-          </div>
-
-          {/* Task Instructions — clickable button, toggles drawer */}
-          <div className="sidebar-section task-instructions-section">
-            <button
-              ref={taskInstructionsBtnRef}
-              className="load-session-btn"
-              onClick={onToggleTaskInstructions}
-              title="Configure task instructions (prepended to first message)"
-            >
-              <FileText size={16} />
-              <span>Task Instructions</span>
-              {systemPrompt && (
-                <span className="system-prompt-indicator" title="Task instructions active">
-                  ●
-                </span>
-              )}
-            </button>
-          </div>
-
-          {/* File Tree - Workspace Explorer */}
-          <div className="sidebar-section file-tree-section">
-            <FileTree 
-              onFileClick={onFileClick}
-              isStreaming={isStreaming}
-              refreshTrigger={fileTreeRefreshTrigger}
-            />
-          </div>
-
-          <div className="sidebar-footer">
-            <ConversationHistory
-              currentConversationId={conversationId}
-              onSelect={onLoadConversation}
-              refreshTrigger={historyRefreshTrigger}
-              closeTrigger={historyCloseTrigger}
-              onDrawerToggle={onDrawerToggle}
-            />
-            <div className="model-selector">
-              <span className="model-label">Model</span>
-              <div className="provider-dropdown-container">
-                <button 
-                  className="provider-dropdown-btn"
-                  onClick={onToggleProviderDropdown}
-                  disabled={isStreaming}
-                >
-                  <span className="provider-name">
-                    {providers.find(p => p.id === selectedProvider)?.name || 'Select Model'}
-                  </span>
-                  <ChevronDown size={16} className={showProviderDropdown ? 'rotated' : ''} />
-                </button>
-                {showProviderDropdown && (
-                  <div className="provider-dropdown-menu">
-                    {providers.map(provider => (
-                      <button
-                        key={provider.id}
-                        className={`provider-option ${provider.id === selectedProvider ? 'selected' : ''}`}
-                        onClick={() => {
-                          onSelectProvider(provider.id)
-                        }}
-                      >
-                        <div className="provider-option-name">{provider.name}</div>
-                        <div className="provider-option-desc">{provider.description}</div>
-                        {provider.supports_thinking && (
-                          <span className="provider-badge">Thinking</span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                )}
+            {showProviderDropdown && (
+              <div className="provider-dropdown-menu">
+                {providers.map(provider => (
+                  <button
+                    key={provider.id}
+                    className={`provider-option ${provider.id === selectedProvider ? 'selected' : ''}`}
+                    onClick={() => {
+                      onSelectProvider(provider.id)
+                    }}
+                  >
+                    <div className="provider-option-name">{provider.name}</div>
+                    <div className="provider-option-desc">{provider.description}</div>
+                    {provider.supports_thinking && (
+                      <span className="provider-badge">Thinking</span>
+                    )}
+                  </button>
+                ))}
               </div>
-            </div>
+            )}
           </div>
-        </>
-      )}
+        </div>
+      </div>
     </aside>
   )
 }
