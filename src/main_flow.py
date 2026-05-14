@@ -291,6 +291,7 @@ def _execute_tool_calls(
                 tc_out, tool_name, result = results_by_id[tc["id"]]
                 if should_trigger_code_interpreter(tool_name):
                     code_tool_called = True
+                result = _apply_self_correction(result, tc_out["id"], messages)
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc_out["id"],
@@ -312,6 +313,7 @@ def _execute_tool_calls(
                 tc_out, tool_name, result = _execute_single_tool(tc)
                 if should_trigger_code_interpreter(tool_name):
                     code_tool_called = True
+                result = _apply_self_correction(result, tc_out["id"], messages)
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc_out["id"],
@@ -319,6 +321,60 @@ def _execute_tool_calls(
                 })
 
     return code_tool_called
+
+
+# ---------------------------------------------------------------------------
+# Self-correction: when a tool result contains <!--SELF_CORRECT:{...}--> the
+# marker is stripped from the visible content and the corresponding assistant
+# message's tool call arguments are retroactively patched.  This makes the
+# conversation history always show "correct" parameters even when the agent
+# made mistakes that the tool's loose execution recovered from.
+# ---------------------------------------------------------------------------
+
+_SELF_CORRECT_RE = re.compile(r'\n?\n?<!--SELF_CORRECT:(.*?)-->', re.DOTALL)
+
+
+def _apply_self_correction(
+    result: str,
+    tool_call_id: str,
+    messages: List[Dict],
+) -> str:
+    """
+    If *result* contains a SELF_CORRECT marker, strip it from the visible
+    content, parse the correction JSON, and update the corresponding
+    assistant message's tool call arguments in *messages*.
+
+    Returns the cleaned result string.
+    """
+    match = _SELF_CORRECT_RE.search(result)
+    if not match:
+        return result
+
+    try:
+        correction = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return _SELF_CORRECT_RE.sub('', result)  # strip broken marker
+
+    # Strip marker from visible content.
+    cleaned = _SELF_CORRECT_RE.sub('', result)
+
+    # Find the assistant message containing this tool call (the most recently
+    # appended one, which should be just before the tool results).
+    for i in range(len(messages) - 1, -1, -1):
+        msg = messages[i]
+        if msg.get("role") != "assistant":
+            continue
+        tool_calls = msg.get("tool_calls")
+        if not tool_calls:
+            continue
+        for tc in tool_calls:
+            if tc.get("id") == tool_call_id:
+                tc["function"]["arguments"] = json.dumps(
+                    correction, ensure_ascii=False
+                )
+                return cleaned
+
+    return cleaned
 
 def record_api_call(request_messages: list, response_message: dict):
     """Append one request→response pair to today's training log."""
