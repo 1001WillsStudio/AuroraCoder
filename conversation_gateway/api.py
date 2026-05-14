@@ -94,6 +94,72 @@ active_streams: Dict[str, ActiveStream] = {}
 _streams_lock = asyncio.Lock()
 
 
+_FILE_WRITE_TOOLS = {"write_file", "edit_file", "delete_file"}
+
+# Tool-call IDs for which we've already taken a pre-write snapshot.
+# Prevents re-snapshotting after the write has already happened.
+_snapshotted_tool_calls: Dict[str, set] = {}  # {conversation_id: {tool_call_id, ...}}
+
+
+def _track_file_changes(conversation_id: str, raw_messages: list):
+    """Scan raw_messages for file-modifying tool calls and update the
+    gateway's in-memory snapshot/touched tracking so /api/files/diff works.
+
+    Two-phase approach:
+      1. When a tool_call appears (no result yet) — snapshot the file
+         BEFORE the backend writes it.
+      2. When the matching tool_result appears — mark the file as touched
+         so the diff endpoint picks it up.
+    """
+    work_dir = Path(WORKSPACE_DIR) if WORKSPACE_DIR else None
+    if not work_dir or not work_dir.exists():
+        return
+
+    if conversation_id not in _snapshotted_tool_calls:
+        _snapshotted_tool_calls[conversation_id] = set()
+
+    # Collect tool_result IDs so we know which calls have completed
+    result_ids = set()
+    for msg in raw_messages:
+        if msg.get("role") == "tool":
+            result_ids.add(msg.get("tool_call_id", ""))
+
+    for msg in raw_messages:
+        if msg.get("role") != "assistant":
+            continue
+        for tc in msg.get("tool_calls", []):
+            func = tc.get("function", {})
+            name = func.get("name", "")
+            if name not in _FILE_WRITE_TOOLS:
+                continue
+            tc_id = tc.get("id", "")
+            try:
+                args = json.loads(func.get("arguments", "{}"))
+            except (json.JSONDecodeError, TypeError):
+                continue
+            file_path = args.get("target_file") or args.get("file_path") or ""
+            if not file_path:
+                continue
+
+            # Phase 1: snapshot BEFORE the write (tool_call seen, no result yet)
+            if tc_id not in _snapshotted_tool_calls[conversation_id]:
+                _snapshotted_tool_calls[conversation_id].add(tc_id)
+                full_path = work_dir / file_path
+                if file_path not in file_snapshots.get(conversation_id, {}):
+                    try:
+                        if full_path.exists() and full_path.is_file():
+                            content = full_path.read_text(encoding="utf-8", errors="replace")
+                        else:
+                            content = ""
+                        snapshot_file(conversation_id, file_path, content)
+                    except Exception:
+                        snapshot_file(conversation_id, file_path, "")
+
+            # Phase 2: mark touched once the tool has completed
+            if tc_id in result_ids:
+                mark_file_touched(conversation_id, file_path)
+
+
 async def _cancel_active_stream(conversation_id: str) -> None:
     """Cancel any in-progress stream for a conversation, including child subagent streams.
 
@@ -332,10 +398,17 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                                 if edata.get("messages"):
                                     stream.latest_frontend_messages = edata["messages"]
 
+                                # --- File tracking for diff endpoint ---
+                                raw_msgs = edata.get("raw_messages", [])
+                                if raw_msgs:
+                                    try:
+                                        _track_file_changes(cid, raw_msgs)
+                                    except Exception:
+                                        pass
+
                                 # --- Incremental persistence ---
                                 # Save whenever the raw message list has grown,
                                 # which happens after each tool execution round.
-                                raw_msgs = edata.get("raw_messages", [])
                                 if raw_msgs and len(raw_msgs) > last_saved_msg_count:
                                     last_saved_msg_count = len(raw_msgs)
                                     try:

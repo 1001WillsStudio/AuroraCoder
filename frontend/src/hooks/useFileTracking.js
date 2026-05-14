@@ -15,15 +15,23 @@ export function useFileTracking(conversationId, messages, isStreaming) {
   const [fileTreeRefreshTrigger, setFileTreeRefreshTrigger] = useState(0)
   const [isUploading, setIsUploading] = useState(false)
   const uploadInputRef = useRef(null)
+  const diffAbortRef = useRef(null)
 
   // ── fetchFileDiffs ──────────────────────────────────────────────────────
 
   const fetchFileDiffs = useCallback(async () => {
     if (!conversationId) return
 
+    if (diffAbortRef.current) diffAbortRef.current.abort()
+    const controller = new AbortController()
+    diffAbortRef.current = controller
+
     setIsLoadingFiles(true)
     try {
-      const response = await fetch(`/api/files/diff?conversation_id=${encodeURIComponent(conversationId)}`)
+      const response = await fetch(
+        `/api/files/diff?conversation_id=${encodeURIComponent(conversationId)}`,
+        { signal: controller.signal }
+      )
       const data = await response.json()
 
       setEditedFiles(prevFiles => {
@@ -59,112 +67,96 @@ export function useFileTracking(conversationId, messages, isStreaming) {
         return prevActiveId
       })
     } catch (error) {
+      if (error.name === 'AbortError') return
       console.error('Error fetching file diffs:', error)
     } finally {
       setIsLoadingFiles(false)
     }
   }, [conversationId, closedFiles])
 
-  // ── Shared helper: open the code panel when a code tool is active ──────
-  // Called at two points — when a code tool starts AND when its result
-  // arrives.  Does NOT require editedFiles to already be populated — the
-  // polling effect below will fetch diffs once showCodePanel becomes true.
+  // ── Count tool results for code tools and FS tools ─────────────────────
 
-  const maybeOpenCodePanel = useCallback(() => {
-    const hasCodeActivity = messages.some(msg =>
-      msg.activities?.some(a =>
-        a.type === 'tool_call' && CODE_TOOLS.includes(a.name)
-      )
-    )
-    if (hasCodeActivity) {
-      setShowCodePanel(true)
-    }
-  }, [messages])
-
-  // ── (A) Tool START — code tool call appears; kick off diff fetch & try open ──
-
-  useEffect(() => {
-    const hasCodeCall = messages.some(msg =>
-      msg.activities?.some(a =>
-        a.type === 'tool_call' && CODE_TOOLS.includes(a.name)
-      )
-    )
-    if (hasCodeCall) {
-      if (conversationId) fetchFileDiffs()                   // start fetching so diffs are ready at tool end
-      maybeOpenCodePanel()
-    }
-  }, [messages, maybeOpenCodePanel, conversationId, fetchFileDiffs])
-
-  // ── (B) Tool END — code tool result arrives; diffs should be ready by now ──
-
-  useEffect(() => {
-    const hasCodeResult = messages.some(msg =>
-      msg.activities?.some(a => {
-        if (a.type !== 'tool_result') return false
-        const toolCall = msg.activities?.find(
-          tc => tc.type === 'tool_call' && tc.id === a.tool_call_id
-        )
-        return toolCall && CODE_TOOLS.includes(toolCall.name)
-      })
-    )
-    if (hasCodeResult) {
-      maybeOpenCodePanel()
-    }
-  }, [messages, maybeOpenCodePanel])
-
-  // ── File tree refresh tracking ──────────────────────────────────────────
-
-  const lastToolCountRef = useRef(0)
-  useEffect(() => {
-    let fsToolCount = 0
-    messages.forEach(msg => {
-      msg.activities?.forEach(a => {
+  function _countToolResults(msgs) {
+    let codeResults = 0, codeCalls = 0, fsResults = 0
+    for (const msg of msgs) {
+      for (const a of msg.activities || []) {
+        if (a.type === 'tool_call' && CODE_TOOLS.includes(a.name)) codeCalls++
         if (a.type === 'tool_result') {
-          const toolCall = msg.activities?.find(
-            tc => tc.type === 'tool_call' && tc.id === a.tool_call_id
-          )
-          if (toolCall && FILE_SYSTEM_TOOLS.includes(toolCall.name)) {
-            fsToolCount++
-          }
+          const tc = msg.activities?.find(t => t.type === 'tool_call' && t.id === a.tool_call_id)
+          if (!tc) continue
+          if (CODE_TOOLS.includes(tc.name)) codeResults++
+          if (FILE_SYSTEM_TOOLS.includes(tc.name)) fsResults++
         }
-        if (a.type === 'tool_call' && FILE_SYSTEM_TOOLS.includes(a.name)) {
-          fsToolCount++
-        }
-      })
-    })
+      }
+    }
+    return { codeCalls, codeResults, fsResults }
+  }
 
-    if (fsToolCount > lastToolCountRef.current) {
-      lastToolCountRef.current = fsToolCount
-      const timer = setTimeout(() => {
-        setFileTreeRefreshTrigger(prev => prev + 1)
-      }, 300)
-      return () => clearTimeout(timer)
+  // Reset counters when conversation changes (new chat or loaded conversation)
+  const lastCodeCallCountRef = useRef(0)
+  const lastCodeResultCountRef = useRef(0)
+  const lastFsResultCountRef = useRef(0)
+  const prevConversationIdRef = useRef(conversationId)
+
+  useEffect(() => {
+    if (conversationId !== prevConversationIdRef.current) {
+      prevConversationIdRef.current = conversationId
+      lastCodeCallCountRef.current = 0
+      lastCodeResultCountRef.current = 0
+      lastFsResultCountRef.current = 0
+    }
+  }, [conversationId])
+
+  // ── Open code panel when a code tool call first appears ────────────────
+
+  useEffect(() => {
+    const { codeCalls } = _countToolResults(messages)
+    if (codeCalls > lastCodeCallCountRef.current) {
+      lastCodeCallCountRef.current = codeCalls
+      setShowCodePanel(true)
+    } else {
+      lastCodeCallCountRef.current = codeCalls
     }
   }, [messages])
 
-  // ── File diff polling during streaming ──────────────────────────────────
+  // ── Fetch diffs only when a code tool RESULT arrives ───────────────────
 
   useEffect(() => {
-    if (!conversationId) return
-    if (showCodePanel) {
-      fetchFileDiffs()
+    const { codeResults } = _countToolResults(messages)
+    if (codeResults > lastCodeResultCountRef.current) {
+      lastCodeResultCountRef.current = codeResults
+      setClosedFiles(new Set())
+      setShowCodePanel(true)
+      if (conversationId) fetchFileDiffs()
+    } else {
+      lastCodeResultCountRef.current = codeResults
     }
-    if (isStreaming && showCodePanel) {
-      const pollInterval = setInterval(() => {
-        fetchFileDiffs()
-      }, 1500)
-      return () => clearInterval(pollInterval)
-    }
-  }, [isStreaming, showCodePanel, conversationId, fetchFileDiffs])
+  }, [messages, conversationId, fetchFileDiffs])
 
-  // ── Final refresh after streaming stops ─────────────────────────────────
+  // ── Refresh file tree only when an FS tool RESULT arrives ──────────────
 
   useEffect(() => {
-    if (!isStreaming && showCodePanel && conversationId) {
-      const timer = setTimeout(fetchFileDiffs, 300)
-      return () => clearTimeout(timer)
+    const { fsResults } = _countToolResults(messages)
+    if (fsResults > lastFsResultCountRef.current) {
+      lastFsResultCountRef.current = fsResults
+      setFileTreeRefreshTrigger(prev => prev + 1)
+    } else {
+      lastFsResultCountRef.current = fsResults
     }
-  }, [isStreaming, showCodePanel, conversationId, fetchFileDiffs])
+  }, [messages])
+
+  // ── Retry diff fetch if panel should be visible but has no files ───────
+  // Handles the race where tool_result arrives in the SSE stream before the
+  // file system change is visible to the diff endpoint.
+
+  const retryTimerRef = useRef(null)
+  useEffect(() => {
+    if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
+    if (showCodePanel && editedFiles.length === 0 && conversationId) {
+      retryTimerRef.current = setTimeout(fetchFileDiffs, 800)
+      return () => clearTimeout(retryTimerRef.current)
+    }
+  }, [showCodePanel, editedFiles.length, conversationId, fetchFileDiffs])
 
   // ── Auto-close code panel when no files remain ──────────────────────────
 
