@@ -24,19 +24,35 @@ function CodePanel({ files, activeFileId, onFileSelect, onFileClose, onClose, on
     
     return { added, removed, total }
   }, [activeFile])
-  // ── Scroll to the first edit section when panel opens or file changes ──
+  // Track previous line count per file to distinguish new files from new edits
+  const prevLineCountsRef = useRef(new Map())
+
+  // ── Smart scroll: new file → first edit; updated file → latest edit; tab switch → no jump ──
   useLayoutEffect(() => {
     if (!activeFile || !codeContentRef.current || isMinimized) return
-    
-    // Use requestAnimationFrame so the DOM has definitely painted
+
+    const fileId = activeFile.id
+    const currCount = activeFile.lines?.length ?? 0
+    const prevCount = prevLineCountsRef.current.get(fileId) ?? -1
+    const isNewFile = prevCount === -1
+    const hasNewLines = currCount > prevCount
+
+    if (!isNewFile && !hasNewLines) return
+
+    // Update tracking before async scroll so subsequent renders see the new count
+    const next = new Map(prevLineCountsRef.current)
+    next.set(fileId, currCount)
+    prevLineCountsRef.current = next
+
     const raf = requestAnimationFrame(() => {
       const container = codeContentRef.current
       if (!container) return
       const diffLines = container.querySelectorAll('.diff-added, .diff-removed')
-      if (diffLines.length > 0) {
-        const firstEdit = diffLines[0]
-        firstEdit.scrollIntoView({ block: 'center', behavior: 'smooth' })
-      }
+      if (diffLines.length === 0) return
+
+      // New file → first edit. Updated file → latest (new) edit.
+      const targetLine = isNewFile ? diffLines[0] : diffLines[diffLines.length - 1]
+      targetLine.scrollIntoView({ block: 'center', behavior: 'smooth' })
     })
     return () => cancelAnimationFrame(raf)
   }, [activeFile, isMinimized])
