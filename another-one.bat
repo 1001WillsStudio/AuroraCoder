@@ -26,7 +26,9 @@ set /a "DEV_PORT_END=%DEV_PORT_START%+2"
 set /a "FRONTEND_PORT=3000+%INST%-1"
 
 set "CONTAINER=thinkwithtool-agent-%INST%"
-set "DATA_DIR=%cd%\data-%INST%"
+set "STORAGE_BASE=%USERPROFILE%\Documents\ThinkTool"
+set "DATA_DIR=%STORAGE_BASE%\data-%INST%"
+set "WORKSPACE_DIR=%STORAGE_BASE%\workspace-%INST%"
 
 echo ========================================
 echo   AuroraCoder  [Instance %INST%]
@@ -60,6 +62,7 @@ findstr /v /i "GITHUB_TOKEN" .env > "%GUEST_ENV%"
 
 :: ── Data directory ──────────────────────────────────────────────────────
 if not exist "%DATA_DIR%" mkdir "%DATA_DIR%"
+if not exist "%WORKSPACE_DIR%" mkdir "%WORKSPACE_DIR%"
 
 :: ── Stop old container if any ───────────────────────────────────────────
 echo Stopping old container "%CONTAINER%" if any...
@@ -74,6 +77,7 @@ docker run --rm -d ^
     -e THINKTOOL_DOCKER=1 ^
     -e THINKTOOL_VNC=1 ^
     -v "%DATA_DIR%:/app/data" ^
+    -v "%WORKSPACE_DIR%:/workspace" ^
     -p %BACKEND_PORT%:8080 ^
     -p %GATEWAY_PORT%:8081 ^
     -p %VNC_PORT%:6080 ^
