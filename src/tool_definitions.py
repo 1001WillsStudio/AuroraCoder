@@ -149,6 +149,7 @@ NATIVE_TOOL_DEFINITIONS = [
                     "edits": {
                         "type": "array",
                         "description": "List of edits to apply.",
+                        "maxItems": 3,
                         "items": {
                             "type": "object",
                             "properties": {
