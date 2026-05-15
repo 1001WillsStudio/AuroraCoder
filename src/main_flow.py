@@ -1,332 +1,39 @@
 """
 Native main flow using OpenAI chat completions API with native tool calling.
 
-This replaces the previous custom XML-based tool system with standard OpenAI function calling.
-Supports multiple model providers that can be switched at runtime.
+This is the primary agent loop: messages in → streamed responses out.
+Tool execution is delegated to tool_executor.py; code-interpreter display
+management is delegated to code_tools/context_manager.py.
 """
 
 import json
 import time
 import datetime
 import logging
-import re
-from typing import Dict, List, Any, Generator, Set, Optional, Tuple
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Dict, List, Generator, Optional
 
-from .tool_definitions import get_tool_definitions, execute_tool_call, PARALLEL_SAFE_TOOLS
-from .code_tools.file_operations import maybe_truncate_edits, apply_self_correction
+from .tool_definitions import get_tool_definitions
 from .config import (
     TRAINING_DATA_DIR, DEFAULT_PROVIDER,
-    MAX_TOKENS, MAX_ITERATIONS, CONTINUE_ITERATIONS,
-    MAX_STREAMING_RETRIES, MAX_TOOL_CONCURRENCY,
+    MAX_TOKENS, MAX_ITERATIONS,
+    MAX_STREAMING_RETRIES,
     SYSTEM_MESSAGE_TEMPLATE, VNC_INSTRUCTIONS, TERMINAL_ENV_NOTE,
-    INTERPRETER_WARN_CHARS, INTERPRETER_MAX_FILES,
     CONTEXT_WINDOW_TOKENS, CONTEXT_WARN_THRESHOLD,
     _CONTINUATION_NOTICE_MARKER, CONTINUATION_NOTICE,
 )
 from .providers import provider_manager
-from .code_tools.code_interpreter import (
-    code_interpreter, 
-    CODE_INTERPRETER_START, 
-    CODE_INTERPRETER_END
+from .code_tools.context_manager import (
+    clean_previous_interpreter_blocks,
+    generate_consolidated_interpreter_display,
 )
-from .code_sandbox import WORKSPACE
+from .tool_executor import execute_tool_calls
 
 _main_logger = logging.getLogger(__name__)
 
 
-# --- Code Interpreter Management ---
-
-# Tools that trigger code interpreter display
-CODE_RELATED_TOOLS = {'read_file', 'write_file', 'edit_file'}
-
-# Tools that remove files from the interpreter
-FILE_REMOVAL_TOOLS = {'delete_file', 'close_file'}
-
-
-def discover_open_files(messages: List[Dict]) -> Set[str]:
-    """
-    Scan message history to discover all files that should be displayed
-    in the code interpreter.
-    
-    Files are added when read_file, write_file, or edit_file is called.
-    Files are removed when delete_file is called.
-    
-    Args:
-        messages: List of message dictionaries
-        
-    Returns:
-        Set of file paths that should be displayed
-    """
-    open_files = set()
-    
-    for msg in messages:
-        # Look for assistant messages with tool calls
-        if msg.get("role") == "assistant" and msg.get("tool_calls"):
-            for tc in msg["tool_calls"]:
-                if not tc.get("function"):
-                    continue
-                    
-                tool_name = tc["function"].get("name", "")
-                args_str = tc["function"].get("arguments", "{}")
-                
-                try:
-                    args = json.loads(args_str)
-                except json.JSONDecodeError:
-                    continue
-                
-                target_file = args.get("target_file")
-                if not target_file:
-                    continue
-                
-                if tool_name in CODE_RELATED_TOOLS:
-                    open_files.add(target_file)
-                elif tool_name in FILE_REMOVAL_TOOLS:
-                    open_files.discard(target_file)
-    
-    return open_files
-
-
-def strip_code_interpreter_blocks(content: str) -> str:
-    """
-    Remove all code interpreter blocks from a string.
-    
-    Args:
-        content: The string content to clean
-        
-    Returns:
-        Content with all code interpreter blocks removed
-    """
-    if not content:
-        return content
-    
-    # Pattern to match the entire code interpreter block
-    pattern = re.compile(
-        re.escape(CODE_INTERPRETER_START) + r'.*?' + re.escape(CODE_INTERPRETER_END),
-        re.DOTALL
-    )
-    
-    cleaned = pattern.sub('', content)
-    
-    # Clean up any double newlines left behind
-    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
-    
-    return cleaned.strip()
-
-
-def clean_previous_interpreter_blocks(messages: List[Dict]) -> List[Dict]:
-    """
-    Remove code interpreter blocks from all previous tool response messages.
-    This is done in-place to save context tokens.
-    
-    Args:
-        messages: List of message dictionaries (modified in place)
-        
-    Returns:
-        The same list with interpreter blocks removed from tool messages
-    """
-    for msg in messages:
-        if msg.get("role") == "tool":
-            content = msg.get("content", "")
-            if CODE_INTERPRETER_START in content:
-                msg["content"] = strip_code_interpreter_blocks(content)
-    
-    return messages
-
-
-def should_trigger_code_interpreter(tool_name: str) -> bool:
-    """Determines if a tool should trigger the code interpreter display."""
-    return tool_name in CODE_RELATED_TOOLS or tool_name in FILE_REMOVAL_TOOLS
-
-
-def generate_consolidated_interpreter_display(messages: List[Dict]) -> str:
-    """
-    Generate a consolidated code interpreter display for all open files.
-    
-    If the display would be too large, appends a warning asking the agent
-    to close files it no longer needs.
-    
-    Args:
-        messages: Current message history to discover open files from
-        
-    Returns:
-        Consolidated code interpreter block, or empty string if no files
-    """
-    open_files = discover_open_files(messages)
-    
-    if not open_files:
-        return ""
-    
-    # Sort files for consistent display order
-    sorted_files = sorted(open_files)
-    
-    # Set root path and generate display
-    root_path = WORKSPACE
-    code_interpreter.set_root_path(root_path)
-    
-    display = code_interpreter.display_multiple_files(sorted_files)
-
-    notes = "\n\nNote: This display shows the LATEST state of each file with accurate line numbers. Always use these line numbers for edit_file calls — never use memorised line numbers. Closing a file removes it from this display, including previous tool responses — you will no longer see its contents unless you open it again. Only close a file after you have fully extracted all information you need from it."
-
-    if len(open_files) > INTERPRETER_MAX_FILES or len(display) > INTERPRETER_WARN_CHARS:
-        file_list = ", ".join(sorted_files)
-        notes += (
-            f"\n⚠️ CONTEXT WARNING: You have {len(open_files)} files open "
-            f"({file_list}). "
-            "To avoid running out of context, please close files you no longer "
-            "need by calling close_file() on them. If you still need data from a "
-            "currently open file, disregard this warning."
-        )
-
-    display = display.replace(CODE_INTERPRETER_END, notes + "\n" + CODE_INTERPRETER_END)
-
-    return display
-
-
-# --- Tool Concurrency ---
-
-_tool_executor = ThreadPoolExecutor(max_workers=MAX_TOOL_CONCURRENCY)
-
-
-def partition_tool_calls(tool_calls: List[Dict]) -> List[Tuple[bool, List[Dict]]]:
-    """
-    Group consecutive tool calls by concurrency safety.
-
-    Returns a list of (is_safe, [tool_call, ...]) batches.
-    Consecutive safe tools are grouped together for parallel execution;
-    unsafe tools are kept in their own sequential batches.
-    """
-    if not tool_calls:
-        return []
-
-    batches: List[Tuple[bool, List[Dict]]] = []
-    current_safe: Optional[bool] = None
-    current_batch: List[Dict] = []
-
-    for tc in tool_calls:
-        is_safe = tc["function"]["name"] in PARALLEL_SAFE_TOOLS
-        if current_safe is not None and is_safe != current_safe:
-            batches.append((current_safe, current_batch))
-            current_batch = []
-        current_safe = is_safe
-        current_batch.append(tc)
-
-    if current_batch and current_safe is not None:
-        batches.append((current_safe, current_batch))
-
-    return batches
-
-
-def _execute_single_tool(tool_call: Dict) -> Tuple[Dict, str, str]:
-    """Execute one tool call and return (tool_call, tool_name, result)."""
-    tool_name = tool_call["function"]["name"]
-    try:
-        arguments = json.loads(tool_call["function"]["arguments"])
-    except json.JSONDecodeError as e:
-        return (tool_call, tool_name, f"Error: could not parse tool arguments — {e}")
-    try:
-        result = execute_tool_call(tool_name, arguments)
-    except Exception as e:
-        result = f"Error executing tool '{tool_name}': {type(e).__name__}: {e}"
-    return (tool_call, tool_name, result)
-
-def _check_same_file_edit_guard(
-    tool_call: Dict,
-    files_edited_this_turn: set,
-) -> Optional[str]:
-    """
-    If this tool call is an edit_file targeting a file already edited in this
-    turn, return an error message.  Otherwise return None and register the file.
-
-    The agent cannot see the updated code interpreter between tool calls in
-    the same turn, so a second edit to the same file would use stale line
-    numbers.  Force it to wait for the next turn.
-    """
-    tool_name = tool_call["function"]["name"]
-    if tool_name != "edit_file":
-        return None
-    try:
-        args = json.loads(tool_call["function"]["arguments"])
-    except (json.JSONDecodeError, TypeError):
-        return None
-    target = args.get("target_file")
-    if not target:
-        return None
-    if target in files_edited_this_turn:
-        return (f"Error: '{target}' was already edited earlier in this turn. "
-                f"You cannot edit the same file twice in one turn because the "
-                f"code interpreter has not refreshed yet — your line numbers "
-                f"are stale. Wait for the next turn and use the updated code "
-                f"interpreter display for correct line numbers.")
-    files_edited_this_turn.add(target)
-    return None
-
-
-def _execute_tool_calls(
-    current_tool_calls: List[Dict],
-    messages: List[Dict],
-) -> bool:
-    """
-    Execute tool calls, running concurrent-safe tools in parallel.
-    Appends tool response messages to `messages` in place.
-
-    Returns:
-        True if any code-related tool was called
-    """
-    code_tool_called = False
-    files_edited_this_turn: set = set()
-
-    for is_safe, batch in partition_tool_calls(current_tool_calls):
-        if is_safe and len(batch) > 1:
-            for tc in batch:
-                maybe_truncate_edits(tc)
-            futures = {
-                _tool_executor.submit(_execute_single_tool, tc): tc
-                for tc in batch
-            }
-            # Collect results keyed by tool_call id to preserve original order
-            results_by_id = {}
-            for future in as_completed(futures):
-                tc, tool_name, result = future.result()
-                results_by_id[tc["id"]] = (tc, tool_name, result)
-            # Append in original batch order
-            for tc in batch:
-                tc_out, tool_name, result = results_by_id[tc["id"]]
-                if should_trigger_code_interpreter(tool_name):
-                    code_tool_called = True
-                result = apply_self_correction(tc_out, result)
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc_out["id"],
-                    "content": result
-                })
-        else:
-            for tc in batch:
-                guard_err = _check_same_file_edit_guard(tc, files_edited_this_turn)
-                if guard_err:
-                    tool_name = tc["function"]["name"]
-                    if should_trigger_code_interpreter(tool_name):
-                        code_tool_called = True
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc["id"],
-                        "content": guard_err
-                    })
-                    continue
-                maybe_truncate_edits(tc)
-                tc_out, tool_name, result = _execute_single_tool(tc)
-                if should_trigger_code_interpreter(tool_name):
-                    code_tool_called = True
-                result = apply_self_correction(tc_out, result)
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc_out["id"],
-                    "content": result
-                })
-
-    return code_tool_called
-
-
+# ---------------------------------------------------------------------------
+#  Training Log
+# ---------------------------------------------------------------------------
 
 def record_api_call(request_messages: list, response_message: dict):
     """Append one request→response pair to today's training log."""
@@ -343,7 +50,9 @@ def record_api_call(request_messages: list, response_message: dict):
         pass
 
 
-# --- Context Continuation Helpers ---
+# ---------------------------------------------------------------------------
+#  Context Continuation Helpers
+# ---------------------------------------------------------------------------
 
 def _filter_tools_by_context(tools: list, total_tokens: int, context_window: int) -> list:
     """
@@ -364,7 +73,9 @@ def _has_continuation_notice_been_shown(messages: List[Dict]) -> bool:
     return False
 
 
-# --- Main Chat Flow ---
+# ---------------------------------------------------------------------------
+#  Primary Agent Loop
+# ---------------------------------------------------------------------------
 
 def generate_chat_responses_stream_native(
     messages: list,
@@ -377,7 +88,7 @@ def generate_chat_responses_stream_native(
     
     Args:
         messages (list): List of OpenAI message dicts in chat format.
-        max_iterations (int): Maximum number of iterations before stopping. Default is 30.
+        max_iterations (int): Maximum number of iterations before stopping.
         provider_id (str, optional): The provider to use. Defaults to DEFAULT_PROVIDER.
         tools_override (list, optional): If provided, use these tool definitions instead
             of the default set. Used by subagents to run with a filtered tool set.
@@ -398,7 +109,6 @@ def generate_chat_responses_stream_native(
     # Strip old code interpreter blocks from tool messages before copying
     clean_previous_interpreter_blocks(messages)
     
-    
     # Get tool definitions (or use override for subagents / force_continuation)
     tools = tools_override if tools_override is not None else get_tool_definitions()
     filter_continuation = tools_override is None  # only filter the default set
@@ -415,7 +125,6 @@ def generate_chat_responses_stream_native(
     # Add system message if not already present.
     if not messages or messages[0].get("role") != "system":
         messages.insert(0, {"role": "system", "content": system_message})
-    # System message already present -- leave immutable
     
     iteration_count = 0
     total_tokens = 0  # latest API call's total_tokens (prompt + completion)
@@ -425,8 +134,7 @@ def generate_chat_responses_stream_native(
         iteration_count += 1
         
         # Filter continuation tool out of the default tool set until context
-        # is high enough.  Skipped when tools_override is set (e.g. subagent
-        # tool set, or force_continuation from the UI).
+        # is high enough.  Skipped when tools_override is set.
         tools_for_iteration = (
             _filter_tools_by_context(tools, total_tokens, context_window)
             if filter_continuation else tools
@@ -446,7 +154,7 @@ def generate_chat_responses_stream_native(
         if extra_body:
             api_kwargs["extra_body"] = extra_body
         
-        # Create chat completion with tools
+        # ── Call the LLM ────────────────────────────────────────────────
         t_api_start = time.time()
         completion_stream = client.chat.completions.create(**api_kwargs)
         
@@ -479,9 +187,7 @@ def generate_chat_responses_stream_native(
                 # Handle tool calls
                 if delta.tool_calls:
                     for tool_call_delta in delta.tool_calls:
-                        # Use the index from the API response, not enumerate
                         idx = tool_call_delta.index if tool_call_delta.index is not None else 0
-                        # Ensure we have enough tool calls in our list
                         while len(current_tool_calls) <= idx:
                             current_tool_calls.append({
                                 "id": "",
@@ -504,6 +210,7 @@ def generate_chat_responses_stream_native(
                 if hasattr(chunk, "usage") and chunk.usage:
                     current_usage = chunk.usage.model_dump()
 
+                # Yield streaming updates so the frontend can render in real-time
                 assistant_message["thinking"] = current_reasoning
                 assistant_message["reasoning_content"] = current_reasoning
                 assistant_message["content"] = current_content
@@ -515,7 +222,7 @@ def generate_chat_responses_stream_native(
                     "provider": provider_id
                 }
 
-            # Log timing for this API call (after streaming loop finishes)
+            # Log timing for this API call
             t_now = time.time()
             api_latency = t_first_chunk - t_api_start
             content_latency = (t_first_content - t_first_chunk) if t_first_content else None
@@ -547,6 +254,7 @@ def generate_chat_responses_stream_native(
 
         record_api_call(messages, assistant_message)
 
+        # ── Process tool calls ──────────────────────────────────────────
         current_tool_calls = [
             tc for tc in current_tool_calls 
             if tc["function"]["name"]
@@ -565,7 +273,7 @@ def generate_chat_responses_stream_native(
                 })
             assistant_message["tool_calls"] = formatted_tool_calls
         
-        # If no tool calls, we're done (or retry if empty)
+        # If no tool calls, we're done (or retry if also no content)
         if not current_tool_calls:
             if not current_content:
                 messages.append({
@@ -586,14 +294,16 @@ def generate_chat_responses_stream_native(
         # Add tool call requests to messages
         messages.append(assistant_message)
         
-        code_tool_called = _execute_tool_calls(current_tool_calls, messages)
+        # Delegate to the tool execution engine
+        code_tool_called = execute_tool_calls(current_tool_calls, messages)
 
         # Warn once when estimated context nears the model's window.
-        # Placed AFTER tool results so we don't break the
-        # [assistant tool_calls] -> [tool results] ordering required by the API.
         if context_window and current_usage and not _has_continuation_notice_been_shown(messages):
             if total_tokens / context_window >= CONTEXT_WARN_THRESHOLD:
-                messages.append({"role": "system", "content": _CONTINUATION_NOTICE_MARKER + "\n" + CONTINUATION_NOTICE})
+                messages.append({
+                    "role": "system",
+                    "content": _CONTINUATION_NOTICE_MARKER + "\n" + CONTINUATION_NOTICE
+                })
 
         # If continue_as_new_chat was called, end the loop immediately
         if any(tc["function"]["name"] == "continue_as_new_chat" for tc in current_tool_calls):
@@ -604,17 +314,12 @@ def generate_chat_responses_stream_native(
             }
             return
 
-        # If any code-related tool was called, update the interpreter display
+        # If any code-related tool was called, refresh the interpreter display
         if code_tool_called:
-            # Clean previous interpreter blocks from all tool messages
             clean_previous_interpreter_blocks(messages)
-            
-            # Generate consolidated interpreter display for all open files
             interpreter_display = generate_consolidated_interpreter_display(messages)
-            
-            # Append interpreter to the last tool response
             if interpreter_display and messages:
-                # Find the last tool message and append interpreter
+                # Append interpreter to the last tool message
                 for i in range(len(messages) - 1, -1, -1):
                     if messages[i].get("role") == "tool":
                         messages[i]["content"] += "\n\n" + interpreter_display
@@ -626,7 +331,7 @@ def generate_chat_responses_stream_native(
             "provider": provider_id
         }
     
-    # Max iterations reached - yield special status so UI can show Continue button
+    # Max iterations reached — yield special status so UI can show Continue button
     yield {
         "messages": messages,
         "status": "max_iterations_reached",
@@ -634,5 +339,5 @@ def generate_chat_responses_stream_native(
     }
 
 
-# Main function for the system
+# Backwards-compatible alias
 generate_chat_responses_stream = generate_chat_responses_stream_native
