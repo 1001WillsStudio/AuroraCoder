@@ -27,13 +27,12 @@ from .core_tools.continue_chat import continue_as_new_chat
 
 
 
-EDIT_FILE_DESCRIPTION = """Range-based file editing. Supports at most 3 edits per call.
+EDIT_FILE_DESCRIPTION = """Range-based file editing.
 
 Each edit replaces a line range (start_line through end_line inclusive) with new content.
 Edits are atomic: if ANY edit in the call fails validation, NONE are applied and the file is unchanged.
 
 RULES:
-- At most 3 edits per call.
 - ALWAYS get line numbers and content from the code interpreter display. NEVER use memorised or assumed line numbers.
 - `start_line_content` / `end_line_content` are SINGLE LINE verification anchors (no newlines). Leading whitespace MUST match; trailing spaces are ignored.
 - `end_line` defaults to `start_line`; `end_line_content` auto-fills from file if omitted.
