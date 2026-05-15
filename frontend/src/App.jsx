@@ -101,7 +101,7 @@ function App() {
           setSelectedProvider(data.default || data.providers?.[0]?.id)
         }
       } catch {
-        setProviders([{ id: 'deepseek', name: 'DeepSeek Reasoner', description: 'Default model' }])
+        setProviders([{ id: 'deepseek', name: 'DeepSeek V4 Pro', description: 'Default model' }])
         setSelectedProvider('deepseek')
       }
     }

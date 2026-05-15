@@ -47,33 +47,33 @@ MODEL_PROVIDERS = {
     },
     "nvidia": {
         "id": "nvidia",
-        "name": "NVIDIA DeepSeek V3.2",
-        "description": "NVIDIA hosted model (slower thinking ~30s TTFT)",
+        "name": "NVIDIA DeepSeek V4 Pro",
+        "description": "NVIDIA hosted V4 Pro with thinking",
         "base_url": "https://integrate.api.nvidia.com/v1",
         "api_key": os.environ.get("NVIDIA_API_KEY", ""),
-        "model": "deepseek-ai/deepseek-v3.2",
+        "model": "deepseek-ai/deepseek-v4-pro",
         "supports_thinking": True,
         "extra_body": {"chat_template_kwargs": {"thinking": True}},
-        "context_window": 128_000,
+        "context_window": 1_048_576,
     },
     "nvidia-fast": {
         "id": "nvidia-fast",
-        "name": "NVIDIA DeepSeek V3.2 (No Thinking)",
-        "description": "NVIDIA hosted, no reasoning (~1s TTFT, faster)",
+        "name": "NVIDIA DeepSeek V4 Pro (No Thinking)",
+        "description": "NVIDIA hosted V4 Pro, no reasoning (faster)",
         "base_url": "https://integrate.api.nvidia.com/v1",
         "api_key": os.environ.get("NVIDIA_API_KEY", ""),
-        "model": "deepseek-ai/deepseek-v3.2",
+        "model": "deepseek-ai/deepseek-v4-pro",
         "supports_thinking": False,
         "extra_body": None,
-        "context_window": 128_000,
+        "context_window": 1_048_576,
     },
     "nvidia-glm5": {
         "id": "nvidia-glm5",
-        "name": "NVIDIA GLM-5",
-        "description": "Z-AI GLM-5 on NVIDIA with deep thinking",
+        "name": "NVIDIA GLM-5.1",
+        "description": "Z-AI GLM-5.1 on NVIDIA with deep thinking",
         "base_url": "https://integrate.api.nvidia.com/v1",
         "api_key": os.environ.get("NVIDIA_API_KEY", ""),
-        "model": "z-ai/glm5",
+        "model": "z-ai/glm-5.1",
         "supports_thinking": True,
         "extra_body": {
             "chat_template_kwargs": {"enable_thinking": True, "clear_thinking": False}
@@ -82,11 +82,11 @@ MODEL_PROVIDERS = {
     },
     "nvidia-glm5-fast": {
         "id": "nvidia-glm5-fast",
-        "name": "NVIDIA GLM-5 (No Thinking)",
-        "description": "Z-AI GLM-5 on NVIDIA, no reasoning (faster)",
+        "name": "NVIDIA GLM-5.1 (No Thinking)",
+        "description": "Z-AI GLM-5.1 on NVIDIA, no reasoning (faster)",
         "base_url": "https://integrate.api.nvidia.com/v1",
         "api_key": os.environ.get("NVIDIA_API_KEY", ""),
-        "model": "z-ai/glm5",
+        "model": "z-ai/glm-5.1",
         "supports_thinking": False,
         "extra_body": None,
         "context_window": 128_000,
@@ -99,12 +99,12 @@ MODEL_PROVIDERS = {
     # Or set GOOGLE_APPLICATION_CREDENTIALS env var to a service account key file.
     "gemini-3-pro": {
         "id": "gemini-3-pro",
-        "name": "Gemini 3 Pro (Vertex AI)",
+        "name": "Gemini 3.1 Pro (Vertex AI)",
         "description": "Google's most advanced reasoning model with 1M context",
         "provider_type": "vertex_ai",  # Special marker for Vertex AI auth
         "project_id": None,  # Set via VERTEX_AI_PROJECT_ID env var or here
         "location": "global",  # Vertex AI region - global for best availability
-        "model": "google/gemini-3-pro-preview",
+        "model": "google/gemini-3.1-pro-preview",
         "supports_thinking": True,
         "extra_body": None,
         "context_window": 1_048_576,
@@ -116,11 +116,11 @@ MODEL_PROVIDERS = {
     # Set GEMINI_API_KEY environment variable
     "gemini-3-pro-api": {
         "id": "gemini-3-pro-api",
-        "name": "Gemini 3 Pro (AI Studio)",
+        "name": "Gemini 3.1 Pro (AI Studio)",
         "description": "Google AI Studio API (Requires GEMINI_API_KEY)",
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
         "api_key": os.environ.get("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY"),
-        "model": "gemini-3-pro-preview",
+        "model": "gemini-3.1-pro-preview",
         "supports_thinking": True,
         "extra_body": None,
         "context_window": 1_048_576,
@@ -136,7 +136,7 @@ API_KEY = MODEL_PROVIDERS[DEFAULT_PROVIDER]["api_key"]
 MODEL_NAME = MODEL_PROVIDERS[DEFAULT_PROVIDER]["model"]
 
 # Model Parameters
-MAX_TOKENS = 8192
+MAX_TOKENS = 32768
 
 # Tool Calling Limits
 MAX_TOOL_CALLS = 10  # Increased since native tool calling is more efficient

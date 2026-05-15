@@ -215,12 +215,12 @@ CODE_INTERPRETER_END   = "<====CODE_INTERPRETER_END====>"
 | ID | Model | Thinking? | Base URL |
 |----|-------|-----------|----------|
 | `deepseek` | `deepseek-v4-pro` | ✅ | `api.deepseek.com` |
-| `nvidia` | `deepseek-ai/deepseek-v3.2` | ✅ | `integrate.api.nvidia.com` |
+| `nvidia` | `deepseek-ai/deepseek-v4-pro` | ✅ | `integrate.api.nvidia.com` |
 | `nvidia-fast` | same model | ❌ | same |
-| `nvidia-glm5` | `z-ai/glm5` | ✅ | same |
+| `nvidia-glm5` | `z-ai/glm-5.1` | ✅ | same |
 | `nvidia-glm5-fast` | same model | ❌ | same |
-| `gemini-3-pro` | Vertex AI | ✅ | Google Cloud |
-| `gemini-3-pro-api` | AI Studio | ✅ | Google API |
+| `gemini-3-pro` | Vertex AI (3.1 Pro) | ✅ | Google Cloud |
+| `gemini-3-pro-api` | AI Studio (3.1 Pro) | ✅ | Google API |
 
 Default: `deepseek`
 
