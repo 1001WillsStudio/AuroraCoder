@@ -65,6 +65,52 @@ def _notify_file_write(file_path: str):
         except Exception:
             pass  # Don't let tracking errors break file operations
 
+# --- Edit-file pre/post-processing ---
+
+_EDIT_SELF_CORRECT_RE = re.compile(r'\n?\n?<!--SELF_CORRECT:(.*?)-->', re.DOTALL)
+MAX_EDITS_PER_CALL = 3
+
+
+def maybe_truncate_edits(tc: Dict) -> None:
+    """If *tc* is an edit_file call with >MAX_EDITS_PER_CALL edits, truncate
+    the arguments to just the first MAX_EDITS_PER_CALL in-place."""
+    if tc["function"]["name"] != "edit_file":
+        return
+    try:
+        args = json.loads(tc["function"]["arguments"])
+    except (json.JSONDecodeError, TypeError):
+        return
+    edits = args.get("edits")
+    if not isinstance(edits, list) or len(edits) <= MAX_EDITS_PER_CALL:
+        return
+    args["edits"] = edits[:MAX_EDITS_PER_CALL]
+    tc["function"]["arguments"] = json.dumps(args, ensure_ascii=False)
+
+
+def apply_self_correction(tc: Dict, result: str) -> str:
+    """
+    If *result* contains a <!--SELF_CORRECT:{...}--> marker, strip it, parse the
+    correction JSON, and update *tc*["function"]["arguments"] in-place.
+
+    *tc* is the same dict that lives in the assistant message already appended
+    to *messages*, so in-place modification keeps history consistent.
+
+    Returns the cleaned result string.
+    """
+    match = _EDIT_SELF_CORRECT_RE.search(result)
+    if not match:
+        return result
+
+    try:
+        correction = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return _EDIT_SELF_CORRECT_RE.sub('', result)
+
+    # Patch the tool call arguments in-place.
+    tc["function"]["arguments"] = json.dumps(correction, ensure_ascii=False)
+
+    return _EDIT_SELF_CORRECT_RE.sub('', result)
+
 # --- File Operations Class ---
 class FileOperations:
     """File operations tool for reading, editing, and managing files."""
@@ -126,6 +172,7 @@ class FileOperations:
             Success message with summary of changes, or error description
         """
         try:
+
             file_path = self._resolve_path(target_file)
             if not file_path.exists() or not file_path.is_file():
                 return f"Error: File '{target_file}' not found."
@@ -436,6 +483,7 @@ class FileOperations:
                 result = ("⚠️  Original parameters were auto-corrected. "
                           "No action needed from you.\n\n" + result)
                 result += "\n\n<!--SELF_CORRECT:" + json.dumps(correction) + "-->"
+
 
             return result
 

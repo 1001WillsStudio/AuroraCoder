@@ -19,11 +19,6 @@ from .code_tools.file_operations import (
     file_search_tool,
     close_file_tool,
 )
-# ========================================================================
-# [COMMENTED OUT — legacy aider-style import, preserved for
-#  potential restoration.]
-#     search_replace_edit_tool,
-# ========================================================================
 from .code_tools.grep_search import grep_search_tool
 from .code_tools.terminal_runner import run_terminal_cmd_tool
 from .core_tools.tool_store_client import tool_store_tool
@@ -31,25 +26,14 @@ from .core_tools.subagent import run_subagent
 from .core_tools.continue_chat import continue_as_new_chat
 
 
-# ========================================================================
-# [COMMENTED OUT — legacy aider-style description, preserved for
-#  potential restoration.  Replaced by range-based description below.]
-# EDIT_FILE_DESCRIPTION = """Aider-style search and replace. Finds exact content starting from `start_line` and replaces it.
-#
-# RULES:
-# - `search_content` must match file content (indentation, newlines matter; trailing spaces are ignored)
-# - Include 1-3 lines of context to uniquely identify the location
-# - One edit per call; make multiple calls for multiple edits
-# - Use empty `replace_content` to delete; include a landmark line to insert after it
-# """
-# ========================================================================
 
-EDIT_FILE_DESCRIPTION = """Range-based file editing. Supports multiple edits per call.
+EDIT_FILE_DESCRIPTION = """Range-based file editing. Supports at most 3 edits per call.
 
 Each edit replaces a line range (start_line through end_line inclusive) with new content.
 Edits are atomic: if ANY edit in the call fails validation, NONE are applied and the file is unchanged.
 
 RULES:
+- At most 3 edits per call.
 - ALWAYS get line numbers and content from the code interpreter display. NEVER use memorised or assumed line numbers.
 - `start_line_content` / `end_line_content` are SINGLE LINE verification anchors (no newlines). Leading whitespace MUST match; trailing spaces are ignored.
 - `end_line` defaults to `start_line`; `end_line_content` auto-fills from file if omitted.
@@ -150,39 +134,6 @@ NATIVE_TOOL_DEFINITIONS = [
             }
         }
     },
-    # ========================================================================
-    # [COMMENTED OUT — legacy aider-style edit_file definition, preserved for
-    #  potential restoration.  Replaced by range-based definition below.]
-    # {
-    #     "type": "function",
-    #     "function": {
-    #         "name": "edit_file",
-    #         "description": EDIT_FILE_DESCRIPTION,
-    #         "parameters": {
-    #             "type": "object",
-    #             "properties": {
-    #                 "target_file": {
-    #                     "type": "string",
-    #                     "description": "Path to the file to edit (relative to workspace)"
-    #                 },
-    #                 "start_line": {
-    #                     "type": "integer",
-    #                     "description": "The line number to start searching from (1-based). The search begins at this line and looks forward."
-    #                 },
-    #                 "search_content": {
-    #                     "type": "string",
-    #                     "description": "The exact content to find and replace. Must match the file content exactly, including whitespace and indentation."
-    #                 },
-    #                 "replace_content": {
-    #                     "type": "string",
-    #                     "description": "The replacement content. Use empty string to delete the matched content."
-    #                 }
-    #             },
-    #             "required": ["target_file", "start_line", "search_content", "replace_content"]
-    #         }
-    #     }
-    # },
-    # ========================================================================
     {
         "type": "function",
         "function": {
@@ -470,11 +421,6 @@ TOOL_FUNCTION_MAP = {
     "read_file": read_file_tool,
     "write_file": full_file_write_tool,
     "edit_file": range_replace_edit_tool,
-    # ========================================================================
-    # [COMMENTED OUT — legacy aider-style mapping, preserved for
-    #  potential restoration.]
-    # "edit_file": search_replace_edit_tool,
-    # ========================================================================
     "delete_file": delete_file_tool,
     "close_file": close_file_tool,
     "list_directory": list_dir_tool,
