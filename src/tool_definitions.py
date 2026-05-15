@@ -11,7 +11,7 @@ from typing import Dict, List, Any
 from .core_tools.google_search import search_for_llm
 from .core_tools.web_browser import web_fetch
 from .code_tools.file_operations import (
-    read_file_tool, 
+    read_file_tool,
     full_file_write_tool,
     range_replace_edit_tool,
     delete_file_tool,
@@ -44,27 +44,17 @@ from .core_tools.continue_chat import continue_as_new_chat
 # """
 # ========================================================================
 
-EDIT_FILE_DESCRIPTION = """Content-anchor file editing. Supports editing via approximate line numbers
-and content anchors — the tool recovers from small agent mistakes.
+EDIT_FILE_DESCRIPTION = """Range-based file editing. Supports multiple edits per call.
 
-Instead of requiring exact line numbers AND exact verification strings, you supply:
-  - target_file — which file to edit
-  - start_line — approximate 1-based line where the region BEGINS (can be off by up to ±3)
-  - content_to_remove — two anchors separated by a line containing only ``...``:
-        <start anchor chunk — 1+ lines, ideally just 1>
-        ...
-        <end anchor chunk — 1+ lines, ideally just 1>
-  - end_line — approximate 1-based line where the region ENDS (can be off by up to ±3)
-  - replace_content — what to insert; empty string = delete the region
-
-The tool searches for each anchor within a ±3-line window around the supplied line
-number.  Trailing whitespace differences are ignored; leading-whitespace mismatches
-are tolerated as a fallback.  If your parameters were auto-corrected you will see a
-brief notice — no action is needed from you.
+Each edit replaces a line range (start_line through end_line inclusive) with new content.
+Edits are atomic: if ANY edit in the call fails validation, NONE are applied and the file is unchanged.
 
 RULES:
 - ALWAYS get line numbers and content from the code interpreter display. NEVER use memorised or assumed line numbers.
-- Use empty replace_content to delete the range.
+- `start_line_content` / `end_line_content` are SINGLE LINE verification anchors (no newlines). Leading whitespace MUST match; trailing spaces are ignored.
+- `end_line` defaults to `start_line`; `end_line_content` auto-fills from file if omitted.
+- Multiple edits per call: all line numbers refer to the file as it was BEFORE this call. Ranges must not overlap.
+- Use empty `replace_content` to delete the range.
 - Do NOT edit the same file more than once per turn. After an edit, read the refreshed code interpreter for correct line numbers before editing that file again.
 """
 
@@ -205,24 +195,38 @@ NATIVE_TOOL_DEFINITIONS = [
                         "type": "string",
                         "description": "Path to the file to edit (relative to workspace)"
                     },
-                    "start_line": {
-                        "type": "integer",
-                        "description": "1-based line number where the region begins (approximate; can be off by up to ±3)"
-                    },
-                    "content_to_remove": {
-                        "type": "string",
-                        "description": "Two anchors separated by a line containing only '...'. The first anchor marks the start of the region; the second anchor marks the end. Everything between (and including) them is removed and replaced. Each anchor is ideally 1 line but multi-line is accepted.\n\nFormat:\n<start anchor chunk — 1+ lines>\n...\n<end anchor chunk — 1+ lines>"
-                    },
-                    "end_line": {
-                        "type": "integer",
-                        "description": "1-based line number where the region ends (approximate; can be off by up to ±3)"
-                    },
-                    "replace_content": {
-                        "type": "string",
-                        "description": "New content to insert in place of the removed region. Use empty string to delete the range."
+                    "edits": {
+                        "type": "array",
+                        "description": "List of edits to apply.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "start_line": {
+                                    "type": "integer",
+                                    "description": "1-based line number where the range begins"
+                                },
+                                "start_line_content": {
+                                    "type": "string",
+                                    "description": "The SINGLE LINE of text at start_line — exactly one line, NO newlines. Used to verify the file boundary. Trailing spaces are ignored."
+                                },
+                                "end_line": {
+                                    "type": "integer",
+                                    "description": "1-based line number where the range ends"
+                                },
+                                "end_line_content": {
+                                    "type": "string",
+                                    "description": "The SINGLE LINE of text at end_line — exactly one line, NO newlines. Used to verify the file boundary. Trailing spaces are ignored."
+                                },
+                                "replace_content": {
+                                    "type": "string",
+                                    "description": "New content that replaces everything from start_line through end_line (inclusive). Use empty string to delete the range."
+                                }
+                            },
+                            "required": ["start_line", "start_line_content", "replace_content"]
+                        }
                     }
                 },
-                "required": ["target_file", "start_line", "content_to_remove", "end_line", "replace_content"]
+                "required": ["target_file", "edits"]
             }
         }
     },
@@ -312,7 +316,7 @@ NATIVE_TOOL_DEFINITIONS = [
                         "description": "Glob pattern for files to include (e.g., '*.py')"
                     },
                     "exclude_pattern": {
-                        "type": "string", 
+                        "type": "string",
                         "description": "Glob pattern for files to exclude (e.g., '*test*')"
                     },
                     "case_sensitive": {
@@ -359,7 +363,7 @@ NATIVE_TOOL_DEFINITIONS = [
                 "type": "object",
                 "properties": {
                     "action": {
-                        "type": "string", 
+                        "type": "string",
                         "enum": ["search", "execute", "info"],
                         "description": "The action to perform: 'search' for tools, 'execute' to run a tool, or 'info' to get tool details."
                     },
@@ -496,17 +500,17 @@ def get_tool_function_map() -> Dict[str, Any]:
 def execute_tool_call(tool_name: str, arguments: Dict[str, Any]) -> str:
     """
     Executes a tool call with the given arguments.
-    
+
     Args:
         tool_name: Name of the tool to execute
         arguments: Dictionary of arguments to pass to the tool
-        
+
     Returns:
         String result from the tool execution
     """
     if tool_name not in TOOL_FUNCTION_MAP:
         return f"Error: Unknown tool '{tool_name}'"
-    
+
     try:
         function = TOOL_FUNCTION_MAP[tool_name]
         result = function(**arguments)

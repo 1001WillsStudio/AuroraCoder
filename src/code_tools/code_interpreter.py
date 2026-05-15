@@ -92,7 +92,7 @@ class CodeInterpreter:
         if errors is None:
             errors = {}
 
-        lines = code.split('\n')
+        lines = code.splitlines()
         max_line_num = len(lines)
         line_num_width = len(str(max_line_num))
 

@@ -22,6 +22,7 @@ Start with::
 """
 
 import asyncio
+import io
 import json
 import logging
 import os
@@ -962,38 +963,50 @@ class DeleteRequest(BaseModel):
 
 @app.post("/api/workspace/upload")
 async def upload_workspace(
-    files: List[UploadFile] = File(...),
-    clear: bool = Form(True),
+    archive: UploadFile = File(...),
+    project_name: str = Form("project"),
 ):
-    """Upload files from a folder into the agent workspace."""
+    """Upload a zip archive of a project into the agent workspace.
+
+    The frontend compresses the selected folder into a single zip (respecting
+    .gitignore, including .git/) and sends it here.  Files are extracted into
+    ``<workspace>/<project_name>/``, so multiple repos can coexist.
+    """
     work_dir = _get_workspace()
     if not work_dir:
         raise HTTPException(status_code=400, detail="No active workspace")
 
-    work_dir.mkdir(parents=True, exist_ok=True)
+    # Sanitise the project folder name
+    safe_name = Path(project_name).name  # strip any slashes / traversal
+    if not safe_name:
+        safe_name = "project"
+    project_dir = work_dir / safe_name
+    project_dir.mkdir(parents=True, exist_ok=True)
 
-    if clear:
-        clear_workspace(work_dir)
-
+    content = await archive.read()
     count = 0
-    for upload_file in files:
-        relative_path = getattr(upload_file, "filename", None)
-        if not relative_path:
-            continue
 
-        safe_path = Path(relative_path)
-        if safe_path.is_absolute() or ".." in safe_path.parts:
-            logger.warning(f"[upload] Rejected unsafe path: {relative_path}")
-            continue
+    with zipfile.ZipFile(io.BytesIO(content)) as zf:
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
 
-        dest = work_dir / safe_path
-        dest.parent.mkdir(parents=True, exist_ok=True)
+            safe_path = Path(info.filename)
+            if safe_path.is_absolute() or ".." in safe_path.parts:
+                logger.warning(f"[upload] Rejected unsafe path: {info.filename}")
+                continue
 
-        content = await upload_file.read()
-        dest.write_bytes(content)
-        count += 1
+            dest = project_dir / safe_path
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(zf.read(info))
+            count += 1
 
-    return {"status": "success", "files_uploaded": count, "workspace": str(work_dir)}
+    return {
+        "status": "success",
+        "files_uploaded": count,
+        "project": safe_name,
+        "workspace": str(work_dir),
+    }
 
 
 @app.post("/api/files/delete")
@@ -1080,7 +1093,6 @@ async def workspace_info():
     work_dir = _get_workspace()
     file_count = count_workspace_files(work_dir)
     return {
-        "docker_mode": DOCKER_MODE,
         "workspace": str(work_dir) if work_dir else None,
         "file_count": file_count,
     }

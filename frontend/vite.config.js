@@ -2,6 +2,10 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import http from 'node:http'
 
+const frontendPort  = parseInt(process.env.VITE_PORT            || '3000')
+const backendPort   = parseInt(process.env.VITE_BACKEND_PORT    || '8080')
+const gatewayPort   = parseInt(process.env.VITE_GATEWAY_PORT    || '8081')
+
 // Dedicated HTTP agent per proxy target — prevents SSE long-poll connections
 // from starving short-lived REST requests sharing the same socket pool.
 const gatewayAgent = new http.Agent({ keepAlive: true, maxSockets: 20 })
@@ -10,11 +14,11 @@ const backendAgent = new http.Agent({ keepAlive: true, maxSockets: 10 })
 export default defineConfig({
   plugins: [react()],
   server: {
-    port: 3000,
+    port: frontendPort,
     proxy: {
       // Chat, conversations, file-display, workspace → gateway
       '/api/chat': {
-        target: 'http://localhost:8081',
+        target: `http://localhost:${gatewayPort}`,
         changeOrigin: true,
         agent: gatewayAgent,
         configure: (proxy) => {
@@ -25,7 +29,7 @@ export default defineConfig({
         },
       },
       '/api/conversations': {
-        target: 'http://localhost:8081',
+        target: `http://localhost:${gatewayPort}`,
         changeOrigin: true,
         agent: gatewayAgent,
         configure: (proxy) => {
@@ -36,18 +40,18 @@ export default defineConfig({
         },
       },
       '/api/files': {
-        target: 'http://localhost:8081',
+        target: `http://localhost:${gatewayPort}`,
         changeOrigin: true,
         agent: gatewayAgent,
       },
       '/api/workspace': {
-        target: 'http://localhost:8081',
+        target: `http://localhost:${gatewayPort}`,
         changeOrigin: true,
         agent: gatewayAgent,
       },
       // Everything else (providers, health, workspace info) → backend
       '/api': {
-        target: 'http://localhost:8080',
+        target: `http://localhost:${backendPort}`,
         changeOrigin: true,
         agent: backendAgent,
       },

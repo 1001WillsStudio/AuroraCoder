@@ -313,25 +313,36 @@ export async function getWorkspaceInfo() {
 
 /**
  * Upload a folder to the workspace (the user selects a folder via webkitdirectory).
- * Each file's relative path is sent as the filename in multipart/form-data,
- * preserving the folder structure on the server side.
+ *
+ * The entire folder is compressed into a single zip archive client-side, then
+ * sent as one file.  This avoids Starlette's per-request multipart limits
+ * (max_files, max_part_size) and drastically cuts upload size/time.
  *
  * Respects .gitignore: if the selected folder contains a .gitignore,
- * matched files are excluded from the upload. .git/ is always included.
+ * matched paths are excluded.  .git/ is always included so the agent
+ * can use git in the workspace.
+ *
+ * Multiple projects can be uploaded — each lands in its own subfolder
+ * under the workspace (named after the selected folder).
  *
  * @param {FileList} fileList - Files from a webkitdirectory input
- * @param {boolean} clear - Clear existing workspace before writing
  */
-export async function uploadWorkspace(fileList, clear = true) {
-  const { default: ignore } = await import('ignore')
+export async function uploadWorkspace(fileList) {
+  const [{ default: JSZip }, { default: ignore }] = await Promise.all([
+    import('jszip'),
+    import('ignore'),
+  ])
 
-  // Collect relative paths and find .gitignore content
   const files = Array.from(fileList)
+
+  // Derive the project folder name from the first file's path
+  // webkitRelativePath is "FolderName/sub/path/file.ext"
+  const projectName = (files[0]?.webkitRelativePath || '').split('/')[0] || 'project'
+
+  // Find root .gitignore
   let gitignoreContent = ''
   for (const file of files) {
-    const rel = file.webkitRelativePath || file.name
-    // .gitignore sits right under the root folder: "FolderName/.gitignore"
-    const parts = rel.split('/')
+    const parts = (file.webkitRelativePath || file.name).split('/')
     if (parts.length === 2 && parts[1] === '.gitignore') {
       gitignoreContent = await file.text()
       break
@@ -339,26 +350,39 @@ export async function uploadWorkspace(fileList, clear = true) {
   }
 
   const ig = ignore()
-  if (gitignoreContent) {
-    ig.add(gitignoreContent)
-  }
+  if (gitignoreContent) ig.add(gitignoreContent)
 
-  const formData = new FormData()
-  formData.append('clear', clear ? 'true' : 'false')
+  // Build zip — read files in parallel batches for speed
+  const zip = new JSZip()
+  const BATCH = 200
+  const toZip = []
 
   for (const file of files) {
     const rel = file.webkitRelativePath || file.name
-    // Strip the top-level folder name to get the in-project path
     const inProject = rel.split('/').slice(1).join('/')
     if (!inProject) continue
 
-    // Always include .git/; filter the rest through .gitignore
-    if (!inProject.startsWith('.git/') && inProject !== '.git' && ig.ignores(inProject)) {
-      continue
+    // .git/ is always included so the agent has full git history
+    if (!inProject.startsWith('.git/') && inProject !== '.git') {
+      if (ig.ignores(inProject)) continue
     }
 
-    formData.append('files', file, rel)
+    toZip.push({ inProject, file })
   }
+
+  for (let i = 0; i < toZip.length; i += BATCH) {
+    const batch = toZip.slice(i, i + BATCH)
+    const buffers = await Promise.all(batch.map(({ file }) => file.arrayBuffer()))
+    for (let j = 0; j < batch.length; j++) {
+      zip.file(batch[j].inProject, buffers[j])
+    }
+  }
+
+  const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 1 } })
+
+  const formData = new FormData()
+  formData.append('project_name', projectName)
+  formData.append('archive', blob, 'workspace.zip')
 
   const response = await fetch(`${API_BASE}/workspace/upload`, {
     method: 'POST',
