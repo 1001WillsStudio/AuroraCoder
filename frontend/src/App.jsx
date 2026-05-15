@@ -46,7 +46,6 @@ function App() {
   } = useFileTracking(conversationId, messages, isStreaming)
 
   // Other state
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [lastRequest, setLastRequest] = useState(null)
   const [showTaskInstructions, setShowTaskInstructions] = useState(false)
   const taskInstructionsRef = useRef(null)
@@ -183,7 +182,6 @@ function App() {
   // ── Handlers ────────────────────────────────────────────────────────────
 
   const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark')
-  const toggleSidebar = () => setSidebarCollapsed(prev => !prev)
 
   const handleSend = async (interruptMessages = null, overrideMessage = null, options = {}) => {
     const sendT0 = performance.now()
@@ -498,10 +496,8 @@ function App() {
   // ── Render ──────────────────────────────────────────────────────────────
 
   return (
-    <div className={`app ${(showCodePanel && editedFiles.length > 0) ? 'code-mode' : ''} ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+    <div className={`app ${(showCodePanel && editedFiles.length > 0) ? 'code-mode' : ''}`}>
       <Sidebar
-        collapsed={sidebarCollapsed}
-        onToggleCollapse={toggleSidebar}
         theme={theme}
         onToggleTheme={toggleTheme}
         onNewChat={handleClear}

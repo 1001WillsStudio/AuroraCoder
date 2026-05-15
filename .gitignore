@@ -31,6 +31,7 @@ venv/
 data/
 data-*/
 workspace/
+workspace-*/
 .search_cache/
 
 # OS
