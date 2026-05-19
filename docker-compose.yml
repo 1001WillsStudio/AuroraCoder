@@ -23,6 +23,8 @@ services:
       - THINKTOOL_DOCKER=1
       - THINKTOOL_VNC=1
     volumes:
+      # Docker socket — required for docker-type ToolStore tools (DinD)
+      - /var/run/docker.sock:/var/run/docker.sock
       # Host bind mounts — stored outside the project tree
       - ${THINKTOOL_DATA_DIR:-~/.thinktool/data}:/app/data
       - ${THINKTOOL_WORKSPACE_DIR:-~/.thinktool/workspace}:/workspace

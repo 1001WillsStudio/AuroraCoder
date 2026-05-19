@@ -7,7 +7,7 @@ RUN mkdir -p /app /workspace /seed
 
 WORKDIR /app
 
-# ── System packages (GUI / VNC stack + common libs) ────────────────────────
+# ── System packages (GUI / VNC stack + Docker CLI + common libs) ────────────
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         xvfb \
@@ -26,7 +26,22 @@ RUN apt-get update && \
         libsdl2-mixer-2.0-0 \
         libsdl2-ttf-2.0-0 \
         git \
-        curl && \
+        curl \
+        ca-certificates \
+        gnupg \
+        lsb-release && \
+    # Install Docker CLI (DinD: uses host's dockerd via mounted socket)
+    mkdir -p /etc/apt/keyrings && \
+    curl -fsSL https://download.docker.com/linux/debian/gpg \
+        | gpg --dearmor -o /etc/apt/keyrings/docker.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) \
+        signed-by=/etc/apt/keyrings/docker.gpg] \
+        https://download.docker.com/linux/debian \
+        $(lsb_release -cs) stable" \
+        > /etc/apt/sources.list.d/docker.list && \
+    apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        docker-ce-cli && \
     apt-get clean && rm -rf /var/lib/apt/lists/* && \
     ln -s /usr/share/novnc/vnc.html /usr/share/novnc/index.html
 
