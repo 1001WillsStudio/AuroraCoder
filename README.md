@@ -1,445 +1,429 @@
-# ThinkWithTool
+<div align="center">
+  <img src="https://img.shields.io/badge/status-active-success?style=flat-square" alt="Status" />
+  <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License" />
+  <img src="https://img.shields.io/badge/python-3.10+-blue?style=flat-square" alt="Python" />
+  <img src="https://img.shields.io/badge/node-18+-green?style=flat-square" alt="Node" />
+  <img src="https://img.shields.io/badge/docker-required-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker" />
+</div>
 
-**ThinkWithTool** is an advanced AI agent framework designed for complex coding and research tasks. It leverages Native Tool Calling (OpenAI function calling format) with extended thinking/reasoning capabilities to provide a robust and precise interface for agentic operations.
+<h1 align="center">🌌 AuroraCoder</h1>
+<p align="center"><strong>An autonomous coding agent that thinks, reasons, and builds —<br/>powered by native OpenAI tool calling with deep reasoning models.</strong></p>
 
-> **Note to AI agents**: This document gives you a complete understanding of the codebase in a single read — it replaces exploratory `read_file` on every source file.
-
----
-
-## Core Philosophy
-
-This project implements a **Code Agent** architecture with a strict separation of concerns:
-
-### Architectural Layers
-
-```
-src/                          ← Stateless agent loop (messages in → messages out)
-    main_flow.py              ← Pure: takes messages, streams responses, yields statuses
-    tool_definitions.py       ← Pure: tool schemas + dispatch, all return strings
-    All tools are stateless   ← No conversation-store access, no direct persistence
-
-conversation_gateway/         ← Middleware between frontend and backend (the "dirty work")
-    api.py                    ← SSE proxy + file display endpoints (port 8081)
-    conversation_store.py     ← File-backed store (thread-safe, atomic writes)
-    workspace.py              ← File diff, tree, upload/delete/export utilities
-
-frontend/                     ← UI + conversation ownership
-    App.jsx                   ← React SPA, owns conversation state
-```
-
-**The rule**: `src/` never touches the conversation store. It just processes messages and returns signals. The proxy (8081) intercepts SSE events and handles all persistence, conversation creation, status management, and context-window monitoring. This keeps the agent loop testable, swappable, and dead-simple.
-
-### Capabilities
-
-- **Persistent Terminal Access**: Stateful Bash sessions for running system commands, git operations, and environment management.
-- **Direct File Manipulation**: Full read/write capabilities on the codebase with intelligent code display.
-- **Native Tool Calling**: Structured, reliable OpenAI function calling format.
-- **Extended Thinking**: Supports models with reasoning/thinking capabilities (e.g., DeepSeek, GLM).
-- **Docker Sandbox**: Runs in a container with a fixed `/workspace` directory and pre-built conda environment.
+<p align="center">
+  <a href="#-overview">Overview</a> •
+  <a href="#-key-innovations">Innovations</a> •
+  <a href="#-quick-start">Quick Start</a> •
+  <a href="#-architecture">Architecture</a> •
+  <a href="#-tools">Tools</a> •
+  <a href="#-configuration">Config</a> •
+  <a href="#-browser-desktop">VNC Desktop</a> •
+  <a href="#-roadmap">Roadmap</a> •
+  <a href="#-contributing">Contributing</a>
+</p>
 
 ---
 
-## 1. What Is ThinkWithTool?
+## ✨ Overview
 
-ThinkWithTool is an **autonomous AI agent framework** that wraps LLMs with native OpenAI function-calling tools. It gives an LLM the ability to:
+**AuroraCoder** is a state-of-the-art autonomous AI coding agent that combines **reasoning LLMs** (DeepSeek V4 Pro, GLM-5.1, Gemini 3.1 Pro) with **native OpenAI function calling** to execute real-world tasks in a Docker sandbox. It's not just a chat interface — it's an autonomous agent that reads your codebase, writes code, runs commands, searches the web, delegates to sub-agents, and even launches GUI applications visible through a built-in VNC desktop.
 
-- Read/write/edit/delete files on a real filesystem
-- Run terminal commands in a persistent shell
-- Search the web (Google CSE)
-- Fetch and summarise web pages (via a cheap secondary model)
-- Delegate sub-tasks to sub-agents
-- Search code with regex (grep)
-- Display files in a consolidated "code interpreter" view
-
-The agent runs inside a **Docker container** with an optional VNC desktop for GUI apps.
+> **Think of it as giving a frontier reasoning model a terminal, a file editor, a web browser, and a sub-agent workforce — all in an isolated Linux container.**
 
 ---
 
-## 2. Repository Layout
+## 🧠 Key Innovations & Personal Tricks
 
-```
-ThinkWithTool/
-├── src/
-│   ├── main_flow.py            ← THE CORE: chat loop, streaming, tool execution
-│   ├── tool_definitions.py     ← All tool schemas + function dispatch
-│   ├── config.py               ← ALL config: API keys, limits, system prompt
-│   ├── providers.py            ← Multi-provider LLM client manager
-│   ├── code_tools/
-│   │   ├── file_operations.py  ← read/write/edit/delete/list/search/close
-│   │   ├── terminal_runner.py  ← persistent shell command execution
-│   │   ├── grep_search.py      ← regex search across workspace
-│   │   └── code_interpreter.py ← consolidated file display (line numbers + pyright)
-│   ├── core_tools/
-│   │   ├── google_search.py    ← Google Custom Search
-│   │   ├── web_browser.py      ← URL fetch → HTML→MD → secondary-model summary
-│   │   ├── subagent.py         ← HTTP-based sub-agent delegation
-│   │   ├── tool_store_client.py← ToolStore integration (optional)
-│   │   └── jupyter_code_runner.py ← Jupyter-style Python execution (UNUSED)
-│   ├── code_sandbox/
-│   │   └── sandbox.py          ← Workspace path (/workspace) + persistent shell
-│   └── web_api/
-│       └── app.py              ← FastAPI backend server (port 8080, agent loop only)
-├── conversation_gateway/       ← Middleware layer (the "dirty work")
-│   ├── api.py                  ← SSE proxy + file display endpoints (port 8081)
-│   ├── conversation_store.py   ← File-backed store (thread-safe, atomic writes)
-│   └── workspace.py            ← File diff, tree, upload/delete/export utilities
-├── frontend/                   ← React + Vite web UI
-├── Dockerfile
-├── docker-compose.yml
-├── requirements.txt
-└── run_web.py                  ← Entry point for backend server
-```
+AuroraCoder isn't a wrapper around someone else's agent framework. It's built from scratch with several novel design decisions that give it an edge:
 
----
+### 1. 🔗 Stateless Core × Stateful Gateway — The "Thin Engine" Pattern
 
-## 3. Central Data Flow
+The agent loop (`main_flow.py`) is **completely stateless** — it takes `messages` in, yields `{messages, status}` out. All persistence, file diffing, conversation management, and context monitoring happen in a separate **conversation gateway** layer (port 8081). 
 
-```
-User Message
-    │
-    ▼
-web_api/app.py  ──►  main_flow.generate_chat_responses_stream_native()
-                          │
-                          ├─ Injects system message (from config.py template)
-                          ├─ Builds API call: model + messages + tools
-                          ├─ Streams response from LLM provider
-                          ├─ Parses tool_call deltas from stream
-                          ├─ Executes tools (parallel for read-only, sequential for write)
-                          ├─ Manages code interpreter display
-                          └─ Loops until: completion, max_iterations, or error
-                                │
-                                ▼
-                          Yields {messages, status, provider} dicts
-                                │
-                                ▼
-                          web_api/app.py streams SSE to frontend
-```
+**Why this matters**: You can swap out the frontend, add another consumer, test the loop in isolation, or run multiple gateways — the core stays simple and testable. This is the opposite of frameworks that entangle state management with agent logic.
 
-### Iteration loop (in `main_flow.py`):
-1. Call LLM with current messages + tools
-2. Stream response; collect `content`, `reasoning_content`, `tool_calls`
-3. If no tool calls → done (or retry if also no content)
-4. If tool calls → execute them, append results as `role: tool` messages
-5. If any code-related tool was called → regenerate interpreter display
-6. Loop back (max 30 iterations by default)
+### 2. 🧵 Smart Parallel Tool Execution
+
+Read-only tools (`read_file`, `grep_search`, `web_browser`, `google_search`, `list_directory`, `search_files`) execute **concurrently** via `ThreadPoolExecutor`. Write tools (`write_file`, `edit_file`, `run_terminal_command`) run sequentially. 
+
+The trick: `partition_tool_calls()` automatically splits mixed tool batches into parallel-safe and sequential groups, so the agent gets maximum throughput without risking race conditions on file operations.
+
+### 3. 📟 Persistent Shell with Background Process Management
+
+Instead of spinning up one-shot subprocesses (which lose state and are slow), AuroraCoder maintains a **single persistent Bash shell**. The blocking/non-blocking paradigm is elegant:
+
+- `blocking=true` → runs command in foreground, returns output when done
+- `blocking=false` → wraps in `nohup bash -c ... &`, returns a log file path immediately
+- On timeout → automatically spawns a new shell so the stalled command keeps running
+
+**This means**: the agent can `npm run dev` in the background, check the logs, make code changes, and see hot-reload take effect — all without losing shell state between calls.
+
+### 4. 📄 Consolidated Code Interpreter Display
+
+Instead of showing file contents inline in tool results (context-expensive), AuroraCoder maintains a **consolidated "code interpreter" view**. After every code-related tool call, it scans messages for all open files, reads them, formats them with line numbers, and appends them as a single block at the end of the last tool message. 
+
+Old interpreter blocks are stripped at the start of each iteration. A context warning fires when >5 files or >50K characters are open. This gives the LLM a clean, deduplicated view of all files it's working on.
+
+### 5. 🧩 Aider-Style Edit (Not Patch Files)
+
+`edit_file` uses an **aider-inspired search-and-replace** algorithm: provide a `search_content` anchor (with surrounding context), and the replacement is applied only if an exact match is found. Trailing whitespace is normalized before comparison. This is far more reliable than sending full-file diffs or trying to specify line ranges.
+
+### 6. 🌐 Dual-Model Web Summarization
+
+When the agent fetches a web page, the raw HTML is converted to Markdown (via `BeautifulSoup` + `markdownify`), then fed to a **cheap secondary model** (`deepseek-chat`) for summarization. Only the summary enters the main agent's context. An LRU cache (15-min TTL, 64 entries) prevents redundant fetches. Cross-host redirects are reported rather than followed, preventing SSRF risks.
+
+### 7. 👥 Sub-Agent Delegation System
+
+The agent can spawn **sub-agents** for research-heavy subtasks. Sub-agents run with a filtered read-only tool set, have lower iteration caps, and their results are truncated to preserve parent context. This is implemented as an HTTP call back into the gateway, so sub-agents can stream their progress too.
+
+### 8. 🔄 Context Window Intelligence
+
+When context usage crosses 80%, a `continue_as_new_chat` tool appears in the agent's tool list. The system prompt includes a one-liner notice injected at the right moment. The agent can call this tool to gracefully archive the current conversation and start fresh — a cleaner alternative to silent truncation.
+
+### 9. 🖥️ VNC Desktop for GUI Applications
+
+The Docker container runs Xvfb + fluxbox + noVNC, giving the agent a **virtual desktop**. It can launch matplotlib plots, pygame games, tkinter apps, or any GUI tool. Users watch live at port 6080. The system prompt includes specific instructions for matplotlib backends and non-blocking GUI launch.
+
+### 10. 🔌 Pluggable Provider Architecture
+
+Seven model providers configured out of the box, with thinking/reasoning mode toggled per provider. The `ProviderManager` singleton initializes all clients at import time and reports which ones succeed. Custom `VertexAIClient` wraps Google Cloud auth with automatic token refresh, mimicking the OpenAI SDK interface.
 
 ---
 
-## 4. Complete Tool Catalog
-
-### 4.1 Tool Definitions & Function Map
-
-Defined in `tool_definitions.py`. 13 tools total:
-
-| # | Tool Name | Function | Read-Only? | Side Effects |
-|---|-----------|----------|------------|--------------|
-| 1 | `google_search` | `search_for_llm` | ✅ | None |
-| 2 | `web_browser` | `web_fetch` | ✅ | None (cached) |
-| 3 | `read_file` | `read_file_tool` | ✅ | None |
-| 4 | `write_file` | `full_file_write_tool` | ❌ | Creates/overwrites file |
-| 5 | `edit_file` | `search_replace_edit_tool` | ❌ | Aider-style edit |
-| 6 | `delete_file` | `delete_file_tool` | ❌ | Deletes file or dir |
-| 7 | `close_file` | `close_file_tool` | ✅ | Removes from interpreter view only |
-| 8 | `list_directory` | `list_dir_tool` | ✅ | None |
-| 9 | `search_files` | `file_search_tool` | ✅ | None |
-| 10 | `grep_search` | `grep_search_tool` | ✅ | None |
-| 11 | `run_terminal_command` | `run_terminal_cmd_tool` | ❌ | Executes shell commands |
-| 12 | `tool_store` | `tool_store_tool` | ⚠️ | Parallel-safe; excluded from subagent (can run write APIs) |
-| 13 | `subagent` | `run_subagent` | ✅ | Spawns child agent (excluded from subagent tool list) |
-| 14 | *(removed)* | — | — | Former `python_interpreter` (dead code purged) |
-
-### 4.2 Tool Parameter Signatures
-
-```
-google_search(search_term: str) → str
-web_browser(target_url: str, prompt: str) → str
-read_file(target_file: str) → str
-write_file(target_file: str, code_edit: str) → str
-edit_file(target_file: str, start_line: int, search_content: str, replace_content: str) → str
-delete_file(target_file: str) → str
-close_file(target_file: str) → str
-list_directory(relative_workspace_path: str = "") → str
-search_files(query: str) → str
-grep_search(query: str, include_pattern: str = None, exclude_pattern: str = None, case_sensitive: bool = True) → str
-run_terminal_command(command: str, timeout: int = 30, blocking: bool = True) → str
-tool_store(action: str, query: str = None, tool_name: str = None, arguments: dict = None) → str
-subagent(task: str) → str
-```
-
-### 4.3 `edit_file` — Aider-Style Search & Replace
-
-**Parameters:**
-- `target_file`: Path to the file to edit
-- `start_line`: Line number to start searching from (1-based)
-- `search_content`: Exact content to find and replace (whitespace and indentation matter)
-- `replace_content`: The replacement content (use empty string to delete)
-
-**Rules:**
-- `search_content` must match file content exactly (indentation, newlines matter; trailing spaces are ignored)
-- Include 1-3 lines of context to uniquely identify the location
-- One edit per call; use multiple calls for multiple edits
-- Use empty `replace_content` to delete content
-
-**Example — changing a print statement on line 10:**
-```
-# Call edit_file with:
-target_file: "main.py"
-start_line: 10
-search_content: 'print("hello")'
-replace_content: 'print("world")'
-```
-
----
-
-## 5. The Code Interpreter System
-
-This is a **display-only** system — it doesn't execute code. It shows file contents with line numbers in a consolidated view.
-
-### Markers
-```
-CODE_INTERPRETER_START = "<====CODE_INTERPRETER_START====>"
-CODE_INTERPRETER_END   = "<====CODE_INTERPRETER_END====>"
-```
-
-### Mechanics
-1. `discover_open_files(messages)` — scans all assistant messages for `read_file`, `write_file`, `edit_file` calls → adds to `open_files` set. `delete_file` and `close_file` remove from set.
-2. `generate_consolidated_interpreter_display(messages)` — reads all open files, formats them with line numbers, wraps in markers, appends context warning if >5 files or >50K chars.
-3. `clean_previous_interpreter_blocks(messages)` — strips old markers from tool messages to save context.
-4. After any code-related tool execution, old blocks are cleaned and a fresh consolidated display is appended to the LAST tool message.
-
----
-
-## 6. Configuration (`config.py`)
-
-### Model Providers
-| ID | Model | Thinking? | Base URL |
-|----|-------|-----------|----------|
-| `deepseek` | `deepseek-v4-pro` | ✅ | `api.deepseek.com` |
-| `nvidia` | `deepseek-ai/deepseek-v4-pro` | ✅ | `integrate.api.nvidia.com` |
-| `nvidia-fast` | same model | ❌ | same |
-| `nvidia-glm5` | `z-ai/glm-5.1` | ✅ | same |
-| `nvidia-glm5-fast` | same model | ❌ | same |
-| `gemini-3-pro` | Vertex AI (3.1 Pro) | ✅ | Google Cloud |
-| `gemini-3-pro-api` | AI Studio (3.1 Pro) | ✅ | Google API |
-
-Default: `deepseek`
-
-### Key Limits
-```python
-MAX_TOKENS = 8192
-MAX_ITERATIONS = 30         # loop iterations per user turn
-CONTINUE_ITERATIONS = 30    # extra iterations on "Continue"
-MAX_STREAMING_RETRIES = 10
-MAX_TOOL_CONCURRENCY = 5    # parallel threads for read-only tools
-SUBAGENT_MAX_ITERATIONS = 15
-SUBAGENT_MAX_RESULT_CHARS = 4000
-```
-(Note: TEMPERATURE was intentionally removed — modern models have proper defaults for agent tasks.)
-
-### Environment Detection
-- `THINKTOOL_DOCKER=1` → `DOCKER_MODE=True`, workspace at `/workspace`
-- `THINKTOOL_VNC=1` → `DOCKER_VNC=True`, VNC instructions added to system prompt
-
-### Web Browser (Secondary Model)
-- Uses DeepSeek Chat (`deepseek-chat`) to summarise pages
-- Cached: 15-min TTL, 64 max entries
-- 100K char limit for markdown fed to summariser
-- 10MB max HTTP response, 60s timeout
-
----
-
-## 7. Sandbox (`code_sandbox/sandbox.py`)
-
-The Docker-first sandbox replaces the former heavyweight session manager. It provides:
-
-- **`WORKSPACE`** — `Path("/workspace")` (from `WORKSPACE_DIR` env var, falls back to `cwd`)
-- **`get_workspace()`** — returns `WORKSPACE`, creating it if needed
-- **`get_python_path()` / `get_conda_env_path()`** — resolve the pre-built conda `agent` environment
-- **`shell`** — module-level `PersistentShell` singleton
-
-### Persistent Shell
-- `shell.run(command, timeout, blocking)` — writes command to bash stdin, waits for boundary marker, reads output from temp file
-- `blocking=False` → wraps in `nohup bash -c ... > logfile 2>&1 &`, returns log path
-- On timeout → spawns a new shell, returns note about log file
-- Conda environment is auto-activated on shell start
-
----
-
-## 8. Provider System (`providers.py`)
-
-### ProviderManager
-- `ProviderManager` — singleton, initializes all configured clients at import time
-- `get_client(provider_id)` → OpenAI client (or VertexAIClient)
-- `get_config(provider_id)` → dict with model name, extra_body, etc.
-- `list_providers()` → only returns successfully-initialized providers
-
-### Vertex AI
-- `VertexAIClient` wraps Google Cloud auth with automatic token refresh
-- Mimics `OpenAI.chat.completions.create()` interface
-- Tokens refreshed before every API call
-- Requires `google.auth` package and ADC
-
----
-
-## 9. Key Files Deep Dive
-
-### `main_flow.py` — THE ENGINE
-
-```
-generate_chat_responses_stream_native(
-    messages: list,           # OpenAI-format message list
-    max_iterations: int,      # default 30
-    provider_id: str | None,  # default from config
-    tools_override: list | None  # for subagents (read-only subset)
-) → Generator[dict]
-```
-
-**Yield format**: `{"messages": [...], "status": "running"|"completed"|"error"|"max_iterations_reached", "provider": str}`
-
-**Tool execution**: Two separate tool sets control behavior: `PARALLEL_SAFE_TOOLS` (tools safe for concurrent `ThreadPoolExecutor` execution) and `SUBAGENT_READ_ONLY_TOOLS` (tools granted to subagents in read-only mode). Write tools run sequentially. Batches are partitioned by `partition_tool_calls()`.
-
-**Error handling**: Streaming errors trigger retry up to `MAX_STREAMING_RETRIES` (10). Empty responses with no tool calls get a corrective system message.
-
-### `file_operations.py` — FILE TOOLS
-
-- `read_file` — validates existence, snapshots content for diff tracking
-- `write_file` — atomic write via temp file + `os.replace()`
-- `edit_file` — aider-style: normalize for comparison (strip trailing whitespace), search from start_line, replace, atomic write
-- `delete_file` — handles both files and directories
-- `list_directory` — emoji-prefixed listing
-- `search_files` — fuzzy filename search
-- File tracking callbacks (`set_file_tracking_callbacks`) for web API diffing
-
-### `web_browser.py` — WEB FETCH
-
-- HTTP fetch with same-host-only redirect following (cross-host redirects reported)
-- HTML → Markdown via `BeautifulSoup` + `markdownify`
-- Secondary model summarization via `deepseek-chat`
-- LRU cache with TTL (15 min)
-
-### `subagent.py` — SUB-AGENT DELEGATION
-
-- Sends HTTP POST to `CONVO_SERVER_URL/api/chat` (default `http://localhost:8081`)
-- Uses `tools: "read_only"` to restrict subagent to safe tools
-- Streams SSE response, extracts final assistant message
-- Truncates to `SUBAGENT_MAX_RESULT_CHARS` (4000)
-
----
-
-## 10. Getting Started
+## 🚀 Quick Start
 
 ### Prerequisites
-- Docker
-- Node.js (for the frontend dev server)
-- Conda (optional, for running outside Docker)
 
-### Running the Application
+- **Docker** — the agent runs inside a container (sandbox + VNC + gateway)
+- **Node.js 18+** — for the React frontend dev server
+- **API Keys** — at least `DEEPSEEK_API_KEY` or `NVIDIA_API_KEY` (set in `.env`)
 
-**`start.bat` is the sole supported entry point on the host.** It builds and runs the Docker container (backend + gateway server) with persistent data volumes, then starts the frontend dev server.
+### Installation
 
-```powershell
-.\start.bat
-```
-
-Services started:
-- Backend API: http://localhost:8080 (agent loop)
-- Gateway: http://localhost:8081 (SSE proxy, file display, conversation persistence)
-- Frontend: http://localhost:3000
-- VNC Desktop: http://localhost:6080
-
-Press `Ctrl+C` to stop the frontend. To stop the backend: `docker stop thinkwithtool-agent`.
-
-**Alternative (docker compose):**
 ```bash
+# 1. Clone the repository
+git clone https://github.com/YOUR_USERNAME/auroracoder.git
+cd auroracoder
+
+# 2. Copy and fill in the environment file
+cp .env.example .env
+# Edit .env with your API keys — at minimum set DEEPSEEK_API_KEY
+
+# 3. Build the base Docker image (conda environment)
+docker build -t thinkwithtool-base -f Dockerfile.base .
+
+# 4. Launch via docker compose
 docker compose up --build
-# Then in a separate terminal:
+
+# 5. In a separate terminal, start the frontend
 cd frontend && npm install && npm run dev
 ```
 
-> **Important:** Do NOT run `python run_web.py` directly on the host. The backend must run inside Docker for proper session isolation, VNC support, and persistent data storage. Running outside Docker will lose conversation history on restart.
+> **Windows users**: Run `.\start.bat` which handles everything automatically.
 
-### Data Persistence
+### Services
 
-All persistent runtime data lives under `/app/data` inside the container, volume-mounted to `./data` on the host:
+| Service | URL | Purpose |
+|---------|-----|---------|
+| 🖥️ **Frontend** | `http://localhost:3000` | Chat UI with streaming, thinking viz, file tree |
+| ⚙️ **Agent Backend** | `http://localhost:8080` | Stateless agent loop + tool execution |
+| 🌉 **Gateway** | `http://localhost:8081` | SSE proxy, conversation persistence, file display |
+| 🖱️ **VNC Desktop** | `http://localhost:6080` | Live Linux desktop for GUI apps |
+
+### Multi-Instance Mode
+
+Run `another-one.bat` (or `another-one.bat 5`) to spin up an additional isolated instance with auto-incremented ports — useful for running multiple agents side by side.
+
+---
+
+## 🏗️ Architecture
 
 ```
-data/                        ← host directory (git-ignored)
+┌──────────────────────────────────────────────────────────────┐
+│                     Docker Container                          │
+│                                                               │
+│  ┌── Frontend (:3000) ────────────────────────────────────┐  │
+│  │  React SPA (Vite)                                       │  │
+│  │  ├─ Chat streaming via SSE                              │  │
+│  │  ├─ File tree + diff viewer                             │  │
+│  │  └─ Thinking visualization (reasoning tokens)           │  │
+│  └─────────────────────────────────────────────────────────┘  │
+│                              │ SSE                             │
+│  ┌── Gateway (:8081) ─────────────────────────────────────┐  │
+│  │  FastAPI                                                │  │
+│  │  ├─ SSE proxy (intercepts agent events)                 │  │
+│  │  ├─ Conversation persistence (atomic file writes)       │  │
+│  │  ├─ File snapshots + diff generation                    │  │
+│  │  └─ Workspace management (upload/delete/export)         │  │
+│  └─────────────────────────────────────────────────────────┘  │
+│                              │ HTTP                            │
+│  ┌── Agent Backend (:8080) ───────────────────────────────┐  │
+│  │  main_flow.py — The Engine                              │  │
+│  │  ├─ System prompt injection (config.py)                 │  │
+│  │  ├─ LLM streaming (7 providers)                         │  │
+│  │  ├─ Tool execution (parallel read, sequential write)    │  │
+│  │  ├─ Code interpreter display management                 │  │
+│  │  └─ Context continuation logic                          │  │
+│  │                                                         │  │
+│  │  13 Built-in Tools:                                     │  │
+│  │  read_file · write_file · edit_file · delete_file       │  │
+│  │  list_directory · search_files · grep_search            │  │
+│  │  run_terminal_command · google_search · web_browser     │  │
+│  │  subagent · tool_store · close_file                     │  │
+│  └─────────────────────────────────────────────────────────┘  │
+│                              │                                 │
+│  ┌── Sandbox (/workspace) ────────────────────────────────┐  │
+│  │  Persistent Bash Shell · Conda Environment              │  │
+│  │  Xvfb + Fluxbox + noVNC (:6080)                        │  │
+│  │  Background process management                          │  │
+│  └─────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### Data Flow
+
+```
+User sends message
+       │
+       ▼
+  Frontend wraps in [TASK INSTRUCTION] markers
+       │
+       ▼
+  Gateway proxies to backend on :8080
+       │
+       ▼
+  main_flow.py generate_chat_responses_stream_native()
+       │
+       ├─ 1. Inject system message
+       ├─ 2. Call LLM (DeepSeek/NVIDIA/Gemini)
+       ├─ 3. Stream thinking + content + tool calls
+       ├─ 4. Execute tools (parallelized by safety)
+       ├─ 5. Append tool results as role:tool messages
+       ├─ 6. Refresh code interpreter display
+       └─ 7. Loop (max 30 iterations, then "Continue")
+       │
+       ▼
+  Gateway intercepts SSE, persists conversation
+       │
+       ▼
+  Frontend renders streaming response + thinking
+```
+
+### Repository Structure
+
+```
+auroracoder/
+├── src/                          # Stateless agent core
+│   ├── main_flow.py              # THE ENGINE: chat loop + streaming
+│   ├── tool_definitions.py       # Tool schemas + execution dispatch
+│   ├── tool_executor.py          # Parallel/serial tool executor
+│   ├── config.py                 # ALL config: models, limits, prompts
+│   ├── providers.py              # Multi-provider LLM client manager
+│   ├── code_tools/               # File & code manipulation tools
+│   │   ├── file_operations.py    # read/write/edit/delete/list/search
+│   │   ├── terminal_runner.py    # Persistent shell execution
+│   │   ├── grep_search.py        # Regex search across workspace
+│   │   └── code_interpreter.py   # Consolidated file display
+│   ├── core_tools/               # Higher-level agent tools
+│   │   ├── google_search.py      # Google Custom Search Engine
+│   │   ├── web_browser.py        # URL → MD → secondary-model summary
+│   │   ├── subagent.py           # Sub-agent delegation
+│   │   └── tool_store_client.py  # ToolStore integration
+│   ├── code_sandbox/
+│   │   └── sandbox.py            # Workspace + persistent shell singleton
+│   └── web_api/
+│       └── app.py                # FastAPI backend (port 8080)
+├── conversation_gateway/         # Middleware layer (the "dirty work")
+│   ├── api.py                    # SSE proxy + file endpoints (port 8081)
+│   ├── conversation_store.py     # Thread-safe atomic file persistence
+│   └── workspace.py              # File diffs, tree, upload/export
+├── frontend/                     # React + Vite SPA
+│   ├── src/
+│   │   ├── App.jsx               # Main app + conversation management
+│   │   ├── components/           # ChatMessage, ThinkingIndicator, etc.
+│   │   ├── services/api.js       # SSE streaming client
+│   │   └── styles/index.css      # Dark theme with gradient accents
+│   ├── package.json
+│   └── vite.config.js
+├── .env.example                  # Template for API keys
+├── docker-compose.yml            # Docker service orchestration
+├── Dockerfile                    # App image
+├── Dockerfile.base               # Base image with conda environment
+├── start.bat                     # Windows one-click launcher
+├── another-one.bat               # Multi-instance launcher
+├── requirements.txt              # Python dependencies
+├── AGENT_README.md               # Detailed internal docs for AI agents
+└── run_web.py                    # Backend entry point
+```
+
+---
+
+## 🔧 Tools
+
+AuroraCoder gives the LLM **13 built-in tools** via native OpenAI function calling:
+
+| Tool | Type | Description |
+|------|------|-------------|
+| `read_file` | Read | Read any file with line numbers |
+| `write_file` | Write | Atomic file creation (temp + `os.replace()`) |
+| `edit_file` | Write | Aider-style search-and-replace editing |
+| `delete_file` | Write | Delete files or directories |
+| `close_file` | Read | Remove from code interpreter view (no filesystem change) |
+| `list_directory` | Read | List directory contents with emoji prefixes |
+| `search_files` | Read | Fuzzy filename search across workspace |
+| `grep_search` | Read | Regex search with include/exclude patterns |
+| `run_terminal_command` | Write | Execute commands in persistent Bash shell |
+| `google_search` | Read | Google Custom Search Engine |
+| `web_browser` | Read | URL fetch → Markdown → secondary-model summary |
+| `subagent` | Read | Delegate tasks to read-only child agents |
+| `tool_store` | Mixed | Universal tool discovery and execution |
+
+**Parallel execution**: Read-only tools run concurrently (5 threads max). Write tools serialize. Sub-agents get a filtered read-only subset.
+
+---
+
+## ⚙️ Configuration
+
+### Supported Model Providers
+
+| Provider | Model | Reasoning | Context |
+|----------|-------|-----------|---------|
+| **DeepSeek** | `deepseek-v4-pro` | ✅ | 1M tokens |
+| **NVIDIA** | `deepseek-ai/deepseek-v4-pro` | ✅/❌ | 1M tokens |
+| **NVIDIA GLM** | `z-ai/glm-5.1` | ✅/❌ | 128K tokens |
+| **Gemini (Vertex AI)** | `gemini-3.1-pro-preview` | ✅ | 1M tokens |
+| **Gemini (AI Studio)** | `gemini-3.1-pro-preview` | ✅ | 1M tokens |
+
+Set via `DEFAULT_PROVIDER` in `config.py` or select from the frontend.
+
+### Key Tuning Parameters
+
+```python
+MAX_TOKENS = 32768           # Completion token limit
+MAX_ITERATIONS = 30          # Agent loop iterations per turn
+CONTINUE_ITERATIONS = 30     # Extra iterations on "Continue"
+MAX_TOOL_CONCURRENCY = 5     # Parallel thread pool size
+SUBAGENT_MAX_ITERATIONS = 15 # Sub-agent iteration cap
+MAX_STREAMING_RETRIES = 10   # Retries on stream failure
+```
+
+### Environment Variables
+
+Copy `.env.example` → `.env` and fill in:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DEEPSEEK_API_KEY` | **Yes** | DeepSeek API key |
+| `NVIDIA_API_KEY` | No | NVIDIA-hosted models |
+| `GEMINI_API_KEY` | No | Google AI Studio |
+| `GOOGLE_SEARCH_API_KEY` | No | Google Custom Search |
+| `GOOGLE_CSE_ID` | No | Custom Search Engine ID |
+| `VERTEX_AI_PROJECT_ID` | No | Google Cloud project for Vertex AI |
+
+---
+
+## 🖥️ VNC Desktop
+
+AuroraCoder includes a full virtual Linux desktop (Xvfb + fluxbox + noVNC) on port **6080**. This means:
+
+- **matplotlib**: The agent can render plots (uses `TkAgg` backend)
+- **pygame / tkinter / any GUI**: Just works — windows appear on the desktop
+- **Web browsers**: Fire a browser and watch it live
+- **IDE demos**: Launch VS Code, Jupyter, anything
+
+The system prompt auto-includes VNC instructions when `THINKTOOL_VNC=1` is set.
+
+---
+
+## 💾 Data Persistence
+
+All conversations and training data survive container restarts via Docker volume mounts:
+
+```
+~/.thinktool/data/
 ├── conversations/
-│   ├── index.json           ← metadata index for all conversations
-│   ├── {id}.json            ← raw API messages per conversation
-│   └── {id}.frontend.json   ← UI-shaped messages per conversation
+│   ├── index.json           # Conversation metadata index
+│   ├── {id}.json            # Raw API messages
+│   └── {id}.frontend.json   # UI-shaped messages
 └── training/
-    └── YYYY-MM-DD.jsonl     ← daily training data logs
+    └── YYYY-MM-DD.jsonl     # Daily API call telemetry
 ```
 
-Key implementation files:
-- `conversation_gateway/conversation_store.py` — file-backed store (thread-safe, atomic writes)
-- `conversation_gateway/api.py` — FastAPI server on port 8081, proxies to backend, persists on SSE events, serves file-display endpoints
-- `conversation_gateway/workspace.py` — file snapshots, diffs, tree building, workspace upload/delete/export
-- `src/config.py` — `DATA_DIR` / `TRAINING_DATA_DIR` path resolution
-
-Without the volume mount (`-v`), the `--rm` flag on `docker run` causes the container to be deleted on stop, destroying all data inside. The volume mount ensures conversations and training logs survive container restarts.
+Override paths with `THINKTOOL_DATA_DIR`, `THINKTOOL_WORKSPACE_DIR`, `THINKTOOL_SESSIONS_DIR` env vars.
 
 ---
 
-## 11. Requirements
+## 🗺️ Roadmap
 
-Core dependencies (see `requirements.txt`):
-- `openai>=1.0.0` — API client
-- `fastapi>=0.104.1` — Web API
-- `google-api-python-client>=2.169.0` — Google Search
-- `pyright` — Python type checking (via nodejs)
+### In Progress
+- [ ] **AgentToolStore Integration** — Dynamic tool discovery via MCP servers, skill registration, and a web-based tool management UI (see `docs/DESIGN_TOOL_STORE_INTEGRATION.md`)
 
----
-
-## 12. Known Issues & Quirks
-
-### Fixed issues
-
-1. ~~**`TEMPERATURE` not passed to API**~~ → **FIXED**: `TEMPERATURE` removed entirely (modern models handle defaults).
-2. ~~**`web_browser` prompt mismatch**~~ → **FIXED**: `prompt` is required in tool definition; function default `""` is a defensive fallback never reached.
-3. ~~**`python_interpreter` dead code**~~ → **FIXED**: All `run_like_jupyter` imports and commented-out definitions removed.
-4. ~~**`terminal_runner.py` background process stubs**~~ → **FIXED**: 3 stub functions + unused fields removed.
-5. ~~**Code interpreter note duplication**~~ → **VERIFIED NOT A BUG**: Note is only added once in `generate_consolidated_interpreter_display`; `display_multiple_files` does not include it.
-6. ~~**Fragile title extraction**~~ → **FIXED**: Task instructions are now wrapped in `[TASK INSTRUCTION]` / `[/TASK INSTRUCTION]` markers by the frontend (`App.jsx`). The full marked message passes through to the stateless agent backend unchanged. The conversation store (`conversation_store.py`) strips the markers via regex in `_extract_title()`, and `save_messages()` now **always** re-extracts the title (not just when "Untitled") so the first incremental persist overwrites the raw initial title from `api.py`. Legacy conversations without markers fall back to the old `\n\n` heuristic.
-
-**Still present:**
-1. **Hardcoded API keys** in `config.py`: Some defaults use plain text or placeholder values (e.g., `"YOUR_GEMINI_API_KEY"`). Most keys read from env vars, but fallback values exist.
-2. **Merged `stderr`**: The persistent shell redirects stderr into stdout (`stderr=subprocess.STDOUT`), so error output is interleaved with normal output.
+### Planned
+- [ ] **Semantic Code Search** — FAISS-based embedding search across workspace
+- [ ] **Linux/macOS Start Script** — `start.sh` equivalent of `start.bat`
+- [ ] **Production Mode** — Serve frontend from Docker, no separate Node process
+- [ ] **WebSocket Streaming** — Replace SSE with WebSocket for bidirectional streaming
+- [ ] **Tool Sandboxing** — Per-tool resource limits and permission scoping
+- [ ] **Conversation Branching** — Fork conversations at any message
+- [ ] **Plugin Ecosystem** — Community-contributed tool packs
 
 ---
 
-## 13. Key Patterns & Conventions
+## 👥 Contributing
+
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+### Development Setup
+
+```bash
+# Clone and enter the repo
+git clone https://github.com/YOUR_USERNAME/auroracoder.git
+cd auroracoder
+
+# Set up Python environment
+conda create -n auroracoder python=3.11
+conda activate auroracoder
+pip install -r requirements.txt
+
+# Install frontend deps
+cd frontend && npm install
+
+# Run backend (outside Docker — for development only)
+python run_web.py
+
+# Run frontend (separate terminal)
+cd frontend && npm run dev
+```
+
+> **Production/deployment always uses Docker** for sandbox isolation.
+
+### Project Conventions
 
 - **All tools return strings** — never raise exceptions to the agent
-- **Workspace root** comes from `code_sandbox.WORKSPACE` (`/workspace` in Docker)
-- **Atomic writes** — temp file + `os.replace()` pattern
-- **Tool wrappers** — each tool has a `_tool` suffix function for the registry
-- **Global singletons** — `shell` (PersistentShell), `provider_manager`, `code_interpreter`
+- **Atomic writes** — temp file + `os.replace()` pattern everywhere
 - **No async** — everything is synchronous, concurrency via threads
-- **Streaming** — SSE from main_flow to web API to frontend
+- **Global singletons** — `shell` (PersistentShell), `provider_manager`, code interpreter
+- **English only** — all generated code and comments must be in English
+- **Path hygiene** — all paths relative to `/workspace` (or `WORKSPACE` from `code_sandbox`)
 
 ---
 
-## 14. Quick Reference: If You Need To...
+## 📄 License
 
-| Task | Where to look |
-|------|---------------|
-| Add a new tool | `tool_definitions.py` — add schema + function mapping |
-| Change the system prompt | `config.py` → `SYSTEM_MESSAGE_TEMPLATE` |
-| Add a new LLM provider | `config.py` → `MODEL_PROVIDERS` |
-| Change iteration limits | `config.py` → `MAX_ITERATIONS`, `CONTINUE_ITERATIONS` |
-| Fix tool execution | `tool_definitions.py` → `execute_tool_call()` |
-| Change subagent behavior | `core_tools/subagent.py` |
-| Modify sandbox / workspace | `code_sandbox/sandbox.py` |
-| Change the web API | `web_api/app.py` |
-| Change the frontend | `frontend/src/` (React + Vite) |
-| Understand the edit_file algorithm | `file_operations.py` → `search_replace_edit()` lines 105-223 |
-| Understand web fetch pipeline | `web_browser.py` → `web_fetch()` |
-| Understand shell execution | `code_sandbox/sandbox.py` → `PersistentShell.run()` |
+MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-## License
+## 🙏 Acknowledgments
 
-This project is provided as-is for research and development purposes.
+AuroraCoder draws inspiration from and builds upon ideas in:
+
+- **Aider** — the gold standard for LLM-powered code editing (search-and-replace pattern)
+- **Claude Code** — Anthropic's agent architecture and skills system
+- **OpenAI** — Function calling API design
+- **Model Context Protocol (MCP)** — Standardized tool server interface
+
+---
+
+<p align="center">
+  <sub>Built with ❤️ for developers who want an agent that actually codes.</sub>
+</p>
