@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# ──────────────────────────────────────────────────────────────────────────────
+# AuroraCoder — One-click launcher for Linux & macOS
+# Equivalent to start.bat for Windows.
+#
+# Usage:
+#   chmod +x start.sh
+#   ./start.sh
+# ──────────────────────────────────────────────────────────────────────────────
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
+
+echo "========================================"
+echo "  AuroraCoder"
+echo "========================================"
+echo "  App:            http://localhost:8081"
+echo "  Backend API:    http://localhost:8080"
+echo "  API Docs:       http://localhost:8080/docs"
+echo "  VNC Desktop:    http://localhost:6080"
+echo "========================================"
+echo ""
+
+# ── Check if base image exists; build if missing ─────────────────────────
+if docker inspect --type=image thinkwithtool-base >/dev/null 2>&1; then
+    echo "[base] Base image found, skipping."
+else
+    echo "[base] Building base image -- first time, this may take a few minutes..."
+    docker build -t thinkwithtool-base -f Dockerfile.base . || {
+        echo "Base image build failed."
+        exit 1
+    }
+    echo "[base] Done."
+fi
+
+# ── Always rebuild app image (fast: just copies source code) ─────────────
+echo "[app] Building app image..."
+docker build -t thinkwithtool . || {
+    echo "App image build failed."
+    exit 1
+}
+
+# ── Stop existing container if running ───────────────────────────────────
+echo "Stopping old container if any..."
+docker stop thinkwithtool-agent >/dev/null 2>&1 || true
+docker rm thinkwithtool-agent >/dev/null 2>&1 || true
+
+# ── Storage base — all persistent data lives under Documents/ThinkTool ────
+# Uses platform-appropriate Documents path
+if [ -d "$HOME/Documents" ]; then
+    STORAGE_BASE="$HOME/Documents/ThinkTool"
+elif [ -d "$HOME/documents" ]; then
+    # Some Linux distros use lowercase
+    STORAGE_BASE="$HOME/documents/ThinkTool"
+else
+    # Fallback: just use home directory
+    STORAGE_BASE="$HOME/ThinkTool"
+fi
+
+# ── Verify .env file exists ──────────────────────────────────────────────
+if [ ! -f ".env" ]; then
+    echo "ERROR: .env file not found. Create it with your API keys."
+    echo "See .env.example for the required variables."
+    exit 1
+fi
+
+# ── Start backend container ──────────────────────────────────────────────
+echo "[1/1] Starting backend in Docker (app + frontend)..."
+mkdir -p "$STORAGE_BASE/data" "$STORAGE_BASE/workspace"
+docker run --rm -d \
+    --name thinkwithtool-agent \
+    --env-file .env \
+    -e THINKTOOL_DOCKER=1 \
+    -e THINKTOOL_VNC=1 \
+    -v "$STORAGE_BASE/data:/app/data" \
+    -v "$STORAGE_BASE/workspace:/workspace" \
+    -p 8080:8080 \
+    -p 8081:8081 \
+    -p 6080:6080 \
+    -p 8888-8890:8888-8890 \
+    thinkwithtool || {
+    echo "Failed to start container."
+    exit 1
+}
+echo "Container started."
+echo ""
+echo "AuroraCoder is running at http://localhost:8081"
+echo "To stop: docker stop thinkwithtool-agent"

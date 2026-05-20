@@ -4,10 +4,9 @@ cd /d "%~dp0"
 echo ========================================
 echo   AuroraCoder
 echo ========================================
+echo   App:            http://localhost:8081
 echo   Backend API:    http://localhost:8080
-echo   Convo History:  http://localhost:8081
 echo   API Docs:       http://localhost:8080/docs
-echo   Frontend:       http://0.0.0.0:3000
 echo   VNC Desktop:    http://localhost:6080
 echo ========================================
 echo.
@@ -45,7 +44,7 @@ docker rm thinkwithtool-agent >nul 2>&1
 set "STORAGE_BASE=%USERPROFILE%\Documents\ThinkTool"
 
 :: Start backend container (agent + conversation history server)
-echo [1/2] Starting backend in Docker...
+echo [1/1] Starting backend in Docker (app + frontend)...
 :: Verify .env file exists (contains API keys)
 if not exist ".env" (
     echo ERROR: .env file not found. Create it with your API keys.
@@ -59,32 +58,7 @@ if errorlevel 1 (
     echo Failed to start container.
     exit /b 1
 )
-echo Container started (agent API :8080 + conversation history :8081).
-
-:: Install frontend dependencies only if package.json changed since last install
-set "_need_install=0"
-if not exist "frontend\node_modules" set "_need_install=1"
-if not exist "frontend\node_modules\.package.json.cached" set "_need_install=1"
-if "%_need_install%"=="0" (
-    fc /b "frontend\package.json" "frontend\node_modules\.package.json.cached" >nul 2>&1
-    if errorlevel 1 set "_need_install=1"
-)
-if "%_need_install%"=="1" (
-    echo [2/2] package.json changed — running npm install...
-    cd frontend && call npm install && cd ..
-    if errorlevel 1 (
-        echo Frontend dependency installation failed.
-        exit /b 1
-    )
-    copy /y "frontend\package.json" "frontend\node_modules\.package.json.cached" >nul
-) else (
-    echo [2/2] package.json unchanged, skipping npm install.
-)
-
-:: Start frontend
-echo Starting frontend on http://0.0.0.0:3000 ...
-echo Press Ctrl+C to stop the frontend.
-echo To stop the backend: docker stop thinkwithtool-agent
+echo Container started.
 echo.
-cd frontend
-npm run dev -- --host 0.0.0.0
+echo AuroraCoder is running at http://localhost:8081
+echo To stop: docker stop thinkwithtool-agent

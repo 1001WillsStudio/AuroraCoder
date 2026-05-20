@@ -37,6 +37,7 @@ from typing import Optional, Dict, Any, List
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
+from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -1096,6 +1097,13 @@ async def workspace_info():
         "workspace": str(work_dir) if work_dir else None,
         "file_count": file_count,
     }
+
+
+# ============================================================================
+# Serve frontend static files (SPA – must be mounted after all API routes)
+frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if frontend_dist.exists():
+    app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")
 
 
 # ============================================================================
