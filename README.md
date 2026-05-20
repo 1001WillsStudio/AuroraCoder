@@ -189,45 +189,50 @@ Run `another-one.bat` (or `another-one.bat 5`) to spin up an additional isolated
 ## 🏗️ Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                     Docker Container                          │
-│                                                               │
-│  ┌── Frontend (:3000) ────────────────────────────────────┐  │
-│  │  React SPA (Vite)                                       │  │
-│  │  ├─ Chat streaming via SSE                              │  │
-│  │  ├─ File tree + diff viewer                             │  │
-│  │  └─ Thinking visualization (reasoning tokens)           │  │
-│  └─────────────────────────────────────────────────────────┘  │
-│                              │ SSE                             │
-│  ┌── Gateway (:8081) ─────────────────────────────────────┐  │
-│  │  FastAPI                                                │  │
-│  │  ├─ SSE proxy (intercepts agent events)                 │  │
-│  │  ├─ Conversation persistence (atomic file writes)       │  │
-│  │  ├─ File snapshots + diff generation                    │  │
-│  │  └─ Workspace management (upload/delete/export)         │  │
-│  └─────────────────────────────────────────────────────────┘  │
-│                              │ HTTP                            │
-│  ┌── Agent Backend (:8080) ───────────────────────────────┐  │
-│  │  main_flow.py — The Engine                              │  │
-│  │  ├─ System prompt injection (config.py)                 │  │
-│  │  ├─ LLM streaming (7 providers)                         │  │
-│  │  ├─ Tool execution (parallel read, sequential write)    │  │
-│  │  ├─ Code interpreter display management                 │  │
-│  │  └─ Context continuation logic                          │  │
-│  │                                                         │  │
-│  │  13 Built-in Tools:                                     │  │
-│  │  read_file · write_file · edit_file · delete_file       │  │
-│  │  list_directory · search_files · grep_search            │  │
-│  │  run_terminal_command · google_search · web_browser     │  │
-│  │  subagent · tool_store · close_file                     │  │
-│  └─────────────────────────────────────────────────────────┘  │
-│                              │                                 │
-│  ┌── Sandbox (/workspace) ────────────────────────────────┐  │
-│  │  Persistent Bash Shell · Conda Environment              │  │
-│  │  Xvfb + Fluxbox + noVNC (:6080)                        │  │
-│  │  Background process management                          │  │
-│  └─────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────┘
+┌── Host Machine ────────────────────────────────────────────────┐
+│                                                                 │
+│  ┌── Frontend (:3000) ──────────────────────────────────────┐  │
+│  │  React SPA (Vite)                                         │  │
+│  │  ├─ Chat streaming via SSE                                │  │
+│  │  ├─ File tree + diff viewer                               │  │
+│  │  └─ Thinking visualization (reasoning tokens)             │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│                              │ SSE                               │
+│  ┌── Docker Container ───────────────────────────────────────┐  │
+│  │                                                            │  │
+│  │  ┌── Gateway (:8081) ──────────────────────────────────┐  │  │
+│  │  │  FastAPI                                             │  │  │
+│  │  │  ├─ SSE proxy (intercepts agent events)              │  │  │
+│  │  │  ├─ Conversation persistence (atomic file writes)    │  │  │
+│  │  │  ├─ File snapshots + diff generation                 │  │  │
+│  │  │  └─ Workspace management (upload/delete/export)      │  │  │
+│  │  └──────────────────────────────────────────────────────┘  │  │
+│  │                              │ HTTP                         │  │
+│  │  ┌── Agent Backend (:8080) ────────────────────────────┐  │  │
+│  │  │  main_flow.py — The Engine                           │  │  │
+│  │  │  ├─ System prompt injection (config.py)              │  │  │
+│  │  │  ├─ LLM streaming (7 providers)                      │  │  │
+│  │  │  ├─ Tool execution (parallel read, sequential write) │  │  │
+│  │  │  ├─ Code interpreter display management              │  │  │
+│  │  │  └─ Context continuation logic                       │  │  │
+│  │  │                                                      │  │  │
+│  │  │  13 Built-in Tools (+1 conditional):                 │  │  │
+│  │  │  read_file · write_file · edit_file · delete_file    │  │  │
+│  │  │  list_directory · search_files · grep_search         │  │  │
+│  │  │  run_terminal_command · google_search · web_browser  │  │  │
+│  │  │  subagent · tool_store · close_file                  │  │  │
+│  │  │  continue_as_new_chat (at ~80% context)              │  │  │
+│  │  └──────────────────────────────────────────────────────┘  │  │
+│  │                              │                              │  │
+│  │  ┌── Sandbox (/workspace) ─────────────────────────────┐  │  │
+│  │  │  Persistent Bash Shell · Conda Environment           │  │  │
+│  │  │  Xvfb + Fluxbox + noVNC (:6080)                     │  │  │
+│  │  │  Background process management                       │  │  │
+│  │  └──────────────────────────────────────────────────────┘  │  │
+│  │                                                            │  │
+│  └────────────────────────────────────────────────────────────┘  │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ### Data Flow
@@ -330,6 +335,7 @@ AuroraCoder gives the LLM **13 built-in tools** via native OpenAI function calli
 
 **Parallel execution**: Read-only tools run concurrently (5 threads max). Write tools serialize. Sub-agents get a filtered read-only subset.
 
+> **`tool_store`** is powered by **[ToolStore](https://github.com/S3-Ai/toolstore)**, a separate open-source project that provides a universal interface for discovering and executing thousands of public APIs and local utilities.
 ---
 
 ## ⚙️ Configuration
@@ -387,26 +393,32 @@ The system prompt auto-includes VNC instructions when `THINKTOOL_VNC=1` is set.
 
 ## 💾 Data Persistence
 
-All conversations and training data survive container restarts via Docker volume mounts:
+All conversations and training data survive container restarts via Docker volume mounts. The application stores data at `/app/data` inside the container, mapped from the host:
 
 ```
-~/.thinktool/data/
+# Docker mode (inside container):
+/app/data/
 ├── conversations/
 │   ├── index.json           # Conversation metadata index
 │   ├── {id}.json            # Raw API messages
 │   └── {id}.frontend.json   # UI-shaped messages
 └── training/
     └── YYYY-MM-DD.jsonl     # Daily API call telemetry
+
+# Local mode (outside Docker, development only):
+~/.thinktool/data/
+├── conversations/           # Same structure as above
+└── training/
 ```
 
-Override paths with `THINKTOOL_DATA_DIR`, `THINKTOOL_WORKSPACE_DIR`, `THINKTOOL_SESSIONS_DIR` env vars.
+Override the data path with the `THINKTOOL_DATA_DIR` env var. For Docker deployments, `THINKTOOL_WORKSPACE_DIR` and `THINKTOOL_SESSIONS_DIR` can be set in `docker-compose.yml` to override volume mount paths.
 
 ---
 
 ## 🗺️ Roadmap
 
 ### In Progress
-- [ ] **AgentToolStore Integration** — Dynamic tool discovery via MCP servers, skill registration, and a web-based tool management UI (see `docs/DESIGN_TOOL_STORE_INTEGRATION.md`)
+- [ ] **AgentToolStore Integration** — Dynamic tool discovery via MCP servers, skill registration, and a web-based tool management UI
 
 ### Planned
 - [ ] **Semantic Code Search** — FAISS-based embedding search across workspace
@@ -466,12 +478,11 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ## 🙏 Acknowledgments
 
-AuroraCoder draws inspiration from and builds upon ideas in:
-
 - **Aider** — the gold standard for LLM-powered code editing (search-and-replace pattern)
 - **Claude Code** — Anthropic's agent architecture and skills system
 - **OpenAI** — Function calling API design
 - **Model Context Protocol (MCP)** — Standardized tool server interface
+- **[ToolStore](https://github.com/S3-Ai/toolstore)** — Universal tool discovery and execution engine (used by the `tool_store` tool)
 
 ---
 
