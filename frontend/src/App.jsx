@@ -372,6 +372,35 @@ function App() {
         await cancelConversation(conversationId)
       } catch { /* ignore — best-effort cancel */ }
     }
+
+    // Inject synthetic tool responses for any orphan tool_calls so the
+    // local rawMessages stay valid for immediate continuation (the backend
+    // middleware does the same for persisted state in its finally block).
+    setRawMessages(prev => {
+      const respondedIds = new Set()
+      for (const m of prev) {
+        if (m.role === 'tool' && m.tool_call_id) respondedIds.add(m.tool_call_id)
+      }
+      let injected = false
+      const fixed = [...prev]
+      for (const m of prev) {
+        if (m.role !== 'assistant') continue
+        for (const tc of m.tool_calls || []) {
+          if (tc.id && !respondedIds.has(tc.id)) {
+            const toolName = tc.function?.name || tc.name || 'unknown'
+            fixed.push({
+              role: 'tool',
+              tool_call_id: tc.id,
+              name: toolName,
+              content: JSON.stringify({ status: 'stopped', message: `Tool "${toolName}" was stopped by the user.` }),
+            })
+            injected = true
+          }
+        }
+      }
+      return injected ? fixed : prev
+    })
+
     setIsStreaming(false)
     setPendingInterrupt(null)
     pendingInterruptRef.current = null

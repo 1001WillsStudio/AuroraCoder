@@ -103,6 +103,51 @@ _FILE_WRITE_TOOLS = {"write_file", "edit_file", "delete_file"}
 _snapshotted_tool_calls: Dict[str, set] = {}  # {conversation_id: {tool_call_id, ...}}
 
 
+def _fix_orphan_tool_calls(raw_messages: list) -> list:
+    """
+    Scan *raw_messages* for assistant ``tool_calls`` that have no matching
+    ``tool`` response and inject a synthetic "stopped by user" result.
+
+    Returns a new list (always copies) so the caller can decide whether to
+    replace the original.
+    """
+    # Collect all tool_call IDs that already have a response
+    responded_ids: set = set()
+    for msg in raw_messages:
+        if msg.get("role") == "tool":
+            tc_id = msg.get("tool_call_id")
+            if tc_id:
+                responded_ids.add(tc_id)
+
+    # Find orphan tool_calls in assistant messages
+    orphans: list[dict] = []
+    for msg in raw_messages:
+        if msg.get("role") != "assistant":
+            continue
+        for tc in msg.get("tool_calls", []):
+            tc_id = tc.get("id")
+            if tc_id and tc_id not in responded_ids:
+                orphans.append(tc)
+
+    if not orphans:
+        return list(raw_messages)
+
+    # Build a new list with synthetic tool responses appended
+    fixed = list(raw_messages)
+    for tc in orphans:
+        tool_name = tc.get("function", {}).get("name", "unknown")
+        fixed.append({
+            "role": "tool",
+            "tool_call_id": tc.get("id", ""),
+            "name": tool_name,
+            "content": json.dumps({
+                "status": "stopped",
+                "message": f'Tool "{tool_name}" was stopped by the user.',
+            }),
+        })
+    return fixed
+
+
 def _track_file_changes(conversation_id: str, raw_messages: list):
     """Scan raw_messages for file-modifying tool calls and update the
     gateway's in-memory snapshot/touched tracking so /api/files/diff works.
@@ -493,6 +538,12 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
         raw_messages = []
         if stream.latest_event_data:
             raw_messages = stream.latest_event_data.get("raw_messages", [])
+
+        # If the user cancelled mid-stream while tool calls were in flight,
+        # inject synthetic tool responses so the persisted conversation stays
+        # valid and can be resumed later.
+        if stream.cancel_event.is_set() and raw_messages:
+            raw_messages = _fix_orphan_tool_calls(raw_messages)
 
         try:
             # Don't overwrite "continued" status if the proxy already set it
