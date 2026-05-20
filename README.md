@@ -12,6 +12,7 @@
 <p align="center">
   <a href="#-overview">Overview</a> •
   <a href="#-key-innovations">Innovations</a> •
+  <a href="#-design-decisions">Design</a> •
   <a href="#-quick-start">Quick Start</a> •
   <a href="#-architecture">Architecture</a> •
   <a href="#-tools">Tools</a> •
@@ -31,9 +32,11 @@
 
 ---
 
-## 🧠 Key Innovations & Personal Tricks
+## 🧠 Key Innovations
 
-AuroraCoder isn't a wrapper around someone else's agent framework. It's built from scratch with several novel design decisions that give it an edge:
+AuroraCoder isn't a wrapper around someone else's agent framework. It's built from scratch — and increasingly, **by itself**. The vast majority of recent changes to this codebase (including this README, the frontend, the gateway, and tool improvements) were coded by AuroraCoder autonomously. This is a code agent that actively develops its own codebase.
+
+Below are the genuinely novel architectural ideas that set it apart — followed by supporting design decisions that emerged from the same principles.
 
 ### 1. 🔗 Stateless Core × Stateful Gateway — The "Thin Engine" Pattern
 
@@ -57,33 +60,74 @@ Instead of spinning up one-shot subprocesses (which lose state and are slow), Au
 
 **This means**: the agent can `npm run dev` in the background, check the logs, make code changes, and see hot-reload take effect — all without losing shell state between calls.
 
-### 4. 📄 Consolidated Code Interpreter Display
+### 4. 📟 Living Tool State — Mutating Responses, Not Appending Them
 
-Instead of showing file contents inline in tool results (context-expensive), AuroraCoder maintains a **consolidated "code interpreter" view**. After every code-related tool call, it scans messages for all open files, reads them, formats them with line numbers, and appends them as a single block at the end of the last tool message. 
+Every other agent framework treats tool responses as **immutable, append-only history**. The model calls a tool, the result is appended, and it stays in context forever, accumulating stale, contradictory file contents that waste tokens and confuse the model.
 
-Old interpreter blocks are stripped at the start of each iteration. A context warning fires when >5 files or >50K characters are open. This gives the LLM a clean, deduplicated view of all files it's working on.
+AuroraCoder introduces a fundamentally different paradigm: **tool responses are mutable**. After every code-related tool call (`read_file`, `write_file`, `edit_file`), the system scans the entire conversation for all currently open files, re-reads them from disk, formats them with line numbers, and appends a single **consolidated state block** to the *last* tool message. Then it **strips every previous state block** from earlier tool messages — collapsing them down to near-zero tokens.
 
-### 5. 🧩 Aider-Style Edit (Not Patch Files)
+```
+Before (append-only — every tool response stays):
+  [read_file → 500 lines of main.py]
+  [edit_file  → 500 lines of main.py]
+  [read_file → 300 lines of utils.py]
+  [edit_file  → 500 lines of main.py AGAIN]
+  = 1800+ lines of duplicate/stale content wasting context
+
+After (living state — only the latest is visible):
+  [read_file → "(file opened)"]          ← collapsed to 1 line
+  [edit_file  → "(edit applied)"]         ← collapsed to 1 line
+  [read_file → "(file opened)"]          ← collapsed to 1 line
+  [edit_file  → FULL STATE: main.py + utils.py]  ← the single source of truth
+  = 500 lines total, always fresh from disk
+```
+
+This is not just deduplication — it's a **redefinition of what a tool response means**. A tool response isn't a historical record; it's a **living window into the current filesystem state**. Previous responses are amortized away. The newest tool call carries the complete truth. An LLM reading the conversation sees exactly what's on disk *right now*, not what was on disk three edits ago.
+
+A context warning fires when >5 files or >50K characters are open, so the model knows when it's holding too much state. This turns the conversation from a growing append-only log into a **self-cleaning state machine**.
+
+### 5. 🚦 Strict Gates in a Loose Loop — The Pattern Circuit Breaker
+
+LLMs are **pattern-following machines**. Give them one successful tool call and they'll produce ten more just like it. But give them **one malformed tool call** — wrong JSON, missing parameters, hallucinated field names — and the pattern they learn is *broken*. The next call copies the same mistake. Then the next. Then the model gets stuck in a **cascade of wrong tool calls**, each one reinforcing the broken template. Most agent frameworks let this happen: a sloppy tool call returns a generic error or partial result, the model sees it as a "successful pattern," and the death spiral begins.
+
+AuroraCoder takes the opposite approach: **the execution layer is ruthlessly strict, precisely so the agent loop can stay loose and autonomous.** Every tool call is validated at the gate:
+
+- **JSON arguments must parse correctly** — malformed JSON gets an immediate, specific error describing exactly what's wrong
+- **Required parameters are enforced** — missing fields get a clear message naming what's needed
+- **Type mismatches are caught** — passing a string where an integer is expected returns a precise type error with the expected schema
+- **File existence is verified before reads** — the agent gets "File not found" not a silent empty string
+- **Edit anchors must match exactly** — the `edit_file` tool normalizes trailing whitespace and searches from the specified start line; if the anchor text isn't found, it returns *where* it looked and *what* it found instead
+
+When a tool call fails validation, the error message goes back as a tool response with **enough specificity that the LLM can correct itself in the next turn**. This breaks the pattern cascade before it starts. The model sees: "that didn't work, here's exactly why, try this instead" — not a silent failure it might copy.
+
+**The philosophy**: the agent operates in a loose, autonomous, exploration-friendly loop — it can try things, make mistakes, course-correct. But the *gates* between the LLM and the filesystem are strict. Every tool call either succeeds cleanly or fails with an actionable error. There is no middle ground where the LLM thinks it succeeded but produced garbage. This prevents the most insidious failure mode in AI agents: the model confidently continuing down a path built on a broken foundation.
+---
+
+## 🏗️ Design Decisions
+
+These aren't innovations per se — they're deliberate architectural choices that support the innovations above. Each one solves a real problem that emerged during development.
+
+### 🔍 Aider-Style Search-and-Replace Editing
 
 `edit_file` uses an **aider-inspired search-and-replace** algorithm: provide a `search_content` anchor (with surrounding context), and the replacement is applied only if an exact match is found. Trailing whitespace is normalized before comparison. This is far more reliable than sending full-file diffs or trying to specify line ranges.
 
-### 6. 🌐 Dual-Model Web Summarization
+### 🌐 Dual-Model Web Summarization
 
 When the agent fetches a web page, the raw HTML is converted to Markdown (via `BeautifulSoup` + `markdownify`), then fed to a **cheap secondary model** (`deepseek-chat`) for summarization. Only the summary enters the main agent's context. An LRU cache (15-min TTL, 64 entries) prevents redundant fetches. Cross-host redirects are reported rather than followed, preventing SSRF risks.
 
-### 7. 👥 Sub-Agent Delegation System
+### 👥 Sub-Agent Delegation System
 
 The agent can spawn **sub-agents** for research-heavy subtasks. Sub-agents run with a filtered read-only tool set, have lower iteration caps, and their results are truncated to preserve parent context. This is implemented as an HTTP call back into the gateway, so sub-agents can stream their progress too.
 
-### 8. 🔄 Context Window Intelligence
+### 🔄 Context Window Intelligence
 
 When context usage crosses 80%, a `continue_as_new_chat` tool appears in the agent's tool list. The system prompt includes a one-liner notice injected at the right moment. The agent can call this tool to gracefully archive the current conversation and start fresh — a cleaner alternative to silent truncation.
 
-### 9. 🖥️ VNC Desktop for GUI Applications
+### 🖥️ VNC Desktop for GUI Applications
 
 The Docker container runs Xvfb + fluxbox + noVNC, giving the agent a **virtual desktop**. It can launch matplotlib plots, pygame games, tkinter apps, or any GUI tool. Users watch live at port 6080. The system prompt includes specific instructions for matplotlib backends and non-blocking GUI launch.
 
-### 10. 🔌 Pluggable Provider Architecture
+### 🔌 Pluggable Provider Architecture
 
 Seven model providers configured out of the box, with thinking/reasoning mode toggled per provider. The `ProviderManager` singleton initializes all clients at import time and reports which ones succeed. Custom `VertexAIClient` wraps Google Cloud auth with automatic token refresh, mimicking the OpenAI SDK interface.
 
