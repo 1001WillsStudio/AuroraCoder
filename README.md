@@ -64,6 +64,8 @@ This is not just deduplication — it's a **redefinition of what a tool response
 
 A context warning fires when >5 files or >50K characters are open. This turns the conversation from a growing append-only log into a **self-cleaning state machine**.
 
+**A forward-looking side effect**: because the consolidated code interpreter always displays each file with line numbers in a canonical format, the `edit_file` tool doesn't need the LLM to embed the target file's content in the tool call. The model references line numbers from the interpreter view, and the tool resolves them against the actual file on disk. Tool calls stay lean regardless of file size. In the future, as models grow more reliable at line-level reasoning, the anchor content could become optional — the model could edit using *only* start and end line numbers, making tool calls near-zero-token operations. The code interpreter lays the groundwork for that transition today.
+
 ### 2. 🚦 Strict Gates in a Loose Loop — Generous Acceptance, Rigorous Validation
 
 LLMs are **pattern-following machines**. Let one malformed tool call slide through with a partial success, and the model learns the wrong lesson — it copies the broken pattern into the next call, then the next, spiraling into a cascade of subtly wrong outputs. Most agents let this happen because their tools are brittle: reject the call outright (wasting a turn) or accept garbage input (reinforcing the mistake).
