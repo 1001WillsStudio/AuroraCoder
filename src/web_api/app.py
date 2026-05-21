@@ -260,7 +260,7 @@ async def stream_chat_response(
                     )
                 else:
                     logger.info(f"[stream] Client disconnected for {conversation_id}")
-                    cancel_active_subagents()
+                    cancel_active_subagents(conversation_id)
 
             except Exception as e:
                 if not cancel_event.is_set():
@@ -270,7 +270,6 @@ async def stream_chat_response(
                         ("error", {"message": str(e), "type": type(e).__name__})
                     )
             finally:
-                cancel_active_subagents()
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
         future = executor.submit(run_generator)

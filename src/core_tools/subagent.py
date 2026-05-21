@@ -24,31 +24,35 @@ logger = logging.getLogger(__name__)
 CONVO_SERVER_URL = os.environ.get("CONVO_SERVER_URL", "http://localhost:8081")
 
 # Track active subagent runs so they can be cancelled from outside.
-# Maps child_id -> (threading.Event, requests.Response | None)
-_active_subagents: dict[str, tuple[threading.Event, requests.Response | None]] = {}
+_active_subagents: dict[str, tuple[threading.Event, requests.Response | None, str]] = {}
 _active_lock = threading.Lock()
 
 
-def cancel_active_subagents() -> None:
+def cancel_active_subagents(parent_conversation_id: str | None = None) -> None:
     """
-    Cancel all running subagent connections.
+    Cancel running subagent connections.
 
-    Called when the parent stream is stopped so subagent HTTP reads
-    are interrupted promptly.
+    Args:
+        parent_conversation_id: If provided, only cancel subagents belonging to this
+            parent conversation. If None, cancel ALL subagents (deprecated escape hatch).
     """
     with _active_lock:
-        items = list(_active_subagents.items())
-        _active_subagents.clear()
+        if parent_conversation_id is not None:
+            items = [(cid, val) for cid, val in _active_subagents.items()
+                     if val[2] == parent_conversation_id]
+            for cid in items:
+                del _active_subagents[cid[0]]
+        else:
+            items = list(_active_subagents.items())
+            _active_subagents.clear()
 
-    for child_id, (cancel_evt, resp) in items:
+    for child_id, (cancel_evt, resp, _parent_cid) in items:
         cancel_evt.set()
-        # Close the response connection to unblock iter_lines()
         if resp is not None:
             try:
                 resp.close()
             except Exception:
                 pass
-        # Ask the conversation server to cancel the child stream
         try:
             requests.post(
                 f"{CONVO_SERVER_URL}/api/conversations/{child_id}/cancel",
@@ -80,7 +84,7 @@ def run_subagent(
 
     # Register this subagent run for external cancellation
     with _active_lock:
-        _active_subagents[child_id] = (cancel_event, None)
+        _active_subagents[child_id] = (cancel_event, None, parent_cid)
 
     body: dict = {
         "message": task,
