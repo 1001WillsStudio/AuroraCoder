@@ -42,27 +42,64 @@
 .settings-header {
   padding: 20px 24px 16px;
   border-bottom: 1px solid var(--border-color);
-  position: relative;
+}
+
+.settings-header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
 }
 
 .settings-header h2 {
-  margin: 0 0 4px;
+  margin: 0;
   font-size: 18px;
   font-weight: 700;
   color: var(--text-primary);
 }
 
+.settings-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── Language Selector ─────────────────────────────────────────────────── */
+
+.settings-lang-selector {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 4px 8px;
+}
+
+.settings-lang-selector select {
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  outline: none;
+  appearance: auto;
+  padding: 0 4px 0 0;
+}
+
+.settings-lang-selector select:hover {
+  color: var(--accent-color, #6C47FF);
+}
+
 .settings-subtitle {
-  margin: 0;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-secondary);
+  margin: 0;
   line-height: 1.5;
 }
 
 .settings-close-btn {
-  position: absolute;
-  top: 16px;
-  right: 16px;
   background: none;
   border: none;
   color: var(--text-secondary);

@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react'
-import { X, Plus, Trash2, Eye, EyeOff, Save, RefreshCw, Shield } from 'lucide-react'
+import { X, Plus, Trash2, Eye, EyeOff, Save, RefreshCw, Shield, Globe } from 'lucide-react'
 import { getSettings, updateSettings, getProviders } from '../services/api'
+import useLanguage from '../hooks/useLanguage'
+import { LANG_LABELS } from '../i18n/translations'
 import '../styles/settings.css'
 
 /**
@@ -9,8 +11,14 @@ import '../styles/settings.css'
  * One list of OpenAI-compatible providers: built-in defaults + user-added custom.
  * Also includes Web Secondary Model and Agent Behavior sections.
  * All changes persist to /app/data/settings.json.
+ *
+ * Language support: the language selector in the header switches the entire
+ * settings UI between available languages (currently en / zh). The choice is
+ * persisted in localStorage via the useLanguage hook.
  */
 export default function SettingsPanel({ isOpen, onClose }) {
+  const { t, lang, setLang } = useLanguage()
+
   const [settings, setSettings] = useState(null)
   const [providers, setProviders] = useState([])
   const [loading, setLoading] = useState(true)
@@ -33,12 +41,12 @@ export default function SettingsPanel({ isOpen, onClose }) {
         setSettings({ ...s, other })
         setProviders(p.providers || [])
       } catch {
-        setMessage({ type: 'error', text: 'Failed to load settings' })
+        setMessage({ type: 'error', text: t('settings.loadError') })
       } finally {
         setLoading(false)
       }
     })()
-  }, [isOpen])
+  }, [isOpen, t])
 
   if (!isOpen) return null
 
@@ -95,10 +103,10 @@ export default function SettingsPanel({ isOpen, onClose }) {
     const errors = {};
     (settings?.custom_providers || []).forEach((cp, i) => {
       const b = `custom-${i}`
-      if (!cp.name?.trim()) errors[b] = 'Name required'
-      if (!cp.base_url?.trim()) errors[b] = errors[b] || 'Base URL required'
-      if (!cp.api_key?.trim()) errors[b] = errors[b] || 'API key required'
-      if (!cp.model?.trim()) errors[b] = errors[b] || 'Model required'
+      if (!cp.name?.trim()) errors[b] = t('msg.nameRequired')
+      if (!cp.base_url?.trim()) errors[b] = errors[b] || t('msg.baseUrlRequired')
+      if (!cp.api_key?.trim()) errors[b] = errors[b] || t('msg.apiKeyRequired')
+      if (!cp.model?.trim()) errors[b] = errors[b] || t('msg.modelRequired')
     })
     setErrorFields(errors)
     return Object.keys(errors).length === 0
@@ -106,7 +114,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
 
   // ── Save ────────────────────────────────────────────────────────────────
   const handleSave = async () => {
-    if (!validate()) { setMessage({ type: 'error', text: 'Fix validation errors before saving' }); return }
+    if (!validate()) { setMessage({ type: 'error', text: t('msg.validationError') }); return }
     setSaving(true); setMessage(null)
     try {
       // Prune empty custom providers
@@ -124,9 +132,9 @@ export default function SettingsPanel({ isOpen, onClose }) {
         api_keys: settings.api_keys, provider_overrides: settings.provider_overrides,
         custom_providers: cp, other: prunedOther,
       })
-      setMessage({ type: 'success', text: 'Settings saved' })
+      setMessage({ type: 'success', text: t('msg.saved') })
       setTimeout(async () => { try { setProviders((await getProviders()).providers || []) } catch {} }, 800)
-    } catch { setMessage({ type: 'error', text: 'Save failed' }) }
+    } catch { setMessage({ type: 'error', text: t('msg.saveFailed') }) }
     finally { setSaving(false) }
   }
 
@@ -151,23 +159,39 @@ export default function SettingsPanel({ isOpen, onClose }) {
       <div className="settings-modal" onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div className="settings-header">
-          <h2>Settings</h2>
-          <p className="settings-subtitle">
-            All providers are OpenAI-compatible. Pre-configured ones are built-in defaults;
-            add your own endpoints below. Settings survive Docker restarts &amp; rebuilds.
-          </p>
-          <button className="settings-close-btn" onClick={onClose} title="Close"><X size={18} /></button>
+          <div className="settings-header-top">
+            <h2>{t('settings.title')}</h2>
+            <div className="settings-header-actions">
+              {/* ── Language selector ────────────────────────────── */}
+              <div className="settings-lang-selector">
+                <Globe size={14} />
+                <select
+                  value={lang}
+                  onChange={e => setLang(e.target.value)}
+                  title={t('language.label')}
+                >
+                  {Object.entries(LANG_LABELS).map(([code, label]) => (
+                    <option key={code} value={code}>{label}</option>
+                  ))}
+                </select>
+              </div>
+              <button className="settings-close-btn" onClick={onClose} title={t('settings.close')}>
+                <X size={18} />
+              </button>
+            </div>
+          </div>
+          <p className="settings-subtitle">{t('settings.subtitle')}</p>
         </div>
 
         <div className="settings-body">
           {loading ? (
-            <div className="settings-loading">Loading…</div>
+            <div className="settings-loading">{t('settings.loading')}</div>
           ) : (
             <>
               {/* ── Providers ──────────────────────────────────────────── */}
               <section className="settings-section">
-                <h3 className="settings-section-title">Providers</h3>
-                <p className="settings-section-desc">All providers use the OpenAI-compatible API protocol.</p>
+                <h3 className="settings-section-title">{t('providers.title')}</h3>
+                <p className="settings-section-desc">{t('providers.desc')}</p>
 
                 {allProviders.map(prov => {
                   const pid = prov.id
@@ -191,12 +215,12 @@ export default function SettingsPanel({ isOpen, onClose }) {
                         <div className="settings-provider-title-row">
                           <span className="settings-custom-label">{prov.name}</span>
                           {isBuiltIn
-                            ? <span className="settings-badge settings-badge-builtin"><Shield size={10} /> built-in</span>
-                            : <span className="settings-badge settings-badge-custom">custom</span>
+                            ? <span className="settings-badge settings-badge-builtin"><Shield size={10} /> {t('providers.badgeBuiltin')}</span>
+                            : <span className="settings-badge settings-badge-custom">{t('providers.badgeCustom')}</span>
                           }
                         </div>
                         {!isBuiltIn && (
-                          <button className="settings-icon-btn settings-danger-btn" onClick={() => removeCustomProvider(ci)} title="Remove">
+                          <button className="settings-icon-btn settings-danger-btn" onClick={() => removeCustomProvider(ci)} title={t('providers.remove')}>
                             <Trash2 size={16} />
                           </button>
                         )}
@@ -208,15 +232,15 @@ export default function SettingsPanel({ isOpen, onClose }) {
                       <div className="settings-field-row">
                         {isBuiltIn ? (
                           <div className="settings-field-col">
-                            <label>API Key</label>
+                            <label>{t('field.apiKey')}</label>
                             <div className="settings-input-row">
                               <input className="settings-input"
                                 type={showKeys[pid] ? 'text' : 'password'} value={key}
                                 onChange={e => setApiKey(pid, e.target.value)}
-                                placeholder={isKeySet ? '••••••••••••••••' : 'Overrides env var'}
+                                placeholder={isKeySet ? t('field.apiKeyPlaceholderSet') : t('field.apiKeyPlaceholder')}
                               />
                               <button className="settings-icon-btn" onClick={() => toggleShowKey(pid)}
-                                title={showKeys[pid] ? 'Hide' : 'Show'}>
+                                title={showKeys[pid] ? t('field.hide') : t('field.show')}>
                                 {showKeys[pid] ? <EyeOff size={16} /> : <Eye size={16} />}
                               </button>
                             </div>
@@ -224,19 +248,19 @@ export default function SettingsPanel({ isOpen, onClose }) {
                         ) : (
                           <>
                             <div className="settings-field-col">
-                              <label>Display Name</label>
+                              <label>{t('field.displayName')}</label>
                               <input className="settings-input" type="text"
                                 value={custom[ci]?.name || ''}
                                 onChange={e => updateCustomProvider(ci, 'name', e.target.value)}
-                                placeholder="My OpenRouter"
+                                placeholder={t('field.displayNamePlaceholder')}
                               />
                             </div>
                             <div className="settings-field-col">
-                              <label>Provider ID</label>
+                              <label>{t('field.providerId')}</label>
                               <input className="settings-input" type="text"
                                 value={custom[ci]?.id || ''}
                                 onChange={e => updateCustomProvider(ci, 'id', e.target.value)}
-                                placeholder="my-openrouter"
+                                placeholder={t('field.providerIdPlaceholder')}
                               />
                             </div>
                           </>
@@ -246,16 +270,16 @@ export default function SettingsPanel({ isOpen, onClose }) {
                       {/* Base URL row */}
                       <div className="settings-field-row" style={{ marginTop: '10px' }}>
                         <div className="settings-field-col settings-field-col-wide">
-                          <label>Base URL</label>
+                          <label>{t('field.baseUrl')}</label>
                           {isBuiltIn ? (
                             <input className="settings-input" type="text" value={baseUrl}
                               onChange={e => setOverride(pid, 'base_url', e.target.value)}
-                              placeholder="Defaults to built-in endpoint"
+                              placeholder={t('field.baseUrlPlaceholderBuiltin')}
                             />
                           ) : (
                             <input className="settings-input" type="text" value={baseUrl}
                               onChange={e => updateCustomProvider(ci, 'base_url', e.target.value)}
-                              placeholder="https://openrouter.ai/api/v1"
+                              placeholder={t('field.baseUrlPlaceholderCustom')}
                             />
                           )}
                         </div>
@@ -264,22 +288,22 @@ export default function SettingsPanel({ isOpen, onClose }) {
                       {/* Model + API key + thinking row */}
                       <div className="settings-field-row" style={{ marginTop: '10px' }}>
                         <div className="settings-field-col">
-                          <label>Model</label>
+                          <label>{t('field.model')}</label>
                           {isBuiltIn ? (
                             <input className="settings-input" type="text" value={model}
                               onChange={e => setOverride(pid, 'model', e.target.value)}
-                              placeholder="Defaults to built-in model"
+                              placeholder={t('field.modelPlaceholderBuiltin')}
                             />
                           ) : (
                             <input className="settings-input" type="text" value={model}
                               onChange={e => updateCustomProvider(ci, 'model', e.target.value)}
-                              placeholder="anthropic/claude-sonnet-4"
+                              placeholder={t('field.modelPlaceholderCustom')}
                             />
                           )}
                         </div>
                         {!isBuiltIn && (
                           <div className="settings-field-col">
-                            <label>API Key</label>
+                            <label>{t('field.apiKey')}</label>
                             <div className="settings-input-row">
                               <input className="settings-input"
                                 type={showKeys[`custom-${ci}`] ? 'text' : 'password'} value={key}
@@ -301,7 +325,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
                                 : updateCustomProvider(ci, 'supports_thinking', e.target.checked)
                               }
                             />
-                            Thinking
+                            {t('field.thinking')}
                           </label>
                         </div>
                       </div>
@@ -310,45 +334,45 @@ export default function SettingsPanel({ isOpen, onClose }) {
                 })}
 
                 <button className="settings-add-btn" onClick={addCustomProvider}>
-                  <Plus size={16} /><span>Add Provider</span>
+                  <Plus size={16} /><span>{t('field.addProvider')}</span>
                 </button>
               </section>
 
               {/* ── Web Secondary Model ─────────────────────────────────── */}
               <section className="settings-section">
-                <h3 className="settings-section-title">Web Secondary Model</h3>
-                <p className="settings-section-desc">Fast/cheap model for summarizing scraped web pages before they enter the agent's context.</p>
+                <h3 className="settings-section-title">{t('webSecondary.title')}</h3>
+                <p className="settings-section-desc">{t('webSecondary.desc')}</p>
                 <div className="settings-field-row">
                   <div className="settings-field-col">
-                    <label>Model Name</label>
+                    <label>{t('webSecondary.modelName')}</label>
                     <input className="settings-input" type="text"
                       value={other.web_secondary?.model_name || ''}
                       onChange={e => setOther('web_secondary', 'model_name', e.target.value)}
-                      placeholder="deepseek-chat"
+                      placeholder={t('webSecondary.modelNamePlaceholder')}
                     />
                   </div>
                   <div className="settings-field-col">
-                    <label>Max Tokens</label>
+                    <label>{t('webSecondary.maxTokens')}</label>
                     <input className="settings-input" type="number"
                       value={other.web_secondary?.max_tokens || ''}
                       onChange={e => setOther('web_secondary', 'max_tokens', e.target.value)}
-                      placeholder="4096" min="256" max="32768"
+                      placeholder={t('webSecondary.maxTokensPlaceholder')} min="256" max="32768"
                     />
                   </div>
                 </div>
                 <div className="settings-field-row" style={{ marginTop: '10px' }}>
                   <div className="settings-field-col settings-field-col-wide">
-                    <label>Base URL</label>
+                    <label>{t('field.baseUrl')}</label>
                     <input className="settings-input" type="text"
                       value={other.web_secondary?.base_url || ''}
                       onChange={e => setOther('web_secondary', 'base_url', e.target.value)}
-                      placeholder="https://api.deepseek.com/v1"
+                      placeholder={t('webSecondary.baseUrlPlaceholder')}
                     />
                   </div>
                 </div>
                 <div className="settings-field-row" style={{ marginTop: '10px' }}>
                   <div className="settings-field-col settings-field-col-wide">
-                    <label>API Key</label>
+                    <label>{t('field.apiKey')}</label>
                     <div className="settings-input-row">
                       <input className="settings-input"
                         type={showKeys['web-secondary'] ? 'text' : 'password'}
@@ -366,22 +390,22 @@ export default function SettingsPanel({ isOpen, onClose }) {
 
               {/* ── Agent Behavior ──────────────────────────────────────── */}
               <section className="settings-section">
-                <h3 className="settings-section-title">Agent Behavior</h3>
-                <p className="settings-section-desc">Tune loop limits, parallelism, and the default provider.</p>
+                <h3 className="settings-section-title">{t('agent.title')}</h3>
+                <p className="settings-section-desc">{t('agent.desc')}</p>
                 <div className="settings-field-row">
                   <div className="settings-field-col">
-                    <label>Default Provider</label>
+                    <label>{t('agent.defaultProvider')}</label>
                     <select className="settings-input"
                       value={other.agent?.default_provider || ''}
                       onChange={e => setOther('agent', 'default_provider', e.target.value)}>
-                      <option value="">(system default)</option>
+                      <option value="">{t('agent.systemDefault')}</option>
                       {allProviders.map(p => (
-                        <option key={p.id} value={p.id}>{p.name}{p.custom ? ' (custom)' : ''}</option>
+                        <option key={p.id} value={p.id}>{p.name}{p.custom ? t('agent.customSuffix') : ''}</option>
                       ))}
                     </select>
                   </div>
                   <div className="settings-field-col">
-                    <label>Max Iterations Per Turn</label>
+                    <label>{t('agent.maxIterations')}</label>
                     <input className="settings-input" type="number"
                       value={other.agent?.max_iterations || ''}
                       onChange={e => setOther('agent', 'max_iterations', e.target.value)}
@@ -391,7 +415,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
                 </div>
                 <div className="settings-field-row" style={{ marginTop: '12px' }}>
                   <div className="settings-field-col">
-                    <label>Continue Iterations</label>
+                    <label>{t('agent.continueIterations')}</label>
                     <input className="settings-input" type="number"
                       value={other.agent?.continue_iterations || ''}
                       onChange={e => setOther('agent', 'continue_iterations', e.target.value)}
@@ -399,7 +423,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
                     />
                   </div>
                   <div className="settings-field-col">
-                    <label>Max Tool Concurrency</label>
+                    <label>{t('agent.maxToolConcurrency')}</label>
                     <input className="settings-input" type="number"
                       value={other.agent?.max_tool_concurrency || ''}
                       onChange={e => setOther('agent', 'max_tool_concurrency', e.target.value)}
@@ -409,7 +433,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
                 </div>
                 <div className="settings-field-row" style={{ marginTop: '12px' }}>
                   <div className="settings-field-col">
-                    <label>Max Terminal Output (chars)</label>
+                    <label>{t('agent.terminalMaxOutput')}</label>
                     <input className="settings-input" type="number"
                       value={other.agent?.terminal_max_output || ''}
                       onChange={e => setOther('agent', 'terminal_max_output', e.target.value)}
@@ -420,7 +444,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
                     <label className="settings-checkbox-label">
                       <input type="checkbox" checked={other.agent?.code_interpreter_errors !== false}
                         onChange={e => setOther('agent', 'code_interpreter_errors', e.target.checked)} />
-                      Code Interpreter Checks
+                      {t('agent.codeInterpreterChecks')}
                     </label>
                   </div>
                 </div>
@@ -429,7 +453,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
               {/* ── Persistence note ────────────────────────────────────── */}
               <div className="settings-persistence-note">
                 <span className="settings-note-icon">💾</span>
-                Stored in <code>/app/data/settings.json</code> (volume-mounted) — survives restarts &amp; rebuilds.
+                <span dangerouslySetInnerHTML={{ __html: t('persistence.note') }} />
               </div>
             </>
           )}
@@ -439,9 +463,9 @@ export default function SettingsPanel({ isOpen, onClose }) {
         <div className="settings-footer">
           {message && <span className={`settings-msg settings-msg-${message.type}`}>{message.text}</span>}
           <div className="settings-footer-actions">
-            <button className="settings-btn-cancel" onClick={onClose}>Cancel</button>
+            <button className="settings-btn-cancel" onClick={onClose}>{t('footer.cancel')}</button>
             <button className="settings-btn-save" onClick={handleSave} disabled={saving || loading}>
-              {saving ? <><RefreshCw size={16} className="spin" /> Saving…</> : <><Save size={16} /> Save</>}
+              {saving ? <><RefreshCw size={16} className="spin" /> {t('footer.saving')}</> : <><Save size={16} /> {t('footer.save')}</>}
             </button>
           </div>
         </div>
