@@ -15,7 +15,7 @@ cd "$SCRIPT_DIR"
 echo "========================================"
 echo "  AuroraCoder"
 echo "========================================"
-echo "  App:            http://localhost:8081"
+echo "  Frontend:       http://localhost:3000"
 echo "  Backend API:    http://localhost:8080"
 echo "  API Docs:       http://localhost:8080/docs"
 echo "  VNC Desktop:    http://localhost:6080"
@@ -78,12 +78,13 @@ docker run --rm -d \
     -p 8080:8080 \
     -p 8081:8081 \
     -p 6080:6080 \
-    -p 8888-8890:8888-8890 \
+    -p 3000:8081 \
+    -p 8900-8902:8900-8902 \
     thinkwithtool || {
     echo "Failed to start container."
     exit 1
 }
 echo "Container started."
 echo ""
-echo "AuroraCoder is running at http://localhost:8081"
+echo "AuroraCoder is running at http://localhost:3000"
 echo "To stop: docker stop thinkwithtool-agent"

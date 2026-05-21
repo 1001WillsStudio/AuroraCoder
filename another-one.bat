@@ -21,8 +21,9 @@ set /a "OFFSET=(%INST%-1)*2"
 set /a "BACKEND_PORT=8080+%OFFSET%"
 set /a "GATEWAY_PORT=8081+%OFFSET%"
 set /a "VNC_PORT=6080+%OFFSET%"
-set /a "DEV_PORT_START=8888+%OFFSET%*3/2"
+set /a "DEV_PORT_START=8900+%OFFSET%*3/2"
 set /a "DEV_PORT_END=%DEV_PORT_START%+2"
+set /a "FRONTEND_PORT=3000+%INST%-1"
 
 set "CONTAINER=thinkwithtool-agent-%INST%"
 set "STORAGE_BASE=%USERPROFILE%\Documents\ThinkTool"
@@ -32,7 +33,7 @@ set "WORKSPACE_DIR=%STORAGE_BASE%\workspace-%INST%"
 echo ========================================
 echo   AuroraCoder  [Instance %INST%]
 echo ========================================
-echo   App:            http://localhost:%GATEWAY_PORT%
+echo   Frontend:       http://localhost:%FRONTEND_PORT%
 echo   Backend API:    http://localhost:%BACKEND_PORT%
 echo   API Docs:       http://localhost:%BACKEND_PORT%/docs
 echo   VNC Desktop:    http://localhost:%VNC_PORT%
@@ -40,7 +41,7 @@ echo ========================================
 echo.
 
 :: ── Port-availability check ─────────────────────────────────────────────
-for %%P in (%BACKEND_PORT% %GATEWAY_PORT% %VNC_PORT%) do (
+for %%P in (%FRONTEND_PORT% %BACKEND_PORT% %GATEWAY_PORT% %VNC_PORT%) do (
     netstat -an | findstr /r ":%%P " >nul 2>&1
     if not errorlevel 1 (
         echo WARNING: Port %%P appears to be in use. The container may fail to start.
@@ -87,7 +88,8 @@ docker run --rm -d ^
     -p %BACKEND_PORT%:8080 ^
     -p %GATEWAY_PORT%:8081 ^
     -p %VNC_PORT%:6080 ^
-    -p %DEV_PORT_START%-%DEV_PORT_END%:8888-8890 ^
+    -p %DEV_PORT_START%-%DEV_PORT_END%:8900-8902 ^
+    -p %FRONTEND_PORT%:8081 ^
     thinkwithtool
 if errorlevel 1 (
     echo Failed to start container.
@@ -96,6 +98,6 @@ if errorlevel 1 (
 del "%GUEST_ENV%" >nul 2>&1
 echo Container "%CONTAINER%" started.
 echo.
-echo AuroraCoder instance %INST% is running at http://localhost:%GATEWAY_PORT%
+echo AuroraCoder instance %INST% is running at http://localhost:%FRONTEND_PORT%
 echo To stop: docker stop %CONTAINER%
 pause

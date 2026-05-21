@@ -31,8 +31,9 @@ OFFSET=$(( (INST - 1) * 2 ))
 BACKEND_PORT=$((8080 + OFFSET))
 GATEWAY_PORT=$((8081 + OFFSET))
 VNC_PORT=$((6080 + OFFSET))
-DEV_PORT_START=$((8888 + OFFSET * 3 / 2))
+DEV_PORT_START=$((8900 + OFFSET * 3 / 2))
 DEV_PORT_END=$((DEV_PORT_START + 2))
+FRONTEND_PORT=$((3000 + INST - 1))
 
 CONTAINER="thinkwithtool-agent-$INST"
 
@@ -50,7 +51,7 @@ WORKSPACE_DIR="$STORAGE_BASE/workspace-$INST"
 echo "========================================"
 echo "  AuroraCoder  [Instance $INST]"
 echo "========================================"
-echo "  App:            http://localhost:$GATEWAY_PORT"
+echo "  Frontend:       http://localhost:$FRONTEND_PORT"
 echo "  Backend API:    http://localhost:$BACKEND_PORT"
 echo "  API Docs:       http://localhost:$BACKEND_PORT/docs"
 echo "  VNC Desktop:    http://localhost:$VNC_PORT"
@@ -72,7 +73,7 @@ if [ ! -f ".env" ]; then
 fi
 
 # ── Port-availability check ─────────────────────────────────────────────
-for port in "$BACKEND_PORT" "$GATEWAY_PORT" "$VNC_PORT"; do
+for port in "$FRONTEND_PORT" "$BACKEND_PORT" "$GATEWAY_PORT" "$VNC_PORT"; do
     if lsof -i ":$port" -sTCP:LISTEN >/dev/null 2>&1 || ss -tlnp "sport = :$port" 2>/dev/null | grep -q ":$port"; then
         echo "WARNING: Port $port appears to be in use. The container may fail to start."
     fi
@@ -102,7 +103,8 @@ docker run --rm -d \
     -p "$BACKEND_PORT:8080" \
     -p "$GATEWAY_PORT:8081" \
     -p "$VNC_PORT:6080" \
-    -p "$DEV_PORT_START-$DEV_PORT_END:8888-8890" \
+    -p "$DEV_PORT_START-$DEV_PORT_END:8900-8902" \
+    -p "$FRONTEND_PORT:8081" \
     thinkwithtool || {
     rm -f "$GUEST_ENV"
     echo "Failed to start container."
@@ -111,5 +113,5 @@ docker run --rm -d \
 rm -f "$GUEST_ENV"
 echo "Container \"$CONTAINER\" started."
 echo ""
-echo "AuroraCoder instance $INST is running at http://localhost:$GATEWAY_PORT"
+echo "AuroraCoder instance $INST is running at http://localhost:$FRONTEND_PORT"
 echo "To stop: docker stop $CONTAINER"
