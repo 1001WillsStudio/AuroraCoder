@@ -91,29 +91,6 @@ MODEL_PROVIDERS = {
         "extra_body": None,
         "context_window": 128_000,
     },
-    # ==========================================================================
-    # Vertex AI Gemini Models (Google Cloud)
-    # ==========================================================================
-    # These require Google Cloud Application Default Credentials (ADC) to be set up.
-    # Run: gcloud auth application-default login
-    # Or set GOOGLE_APPLICATION_CREDENTIALS env var to a service account key file.
-    "gemini-3-pro": {
-        "id": "gemini-3-pro",
-        "name": "Gemini 3.1 Pro (Vertex AI)",
-        "description": "Google's most advanced reasoning model with 1M context",
-        "provider_type": "vertex_ai",  # Special marker for Vertex AI auth
-        "project_id": None,  # Set via VERTEX_AI_PROJECT_ID env var or here
-        "location": "global",  # Vertex AI region - global for best availability
-        "model": "google/gemini-3.1-pro-preview",
-        "supports_thinking": True,
-        "extra_body": None,
-        "context_window": 1_048_576,
-    },
-    # ==========================================================================
-    # Google AI Studio (API Key based)
-    # ==========================================================================
-    # Get API key from: https://aistudio.google.com/app/apikey
-    # Set GEMINI_API_KEY environment variable
     "gemini-3-pro-api": {
         "id": "gemini-3-pro-api",
         "name": "Gemini 3.1 Pro (AI Studio)",
@@ -214,8 +191,6 @@ INTERPRETER_MAX_FILE_CHARS = 150_000  # Per-file char limit; larger files get tr
 INTERPRETER_TRUNCATE_PREVIEW_LINES = 20  # Lines shown when a file is truncated
 
 # File Operation Markers
-EDIT_ZONE_MARKER = "# Edit Zone"
-
 # Terminal Environment Note — adapts to platform
 _TERMINAL_BLOCKING_NOTE = (
     " For long-running processes (servers, training, etc.), set blocking=false "
@@ -277,3 +252,60 @@ Current Time: {current_time}
 - Never delegate write/execute operations to a subagent — it is read-only.
 - **edit_file**: at most 3 edits per call per file. Split larger changes across multiple tool rounds.
 """
+
+# =============================================================================
+# Dynamic configuration — reads from user settings_store for runtime overrides.
+# These getter functions check {DATA_DIR}/settings.json and fall back to the
+# module-level defaults above.
+# =============================================================================
+
+def _get_from_settings(section: str, field: str, default):
+    """Read a nested setting from the user's settings.json, falling back to *default*."""
+    try:
+        from . import settings_store  # deferred import to avoid circular deps
+        raw = settings_store._load_raw()
+        return raw.get(section, {}).get(field, default)
+    except Exception:
+        return default
+
+
+def get_default_provider() -> str:
+    """Read the user's preferred default provider from settings, or return the module default."""
+    return _get_from_settings("agent", "default_provider", DEFAULT_PROVIDER)
+
+
+def get_max_iterations() -> int:
+    return int(_get_from_settings("agent", "max_iterations", MAX_ITERATIONS))
+
+
+def get_continue_iterations() -> int:
+    return int(_get_from_settings("agent", "continue_iterations", CONTINUE_ITERATIONS))
+
+
+def get_max_tool_concurrency() -> int:
+    return int(_get_from_settings("agent", "max_tool_concurrency", MAX_TOOL_CONCURRENCY))
+
+
+def get_terminal_max_output() -> int:
+    return int(_get_from_settings("agent", "terminal_max_output", TERMINAL_MAX_OUTPUT_CHARS))
+
+
+def get_code_interpreter_errors_enabled() -> bool:
+    val = _get_from_settings("agent", "code_interpreter_errors", None)
+    if val is not None:
+        return bool(val)
+    return CODE_INTERPRETER_ERRORS_ENABLED
+
+
+def get_web_secondary_config() -> dict:
+    """Return the full web secondary model configuration from settings or defaults."""
+    return {
+        "base_url": os.environ.get("WEB_SECONDARY_MODEL_BASE_URL")
+                     or _get_from_settings("web_secondary", "base_url", WEB_SECONDARY_MODEL_BASE_URL),
+        "api_key": os.environ.get("WEB_SECONDARY_MODEL_API_KEY")
+                    or _get_from_settings("web_secondary", "api_key", WEB_SECONDARY_MODEL_API_KEY),
+        "model_name": os.environ.get("WEB_SECONDARY_MODEL_NAME")
+                       or _get_from_settings("web_secondary", "model_name", WEB_SECONDARY_MODEL_NAME),
+        "max_tokens": int(os.environ.get("WEB_SECONDARY_MODEL_MAX_TOKENS", "") or
+                          _get_from_settings("web_secondary", "max_tokens", WEB_SECONDARY_MODEL_MAX_TOKENS)),
+    }

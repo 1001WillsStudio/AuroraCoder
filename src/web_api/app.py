@@ -383,8 +383,68 @@ async def health_check():
 
 @app.get("/api/providers")
 async def list_providers():
+    from ..settings_store import get_custom_providers, get_api_key, get_setting_override
     providers = get_available_providers()
+    # Merge custom providers from settings
+    for cp in get_custom_providers():
+        if not any(p["id"] == cp["id"] for p in providers):
+            providers.append({
+                "id": cp["id"],
+                "name": cp.get("name", cp["id"]),
+                "description": cp.get("description", "Custom provider"),
+                "supports_thinking": cp.get("supports_thinking", False),
+                "custom": True,
+            })
     return {"providers": providers, "default": get_default_provider()}
+
+
+# ============================================================================
+# Settings Endpoints
+# ============================================================================
+
+from pydantic import BaseModel as _PydanticBaseModel, Field as _Field
+from typing import Any as _Any
+
+class _SettingsUpdate(_PydanticBaseModel):
+    """Partial update for settings."""
+    api_keys: Optional[dict] = _Field(None, description="Map of provider_id -> API key")
+    provider_overrides: Optional[dict] = _Field(None, description="Per-provider overrides (base_url, model)")
+    custom_providers: Optional[list] = _Field(None, description="User-defined custom providers")
+    other: Optional[dict] = _Field(None, description="Miscellaneous settings")
+
+
+@app.get("/api/settings")
+async def get_settings():
+    """Return current user settings (API keys masked)."""
+    from ..settings_store import get_all_settings as _get_all
+    from ..settings_store import get_custom_providers as _get_cp
+    settings = _get_all()
+    # Ensure keys exist for a smooth frontend experience
+    settings.setdefault("api_keys", {})
+    settings.setdefault("provider_overrides", {})
+    settings.setdefault("custom_providers", _get_cp())
+    settings.setdefault("other", {})
+    return settings
+
+
+@app.put("/api/settings")
+async def update_settings(update: _SettingsUpdate):
+    """Merge partial settings update and persist."""
+    from ..settings_store import update_settings as _update
+    from ..providers import provider_manager as _pm
+    payload = {}
+    if update.api_keys is not None:
+        payload["api_keys"] = update.api_keys
+    if update.provider_overrides is not None:
+        payload["provider_overrides"] = update.provider_overrides
+    if update.custom_providers is not None:
+        payload["custom_providers"] = update.custom_providers
+    if update.other is not None:
+        payload["other"] = update.other
+    result = _update(payload)
+    # Re-initialize providers so custom providers / new keys take effect immediately
+    _pm.reload()
+    return result
 
 
 # ============================================================================

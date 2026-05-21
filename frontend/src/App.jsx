@@ -4,7 +4,7 @@ import ChatMessage from './components/ChatMessage'
 import ChatInput from './components/ChatInput'
 import Sidebar from './components/Sidebar'
 import WelcomeScreen from './components/WelcomeScreen'
-import CodePanel from './components/CodePanel'
+import SettingsPanel from './components/SettingsPanel'
 import { streamChat, getProviders, cancelConversation, getConversation, getActiveStreams, resumeStream } from './services/api'
 import { isInterruptible, TASK_MARKER_START, TASK_MARKER_END, formatElapsedTime } from './utils/streamUtils'
 import { useFileTracking } from './hooks/useFileTracking'
@@ -60,7 +60,7 @@ function App() {
   const [viewMode, setViewMode] = useState('main')
   const [parentConversationId, setParentConversationId] = useState(null)
   const [subagentChildIds, setSubagentChildIds] = useState([])
-
+  const [showSettings, setShowSettings] = useState(false)
   const messagesEndRef = useRef(null)
   const chatContainerRef = useRef(null)
   const inputRef = useRef(null)
@@ -554,6 +554,7 @@ function App() {
         onSelectProvider={(id) => { setSelectedProvider(id); setShowProviderDropdown(false) }}
         showProviderDropdown={showProviderDropdown}
         onToggleProviderDropdown={() => setShowProviderDropdown(!showProviderDropdown)}
+        onOpenSettings={() => setShowSettings(true)}
       />
 
       <main className="main-content">
@@ -692,6 +693,8 @@ function App() {
           </div>
         </div>
       )}
+
+      <SettingsPanel isOpen={showSettings} onClose={() => setShowSettings(false)} />
     </div>
   )
 }

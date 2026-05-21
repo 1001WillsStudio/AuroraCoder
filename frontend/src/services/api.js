@@ -175,9 +175,28 @@ export async function getProviders() {
   }
   return response.json()
 }
+/**
+ * Get user settings (API keys masked).
+ */
+export async function getSettings() {
+  const response = await fetch(`${API_BASE}/settings`)
+  if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+  return response.json()
+}
 
-// ============================================================================
-// Conversation History API (served by the conversation server)
+/**
+ * Update user settings. Persisted to /app/data/settings.json.
+ */
+export async function updateSettings(payload) {
+  const response = await fetch(`${API_BASE}/settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+  return response.json()
+}
+
 // ============================================================================
 
 /**

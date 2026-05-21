@@ -1,10 +1,8 @@
 """
 Model Provider Manager
 
-Manages multiple OpenAI-compatible API clients for different model providers.
-Allows runtime switching between providers (e.g., DeepSeek, NVIDIA, Vertex AI).
-
-For Vertex AI providers, handles Google Cloud authentication with automatic token refresh.
+Manages multiple OpenAI-compatible API clients. All providers use the standard
+OpenAI client — there is no special-casing for any provider type.
 """
 
 import os
@@ -18,194 +16,132 @@ from .config import MODEL_PROVIDERS, DEFAULT_PROVIDER
 
 
 # =============================================================================
-# Vertex AI Client Wrapper
-# =============================================================================
-
-class VertexAIClient:
-    """
-    OpenAI-compatible client wrapper for Vertex AI.
-    
-    Handles Google Cloud authentication with automatic token refresh.
-    Tokens expire after 1 hour, so we refresh before each API call.
-    
-    Requires either:
-    - Application Default Credentials (run: gcloud auth application-default login)
-    - GOOGLE_APPLICATION_CREDENTIALS env var pointing to a service account key
-    """
-    
-    def __init__(self, project_id: str, location: str = "us-central1"):
-        """
-        Initialize the Vertex AI client.
-        
-        Args:
-            project_id: Google Cloud project ID
-            location: Vertex AI region (default: us-central1)
-        """
-        self.project_id = project_id
-        self.location = location
-        self._credentials = None
-        self._client: Optional[OpenAI] = None
-        # Vertex AI OpenAI-compatible endpoint
-        # See: https://cloud.google.com/vertex-ai/generative-ai/docs/start/openai
-        self._base_url = f"https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/{location}/endpoints/openapi"
-        
-        # Initialize credentials
-        self._init_credentials()
-    
-    def _init_credentials(self):
-        """Initialize Google Cloud credentials."""
-        try:
-            from google.auth import default
-            import google.auth.transport.requests
-
-            self._credentials, _ = default(
-                scopes=["https://www.googleapis.com/auth/cloud-platform"]
-            )
-            self._auth_request = google.auth.transport.requests.Request()
-            logger.info("[VertexAI] Credentials initialized for project: %s", self.project_id)
-        except Exception as e:
-            logger.warning("[VertexAI] Failed to initialize credentials: %s", e)
-            logger.warning("[VertexAI] Run 'gcloud auth application-default login' to authenticate")
-            self._credentials = None
-    
-    def _refresh_token(self) -> str:
-        """Refresh and return the access token."""
-        if self._credentials is None:
-            raise RuntimeError(
-                "Google Cloud credentials not initialized. "
-                "Run 'gcloud auth application-default login' or set GOOGLE_APPLICATION_CREDENTIALS"
-            )
-        
-        # Refresh credentials if expired or about to expire
-        if not self._credentials.valid:
-            self._credentials.refresh(self._auth_request)
-        
-        return self._credentials.token
-    
-    def _get_client(self) -> OpenAI:
-        """Get an OpenAI client with a fresh token."""
-        token = self._refresh_token()
-        
-        # Create a new client with the refreshed token
-        # We recreate to ensure the token is fresh
-        self._client = OpenAI(
-            base_url=self._base_url,
-            api_key=token
-        )
-        return self._client
-    
-    @property
-    def chat(self):
-        """Provide access to chat.completions like the standard OpenAI client."""
-        return _VertexAIChatNamespace(self)
-
-
-class _VertexAIChatNamespace:
-    """Namespace class to mimic OpenAI's client.chat structure."""
-    
-    def __init__(self, vertex_client: VertexAIClient):
-        self._vertex_client = vertex_client
-        self.completions = _VertexAICompletions(vertex_client)
-
-
-class _VertexAICompletions:
-    """Completions class that refreshes token before each call."""
-    
-    def __init__(self, vertex_client: VertexAIClient):
-        self._vertex_client = vertex_client
-    
-    def create(self, **kwargs) -> Any:
-        """
-        Create a chat completion, refreshing the token first.
-        
-        This method is called for each API request and ensures
-        the token is fresh before making the call.
-        """
-        client = self._vertex_client._get_client()
-        return client.chat.completions.create(**kwargs)
-
-
-# =============================================================================
 # Provider Manager
 # =============================================================================
 
 class ProviderManager:
     """Manages multiple OpenAI-compatible API clients."""
-    
+
     def __init__(self):
-        self._clients: Dict[str, Any] = {}  # Can be OpenAI or VertexAIClient
+        self._clients: Dict[str, OpenAI] = {}
         self._initialize_clients()
-    
+
     def _initialize_clients(self):
-        """Initialize clients for all configured providers."""
+        """Initialize clients for all configured providers (built-in + custom)."""
+        # ── Built-in providers ─────────────────────────────────────────────
         for provider_id, config in MODEL_PROVIDERS.items():
             try:
-                if config.get("provider_type") == "vertex_ai":
-                    # Vertex AI provider - use special client with token refresh
-                    self._init_vertex_client(provider_id, config)
-                else:
-                    # Standard OpenAI-compatible provider
-                    api_key = config.get("api_key")
-                    if not api_key or "YOUR_" in str(api_key):
-                        # Skip if API key is missing or is a placeholder
-                        # This prevents unconfigured providers from appearing in the list
+                api_key = config.get("api_key")
+                if not api_key or "YOUR_" in str(api_key):
+                    # Check settings_store for a user-provided key
+                    from .settings_store import get_api_key as _s_key
+                    api_key = _s_key(provider_id)
+                    if not api_key:
                         if config.get("id") == "gemini-3-pro-api":
-                            logger.info("[ProviderManager] Skipping %s: API key not configured (GEMINI_API_KEY env var missing)", provider_id)
+                            logger.info(
+                                "[ProviderManager] Skipping %s: "
+                                "API key not configured (GEMINI_API_KEY or settings)",
+                                provider_id,
+                            )
                             continue
-                            
-                    self._clients[provider_id] = OpenAI(
-                        base_url=config["base_url"],
-                        api_key=api_key
-                    )
-                    logger.info("[ProviderManager] Initialized: %s (%s)", provider_id, config['name'])
+                        continue
+                self._clients[provider_id] = OpenAI(
+                    base_url=config["base_url"],
+                    api_key=api_key,
+                )
+                logger.info("[ProviderManager] Initialized: %s (%s)", provider_id, config["name"])
             except Exception as e:
                 logger.warning("[ProviderManager] Failed to initialize %s: %s", provider_id, e)
-    
-    def _init_vertex_client(self, provider_id: str, config: dict):
-        """Initialize a Vertex AI client with Google Cloud auth."""
-        # Get project ID from config or environment
-        project_id = config.get("project_id") or os.environ.get("VERTEX_AI_PROJECT_ID")
-        
-        if not project_id:
-            logger.warning("[ProviderManager] %s requires VERTEX_AI_PROJECT_ID env var", provider_id)
-            logger.warning("[ProviderManager] Skipping %s - set VERTEX_AI_PROJECT_ID to enable", provider_id)
-            return
-        
-        location = config.get("location", "us-central1")
-        
-        try:
-            client = VertexAIClient(project_id=project_id, location=location)
-            self._clients[provider_id] = client
-            logger.info("[ProviderManager] Initialized Vertex AI: %s (%s)", provider_id, config['name'])
-        except Exception as e:
-            logger.warning("[ProviderManager] Failed to initialize Vertex AI %s: %s", provider_id, e)
-    
+
+        # ── Custom providers from settings_store ───────────────────────────
+        from .settings_store import get_custom_providers as _gcp
+        for cp_data in _gcp():
+            cpid = cp_data.get("id")
+            if not cpid or cpid in self._clients:
+                continue
+            try:
+                api_key = cp_data.get("api_key", "")
+                base_url = cp_data.get("base_url", "")
+                if api_key and base_url:
+                    self._clients[cpid] = OpenAI(base_url=base_url, api_key=api_key)
+                    logger.info("[ProviderManager] Initialized custom: %s", cp_data.get("name", cpid))
+            except Exception as e:
+                logger.warning("[ProviderManager] Failed to initialize custom provider %s: %s", cpid, e)
+
     def get_client(self, provider_id: str) -> OpenAI:
         """Get the client for a specific provider."""
         if provider_id not in self._clients:
-            raise ValueError(f"Unknown provider: {provider_id}. Available: {list(self._clients.keys())}")
+            raise ValueError(
+                f"Unknown provider: {provider_id}. Available: {list(self._clients.keys())}"
+            )
         return self._clients[provider_id]
-    
+
     def get_config(self, provider_id: str) -> dict:
-        """Get the configuration for a specific provider."""
+        """Get the configuration for a specific provider, merging user overrides."""
+        from .settings_store import (
+            get_api_key as _gs_key,
+            get_custom_providers as _gs_cp,
+            get_setting_override as _gs_override,
+        )
+        # Check custom providers first
+        for cp in _gs_cp():
+            if cp["id"] == provider_id:
+                return {
+                    "id": cp["id"],
+                    "name": cp.get("name", cp["id"]),
+                    "description": cp.get("description", "Custom provider"),
+                    "supports_thinking": cp.get("supports_thinking", False),
+                    "base_url": cp.get("base_url", ""),
+                    "api_key": cp.get("api_key", ""),
+                    "model": cp.get("model", ""),
+                    "custom": True,
+                }
         if provider_id not in MODEL_PROVIDERS:
             raise ValueError(f"Unknown provider: {provider_id}")
-        return MODEL_PROVIDERS[provider_id]
-    
+        cfg = dict(MODEL_PROVIDERS[provider_id])
+        # Override with settings from settings.json
+        key = _gs_key(provider_id)
+        if key:
+            cfg["api_key"] = key
+        override_url = _gs_override(provider_id, "base_url")
+        if override_url:
+            cfg["base_url"] = override_url
+        override_model = _gs_override(provider_id, "model")
+        if override_model:
+            cfg["model"] = override_model
+        return cfg
+
+    def reload(self) -> None:
+        """Re-initialize all clients, picking up new/changed settings."""
+        self._clients.clear()
+        self._initialize_clients()
+        logger.info("[ProviderManager] Reloaded — %d provider(s) available", len(self._clients))
+
     def list_providers(self) -> List[dict]:
-        """List all available (initialized) providers with their info (for frontend)."""
-        # Only return providers that were successfully initialized
-        return [
+        """List all initialized providers in a frontend-friendly format."""
+        result = [
             {
                 "id": config["id"],
                 "name": config["name"],
                 "description": config["description"],
-                "supports_thinking": config["supports_thinking"]
+                "supports_thinking": config["supports_thinking"],
             }
             for provider_id, config in MODEL_PROVIDERS.items()
             if provider_id in self._clients
         ]
-    
+        # Add custom providers
+        from .settings_store import get_custom_providers as _gcp
+        for cp in _gcp():
+            if cp.get("id") in self._clients:
+                result.append({
+                    "id": cp["id"],
+                    "name": cp.get("name", cp["id"]),
+                    "description": cp.get("description", "Custom provider"),
+                    "supports_thinking": cp.get("supports_thinking", False),
+                    "custom": True,
+                })
+        return result
+
     def get_default_provider(self) -> str:
         """Get the default provider ID."""
         return DEFAULT_PROVIDER
