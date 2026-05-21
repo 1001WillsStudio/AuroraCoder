@@ -746,14 +746,19 @@ async def proxy_chat(request: Request):
         parent_id=parent_id,
     )
 
-    # Seed frontend_messages with the user's message (without markers) so
-    # loading the conversation before the first backend event still shows
-    # something meaningful.
+    # Seed frontend_messages so loading the conversation before the first
+    # backend event still shows something.  For existing conversations
+    # (re-send / interrupt), APPEND instead of replacing — otherwise the
+    # entire history is lost if the backend never produces events.
     if body.get("message"):
         clean_content = strip_task_instruction(body["message"]) or body["message"]
-        store.save_frontend_messages(conversation_id, [
-            {"role": "user", "content": clean_content.strip()}
-        ])
+        new_user_msg = {"role": "user", "content": clean_content.strip()}
+        existing_fe_msgs = store.get_frontend_messages(conversation_id)
+        if existing_fe_msgs:
+            existing_fe_msgs.append(new_user_msg)
+            store.save_frontend_messages(conversation_id, existing_fe_msgs)
+        else:
+            store.save_frontend_messages(conversation_id, [new_user_msg])
     t5 = time.perf_counter()
     logger.info(f"[proxy] [{cid_tag}...] store_ops={t5-t4:.3f}s")
 
