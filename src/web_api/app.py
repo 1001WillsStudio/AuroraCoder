@@ -32,8 +32,8 @@ from conversation_gateway.workspace import snapshot_file, mark_file_touched, cle
 
 logger = logging.getLogger(__name__)
 
-# Thread pool for running synchronous generators
-executor = ThreadPoolExecutor(max_workers=4)
+# Thread pool for running synchronous generators (unbounded — workers are I/O-bound)
+executor = ThreadPoolExecutor()
 
 # ============================================================================
 # Pydantic Models

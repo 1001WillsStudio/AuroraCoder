@@ -10,6 +10,7 @@ For Vertex AI providers, handles Google Cloud authentication with automatic toke
 import os
 import logging
 from typing import Dict, List, Optional, Any
+import httpx
 from openai import OpenAI
 
 logger = logging.getLogger(__name__)
@@ -155,7 +156,8 @@ class ProviderManager:
                             
                     self._clients[provider_id] = OpenAI(
                         base_url=config["base_url"],
-                        api_key=api_key
+                        api_key=api_key,
+                        timeout=httpx.Timeout(300.0, connect=30.0),
                     )
                     logger.info("[ProviderManager] Initialized: %s (%s)", provider_id, config['name'])
             except Exception as e:
