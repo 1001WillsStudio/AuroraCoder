@@ -33,13 +33,20 @@ set "WORKSPACE_DIR=%STORAGE_BASE%\workspace-%INST%"
 echo ========================================
 echo   AuroraCoder  [Instance %INST%]
 echo ========================================
+echo   Frontend:       http://localhost:%FRONTEND_PORT%
 echo   Backend API:    http://localhost:%BACKEND_PORT%
-echo   Convo History:  http://localhost:%GATEWAY_PORT%
 echo   API Docs:       http://localhost:%BACKEND_PORT%/docs
-echo   Frontend:       http://0.0.0.0:%FRONTEND_PORT%
 echo   VNC Desktop:    http://localhost:%VNC_PORT%
 echo ========================================
 echo.
+
+:: ── Port-availability check ─────────────────────────────────────────────
+for %%P in (%FRONTEND_PORT% %BACKEND_PORT% %GATEWAY_PORT% %VNC_PORT%) do (
+    netstat -an | findstr /r ":%%P " >nul 2>&1
+    if not errorlevel 1 (
+        echo WARNING: Port %%P appears to be in use. The container may fail to start.
+    )
+)
 
 :: ── Pre-flight checks ───────────────────────────────────────────────────
 :: The base + app images must already exist (built by start.bat)
@@ -70,7 +77,7 @@ docker stop %CONTAINER% >nul 2>&1
 docker rm   %CONTAINER% >nul 2>&1
 
 :: ── Start backend container ─────────────────────────────────────────────
-echo [1/2] Starting backend in Docker (instance %INST%)...
+echo Starting backend in Docker (instance %INST%)...
 docker run --rm -d ^
     --name %CONTAINER% ^
     --env-file "%GUEST_ENV%" ^
@@ -82,25 +89,15 @@ docker run --rm -d ^
     -p %GATEWAY_PORT%:8081 ^
     -p %VNC_PORT%:6080 ^
     -p %DEV_PORT_START%-%DEV_PORT_END%:8888-8890 ^
+    -p %FRONTEND_PORT%:3000 ^
     thinkwithtool
 if errorlevel 1 (
     echo Failed to start container.
     exit /b 1
 )
 del "%GUEST_ENV%" >nul 2>&1
-echo Container "%CONTAINER%" started (API :%BACKEND_PORT% + gateway :%GATEWAY_PORT%).
+echo Container "%CONTAINER%" started.
 echo.
-
-:: ── Frontend ────────────────────────────────────────────────────────────
-:: Reuse the same node_modules from the primary frontend — no extra install needed.
-:: Override the Vite dev-server port and proxy targets via environment variables.
-echo [2/2] Starting frontend on http://0.0.0.0:%FRONTEND_PORT% ...
-echo Press Ctrl+C to stop the frontend.
-echo To stop the backend:  docker stop %CONTAINER%
-echo.
-
-cd frontend
-set "VITE_PORT=%FRONTEND_PORT%"
-set "VITE_BACKEND_PORT=%BACKEND_PORT%"
-set "VITE_GATEWAY_PORT=%GATEWAY_PORT%"
-npm run dev -- --host 0.0.0.0
+echo AuroraCoder instance %INST% is running at http://localhost:%FRONTEND_PORT%
+echo To stop: docker stop %CONTAINER%
+pause

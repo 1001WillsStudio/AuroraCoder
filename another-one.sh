@@ -51,10 +51,9 @@ WORKSPACE_DIR="$STORAGE_BASE/workspace-$INST"
 echo "========================================"
 echo "  AuroraCoder  [Instance $INST]"
 echo "========================================"
+echo "  Frontend:       http://localhost:$FRONTEND_PORT"
 echo "  Backend API:    http://localhost:$BACKEND_PORT"
-echo "  Convo History:  http://localhost:$GATEWAY_PORT"
 echo "  API Docs:       http://localhost:$BACKEND_PORT/docs"
-echo "  Frontend:       http://0.0.0.0:$FRONTEND_PORT"
 echo "  VNC Desktop:    http://localhost:$VNC_PORT"
 echo "========================================"
 echo ""
@@ -73,6 +72,13 @@ if [ ! -f ".env" ]; then
     exit 1
 fi
 
+# ── Port-availability check ─────────────────────────────────────────────
+for port in "$FRONTEND_PORT" "$BACKEND_PORT" "$GATEWAY_PORT" "$VNC_PORT"; do
+    if lsof -i ":$port" -sTCP:LISTEN >/dev/null 2>&1 || ss -tlnp "sport = :$port" 2>/dev/null | grep -q ":$port"; then
+        echo "WARNING: Port $port appears to be in use. The container may fail to start."
+    fi
+done
+
 # ── Build a filtered .env without GITHUB_TOKEN ──────────────────────────
 GUEST_ENV="$PWD/.env.guest-$INST"
 grep -vi "GITHUB_TOKEN" .env > "$GUEST_ENV"
@@ -86,7 +92,7 @@ docker stop "$CONTAINER" >/dev/null 2>&1 || true
 docker rm   "$CONTAINER" >/dev/null 2>&1 || true
 
 # ── Start backend container ─────────────────────────────────────────────
-echo "[1/2] Starting backend in Docker (instance $INST)..."
+echo "Starting backend in Docker (instance $INST)..."
 docker run --rm -d \
     --name "$CONTAINER" \
     --env-file "$GUEST_ENV" \
@@ -98,25 +104,14 @@ docker run --rm -d \
     -p "$GATEWAY_PORT:8081" \
     -p "$VNC_PORT:6080" \
     -p "$DEV_PORT_START-$DEV_PORT_END:8888-8890" \
+    -p "$FRONTEND_PORT:3000" \
     thinkwithtool || {
     rm -f "$GUEST_ENV"
     echo "Failed to start container."
     exit 1
 }
 rm -f "$GUEST_ENV"
-echo "Container \"$CONTAINER\" started (API :$BACKEND_PORT + gateway :$GATEWAY_PORT)."
+echo "Container \"$CONTAINER\" started."
 echo ""
-
-# ── Frontend ────────────────────────────────────────────────────────────
-# Reuse the same node_modules from the primary frontend — no extra install needed.
-# Override the Vite dev-server port and proxy targets via environment variables.
-echo "[2/2] Starting frontend on http://0.0.0.0:$FRONTEND_PORT ..."
-echo "Press Ctrl+C to stop the frontend."
-echo "To stop the backend:  docker stop $CONTAINER"
-echo ""
-
-cd frontend
-VITE_PORT="$FRONTEND_PORT" \
-VITE_BACKEND_PORT="$BACKEND_PORT" \
-VITE_GATEWAY_PORT="$GATEWAY_PORT" \
-npm run dev -- --host 0.0.0.0
+echo "AuroraCoder instance $INST is running at http://localhost:$FRONTEND_PORT"
+echo "To stop: docker stop $CONTAINER"

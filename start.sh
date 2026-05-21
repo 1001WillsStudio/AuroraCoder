@@ -15,7 +15,7 @@ cd "$SCRIPT_DIR"
 echo "========================================"
 echo "  AuroraCoder"
 echo "========================================"
-echo "  App:            http://localhost:8081"
+echo "  Frontend:       http://localhost:3000"
 echo "  Backend API:    http://localhost:8080"
 echo "  API Docs:       http://localhost:8080/docs"
 echo "  VNC Desktop:    http://localhost:6080"
@@ -66,7 +66,7 @@ if [ ! -f ".env" ]; then
 fi
 
 # ── Start backend container ──────────────────────────────────────────────
-echo "[1/1] Starting backend in Docker (app + frontend)..."
+echo "Starting backend in Docker (app + frontend)..."
 mkdir -p "$STORAGE_BASE/data" "$STORAGE_BASE/workspace"
 docker run --rm -d \
     --name thinkwithtool-agent \
@@ -78,6 +78,7 @@ docker run --rm -d \
     -p 8080:8080 \
     -p 8081:8081 \
     -p 6080:6080 \
+    -p 3000:3000 \
     -p 8888-8890:8888-8890 \
     thinkwithtool || {
     echo "Failed to start container."
@@ -85,5 +86,5 @@ docker run --rm -d \
 }
 echo "Container started."
 echo ""
-echo "AuroraCoder is running at http://localhost:8081"
+echo "AuroraCoder is running at http://localhost:3000"
 echo "To stop: docker stop thinkwithtool-agent"
