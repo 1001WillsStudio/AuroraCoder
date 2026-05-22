@@ -34,7 +34,7 @@ Edits are atomic: if ANY edit in the call fails validation, NONE are applied and
 
 RULES:
 - ALWAYS get line numbers and content from the code interpreter display. NEVER use memorised or assumed line numbers.
-- `content_to_remove` MUST be in the format "start_line_content\\n...\\nend_line_content". The "..." is a REQUIRED separator — it must always be included (the only exception is single-line removal where start and end are the same line — omit "..." in that case). The first line is the start anchor, the last line is the end anchor.
+- `content_to_remove` uses anchor matching: "first_line\\n...\\nlast_line". The "..." is a range operator — only the first and last lines act as anchors to find the block; intermediate lines are ignored. Always use "..." for multi-line ranges (omit only for single-line edits where start == end). Example: to replace a 4-line function, use "def foo():\\n...\\n    return x" — do NOT paste the full function body.
 - `remove_end_line` defaults to `remove_start_line`.
 - Multiple edits per call: all line numbers refer to the file as it was BEFORE this call. Ranges must not overlap.
 - Use empty `replace_content` to delete the range.
@@ -157,7 +157,7 @@ NATIVE_TOOL_DEFINITIONS = [
                                     "description": "1-based line number where the range begins"
                                 },
                                 "content_to_remove": {
-                                    "description": "Multi-line content that identifies the block to replace. REQUIRED format: 'start_line_content\\n...\\nend_line_content'. The '...' separator is MANDATORY — always include it (only exception: single-line removal where start and end are the same line, omit '...'). The first line is the start anchor, the last line is the end anchor."
+                                    "description": "Anchor-based block identifier. For multi-line: 'first_line\\n...\\nlast_line' — only the boundary lines are matched, intermediate lines are ignored. For single-line edits (start == end): just the line content itself with no '...'."
                                 },
                                 "remove_end_line": {
                                     "type": "integer",
