@@ -888,7 +888,7 @@ async def list_active_streams():
 # Endpoints — CRUD (storage)
 # ============================================================================
 
-@app.get("/")
+@app.get("/health")
 async def health():
     return {"status": "ok", "service": "conversation-history"}
 
@@ -1165,6 +1165,12 @@ async def workspace_info():
 frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 if frontend_dist.exists():
     app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")
+else:
+    logger.warning(
+        "Frontend build not found at %s — rebuild the Docker image or run "
+        "`cd frontend && npm run build` to serve the UI at /",
+        frontend_dist,
+    )
 
 
 # ============================================================================

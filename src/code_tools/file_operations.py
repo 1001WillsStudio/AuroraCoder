@@ -9,13 +9,11 @@ import re
 import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable
-from ..config import EDIT_ZONE_MARKER
 from ..code_sandbox import WORKSPACE
 
 logger = logging.getLogger(__name__)
 
 # --- Constants ---
-WILDCARD_SENTINEL = EDIT_ZONE_MARKER  # Backward compatibility with old constant name
 MAX_ANCHOR_SHIFT = 3  # ±3 line tolerance for anchor verification
 
 # --- File Access Callbacks ---
