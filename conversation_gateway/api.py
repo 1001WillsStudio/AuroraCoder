@@ -43,6 +43,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from src.config import WORKSPACE_DIR
+from src.settings_store import (
+    get_all_settings,
+    get_custom_providers,
+    update_settings,
+)
+from src.providers import get_available_providers, get_default_provider, provider_manager
+from src.code_sandbox import shell
 
 from .conversation_store import ConversationStore, strip_task_instruction
 from .workspace import (
@@ -886,7 +893,71 @@ async def list_active_streams():
 
 # ============================================================================
 # Endpoints — CRUD (storage)
-# ============================================================================
+@app.get("/api/providers")
+async def list_providers():
+    """Return available model providers (built-in + custom)."""
+    providers = get_available_providers()
+    for cp in get_custom_providers():
+        if not any(p["id"] == cp["id"] for p in providers):
+            providers.append({
+                "id": cp["id"],
+                "name": cp.get("name", cp["id"]),
+                "description": cp.get("description", "Custom provider"),
+                "supports_thinking": cp.get("supports_thinking", False),
+                "custom": True,
+            })
+    return {"providers": providers, "default": get_default_provider()}
+
+
+# ── Settings ─────────────────────────────────────────────────────
+
+class _SettingsUpdate(BaseModel):
+    """Partial update for settings."""
+    api_keys: Optional[dict] = None
+    provider_overrides: Optional[dict] = None
+    custom_providers: Optional[list] = None
+    other: Optional[dict] = None
+
+
+@app.get("/api/settings")
+async def get_settings():
+    """Return current user settings."""
+    settings = get_all_settings()
+    settings.setdefault("api_keys", {})
+    settings.setdefault("provider_overrides", {})
+    settings.setdefault("custom_providers", get_custom_providers())
+    settings.setdefault("other", {})
+    return settings
+
+
+@app.put("/api/settings")
+async def update_settings(update: _SettingsUpdate):
+    """Merge partial settings update and persist."""
+    payload = {}
+    if update.api_keys is not None:
+        payload["api_keys"] = update.api_keys
+    if update.provider_overrides is not None:
+        payload["provider_overrides"] = update.provider_overrides
+    if update.custom_providers is not None:
+        payload["custom_providers"] = update.custom_providers
+    if update.other is not None:
+        payload["other"] = update.other
+    result = update_settings(payload)
+    provider_manager.reload()
+    return result
+
+
+# ── Workspace info ───────────────────────────────────────────────
+
+@app.get("/api/workspace")
+async def get_workspace_info():
+    """Return basic workspace info."""
+    from src.code_sandbox import WORKSPACE as ws
+    return {
+        "workspace": str(ws),
+        "shell_alive": shell.is_alive,
+    }
+
 
 @app.get("/health")
 async def health():

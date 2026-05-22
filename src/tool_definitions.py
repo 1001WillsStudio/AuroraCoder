@@ -29,13 +29,13 @@ from .core_tools.continue_chat import continue_as_new_chat
 
 EDIT_FILE_DESCRIPTION = """Range-based file editing.
 
-Each edit replaces a line range (start_line through end_line inclusive) with new content.
+Each edit replaces a line range (remove_start_line through remove_end_line inclusive) with new content.
 Edits are atomic: if ANY edit in the call fails validation, NONE are applied and the file is unchanged.
 
 RULES:
 - ALWAYS get line numbers and content from the code interpreter display. NEVER use memorised or assumed line numbers.
-- `start_line_content` / `end_line_content` are SINGLE LINE verification anchors (no newlines). Leading whitespace MUST match; trailing spaces are ignored.
-- `end_line` defaults to `start_line`; `end_line_content` auto-fills from file if omitted.
+- `content_to_remove` MUST be in the format "start_line_content\\n...\\nend_line_content". The "..." is a REQUIRED separator — it must always be included (the only exception is single-line removal where start and end are the same line — omit "..." in that case). The first line is the start anchor, the last line is the end anchor.
+- `remove_end_line` defaults to `remove_start_line`.
 - Multiple edits per call: all line numbers refer to the file as it was BEFORE this call. Ranges must not overlap.
 - Use empty `replace_content` to delete the range.
 - Do NOT edit the same file more than once per turn. After an edit, read the refreshed code interpreter for correct line numbers before editing that file again.
@@ -152,28 +152,23 @@ NATIVE_TOOL_DEFINITIONS = [
                         "items": {
                             "type": "object",
                             "properties": {
-                                "start_line": {
+                                "remove_start_line": {
                                     "type": "integer",
                                     "description": "1-based line number where the range begins"
                                 },
-                                "start_line_content": {
-                                    "type": "string",
-                                    "description": "The SINGLE LINE of text at start_line — exactly one line, NO newlines. Used to verify the file boundary. Trailing spaces are ignored."
+                                "content_to_remove": {
+                                    "description": "Multi-line content that identifies the block to replace. REQUIRED format: 'start_line_content\\n...\\nend_line_content'. The '...' separator is MANDATORY — always include it (only exception: single-line removal where start and end are the same line, omit '...'). The first line is the start anchor, the last line is the end anchor."
                                 },
-                                "end_line": {
+                                "remove_end_line": {
                                     "type": "integer",
                                     "description": "1-based line number where the range ends"
                                 },
-                                "end_line_content": {
-                                    "type": "string",
-                                    "description": "The SINGLE LINE of text at end_line — exactly one line, NO newlines. Used to verify the file boundary. Trailing spaces are ignored."
-                                },
                                 "replace_content": {
                                     "type": "string",
-                                    "description": "New content that replaces everything from start_line through end_line (inclusive). Use empty string to delete the range."
+                                    "description": "New content that replaces everything from remove_start_line through remove_end_line (inclusive). Use empty string to delete the range."
                                 }
                             },
-                            "required": ["start_line", "start_line_content", "replace_content"]
+                            "required": ["remove_start_line", "content_to_remove", "replace_content"]
                         }
                     }
                 },

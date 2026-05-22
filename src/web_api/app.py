@@ -1,9 +1,9 @@
 """
 FastAPI Backend for ThinkWithTool AI Assistant
 
-Provides REST API endpoints with SSE streaming for real-time chat responses.
-File-display endpoints (diff, tree, read, workspace) have been moved to
-``conversation_gateway/api.py`` (port 8081).
+Provides the core agent SSE streaming endpoint.
+All other endpoints (settings, providers, workspace, file display, conversations)
+have been moved to ``conversation_gateway/api.py`` (port 8081).
 """
 
 import json
@@ -32,40 +32,40 @@ from conversation_gateway.workspace import snapshot_file, mark_file_touched, cle
 
 logger = logging.getLogger(__name__)
 
-# Thread pool for running synchronous generators (unbounded — workers are I/O-bound)
 executor = ThreadPoolExecutor()
+
 
 # ============================================================================
 # Pydantic Models
 # ============================================================================
 
 class ChatMessage(BaseModel):
-    """A single chat message."""
-    role: str = Field(..., description="Message role: 'user', 'assistant', 'system', or 'tool'")
-    content: Optional[str] = Field(None, description="Message content")
-    thinking: Optional[str] = Field(None, description="Reasoning/thinking content")
-    tool_calls: Optional[list] = Field(None, description="Tool calls made by assistant")
-    tool_call_id: Optional[str] = Field(None, description="ID of the tool call this message responds to")
+    role: str = Field(..., description="Message role")
+    content: Optional[str] = Field(None)
+    thinking: Optional[str] = Field(None)
+    tool_calls: Optional[list] = Field(None)
+    tool_call_id: Optional[str] = Field(None)
 
 
 class ChatRequest(BaseModel):
-    """Request body for chat endpoint."""
-    message: Optional[str] = Field(None, description="User message text (omit for continue)")
-    conversation_id: Optional[str] = Field(None, description="Conversation ID for stream management")
-    messages: Optional[list] = Field(None, description="Full conversation history from frontend (required for continue/resume)")
-    provider: Optional[str] = Field(None, description="Model provider to use (e.g., 'deepseek', 'nvidia')")
-    tools: Optional[str] = Field(None, description="Tool mode: 'read_only' or 'all'")
+    message: Optional[str] = Field(None)
+    conversation_id: Optional[str] = Field(None)
+    messages: Optional[list] = Field(None)
+    provider: Optional[str] = Field(None)
+    tools: Optional[str] = Field(None)
 
 
-# Track active streams per conversation - allows cancelling previous stream when new one starts
+# ============================================================================
+# Active stream tracking (for cancelling on new-send)
+# ============================================================================
+
 active_streams: Dict[str, threading.Event] = {}
 active_streams_lock = threading.Lock()
 
+
 def cancel_active_stream(conversation_id: str) -> bool:
-    """Cancel any active stream for the given conversation. Returns True if a stream was cancelled."""
     with active_streams_lock:
         if conversation_id in active_streams:
-            logger.info(f"[cancel_active_stream] Cancelling active stream for {conversation_id}")
             active_streams[conversation_id].set()
             del active_streams[conversation_id]
             return True
@@ -73,23 +73,23 @@ def cancel_active_stream(conversation_id: str) -> bool:
 
 
 def register_stream(conversation_id: str, cancel_event: threading.Event):
-    """Register a new active stream for the conversation."""
     with active_streams_lock:
         if conversation_id in active_streams:
-            logger.info(f"[register_stream] Replacing existing stream for {conversation_id}")
             active_streams[conversation_id].set()
         active_streams[conversation_id] = cancel_event
 
 
 def unregister_stream(conversation_id: str, cancel_event: threading.Event):
-    """Unregister a stream (only if it's still the active one)."""
     with active_streams_lock:
         if active_streams.get(conversation_id) is cancel_event:
             del active_streams[conversation_id]
 
 
+# ============================================================================
+# Helpers
+# ============================================================================
+
 def get_filtered_tools(mode: str):
-    """Return tool definitions filtered by mode."""
     from ..tool_definitions import NATIVE_TOOL_DEFINITIONS, SUBAGENT_READ_ONLY_TOOLS
     defs = []
     for td in NATIVE_TOOL_DEFINITIONS:
@@ -102,17 +102,9 @@ def get_filtered_tools(mode: str):
     return defs
 
 
-# ============================================================================
-# Message Conversion for Frontend
-# ============================================================================
-
 def convert_messages_for_frontend(messages: list) -> list:
-    """Convert backend message format to frontend-friendly format."""
     frontend_messages = []
     i = 0
-
-    logger.debug(f"[convert] Processing {len(messages)} messages")
-
     while i < len(messages):
         msg = messages[i]
         role = msg.get("role")
@@ -120,85 +112,55 @@ def convert_messages_for_frontend(messages: list) -> list:
         if role == "system":
             i += 1
             continue
-
         elif role == "user":
-            frontend_messages.append({
-                "role": "user",
-                "content": msg.get("content", "")
-            })
+            frontend_messages.append({"role": "user", "content": msg.get("content", "")})
             i += 1
-
         elif role == "assistant":
             activities = []
-
             thinking = msg.get("thinking") or msg.get("reasoning_content")
             if thinking:
                 activities.append({"type": "thinking", "content": thinking})
-
-            tool_calls = msg.get("tool_calls", [])
-            for tc in tool_calls:
+            for tc in msg.get("tool_calls", []):
                 tc_func = tc.get("function", {})
                 activities.append({
-                    "type": "tool_call",
-                    "id": tc.get("id", ""),
-                    "name": tc_func.get("name", ""),
-                    "arguments": tc_func.get("arguments", "{}")
+                    "type": "tool_call", "id": tc.get("id", ""),
+                    "name": tc_func.get("name", ""), "arguments": tc_func.get("arguments", "{}"),
                 })
-
             j = i + 1
             while j < len(messages) and messages[j].get("role") == "tool":
                 tool_msg = messages[j]
-                tool_content = tool_msg.get("content", "")
-                if len(tool_content) > 3000:
-                    tool_content = tool_content[:3000] + "\n... [truncated]"
+                content = tool_msg.get("content", "")
+                if len(content) > 3000:
+                    content = content[:3000] + "\n... [truncated]"
                 activities.append({
                     "type": "tool_result",
                     "tool_call_id": tool_msg.get("tool_call_id", ""),
-                    "content": tool_content
+                    "content": content,
                 })
                 j += 1
-
-            content = msg.get("content", "")
-            assistant_msg = {
+            frontend_messages.append({
                 "role": "assistant",
-                "content": content,
-                "activities": activities
-            }
-            logger.debug(f"[convert] Assistant message with {len(activities)} activities, content_len={len(content)}")
-            frontend_messages.append(assistant_msg)
+                "content": msg.get("content", ""),
+                "activities": activities,
+            })
             i = j
-
         elif role == "tool":
             i += 1
-
         else:
             i += 1
-
     return frontend_messages
 
 
-# ============================================================================
-# SSE Event Formatting
-# ============================================================================
-
 def format_sse_event(event_type: str, data: Any) -> str:
-    """Format data as a Server-Sent Event."""
-    json_data = json.dumps(data, ensure_ascii=False)
-    return f"event: {event_type}\ndata: {json_data}\n\n"
+    return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 async def stream_chat_response(
-    messages: list,
-    conversation_id: str,
-    request: Request,
-    max_iterations: int = 30,
-    provider: Optional[str] = None,
-    tools_override: Optional[list] = None,
-    restart_shell: bool = False,
+    messages: list, conversation_id: str, request: Request,
+    max_iterations: int = 30, provider: Optional[str] = None,
+    tools_override: Optional[list] = None, restart_shell: bool = False,
 ) -> AsyncGenerator[str, None]:
-    """Stream chat responses as SSE events."""
     cancel_event = threading.Event()
-
     cancel_active_stream(conversation_id)
     register_stream(conversation_id, cancel_event)
 
@@ -212,28 +174,22 @@ async def stream_chat_response(
                     try:
                         shell.restart()
                     except Exception as e:
-                        logger.warning(f"[stream] Failed to restart shell: {e}")
+                        logger.warning(f"Failed to restart shell: {e}")
 
                 current_messages = messages
                 status = "running"
                 current_provider = provider
 
                 for response in generate_chat_responses_stream_native(
-                    messages=messages,
-                    max_iterations=max_iterations,
-                    provider_id=provider,
-                    tools_override=tools_override,
+                    messages=messages, max_iterations=max_iterations,
+                    provider_id=provider, tools_override=tools_override,
                 ):
                     if cancel_event.is_set():
-                        logger.info(f"[stream] Client disconnected, stopping generation for {conversation_id}")
                         break
-
                     current_messages = response["messages"]
                     status = response["status"]
                     current_provider = response.get("provider", provider)
-
                     frontend_messages = convert_messages_for_frontend(current_messages)
-
                     loop.call_soon_threadsafe(
                         queue.put_nowait,
                         ("messages", {
@@ -241,27 +197,24 @@ async def stream_chat_response(
                             "raw_messages": current_messages,
                             "status": status,
                             "conversation_id": conversation_id,
-                            "provider": current_provider
+                            "provider": current_provider,
                         })
                     )
 
                 if not cancel_event.is_set():
-                    final_status = status
                     final_messages = convert_messages_for_frontend(current_messages)
                     loop.call_soon_threadsafe(
                         queue.put_nowait,
                         ("done", {
                             "conversation_id": conversation_id,
-                            "status": final_status,
+                            "status": status,
                             "messages": final_messages,
                             "raw_messages": current_messages,
-                            "provider": current_provider
+                            "provider": current_provider,
                         })
                     )
                 else:
-                    logger.info(f"[stream] Client disconnected for {conversation_id}")
                     cancel_active_subagents(conversation_id)
-
             except Exception as e:
                 if not cancel_event.is_set():
                     logger.exception("Error in generator thread")
@@ -272,99 +225,52 @@ async def stream_chat_response(
             finally:
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
-        future = executor.submit(run_generator)
+        executor.submit(run_generator)
 
         while True:
             try:
                 if await request.is_disconnected():
-                    logger.info(f"[stream] Client disconnected, signaling cancellation for {conversation_id}")
                     cancel_event.set()
                     break
-
                 event = await asyncio.wait_for(queue.get(), timeout=2.0)
-
                 if event is None:
                     break
-
                 event_type, event_data = event
                 yield format_sse_event(event_type, event_data)
-
             except asyncio.TimeoutError:
                 if await request.is_disconnected():
-                    logger.info(f"[stream] Client disconnected during timeout, signaling cancellation for {conversation_id}")
                     cancel_event.set()
                     break
                 continue
-
-    except Exception as e:
-        logger.exception("Error in stream_chat_response")
-        yield format_sse_event("error", {"message": str(e), "type": type(e).__name__})
     finally:
         cancel_event.set()
         unregister_stream(conversation_id, cancel_event)
 
 
 # ============================================================================
-# Application Lifecycle
+# Application
 # ============================================================================
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan manager - handles startup and shutdown."""
     logger.info("Initializing sandbox...")
     try:
         workspace = get_workspace()
         logger.info(f"Workspace: {workspace}")
-
         shell.start()
-        logger.info("Persistent shell started")
-
-        set_file_tracking_callbacks(
-            on_read=snapshot_file,
-            on_write=mark_file_touched
-        )
+        set_file_tracking_callbacks(on_read=snapshot_file, on_write=mark_file_touched)
         logger.info("File tracking callbacks registered")
-
     except Exception as e:
         logger.error(f"Failed to initialize sandbox: {e}")
-
     yield
-
     logger.info("Shutting down...")
     shell.stop()
     executor.shutdown(wait=False)
 
 
-# ============================================================================
-# FastAPI Application
-# ============================================================================
+app = FastAPI(title="AuroraCoder API", version="1.0.0", lifespan=lifespan)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-def create_app() -> FastAPI:
-    """Create and configure the FastAPI application."""
-    app = FastAPI(
-        title="AuroraCoder API",
-        description="Your intelligent coding companion - AI-powered code assistant",
-        version="1.0.0",
-        lifespan=lifespan
-    )
-
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
-    return app
-
-
-app = create_app()
-
-
-# ============================================================================
-# API Endpoints
-# ============================================================================
 
 @app.get("/")
 async def root():
@@ -381,132 +287,30 @@ async def health_check():
     }
 
 
-@app.get("/api/providers")
-async def list_providers():
-    from ..settings_store import get_custom_providers, get_api_key, get_setting_override
-    providers = get_available_providers()
-    # Merge custom providers from settings
-    for cp in get_custom_providers():
-        if not any(p["id"] == cp["id"] for p in providers):
-            providers.append({
-                "id": cp["id"],
-                "name": cp.get("name", cp["id"]),
-                "description": cp.get("description", "Custom provider"),
-                "supports_thinking": cp.get("supports_thinking", False),
-                "custom": True,
-            })
-    return {"providers": providers, "default": get_default_provider()}
-
-
-# ============================================================================
-# Settings Endpoints
-# ============================================================================
-
-from pydantic import BaseModel as _PydanticBaseModel, Field as _Field
-from typing import Any as _Any
-
-class _SettingsUpdate(_PydanticBaseModel):
-    """Partial update for settings."""
-    api_keys: Optional[dict] = _Field(None, description="Map of provider_id -> API key")
-    provider_overrides: Optional[dict] = _Field(None, description="Per-provider overrides (base_url, model)")
-    custom_providers: Optional[list] = _Field(None, description="User-defined custom providers")
-    other: Optional[dict] = _Field(None, description="Miscellaneous settings")
-
-
-@app.get("/api/settings")
-async def get_settings():
-    """Return current user settings (API keys masked)."""
-    from ..settings_store import get_all_settings as _get_all
-    from ..settings_store import get_custom_providers as _get_cp
-    settings = _get_all()
-    # Ensure keys exist for a smooth frontend experience
-    settings.setdefault("api_keys", {})
-    settings.setdefault("provider_overrides", {})
-    settings.setdefault("custom_providers", _get_cp())
-    settings.setdefault("other", {})
-    return settings
-
-
-@app.put("/api/settings")
-async def update_settings(update: _SettingsUpdate):
-    """Merge partial settings update and persist."""
-    from ..settings_store import update_settings as _update
-    from ..providers import provider_manager as _pm
-    payload = {}
-    if update.api_keys is not None:
-        payload["api_keys"] = update.api_keys
-    if update.provider_overrides is not None:
-        payload["provider_overrides"] = update.provider_overrides
-    if update.custom_providers is not None:
-        payload["custom_providers"] = update.custom_providers
-    if update.other is not None:
-        payload["other"] = update.other
-    result = _update(payload)
-    # Re-initialize providers so custom providers / new keys take effect immediately
-    _pm.reload()
-    return result
-
-
-# ============================================================================
-# Workspace Info
-# ============================================================================
-
-@app.get("/api/workspace")
-async def get_workspace_info():
-    """Return basic workspace info."""
-    return {
-        "workspace": str(WORKSPACE),
-        "shell_alive": shell.is_alive,
-    }
-
-
-# ============================================================================
-# Chat Endpoint
-# ============================================================================
-
 @app.post("/api/chat")
 async def chat(chat_request: ChatRequest, request: Request):
-    """Stateless chat endpoint. Returns a streaming response with SSE events."""
     conversation_id = chat_request.conversation_id or str(uuid.uuid4())
-    logger.info(f"[API] /api/chat called with conversation_id: {chat_request.conversation_id}, new_id: {conversation_id}")
-
     set_current_conversation(conversation_id)
-
-    is_new_conversation = not chat_request.conversation_id
-    is_continue = bool(chat_request.messages and not chat_request.message)
-
-    if is_new_conversation:
+    is_new = not chat_request.conversation_id
+    if is_new:
         clear_conversation_snapshots(conversation_id)
 
     messages = (chat_request.messages or []).copy()
     if chat_request.message:
         messages.append({"role": "user", "content": chat_request.message})
 
-    logger.info(f"[API] Total messages: {len(messages)}, provider: {chat_request.provider}")
-
     provider = chat_request.provider or DEFAULT_PROVIDER
-
     tools_override = get_filtered_tools(chat_request.tools) if chat_request.tools else None
-    if tools_override is not None:
-        tool_names = [td["function"]["name"] for td in tools_override]
-        logger.info(f"[API] Tool override ({chat_request.tools}): {tool_names}")
 
     return StreamingResponse(
-        stream_chat_response(messages, conversation_id, request, provider=provider, tools_override=tools_override, restart_shell=is_new_conversation),
+        stream_chat_response(messages, conversation_id, request, provider=provider, tools_override=tools_override, restart_shell=is_new),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-            "X-Conversation-ID": conversation_id,
-            "X-Provider": provider
+            "Cache-Control": "no-cache", "Connection": "keep-alive",
+            "X-Accel-Buffering": "no", "X-Conversation-ID": conversation_id, "X-Provider": provider,
         }
     )
 
-
-# ============================================================================
-# Entry Point
-# ============================================================================
 
 if __name__ == "__main__":
     import uvicorn
