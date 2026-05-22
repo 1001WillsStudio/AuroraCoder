@@ -69,10 +69,6 @@ const LANG = {
     'agent.systemDefault': '(system default)',
     'agent.customSuffix': ' (custom)',
     'agent.maxIterations': 'Max Iterations Per Turn',
-    'agent.continueIterations': 'Continue Iterations',
-    'agent.maxToolConcurrency': 'Max Tool Concurrency',
-    'agent.terminalMaxOutput': 'Max Terminal Output (chars)',
-    'agent.codeInterpreterChecks': 'Code Interpreter Checks',
 
     // ── Persistence note ──────────────────────────────────────────
     'persistence.note':
@@ -147,10 +143,6 @@ const LANG = {
     'agent.systemDefault': '(系统默认)',
     'agent.customSuffix': '（自定义）',
     'agent.maxIterations': '每轮最大迭代次数',
-    'agent.continueIterations': '继续迭代次数',
-    'agent.maxToolConcurrency': '最大工具并发数',
-    'agent.terminalMaxOutput': '终端最大输出（字符）',
-    'agent.codeInterpreterChecks': '代码解释器检查',
 
     // ── Persistence note ──────────────────────────────────────────
     'persistence.note':

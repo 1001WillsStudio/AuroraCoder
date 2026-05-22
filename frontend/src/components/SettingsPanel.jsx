@@ -41,6 +41,9 @@ export default function SettingsPanel({ isOpen, onClose }) {
         setSettings({ ...s, other })
         setProviders(p.providers || [])
       } catch {
+        // Backend unavailable — set safe defaults so the UI still works
+        setSettings({ api_keys: {}, provider_overrides: {}, custom_providers: [], other: { web_secondary: {}, agent: {} } })
+        setProviders([])
         setMessage({ type: 'error', text: t('settings.loadError') })
       } finally {
         setLoading(false)
@@ -415,14 +418,6 @@ export default function SettingsPanel({ isOpen, onClose }) {
                 </div>
                 <div className="settings-field-row" style={{ marginTop: '12px' }}>
                   <div className="settings-field-col">
-                    <label>{t('agent.continueIterations')}</label>
-                    <input className="settings-input" type="number"
-                      value={other.agent?.continue_iterations || ''}
-                      onChange={e => setOther('agent', 'continue_iterations', e.target.value)}
-                      placeholder="30" min="1" max="200"
-                    />
-                  </div>
-                  <div className="settings-field-col">
                     <label>{t('agent.maxToolConcurrency')}</label>
                     <input className="settings-input" type="number"
                       value={other.agent?.max_tool_concurrency || ''}
@@ -430,8 +425,6 @@ export default function SettingsPanel({ isOpen, onClose }) {
                       placeholder="5" min="1" max="20"
                     />
                   </div>
-                </div>
-                <div className="settings-field-row" style={{ marginTop: '12px' }}>
                   <div className="settings-field-col">
                     <label>{t('agent.terminalMaxOutput')}</label>
                     <input className="settings-input" type="number"
@@ -439,13 +432,6 @@ export default function SettingsPanel({ isOpen, onClose }) {
                       onChange={e => setOther('agent', 'terminal_max_output', e.target.value)}
                       placeholder="15000" min="1000" max="100000"
                     />
-                  </div>
-                  <div className="settings-field-col settings-field-col-checkbox" style={{ paddingTop: '20px' }}>
-                    <label className="settings-checkbox-label">
-                      <input type="checkbox" checked={other.agent?.code_interpreter_errors !== false}
-                        onChange={e => setOther('agent', 'code_interpreter_errors', e.target.checked)} />
-                      {t('agent.codeInterpreterChecks')}
-                    </label>
                   </div>
                 </div>
               </section>

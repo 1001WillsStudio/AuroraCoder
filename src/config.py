@@ -120,7 +120,6 @@ MAX_TOOL_CALLS = 10  # Increased since native tool calling is more efficient
 
 # Iteration Limits
 MAX_ITERATIONS = 30  # Maximum iterations per turn before requiring user to continue
-CONTINUE_ITERATIONS = 30  # Additional iterations when user clicks Continue
 MAX_STREAMING_RETRIES = 10  # Consecutive streaming failures before giving up
 
 # Tool Concurrency
@@ -179,10 +178,6 @@ WEB_FETCH_TIMEOUT_S = 60
 # URL result cache: entries and TTL
 WEB_CACHE_MAX_ENTRIES = 64
 WEB_CACHE_TTL_S = 15 * 60  # 15 minutes
-
-# Code interpreter (Pyright) error checking on files shown to the model.
-# Set to False to disable — useful when the checker produces noisy false positives.
-CODE_INTERPRETER_ERRORS_ENABLED = False
 
 # Code interpreter display limits
 INTERPRETER_WARN_CHARS = 50_000       # Total display chars before context warning
@@ -278,10 +273,6 @@ def get_max_iterations() -> int:
     return int(_get_from_settings("agent", "max_iterations", MAX_ITERATIONS))
 
 
-def get_continue_iterations() -> int:
-    return int(_get_from_settings("agent", "continue_iterations", CONTINUE_ITERATIONS))
-
-
 def get_max_tool_concurrency() -> int:
     return int(_get_from_settings("agent", "max_tool_concurrency", MAX_TOOL_CONCURRENCY))
 
@@ -290,11 +281,6 @@ def get_terminal_max_output() -> int:
     return int(_get_from_settings("agent", "terminal_max_output", TERMINAL_MAX_OUTPUT_CHARS))
 
 
-def get_code_interpreter_errors_enabled() -> bool:
-    val = _get_from_settings("agent", "code_interpreter_errors", None)
-    if val is not None:
-        return bool(val)
-    return CODE_INTERPRETER_ERRORS_ENABLED
 
 
 def get_web_secondary_config() -> dict:
