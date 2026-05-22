@@ -5,6 +5,6 @@ This package provides a modern REST API with Server-Sent Events (SSE)
 streaming for the AI assistant.
 """
 
-from .app import app, create_app
+from .app import app
 
-__all__ = ['app', 'create_app']
+__all__ = ['app']
