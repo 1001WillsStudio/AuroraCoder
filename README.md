@@ -40,9 +40,20 @@ Below are the genuinely novel architectural ideas that set it apart — followed
 
 ### 1. 📟 Living Tool State — Mutating Responses, Not Appending Them
 
-Every other agent framework treats tool responses as **immutable, append-only history**. The model calls a tool, the result is appended, and it stays in context forever — accumulating stale, contradictory file contents that waste tokens and confuse the model.
+Most agent frameworks treat tool responses as **immutable, append-only history**. The model calls a tool, the result is appended, and it stays in context forever — accumulating stale, contradictory file contents that waste tokens and confuse the model.
 
-AuroraCoder introduces a fundamentally different paradigm: **tool responses are mutable**. After every code-related tool call (`read_file`, `write_file`, `edit_file`), the system scans the entire conversation for all currently open files, re-reads them from disk, formats them with line numbers, and appends a single **consolidated state block** to the *last* tool message. Then it **strips every previous state block** from earlier tool messages — collapsing them down to near-zero tokens.
+But beyond the append-only problem, there's a deeper design choice that divides all coding agents into two camps — what does the agent return after editing a file?
+
+| Pattern | After Edit | Token Cost | Model Visibility | Examples |
+|---------|-----------|------------|------------------|----------|
+| **A: Minimal Response** | `"Edit applied successfully."` + diff | Low | Must mentally reconstruct file state from past actions | [OpenCode](https://github.com/anomalyco/opencode), Aider |
+| **B: Full State Response** | Complete file content with line numbers | Higher | Perfect — sees exact disk state every turn | AuroraCoder, Claude Code |
+
+**Pattern A** (used by [OpenCode](https://github.com/anomalyco/opencode) — 160K+ GitHub stars) returns only a status message and a unified diff. The model never sees the full updated file after an edit unless it explicitly calls `read` again. This saves context tokens but forces the model to mentally reconstruct file state across multiple edits — a fragile process prone to drift, phantom content, and cascading errors when the model's mental model diverges from what's actually on disk. The [OpenCode source](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/tool/edit.ts) confirms: its `edit` tool's output is literally `"Edit applied successfully."` — nothing more.
+
+**Pattern B** re-reads every affected file from disk after each code-changing operation and presents the authoritative state to the model. This costs extra tokens (re-sending file contents the model already edited) but eliminates state hallucination — the model always operates on ground truth.
+
+AuroraCoder is a refined Pattern B implementation. But it goes further than naive re-reading: **tool responses are mutable**. After every code-related tool call (`read_file`, `write_file`, `edit_file`), the system scans the entire conversation for all currently open files, re-reads them from disk, formats them with line numbers, and appends a single **consolidated state block** to the *last* tool message. Then it **strips every previous state block** from earlier tool messages — collapsing them down to near-zero tokens.
 
 ```
 Before (append-only — every tool response stays):
@@ -335,7 +346,7 @@ AuroraCoder gives the LLM **13 built-in tools** via native OpenAI function calli
 
 **Parallel execution**: Read-only tools run concurrently (5 threads max). Write tools serialize. Sub-agents get a filtered read-only subset.
 
-> **`tool_store`** is powered by **[ToolStore](https://github.com/S3-Ai/toolstore)**, a separate open-source project that provides a universal interface for discovering and executing thousands of public APIs and local utilities.
+> **`tool_store`** is a built-in meta-tool that provides universal tool discovery and execution — search, inspect, and invoke thousands of public APIs and local utilities from a single interface.
 ---
 
 ## ⚙️ Configuration
@@ -479,10 +490,10 @@ MIT License — see [LICENSE](LICENSE) for details.
 ## 🙏 Acknowledgments
 
 - **Aider** — the gold standard for LLM-powered code editing (search-and-replace pattern)
+- **[OpenCode](https://github.com/anomalyco/opencode)** — open-source AI coding agent (160K+ stars); follows Pattern A (minimal edit response — model must reconstruct state from past actions)
 - **Claude Code** — Anthropic's agent architecture and skills system
 - **OpenAI** — Function calling API design
 - **Model Context Protocol (MCP)** — Standardized tool server interface
-- **[ToolStore](https://github.com/S3-Ai/toolstore)** — Universal tool discovery and execution engine (used by the `tool_store` tool)
 
 ---
 

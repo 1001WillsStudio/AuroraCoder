@@ -443,13 +443,14 @@ def get_tool_function_map() -> Dict[str, Any]:
     return TOOL_FUNCTION_MAP
 
 
-def execute_tool_call(tool_name: str, arguments: Dict[str, Any]) -> str:
+def execute_tool_call(tool_name: str, arguments: Dict[str, Any], tool_call_id: str | None = None) -> str:
     """
     Executes a tool call with the given arguments.
 
     Args:
         tool_name: Name of the tool to execute
         arguments: Dictionary of arguments to pass to the tool
+        tool_call_id: Optional id of the tool call (used by subagent to link events)
 
     Returns:
         String result from the tool execution
@@ -459,6 +460,8 @@ def execute_tool_call(tool_name: str, arguments: Dict[str, Any]) -> str:
 
     try:
         function = TOOL_FUNCTION_MAP[tool_name]
+        if tool_name == "subagent" and tool_call_id:
+            arguments = {**arguments, "tool_call_id": tool_call_id}
         result = function(**arguments)
         return str(result)
     except Exception as e:

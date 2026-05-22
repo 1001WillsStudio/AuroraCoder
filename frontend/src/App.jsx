@@ -59,7 +59,9 @@ function App() {
   const draftInputsRef = useRef(new Map())
   const [viewMode, setViewMode] = useState('main')
   const [parentConversationId, setParentConversationId] = useState(null)
-  const [subagentChildIds, setSubagentChildIds] = useState([])
+  // Map from tool_call_id → child_id for accurate correlation between
+  // subagent_event notifications and their originating tool calls.
+  const [subagentChildIds, setSubagentChildIds] = useState({})
   const [showSettings, setShowSettings] = useState(false)
   const messagesEndRef = useRef(null)
   const chatContainerRef = useRef(null)
@@ -278,8 +280,14 @@ function App() {
           setHistoryRefreshTrigger(prev => prev + 1)
         },
         onSubagentEvent: (evt) => {
-          if (evt.child_id) {
-            setSubagentChildIds(prev => prev.includes(evt.child_id) ? prev : [...prev, evt.child_id])
+          if (evt.child_id && evt.tool_call_id) {
+            setSubagentChildIds(prev => ({ ...prev, [evt.tool_call_id]: evt.child_id }))
+          } else if (evt.child_id) {
+            // Fallback: use index-based mapping for events without tool_call_id
+            setSubagentChildIds(prev => {
+              const arr = prev._fallback || []
+              return { ...prev, _fallback: arr.includes(evt.child_id) ? arr : [...arr, evt.child_id] }
+            })
           }
           setHistoryRefreshTrigger(prev => prev + 1)
         }
@@ -331,8 +339,13 @@ function App() {
           setHistoryRefreshTrigger(prev => prev + 1)
         },
         onSubagentEvent: (evt) => {
-          if (evt.child_id) {
-            setSubagentChildIds(prev => prev.includes(evt.child_id) ? prev : [...prev, evt.child_id])
+          if (evt.child_id && evt.tool_call_id) {
+            setSubagentChildIds(prev => ({ ...prev, [evt.tool_call_id]: evt.child_id }))
+          } else if (evt.child_id) {
+            setSubagentChildIds(prev => {
+              const arr = prev._fallback || []
+              return { ...prev, _fallback: arr.includes(evt.child_id) ? arr : [...arr, evt.child_id] }
+            })
           }
           setHistoryRefreshTrigger(prev => prev + 1)
         }
@@ -342,7 +355,6 @@ function App() {
       setIsStreaming(false)
     }
   }
-
   const handleClear = () => {
     if (inputValue.trim()) draftInputsRef.current.set(conversationId ?? '__new__', inputValue)
     if (abortControllerRef.current) abortControllerRef.current.abort()
@@ -358,7 +370,7 @@ function App() {
     setActiveConvoWarning(false)
     setViewMode('main')
     setParentConversationId(null)
-    setSubagentChildIds([])
+    setSubagentChildIds({})
     setHistoryRefreshTrigger(prev => prev + 1)
     const draft = draftInputsRef.current.get('__new__') || ''
     setInputValue(draft)

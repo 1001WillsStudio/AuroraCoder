@@ -66,6 +66,7 @@ def cancel_active_subagents(parent_conversation_id: str | None = None) -> None:
 def run_subagent(
     task: str,
     provider_id: str | None = None,
+    tool_call_id: str | None = None,
 ) -> str:
     """
     Spawn a subagent that executes *task* autonomously and returns a summary.
@@ -74,6 +75,8 @@ def run_subagent(
         task:  Detailed description of what the subagent should accomplish.
                The subagent has NO knowledge of the parent conversation.
         provider_id: Model provider; defaults to the parent's current provider.
+        tool_call_id: The parent's tool_call id for this call, so the frontend
+                      can correlate subagent events with the originating tool.
     """
     from ..code_tools.file_operations import _current_conversation_id as parent_cid
 
@@ -92,6 +95,7 @@ def run_subagent(
         "tools": tools,
         "conv_type": "subagent",
         "parent_id": parent_cid,
+        "tool_call_id": tool_call_id,
     }
     if provider_id:
         body["provider"] = provider_id
@@ -107,7 +111,7 @@ def run_subagent(
         # Store the response so cancel_active_subagents() can close it
         with _active_lock:
             if child_id in _active_subagents:
-                _active_subagents[child_id] = (cancel_event, resp)
+                _active_subagents[child_id] = (cancel_event, resp, parent_cid)
 
         if resp.status_code != 200:
             return f"Subagent error: conversation server returned {resp.status_code}: {resp.text[:500]}"

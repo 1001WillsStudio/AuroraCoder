@@ -80,6 +80,7 @@ class ActiveStream:
     conversation_id: str
     conv_type: str = "user_chat"
     parent_id: Optional[str] = None
+    tool_call_id: Optional[str] = None   # set when this is a subagent spawned by a tool call
     provider: Optional[str] = None
     latest_event_type: Optional[str] = None
     latest_event_data: Optional[dict] = None
@@ -489,6 +490,7 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                                 if parent and not parent.finished:
                                     child_evt = ("subagent_event", {
                                         "child_id": cid,
+                                        "tool_call_id": stream.tool_call_id,
                                         "event_type": etype,
                                         "status": stream.status,
                                     })
@@ -712,6 +714,7 @@ async def proxy_chat(request: Request):
     # Extract conversation-server metadata (not forwarded to backend)
     conv_type = body.pop("conv_type", "user_chat")
     parent_id = body.pop("parent_id", None)
+    tool_call_id = body.pop("tool_call_id", None)
 
     # 409 guard: only for user_chat (subagents are allowed alongside a main stream)
     if conv_type == "user_chat":
@@ -735,6 +738,7 @@ async def proxy_chat(request: Request):
         conversation_id=conversation_id,
         conv_type=conv_type,
         parent_id=parent_id,
+        tool_call_id=tool_call_id,
         provider=body.get("provider"),
     )
 
@@ -771,6 +775,7 @@ async def proxy_chat(request: Request):
         if parent_stream and not parent_stream.finished:
             evt = ("subagent_event", {
                 "child_id": conversation_id,
+                "tool_call_id": tool_call_id,
                 "event_type": "started",
                 "status": "running",
             })

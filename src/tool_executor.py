@@ -57,7 +57,7 @@ def _execute_single_tool(tool_call: Dict) -> Tuple[Dict, str, str]:
     except json.JSONDecodeError as e:
         return (tool_call, tool_name, f"Error: could not parse tool arguments — {e}")
     try:
-        result = execute_tool_call(tool_name, arguments)
+        result = execute_tool_call(tool_name, arguments, tool_call_id=tool_call.get("id"))
     except Exception as e:
         result = f"Error executing tool '{tool_name}': {type(e).__name__}: {e}"
     return (tool_call, tool_name, result)

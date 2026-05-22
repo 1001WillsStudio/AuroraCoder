@@ -12,16 +12,22 @@ import {
 function ToolActivity({ toolCalls, toolResults, onStopTool, onLoadConversation, subagentChildIds }) {
   if (!toolCalls || toolCalls.length === 0) return null
 
-  let subagentIdx = 0
+  // subagentChildIds is now a map { tool_call_id → child_id }
+  // For backward compatibility with older sessions, also support _fallback array
+  const fallbackIds = subagentChildIds?._fallback || []
+  let fallbackIdx = 0
   return (
     <div className="tool-activity-section">
       {toolCalls.map((tc, idx) => {
         const toolResult = toolResults?.find(r => r.tool_call_id === tc.id)
-        const childId = tc.name === 'subagent' ? subagentChildIds?.[subagentIdx++] : null
+        // Use tool_call_id → child_id map, fall back to index-based if no mapping
+        const childId = tc.name === 'subagent'
+          ? (subagentChildIds?.[tc.id] || fallbackIds[fallbackIdx++])
+          : null
         return (
-          <ToolActivityItem 
-            key={tc.id || idx} 
-            toolCall={tc} 
+          <ToolActivityItem
+            key={tc.id || idx}
+            toolCall={tc}
             result={toolResult}
             onStop={onStopTool}
             onLoadConversation={onLoadConversation}
