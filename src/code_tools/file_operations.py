@@ -152,21 +152,21 @@ class FileOperations:
         different positions than specified, a self-correction marker is
         emitted so main_flow can patch the conversation history.
 
-        Each edit specifies a line range (remove_start_line..remove_end_line) and
-        replacement content.  content_to_remove is a multi-line string in the format
-        "start_line_content\\n...\\nend_line_content" that identifies the exact block
-        to replace in the file.  The first line serves as the start anchor and the
-        last line serves as the end anchor.
+        Each edit specifies the lines to remove via `remove_line_number` (e.g. "13-15",
+        "24-36") and replacement content.  content_to_remove is a multi-line string in
+        the format "start_line_content\\n[TO]\\nend_line_content" that identifies the
+        exact block to replace in the file.  The first line serves as the start anchor
+        and the last line serves as the end anchor.
 
         Args:
             target_file: Path to the file to edit (relative to workspace)
             edits: List of edit dicts, each with:
-                remove_start_line (int): 1-based line number where the range begins
+                remove_line_number (str): Line range to remove, e.g. "13-15" or "24-36".
+                    For a single line just use the number, e.g. "42".
                 content_to_remove (str): Multi-line block identifying what to replace,
-                    in format 'start_line_content\\n...\\nend_line_content'
-                remove_end_line (int): 1-based line number where the range ends
+                    in format 'start_line_content\\n[TO]\\nend_line_content'
                 replace_content (str): New content to insert (replaces everything
-                    from remove_start_line through remove_end_line inclusive;
+                    in the specified remove_line_number inclusive;
                     empty string to delete)
 
         Returns:
@@ -272,11 +272,26 @@ class FileOperations:
             corrected_edits_for_marker = []
 
             for i, edit in enumerate(edits):
-                start_line = edit.get("remove_start_line")
+                # Parse remove_line_number string like "13-15" or "42"
+                remove_line_number = edit.get("remove_line_number", "")
+                try:
+                    parts = str(remove_line_number).strip().split("-")
+                    if len(parts) == 1:
+                        start_line = int(parts[0])
+                        end_line = start_line
+                    elif len(parts) == 2:
+                        start_line = int(parts[0])
+                        end_line = int(parts[1])
+                    else:
+                        return (f"Error in edit #{i + 1}: remove_line_number must be "
+                                f"like '13-15' or '42', got '{remove_line_number}'")
+                except (ValueError, AttributeError):
+                    return (f"Error in edit #{i + 1}: remove_line_number must be "
+                            f"like '13-15' or '42', got '{remove_line_number}'")
+
                 content_to_remove = str(edit.get("content_to_remove") or "")
-                start_content = content_to_remove.split('\n...\n')[0] if content_to_remove else ""
-                end_content = content_to_remove.split('\n...\n')[-1] if content_to_remove else ""
-                end_line = edit.get("remove_end_line")
+                start_content = content_to_remove.split('\n[TO]\n')[0] if content_to_remove else ""
+                end_content = content_to_remove.split('\n[TO]\n')[-1] if content_to_remove else ""
                 replace_content = str(edit.get("replace_content", ""))
 
                 # --- Defaults: end_line → start_line, end_content → file ---
@@ -404,11 +419,10 @@ class FileOperations:
                 # Build content_to_remove from the actual file block that was matched
                 start_portion = ''.join(original_lines[start_idx:start_idx + start_anchor_line_count]).rstrip('\n')
                 end_portion = ''.join(original_lines[end_idx - end_anchor_line_count + 1:end_idx + 1]).rstrip('\n')
-                actual_block = start_portion + '\n...\n' + end_portion
+                actual_block = start_portion + '\n[TO]\n' + end_portion
                 corrected_edits_for_marker.append({
-                    "remove_start_line": start_idx + 1,
+                    "remove_line_number": f"{start_idx + 1}-{end_idx + 1}",
                     "content_to_remove": actual_block,
-                    "remove_end_line": end_idx + 1,
                     "replace_content": replace_content,
                 })
 

@@ -29,13 +29,13 @@ from .core_tools.continue_chat import continue_as_new_chat
 
 EDIT_FILE_DESCRIPTION = """Range-based file editing.
 
-Each edit replaces a line range (remove_start_line through remove_end_line inclusive) with new content.
+Each edit replaces the line range given by `remove_line_number` (e.g. "13-15", "24-36") with new content. For a single line, just use the line number (e.g. "42", shorthand for "42-42").
 Edits are atomic: if ANY edit in the call fails validation, NONE are applied and the file is unchanged.
 
 RULES:
 - ALWAYS get line numbers and content from the code interpreter display. NEVER use memorised or assumed line numbers.
-- `content_to_remove` uses anchor matching: "first_line\\n...\\nlast_line". The "..." is a range operator — only the first and last lines act as anchors to find the block; intermediate lines are ignored. Always use "..." for multi-line ranges (omit only for single-line edits where start == end). Example: to replace a 4-line function, use "def foo():\\n...\\n    return x" — do NOT paste the full function body.
-- `remove_end_line` defaults to `remove_start_line`.
+- `content_to_remove` uses anchor matching: "first_line\\n[TO]\\nlast_line". The "[TO]" is a range marker — only the first and last lines act as anchors to find the block; intermediate lines are ignored. Always use "[TO]" for multi-line ranges (omit only for single-line edits where start == end). Example: to replace a 4-line function, use "def foo():\\n[TO]\\n    return x" — do NOT paste the full function body.
+- `remove_line_number` format: "13-15" for lines 13 through 15 inclusive, or "42" for a single line.
 - Multiple edits per call: all line numbers refer to the file as it was BEFORE this call. Ranges must not overlap.
 - Use empty `replace_content` to delete the range.
 - Do NOT edit the same file more than once per turn. After an edit, read the refreshed code interpreter for correct line numbers before editing that file again.
@@ -152,23 +152,19 @@ NATIVE_TOOL_DEFINITIONS = [
                         "items": {
                             "type": "object",
                             "properties": {
-                                "remove_start_line": {
-                                    "type": "integer",
-                                    "description": "1-based line number where the range begins"
+                                "remove_line_number": {
+                                    "type": "string",
+                                    "description": "Line range to remove, e.g. \"13-15\" (lines 13 through 15 inclusive) or \"24-36\". For a single line just use the number, e.g. \"42\"."
                                 },
                                 "content_to_remove": {
-                                    "description": "Anchor-based block identifier. For multi-line: 'first_line\\n...\\nlast_line' — only the boundary lines are matched, intermediate lines are ignored. For single-line edits (start == end): just the line content itself with no '...'."
-                                },
-                                "remove_end_line": {
-                                    "type": "integer",
-                                    "description": "1-based line number where the range ends"
+                                    "description": "Anchor-based block identifier. For multi-line: 'first_line\\n[TO]\\nlast_line' — only the boundary lines are matched, intermediate lines are ignored. For single-line edits (start == end): just the line content itself with no '[TO]'."
                                 },
                                 "replace_content": {
                                     "type": "string",
-                                    "description": "New content that replaces everything from remove_start_line through remove_end_line (inclusive). Use empty string to delete the range."
+                                    "description": "New content that replaces everything in the specified remove_line_number (inclusive). Use empty string to delete the range."
                                 }
                             },
-                            "required": ["remove_start_line", "content_to_remove", "replace_content"]
+                            "required": ["remove_line_number", "content_to_remove", "replace_content"]
                         }
                     }
                 },
