@@ -9,13 +9,11 @@ import re
 import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable
-from ..config import EDIT_ZONE_MARKER
 from ..code_sandbox import WORKSPACE
 
 logger = logging.getLogger(__name__)
 
 # --- Constants ---
-WILDCARD_SENTINEL = EDIT_ZONE_MARKER  # Backward compatibility with old constant name
 MAX_ANCHOR_SHIFT = 3  # ±3 line tolerance for anchor verification
 
 # --- File Access Callbacks ---
@@ -148,25 +146,28 @@ class FileOperations:
         Apply one or more range-based edits to a file.
 
         Same interface as the strict version, but with ±MAX_ANCHOR_SHIFT line
-        tolerance for start_line_content / end_line_content verification.
+        tolerance for content_to_remove verification.
         Two-pass matching: strict (trailing whitespace ignored) then relaxed
         (leading whitespace also ignored).  When anchors are found at
         different positions than specified, a self-correction marker is
         emitted so main_flow can patch the conversation history.
 
-        Each edit specifies a line range (start_line..end_line) and replacement
-        content.  start_line_content / end_line_content are single-line verification
-        strings to ensure the file hasn't drifted.
+        Each edit specifies a line range (remove_start_line..remove_end_line) and
+        replacement content.  content_to_remove is a multi-line string in the format
+        "start_line_content\\n...\\nend_line_content" that identifies the exact block
+        to replace in the file.  The first line serves as the start anchor and the
+        last line serves as the end anchor.
 
         Args:
             target_file: Path to the file to edit (relative to workspace)
             edits: List of edit dicts, each with:
-                start_line (int): 1-based line number where the range begins
-                start_line_content (str): Single line of text at start_line for verification
-                end_line (int): 1-based line number where the range ends
-                end_line_content (str): Single line of text at end_line for verification
+                remove_start_line (int): 1-based line number where the range begins
+                content_to_remove (str): Multi-line block identifying what to replace,
+                    in format 'start_line_content\\n...\\nend_line_content'
+                remove_end_line (int): 1-based line number where the range ends
                 replace_content (str): New content to insert (replaces everything
-                    from start_line through end_line inclusive; empty string to delete)
+                    from remove_start_line through remove_end_line inclusive;
+                    empty string to delete)
 
         Returns:
             Success message with summary of changes, or error description
@@ -271,10 +272,11 @@ class FileOperations:
             corrected_edits_for_marker = []
 
             for i, edit in enumerate(edits):
-                start_line = edit.get("start_line")
-                start_content = str(edit.get("start_line_content") or edit.get("start_content") or "")
-                end_line = edit.get("end_line")
-                end_content = str(edit.get("end_line_content") or edit.get("end_content") or "")
+                start_line = edit.get("remove_start_line")
+                content_to_remove = str(edit.get("content_to_remove") or "")
+                start_content = content_to_remove.split('\n...\n')[0] if content_to_remove else ""
+                end_content = content_to_remove.split('\n...\n')[-1] if content_to_remove else ""
+                end_line = edit.get("remove_end_line")
                 replace_content = str(edit.get("replace_content", ""))
 
                 # --- Defaults: end_line → start_line, end_content → file ---
@@ -399,11 +401,14 @@ class FileOperations:
                 if start_corrected or end_corrected or start_is_multiline or end_is_multiline:
                     any_correction_needed = True
 
+                # Build content_to_remove from the actual file block that was matched
+                start_portion = ''.join(original_lines[start_idx:start_idx + start_anchor_line_count]).rstrip('\n')
+                end_portion = ''.join(original_lines[end_idx - end_anchor_line_count + 1:end_idx + 1]).rstrip('\n')
+                actual_block = start_portion + '\n...\n' + end_portion
                 corrected_edits_for_marker.append({
-                    "start_line": start_idx + 1,
-                    "start_line_content": _normalise_line(original_lines[start_idx]),
-                    "end_line": end_idx + 1,
-                    "end_line_content": _normalise_line(original_lines[end_idx]),
+                    "remove_start_line": start_idx + 1,
+                    "content_to_remove": actual_block,
+                    "remove_end_line": end_idx + 1,
                     "replace_content": replace_content,
                 })
 
