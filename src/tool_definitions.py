@@ -154,7 +154,7 @@ NATIVE_TOOL_DEFINITIONS = [
                             "properties": {
                                 "remove_line_number": {
                                     "type": "string",
-                                    "description": "Line range to remove, e.g. \"13-15\" (lines 13 through 15 inclusive) or \"24-36\". For a single line just use the number, e.g. \"42\"."
+                                    "description": "Line range to remove, e.g., \"13-15\" (lines 13–15 inclusive) or \"42\" (line 42 only)."
                                 },
                                 "content_to_remove": {
                                     "description": "Anchor-based block identifier. For multi-line: 'first_line\\n[TO]\\nlast_line' — only the boundary lines are matched, intermediate lines are ignored. For single-line edits (start == end): just the line content itself with no '[TO]'."
