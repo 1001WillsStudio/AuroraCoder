@@ -63,11 +63,25 @@ def _save_raw(data: Dict[str, Any]) -> None:
 # ── public API ──────────────────────────────────────────────────────────────
 
 def get_all_settings() -> Dict[str, Any]:
-    """Return every stored key (API keys are masked when returned to the frontend)."""
+    """Return every stored key with API keys replaced by booleans.
+
+    The frontend only needs to know *whether* a key is configured, not the
+    actual secret.  Real keys never leave the server.
+    """
     with _lock:
         raw = _load_raw()
-    # Return a copy so callers can't mutate the cache
-    return _deep_copy(raw)
+    data = _deep_copy(raw)
+    # Replace api_key strings with booleans: True = configured, absent = not
+    for k in list(data.get("api_keys", {})):
+        data["api_keys"][k] = bool(data["api_keys"][k])
+    for cp in data.get("custom_providers", []):
+        if isinstance(cp, dict):
+            cp["api_key"] = bool(cp.get("api_key"))
+    # Also mask web_secondary api_key nested under "other"
+    ws = data.get("other", {}).get("web_secondary", {}) if isinstance(data.get("other"), dict) else {}
+    if isinstance(ws, dict) and ws.get("api_key"):
+        ws["api_key"] = True
+    return data
 
 
 def get_setting(key: str, default: Any = None) -> Any:
@@ -81,11 +95,53 @@ def update_settings(partial: Dict[str, Any]) -> Dict[str, Any]:
     """
     Merge *partial* into the existing settings and persist.
 
+    Boolean ``True`` values in ``api_keys`` or ``custom_providers[*].api_key``
+    are treated as placeholders ("keep the existing key") and are replaced
+    with the currently-stored value before saving.
+
     Returns the full merged dict (with API keys masked).
     """
     with _lock:
         current = _load_raw()
+
+        # Remember existing keys so booleans can be resolved
+        saved_api_keys = dict(current.get("api_keys", {}))
+        saved_custom = list(current.get("custom_providers", []))
+        saved_custom_keys = {
+            cp.get("id"): cp.get("api_key", "")
+            for cp in saved_custom if isinstance(cp, dict)
+        }
+        # Also remember web_secondary api_key
+        saved_ws = current.get("other", {}).get("web_secondary", {}) if isinstance(current.get("other"), dict) else {}
+        saved_ws_key = saved_ws.get("api_key", "") if isinstance(saved_ws, dict) else ""
+
         _deep_merge(current, partial)
+
+        # Resolve boolean placeholders in api_keys
+        for k, v in list(current.get("api_keys", {}).items()):
+            if v is True:
+                if k in saved_api_keys and saved_api_keys[k]:
+                    current["api_keys"][k] = saved_api_keys[k]
+                else:
+                    del current["api_keys"][k]  # placeholder but no stored key
+
+        # Resolve boolean placeholders in custom_providers
+        for cp in current.get("custom_providers", []):
+            if isinstance(cp, dict) and cp.get("api_key") is True:
+                real = saved_custom_keys.get(cp.get("id"), "")
+                if real:
+                    cp["api_key"] = real
+                else:
+                    cp["api_key"] = ""
+
+        # Resolve boolean placeholder in other.web_secondary.api_key
+        ws = current.get("other", {}).get("web_secondary", {}) if isinstance(current.get("other"), dict) else {}
+        if isinstance(ws, dict) and ws.get("api_key") is True:
+            if saved_ws_key:
+                ws["api_key"] = saved_ws_key
+            else:
+                ws["api_key"] = ""
+
         # Prune empty values so the file stays clean
         _prune_empty(current)
         _save_raw(current)

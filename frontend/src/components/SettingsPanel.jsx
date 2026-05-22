@@ -27,6 +27,9 @@ export default function SettingsPanel({ isOpen, onClose }) {
   const [showKeys, setShowKeys] = useState({})
   const [errorFields, setErrorFields] = useState({})
 
+  // ── Sentinel for "key is configured but hidden" ─────────────────────────
+  const KEY_SENTINEL = '••••••••'
+
   // ── Load ────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!isOpen) return
@@ -35,9 +38,23 @@ export default function SettingsPanel({ isOpen, onClose }) {
       setMessage(null)
       try {
         const [s, p] = await Promise.all([getSettings(), getProviders()])
+        // Backend returns boolean true for configured keys — convert to sentinel
+        const normApiKeys = {}
+        for (const [k, v] of Object.entries(s.api_keys || {})) {
+          normApiKeys[k] = v === true ? KEY_SENTINEL : (typeof v === 'string' ? v : '')
+        }
+        s.api_keys = normApiKeys
+        // Same for custom providers
+        for (const cp of s.custom_providers || []) {
+          if (cp?.api_key === true) cp.api_key = KEY_SENTINEL
+        }
         const other = s.other || {}
         other.web_secondary = other.web_secondary || {}
         other.agent = other.agent || {}
+        // Also handle web_secondary api_key (currently returned as a real key from get_all_settings)
+        if (other.web_secondary.api_key && other.web_secondary.api_key !== KEY_SENTINEL) {
+          other.web_secondary.api_key = KEY_SENTINEL
+        }
         setSettings({ ...s, other })
         setProviders(p.providers || [])
       } catch {
@@ -122,17 +139,30 @@ export default function SettingsPanel({ isOpen, onClose }) {
     try {
       // Prune empty custom providers
       const cp = (settings.custom_providers || []).filter(c => c.name?.trim() || c.base_url?.trim())
-      // Prune empty 'other' sub-objects
+      // Convert sentinel back to boolean true so backend preserves the real key
+      for (const c of cp) {
+        if (c.api_key === KEY_SENTINEL) c.api_key = true
+      }
+      // Convert api_keys: sentinel → true, empty → skip
+      const outApiKeys = {}
+      for (const [k, v] of Object.entries(settings.api_keys || {})) {
+        if (v === KEY_SENTINEL) outApiKeys[k] = true           // keep existing
+        else if (v && v.trim()) outApiKeys[k] = v               // new key
+      }
+      // Prune empty 'other' sub-objects (also convert sentinel for web_secondary api_key)
       const prunedOther = {}
       for (const [sec, fields] of Object.entries(settings.other || {})) {
         if (fields && typeof fields === 'object') {
           const clean = {}
-          for (const [k, v] of Object.entries(fields)) { if (v !== '' && v !== null && v !== undefined) clean[k] = v }
+          for (const [k, v] of Object.entries(fields)) {
+            if (v === KEY_SENTINEL) clean[k] = true             // keep existing
+            else if (v !== '' && v !== null && v !== undefined) clean[k] = v
+          }
           if (Object.keys(clean).length > 0) prunedOther[sec] = clean
         }
       }
       await updateSettings({
-        api_keys: settings.api_keys, provider_overrides: settings.provider_overrides,
+        api_keys: outApiKeys, provider_overrides: settings.provider_overrides,
         custom_providers: cp, other: prunedOther,
       })
       setMessage({ type: 'success', text: t('msg.saved') })

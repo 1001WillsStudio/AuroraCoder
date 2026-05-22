@@ -925,7 +925,7 @@ async def get_settings():
     settings = get_all_settings()
     settings.setdefault("api_keys", {})
     settings.setdefault("provider_overrides", {})
-    settings.setdefault("custom_providers", get_custom_providers())
+    settings.setdefault("custom_providers", [])
     settings.setdefault("other", {})
     return settings
 
