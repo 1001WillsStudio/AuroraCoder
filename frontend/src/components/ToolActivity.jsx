@@ -305,29 +305,66 @@ function getToolConfig(toolName, args, result) {
 }
 
 /**
+ * Parse a remove_line_number string like "13-15" or "42" into { start, end }.
+ */
+function parseRemoveLineNumber(remove_line_number) {
+  if (!remove_line_number) return { start: null, end: null }
+  const parts = String(remove_line_number).split('-')
+  const start = parseInt(parts[0], 10)
+  const end = parts.length > 1 ? parseInt(parts[1], 10) : start
+  return isNaN(start) ? { start: null, end: null } : { start, end: isNaN(end) ? start : end }
+}
+
+/**
+ * Parse content_to_remove anchor string.
+ * Multi-line format: "first_line\n[TO]\nlast_line"
+ * Single-line format: just the line content (no [TO] marker)
+ */
+function parseContentToRemove(content_to_remove) {
+  if (!content_to_remove) return { first: '', last: '', isMultiLine: false }
+  const marker = '\n[TO]\n'
+  const idx = content_to_remove.indexOf(marker)
+  if (idx === -1) {
+    // Single-line: no [TO] marker
+    return { first: content_to_remove, last: content_to_remove, isMultiLine: false }
+  }
+  return {
+    first: content_to_remove.slice(0, idx),
+    last: content_to_remove.slice(idx + marker.length),
+    isMultiLine: true
+  }
+}
+
+/**
  * Displays a range-based edit: shows the replaced range context
  * and the full replacement content with line numbers.
  */
 function EditRangeView({ edit, editIndex }) {
-  const { start_line, end_line, replace_content } = edit
-  const start_content = edit.start_line_content || edit.start_content || ''
-  const end_content = edit.end_line_content || edit.end_content || ''
+  // Parse new-format fields
+  const { remove_line_number, content_to_remove, replace_content } = edit
+  const { start: start_line, end: end_line } = parseRemoveLineNumber(remove_line_number)
+  const { first: start_content, last: end_content, isMultiLine } = parseContentToRemove(content_to_remove)
+
   const isDelete = !replace_content
   const effectiveEnd = end_line || start_line
 
   let locationLabel = ''
-  if (start_line && effectiveEnd && start_line !== effectiveEnd) {
+  if (start_line != null && effectiveEnd != null && start_line !== effectiveEnd) {
     locationLabel = `Lines ${start_line}–${effectiveEnd}`
-  } else if (start_line) {
+  } else if (start_line != null) {
     locationLabel = `Line ${start_line}`
   }
 
-  const rangeSpan = effectiveEnd - (start_line || 1) + 1
+  const rangeSpan = (effectiveEnd != null && start_line != null) ? (effectiveEnd - start_line + 1) : 1
 
   const lines = isDelete ? [] : (replace_content || '').split('\n')
   const maxPreview = 30
   const hasMore = lines.length > maxPreview
   const displayLines = hasMore ? lines.slice(0, maxPreview) : lines
+
+  const showRemovedStart = !!start_content
+  const showRemovedEnd = isMultiLine && effectiveEnd !== start_line && !!end_content
+  const showEllipsis = rangeSpan > 2 && isMultiLine
 
   return (
     <div className="diff-view">
@@ -340,26 +377,26 @@ function EditRangeView({ edit, editIndex }) {
         </div>
       )}
       {/* Show the removed range as context */}
-      <div className="diff-removed">
-        {start_content && (
+      {showRemovedStart && (
+        <div className="diff-removed">
           <div className="diff-line removed">
             <span className="diff-line-num">{start_line}</span>
             <span className="diff-content">{start_content}</span>
           </div>
-        )}
-        {rangeSpan > 2 && (
-          <div className="diff-line removed diff-line-ellipsis">
-            <span className="diff-line-num">⋮</span>
-            <span className="diff-content diff-ellipsis-text">({rangeSpan - 2} more line{rangeSpan - 2 > 1 ? 's' : ''})</span>
-          </div>
-        )}
-        {end_content && effectiveEnd !== start_line && (
-          <div className="diff-line removed">
-            <span className="diff-line-num">{effectiveEnd}</span>
-            <span className="diff-content">{end_content}</span>
-          </div>
-        )}
-      </div>
+          {showEllipsis && (
+            <div className="diff-line removed diff-line-ellipsis">
+              <span className="diff-line-num">⋮</span>
+              <span className="diff-content diff-ellipsis-text">({rangeSpan - 2} more line{rangeSpan - 2 > 1 ? 's' : ''})</span>
+            </div>
+          )}
+          {showRemovedEnd && (
+            <div className="diff-line removed">
+              <span className="diff-line-num">{effectiveEnd}</span>
+              <span className="diff-content">{end_content}</span>
+            </div>
+          )}
+        </div>
+      )}
       {/* Show the full replacement content */}
       {!isDelete && (
         <div className="diff-added">
