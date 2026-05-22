@@ -40,22 +40,22 @@ export default function Sidebar({
           <img src="/assets/logo.png" alt="1001 Wills AI Lab" className="logo-image" />
           <span className="logo-text">AuroraCoder</span>
         </div>
-      </div>
-      <div className="sidebar-header-actions">
-        <button
-          className="theme-toggle"
-          onClick={onToggleTheme}
-          title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
-        >
-          {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
-        </button>
-        <button
-          className="settings-gear-btn"
-          onClick={onOpenSettings}
-          title="Settings — API keys, custom providers"
-        >
-          <Settings size={18} />
-        </button>
+        <div className="sidebar-header-actions">
+          <button
+            className="theme-toggle"
+            onClick={onToggleTheme}
+            title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+          >
+            {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+          </button>
+          <button
+            className="settings-gear-btn"
+            onClick={onOpenSettings}
+            title="Settings — API keys, custom providers"
+          >
+            <Settings size={18} />
+          </button>
+        </div>
       </div>
       
       <div className="sidebar-actions">

@@ -122,6 +122,27 @@
   border-color: var(--accent-primary);
 }
 
+/* ── Settings Gear Button ────────────────────────────────────── */
+.settings-gear-btn {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.settings-gear-btn:hover {
+  background: var(--bg-hover);
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+
 /* ── New Chat Button ─────────────────────────────────────────── */
 .new-chat-btn {
   width: 100%;
