@@ -49,7 +49,18 @@ export default defineConfig({
         changeOrigin: true,
         agent: gatewayAgent,
       },
-      // Everything else (providers, health, workspace info) → backend
+      // Settings, providers → gateway (owns these routes now)
+      '/api/settings': {
+        target: `http://localhost:${gatewayPort}`,
+        changeOrigin: true,
+        agent: gatewayAgent,
+      },
+      '/api/providers': {
+        target: `http://localhost:${gatewayPort}`,
+        changeOrigin: true,
+        agent: gatewayAgent,
+      },
+      // Everything else → backend
       '/api': {
         target: `http://localhost:${backendPort}`,
         changeOrigin: true,
