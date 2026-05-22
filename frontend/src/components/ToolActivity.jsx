@@ -62,7 +62,7 @@ function ToolActivityItem({ toolCall, result, onStop, onLoadConversation, childC
     return () => clearInterval(interval)
   }, [isComplete, toolCall.id])
   
-  // Parse arguments safely
+  // Parse arguments safely — LLM sometimes produces malformed JSON
   let args = {}
   try {
     const rawArgs = toolCall.arguments
@@ -72,7 +72,9 @@ function ToolActivityItem({ toolCall, result, onStop, onLoadConversation, childC
       args = rawArgs || {}
     }
   } catch (e) {
-    console.warn('[ToolActivityItem] Failed to parse arguments:', e)
+    // Downgraded to debug: LLM-generated JSON is occasionally malformed.
+    // This is handled gracefully by falling back to empty args.
+    console.debug('[ToolActivityItem] Failed to parse arguments:', e.message)
     args = {}
   }
 

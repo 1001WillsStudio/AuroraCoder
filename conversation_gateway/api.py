@@ -46,7 +46,7 @@ from src.config import WORKSPACE_DIR
 from src.settings_store import (
     get_all_settings,
     get_custom_providers,
-    update_settings,
+    update_settings as _store_update_settings,
 )
 from src.providers import get_available_providers, get_default_provider, provider_manager
 from src.code_sandbox import shell
@@ -942,7 +942,7 @@ async def update_settings(update: _SettingsUpdate):
         payload["custom_providers"] = update.custom_providers
     if update.other is not None:
         payload["other"] = update.other
-    result = update_settings(payload)
+    result = _store_update_settings(payload)
     provider_manager.reload()
     return result
 
