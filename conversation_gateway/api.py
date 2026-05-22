@@ -888,7 +888,45 @@ async def list_active_streams():
 # Endpoints — CRUD (storage)
 # ============================================================================
 
-@app.get("/")
+# ── Passthrough to Backend (settings, providers, workspace info) ──
+# These endpoints live on the backend (port 8080), not the gateway.
+# The gateway proxies them so the frontend (served from the gateway)
+# can reach them without CORS issues.
+
+@app.get("/api/settings")
+async def get_settings_passthrough():
+    """Proxy GET /api/settings to the backend."""
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10)) as client:
+        resp = await client.get(f"{BACKEND_URL}/api/settings")
+        return JSONResponse(status_code=resp.status_code, content=resp.json())
+
+
+@app.put("/api/settings")
+async def update_settings_passthrough(request: Request):
+    """Proxy PUT /api/settings to the backend."""
+    body = await request.json()
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10)) as client:
+        resp = await client.put(f"{BACKEND_URL}/api/settings", json=body)
+        return JSONResponse(status_code=resp.status_code, content=resp.json())
+
+
+@app.get("/api/providers")
+async def get_providers_passthrough():
+    """Proxy GET /api/providers to the backend."""
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10)) as client:
+        resp = await client.get(f"{BACKEND_URL}/api/providers")
+        return JSONResponse(status_code=resp.status_code, content=resp.json())
+
+
+@app.get("/api/workspace")
+async def get_workspace_passthrough():
+    """Proxy GET /api/workspace to the backend."""
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10)) as client:
+        resp = await client.get(f"{BACKEND_URL}/api/workspace")
+        return JSONResponse(status_code=resp.status_code, content=resp.json())
+
+
+@app.get("/health")
 async def health():
     return {"status": "ok", "service": "conversation-history"}
 
@@ -1165,6 +1203,12 @@ async def workspace_info():
 frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 if frontend_dist.exists():
     app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")
+else:
+    logger.warning(
+        "Frontend build not found at %s — rebuild the Docker image or run "
+        "`cd frontend && npm run build` to serve the UI at /",
+        frontend_dist,
+    )
 
 
 # ============================================================================
