@@ -290,8 +290,16 @@ class FileOperations:
                             f"like '13-15' or '42', got '{remove_line_number}'")
 
                 content_to_remove = str(edit.get("content_to_remove") or "")
-                start_content = content_to_remove.split('\n[TO]\n')[0] if content_to_remove else ""
-                end_content = content_to_remove.split('\n[TO]\n')[-1] if content_to_remove else ""
+                has_to_marker = '\n[TO]\n' in content_to_remove
+                if has_to_marker:
+                    parts = content_to_remove.split('\n[TO]\n', 1)
+                    start_content = parts[0]
+                    end_content = parts[1]
+                else:
+                    # Agent omitted [TO] — treat entire string as block to find;
+                    # end-content matching is skipped.
+                    start_content = content_to_remove
+                    end_content = ""
                 replace_content = str(edit.get("replace_content", ""))
 
                 # --- Defaults: end_line → start_line, end_content → file ---
@@ -307,7 +315,7 @@ class FileOperations:
                 if start_line > end_line:
                     return (f"Error in edit #{i + 1}: start_line ({start_line}) must be "
                             f"<= end_line ({end_line})")
-                if not end_content:
+                if not end_content and has_to_marker:
                     end_content = _normalise_line(original_lines[end_line - 1])
 
                 # Validate line numbers
@@ -366,8 +374,16 @@ class FileOperations:
                 # Verify end anchor (with ±MAX_ANCHOR_SHIFT tolerance)
                 # For end anchor, the expected_line_num points to the LAST line
                 # of the block, so we search for the block ending at that line.
+                # When the agent omitted [TO], there is no end anchor — the end
+                # is determined by the matched start block length.
                 end_corrected = False
-                if end_is_multiline:
+                if not has_to_marker:
+                    # No [TO] marker — end is defined by the matched start block.
+                    _blines = start_content.splitlines(keepends=True)
+                    if len(_blines) > 1 and _blines[-1].strip() == '':
+                        _blines = _blines[:-1]
+                    end_idx = start_idx + len(_blines) - 1
+                elif end_is_multiline:
                     # Multi-line end: search for block whose last line is near end_line
                     end_search_start = end_line - end_anchor_line_count + 1
                     found_idx = _find_anchor_tolerant(end_search_start, end_content)
@@ -416,9 +432,15 @@ class FileOperations:
                 if start_corrected or end_corrected or start_is_multiline or end_is_multiline:
                     any_correction_needed = True
 
-                # Build content_to_remove from the actual file block that was matched
-                start_portion = ''.join(original_lines[start_idx:start_idx + start_anchor_line_count]).rstrip('\n')
-                end_portion = ''.join(original_lines[end_idx - end_anchor_line_count + 1:end_idx + 1]).rstrip('\n')
+                # Build content_to_remove from the actual file block that was matched.
+                # When the agent omitted [TO], extract just the first and last lines as
+                # anchor boundaries so the correction marker has proper format.
+                if has_to_marker:
+                    start_portion = ''.join(original_lines[start_idx:start_idx + start_anchor_line_count]).rstrip('\n')
+                    end_portion = ''.join(original_lines[end_idx - end_anchor_line_count + 1:end_idx + 1]).rstrip('\n')
+                else:
+                    start_portion = original_lines[start_idx].rstrip('\n')
+                    end_portion = original_lines[end_idx].rstrip('\n')
                 actual_block = start_portion + '\n[TO]\n' + end_portion
                 corrected_edits_for_marker.append({
                     "remove_line_number": f"{start_idx + 1}-{end_idx + 1}",
