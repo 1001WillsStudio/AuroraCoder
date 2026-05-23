@@ -37,3 +37,10 @@ workspace-*/
 # OS
 .DS_Store
 Thumbs.db
+
+# Launcher build artifacts
+launcher/embed/
+launcher/thinkwithtool-launcher
+launcher/thinkwithtool-launcher-*
+thinkwithtool-launcher
+thinkwithtool-launcher.exe
