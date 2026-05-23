@@ -1,0 +1,115 @@
+name: Build & Release Launcher
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:  # Allow manual trigger for testing
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build launcher binaries
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            ext: ""
+          - os: linux
+            arch: arm64
+            ext: ""
+          - os: darwin
+            arch: amd64
+            ext: ""
+          - os: darwin
+            arch: arm64
+            ext: ""
+          - os: windows
+            arch: amd64
+            ext: ".exe"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Install rsync
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq rsync
+
+      - name: Prepare embed directory
+        run: |
+          mkdir -p launcher/embed
+          rsync -av \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='dist' \
+            --exclude='__pycache__' \
+            --exclude='*.pyc' \
+            --exclude='*.pyo' \
+            --exclude='data' \
+            --exclude='workspace' \
+            --exclude='sessions' \
+            --exclude='.env' \
+            --exclude='launcher' \
+            --exclude='docs' \
+            --exclude='*.egg-info' \
+            --exclude='.mypy_cache' \
+            --exclude='.pytest_cache' \
+            --exclude='.search_cache' \
+            --exclude='*.log' \
+            --exclude='.cursor' \
+            --exclude='.idea' \
+            --exclude='.vscode' \
+            --exclude='*.swp' \
+            --exclude='*.swo' \
+            --exclude='*.map' \
+            --exclude='.github' \
+            ./ launcher/embed/
+
+      - name: Build binary (${{ matrix.os }}-${{ matrix.arch }})
+        run: |
+          cd launcher
+          OUTPUT="thinkwithtool-launcher-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}"
+          GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} CGO_ENABLED=0 \
+            go build -trimpath -ldflags="-s -w" -o "$OUTPUT" .
+          echo "BINARY=$OUTPUT" >> $GITHUB_ENV
+          ls -lh "$OUTPUT"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: thinkwithtool-launcher-${{ matrix.os }}-${{ matrix.arch }}
+          path: launcher/${{ env.BINARY }}
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifact directory
+        run: |
+          mkdir -p dist
+          find artifacts -type f -name "thinkwithtool-launcher-*" -exec cp {} dist/ \;
+          ls -lh dist/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          draft: true
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
