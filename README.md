@@ -299,7 +299,7 @@ auroracoder/
 │   │   └── sandbox.py            # Workspace + persistent shell singleton
 │   └── web_api/
 │       └── app.py                # FastAPI backend (port 8080)
-├── conversation_gateway/         # Middleware layer (the "dirty work")
+├── gateway/         # Middleware layer (the "dirty work")
 │   ├── api.py                    # SSE proxy + file endpoints (port 8081)
 │   ├── conversation_store.py     # Thread-safe atomic file persistence
 │   └── workspace.py              # File diffs, tree, upload/export

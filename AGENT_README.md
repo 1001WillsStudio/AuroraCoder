@@ -18,7 +18,7 @@ src/                          ← Stateless agent loop (messages in → messages
     tool_definitions.py       ← Pure: tool schemas + dispatch, all return strings
     All tools are stateless   ← No conversation-store access, no direct persistence
 
-conversation_gateway/         ← Middleware between frontend and backend (the "dirty work")
+gateway/         ← Middleware between frontend and backend (the "dirty work")
     api.py                    ← SSE proxy + file display endpoints (port 8081)
     conversation_store.py     ← File-backed store (thread-safe, atomic writes)
     workspace.py              ← File diff, tree, upload/delete/export utilities
@@ -79,7 +79,7 @@ ThinkWithTool/
 │   │   └── sandbox.py          ← Workspace path (/workspace) + persistent shell
 │   └── web_api/
 │       └── app.py              ← FastAPI backend server (port 8080, agent loop only)
-├── conversation_gateway/       ← Middleware layer (the "dirty work")
+├── gateway/       ← Middleware layer (the "dirty work")
 │   ├── api.py                  ← SSE proxy + file display endpoints (port 8081)
 │   ├── conversation_store.py   ← File-backed store (thread-safe, atomic writes)
 │   └── workspace.py            ← File diff, tree, upload/delete/export utilities
@@ -373,9 +373,9 @@ data/                        ← host directory (git-ignored)
 ```
 
 Key implementation files:
-- `conversation_gateway/conversation_store.py` — file-backed store (thread-safe, atomic writes)
-- `conversation_gateway/api.py` — FastAPI server on port 8081, proxies to backend, persists on SSE events, serves file-display endpoints
-- `conversation_gateway/workspace.py` — file snapshots, diffs, tree building, workspace upload/delete/export
+- `gateway/conversation_store.py` — file-backed store (thread-safe, atomic writes)
+- `gateway/api.py` — FastAPI server on port 8081, proxies to backend, persists on SSE events, serves file-display endpoints
+- `gateway/workspace.py` — file snapshots, diffs, tree building, workspace upload/delete/export
 - `src/config.py` — `DATA_DIR` / `TRAINING_DATA_DIR` path resolution
 
 Without the volume mount (`-v`), the `--rm` flag on `docker run` causes the container to be deleted on stop, destroying all data inside. The volume mount ensures conversations and training logs survive container restarts.

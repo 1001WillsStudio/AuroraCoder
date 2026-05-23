@@ -3,7 +3,7 @@ FastAPI Backend for ThinkWithTool AI Assistant
 
 Provides the core agent SSE streaming endpoint.
 All other endpoints (settings, providers, workspace, file display, conversations)
-have been moved to ``conversation_gateway/api.py`` (port 8081).
+have been moved to ``gateway/api.py`` (port 8081).
 """
 
 import json
@@ -28,7 +28,7 @@ from ..code_tools.file_operations import set_file_tracking_callbacks, set_curren
 from ..core_tools.subagent import cancel_active_subagents
 from ..config import DEFAULT_PROVIDER
 
-from conversation_gateway.workspace import snapshot_file, mark_file_touched, clear_conversation_snapshots
+from gateway.workspace import snapshot_file, mark_file_touched, clear_conversation_snapshots
 
 logger = logging.getLogger(__name__)
 

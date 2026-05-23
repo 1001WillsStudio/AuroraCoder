@@ -18,7 +18,7 @@ Key behaviors:
 
 Start with::
 
-    uvicorn conversation_gateway.api:app --host 0.0.0.0 --port 8081
+    uvicorn gateway.api:app --host 0.0.0.0 --port 8081
 """
 
 import asyncio
@@ -43,7 +43,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import hashlib
 import secrets
-import functools
 
 from src.config import WORKSPACE_DIR
 from src.settings_store import (

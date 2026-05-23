@@ -48,7 +48,7 @@ These MUST be followed — the agent loop depends on them:
 AuroraCoder has a strict separation of concerns:
 
 - **`src/`** — Stateless agent loop. Takes messages in, yields messages out. Never touches persistence.
-- **`conversation_gateway/`** — Middleware. Owns all persistence, proxying, and file display logic.
+- **`gateway/`** — Middleware. Owns all persistence, proxying, and file display logic.
 - **`frontend/`** — UI. Owns conversation management state.
 
 DO NOT:

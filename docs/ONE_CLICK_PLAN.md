@@ -18,7 +18,7 @@ auroracoder.exe  ←  you build this once, ship it
   ├── Dockerfile.base
   ├── frontend/         (source, not node_modules)
   ├── src/
-  ├── conversation_gateway/
+  ├── gateway/
   └── ...all project files embedded at compile time
 ```
 
@@ -32,7 +32,7 @@ the frontend must be **built inside Docker** and served by the existing gateway.
 | What Changes | File(s) |
 |---|---|
 | `npm install && npm run build` during `docker build` | `Dockerfile` |
-| Gateway serves `frontend/dist/` as static files on `:8081` | `conversation_gateway/api.py` |
+| Gateway serves `frontend/dist/` as static files on `:8081` | `gateway/api.py` |
 | Remove host-side frontend step from start scripts | `start.bat`, `start.sh` |
 
 After this, opening `http://localhost:8081` gives the full app — no separate Vite server.
