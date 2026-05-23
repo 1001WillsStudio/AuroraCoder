@@ -9,8 +9,10 @@ import SettingsPanel from './components/SettingsPanel'
 import { streamChat, getProviders, cancelConversation, getConversation, getActiveStreams, resumeStream } from './services/api'
 import { isInterruptible, TASK_MARKER_START, TASK_MARKER_END, formatElapsedTime } from './utils/streamUtils'
 import { useFileTracking } from './hooks/useFileTracking'
+import useLanguage from './hooks/useLanguage'
 
 function App() {
+  const { t } = useLanguage()
   const [messages, setMessages] = useState([])
   const [rawMessages, setRawMessages] = useState([])
   const [inputValue, setInputValue] = useState('')
@@ -460,7 +462,7 @@ function App() {
         const activities = [...(lastMsg.activities || [])]
         activities.push({ type: 'tool_result', tool_call_id: toolInfo.toolCall.id, content: terminationMessage, isTerminated: true })
         lastMsg.activities = activities
-        const terminationNote = `\n\n---\n**Tool Stopped:** The ${toolInfo.config?.label || toolInfo.toolName} operation was terminated by user after running for ${formatElapsedTime(toolInfo.elapsedSeconds)}.`
+        const terminationNote = `\n\n---\n**${t('app.toolStopped')}** ${t('app.toolStoppedByUser', { tool: toolInfo.config?.label || toolInfo.toolName, time: formatElapsedTime(toolInfo.elapsedSeconds) })}`
         lastMsg.content = (lastMsg.content || '') + terminationNote
         newMessages[lastIdx] = lastMsg
       }
@@ -588,7 +590,7 @@ function App() {
                   subagentChildIds={subagentChildIds}
                   senderLabel={
                     viewMode === 'subagent'
-                      ? (msg.role === 'user' ? 'Main Agent' : 'Subagent')
+                      ? (msg.role === 'user' ? t('app.mainAgent') : t('app.subagent'))
                       : null
                   }
                 />
@@ -601,7 +603,7 @@ function App() {
             <div className="continue-container">
               <button className="continue-btn" onClick={handleContinue}>
                 <RotateCcw size={18} />
-                <span>Continue Generation</span>
+                <span>{t('app.continueGeneration')}</span>
               </button>
             </div>
           )}
@@ -615,7 +617,7 @@ function App() {
 
         {activeConvoWarning && (
           <div className="active-convo-warning">
-            <span>An agent is still running. Stop it or wait for it to finish before starting a new conversation.</span>
+            <span>{t('app.agentRunning')}</span>
             <button className="active-convo-warning-btn"
               onClick={async () => {
                 try {
@@ -623,20 +625,20 @@ function App() {
                   if (active && active.length > 0) handleLoadConversation(active[0].conversation_id)
                 } catch { /* ignore */ }
               }}>
-              View active conversation
+              {t('app.viewActiveConversation')}
             </button>
           </div>
         )}
 
         {viewMode === 'subagent' && (
           <div className="subagent-view-bar">
-            <span>{isStreaming ? 'Subagent is running...' : 'Subagent conversation (read-only)'}</span>
+            <span>{isStreaming ? t('app.subagentRunning') : t('app.subagentReadOnly')}</span>
             <button className="subagent-back-btn"
               onClick={() => {
                 if (parentConversationId) handleLoadConversation(parentConversationId)
                 else handleClear()
               }}>
-              Back to parent
+              {t('app.backToParent')}
             </button>
           </div>
         )}
@@ -682,15 +684,14 @@ function App() {
       {showTaskInstructions && (
         <div className="task-instructions-drawer" ref={taskInstructionsRef}>
           <div className="history-drawer-header">
-            <h3>Task Instructions</h3>
+            <h3>{t('app.taskInstructions')}</h3>
             <button className="history-drawer-close" onClick={() => setShowTaskInstructions(false)}>
               <X size={16} />
             </button>
           </div>
           <div className="task-instructions-body">
             <p className="task-instructions-desc">
-              Prepended to the first message of each new conversation. Use this to give the agent
-              persistent context (e.g., project conventions, file locations, safety rules).
+              {t('app.taskInstructionsDesc')}
             </p>
             <textarea
               className="task-instructions-textarea"
@@ -700,7 +701,7 @@ function App() {
                 setSystemPrompt(value)
                 try { localStorage.setItem('systemPrompt', value) } catch { /* ignore */ }
               }}
-              placeholder="e.g., Always write tests for new code, Use TypeScript strict mode, Keep explanations concise..."
+              placeholder={t('app.taskInstructionsPlaceholder')}
               autoFocus
             />
           </div>

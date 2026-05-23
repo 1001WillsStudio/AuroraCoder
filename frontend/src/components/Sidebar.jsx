@@ -1,5 +1,6 @@
 import React from 'react'
 import { Sun, Moon, ChevronDown, Upload, FileText, Settings } from 'lucide-react'
+import useLanguage from '../hooks/useLanguage'
 import FileTree from './FileTree'
 import ConversationHistory from './ConversationHistory'
 
@@ -33,6 +34,7 @@ export default function Sidebar({
   onToggleProviderDropdown,
   onOpenSettings,
 }) {
+  const { t } = useLanguage()
   return (
     <aside className="sidebar">
       <div className="sidebar-header">
@@ -44,14 +46,14 @@ export default function Sidebar({
           <button
             className="theme-toggle"
             onClick={onToggleTheme}
-            title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+            title={t('sidebar.themeSwitch', { mode: theme === 'dark' ? t('theme.light') : t('theme.dark') })}
           >
             {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
           </button>
           <button
             className="settings-gear-btn"
             onClick={onOpenSettings}
-            title="Settings — API keys, custom providers"
+            title={t('sidebar.settingsTitle')}
           >
             <Settings size={18} />
           </button>
@@ -60,16 +62,16 @@ export default function Sidebar({
       
       <div className="sidebar-actions">
         <button className="new-chat-btn" onClick={onNewChat}>
-          <span>+ New Chat</span>
+          <span>{t('sidebar.newChat')}</span>
         </button>
         <button
           className="load-session-btn"
           onClick={() => uploadInputRef.current?.click()}
           disabled={isUploading}
-          title="Select a folder to upload into the workspace"
+          title={t('sidebar.uploadTitle')}
         >
           <Upload size={16} />
-          <span>{isUploading ? 'Uploading...' : 'Upload Project'}</span>
+          <span>{isUploading ? t('sidebar.uploading') : t('sidebar.uploadProject')}</span>
         </button>
         <input
           ref={uploadInputRef}
@@ -88,12 +90,12 @@ export default function Sidebar({
           ref={taskInstructionsBtnRef}
           className="load-session-btn"
           onClick={onToggleTaskInstructions}
-          title="Configure task instructions (prepended to first message)"
+          title={t('sidebar.taskInstructionsTitle')}
         >
           <FileText size={16} />
-          <span>Task Instructions</span>
+          <span>{t('sidebar.taskInstructions')}</span>
           {systemPrompt && (
-            <span className="system-prompt-indicator" title="Task instructions active">
+            <span className="system-prompt-indicator" title={t('sidebar.taskInstructionsActive')}>
               ●
             </span>
           )}
@@ -118,15 +120,15 @@ export default function Sidebar({
           onDrawerToggle={onDrawerToggle}
         />
         <div className="model-selector">
-          <span className="model-label">Model</span>
+          <span className="model-label">{t('sidebar.model')}</span>
           <div className="provider-dropdown-container">
-            <button 
+            <button
               className="provider-dropdown-btn"
               onClick={onToggleProviderDropdown}
               disabled={isStreaming}
             >
               <span className="provider-name">
-                {providers.find(p => p.id === selectedProvider)?.name || 'Select Model'}
+                {providers.find(p => p.id === selectedProvider)?.name || t('sidebar.selectModel')}
               </span>
               <ChevronDown size={16} className={showProviderDropdown ? 'rotated' : ''} />
             </button>
@@ -143,7 +145,7 @@ export default function Sidebar({
                     <div className="provider-option-name">{provider.name}</div>
                     <div className="provider-option-desc">{provider.description}</div>
                     {provider.supports_thinking && (
-                      <span className="provider-badge">Thinking</span>
+                      <span className="provider-badge">{t('sidebar.thinkingBadge')}</span>
                     )}
                   </button>
                 ))}

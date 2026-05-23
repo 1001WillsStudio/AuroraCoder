@@ -1,20 +1,21 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { History, X, Search } from 'lucide-react'
 import { listConversations, getActiveStreams } from '../services/api'
+import useLanguage from '../hooks/useLanguage'
 
-function relativeTime(isoString) {
+function relativeTime(isoString, t) {
   if (!isoString) return ''
   const now = Date.now()
   const then = new Date(isoString).getTime()
   const diff = Math.max(0, now - then)
   const seconds = Math.floor(diff / 1000)
-  if (seconds < 60) return 'just now'
+  if (seconds < 60) return t('history.justNow')
   const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m ago`
+  if (minutes < 60) return t('history.minutesAgo', { n: minutes })
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
+  if (hours < 24) return t('history.hoursAgo', { n: hours })
   const days = Math.floor(hours / 24)
-  if (days < 7) return `${days}d ago`
+  if (days < 7) return t('history.daysAgo', { n: days })
   return new Date(isoString).toLocaleDateString()
 }
 
@@ -56,13 +57,12 @@ function groupConversations(conversations) {
 }
 
 // ─── Inline "current session" view (always visible in sidebar) ──────────
-function CurrentSession({ currentConversationId, conversations, activeIds, onSelect }) {
+function CurrentSession({ currentConversationId, conversations, activeIds, onSelect, t }) {
   if (!currentConversationId) return null
 
   const current = conversations.find(c => c.id === currentConversationId)
   if (!current) return null
 
-  // Resolve to the main (root) agent — whether we selected main or a subagent
   const mainId = current.parent_id || current.id
   const main = current.parent_id
     ? conversations.find(c => c.id === mainId)
@@ -76,7 +76,7 @@ function CurrentSession({ currentConversationId, conversations, activeIds, onSel
   return (
     <div className="current-session">
       <div className="current-session-header">
-        <span className="current-session-label">Current</span>
+        <span className="current-session-label">{t('history.current')}</span>
         {mainActive && <span className="status-dot active" />}
       </div>
       <button
@@ -84,7 +84,7 @@ function CurrentSession({ currentConversationId, conversations, activeIds, onSel
         onClick={() => onSelect(mainId)}
         title={main.title}
       >
-        {main.title || 'Untitled'}
+        {main.title || t('history.untitled')}
       </button>
 
       {children.length > 0 && (
@@ -101,7 +101,7 @@ function CurrentSession({ currentConversationId, conversations, activeIds, onSel
               >
                 <span className="subagent-prefix">↳</span>
                 <span className="current-session-child-title">
-                  {child.title || 'Subagent'}
+                  {child.title || t('history.subagent')}
                 </span>
                 {childActive && <span className="status-dot active" />}
               </button>
@@ -114,7 +114,7 @@ function CurrentSession({ currentConversationId, conversations, activeIds, onSel
 }
 
 // ─── Full history drawer (opens as a second panel) ──────────────────────
-function HistoryDrawer({ conversations, activeIds, currentConversationId, onSelect, onClose, triggerRef }) {
+function HistoryDrawer({ conversations, activeIds, currentConversationId, onSelect, onClose, triggerRef, t }) {
   const [searchQuery, setSearchQuery] = useState('')
   const searchRef = useRef(null)
   const panelRef = useRef(null)
@@ -123,7 +123,6 @@ function HistoryDrawer({ conversations, activeIds, currentConversationId, onSele
     searchRef.current?.focus()
   }, [])
 
-  // Close on click outside (but not on the trigger button — that toggles via its own onClick)
   useEffect(() => {
     function handleClick(e) {
       if (triggerRef?.current?.contains(e.target)) return
@@ -131,7 +130,6 @@ function HistoryDrawer({ conversations, activeIds, currentConversationId, onSele
         onClose()
       }
     }
-    // Delay listener so the opening click doesn't immediately close
     const timer = setTimeout(() => document.addEventListener('mousedown', handleClick), 0)
     return () => {
       clearTimeout(timer)
@@ -139,7 +137,6 @@ function HistoryDrawer({ conversations, activeIds, currentConversationId, onSele
     }
   }, [onClose])
 
-  // Close on Escape
   useEffect(() => {
     function handleKey(e) {
       if (e.key === 'Escape') onClose()
@@ -157,7 +154,7 @@ function HistoryDrawer({ conversations, activeIds, currentConversationId, onSele
   return (
     <div className="history-drawer" ref={panelRef}>
       <div className="history-drawer-header">
-        <h3>History</h3>
+        <h3>{t('history.history')}</h3>
         <button className="history-drawer-close" onClick={onClose}>
           <X size={16} />
         </button>
@@ -168,7 +165,7 @@ function HistoryDrawer({ conversations, activeIds, currentConversationId, onSele
         <input
           ref={searchRef}
           type="text"
-          placeholder="Search conversations..."
+          placeholder={t('history.search')}
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
         />
@@ -177,7 +174,7 @@ function HistoryDrawer({ conversations, activeIds, currentConversationId, onSele
       <div className="history-drawer-list">
         {filtered.length === 0 ? (
           <div className="history-drawer-empty">
-            {searchQuery ? 'No matches' : 'No conversations yet'}
+            {searchQuery ? t('history.noMatches') : t('history.noConversations')}
           </div>
         ) : (
           filtered.map(conv => {
@@ -196,11 +193,11 @@ function HistoryDrawer({ conversations, activeIds, currentConversationId, onSele
                 <div className="history-drawer-item-body">
                   <span className="history-drawer-item-title">
                     {isSubagent && <span className="subagent-prefix">↳ </span>}
-                    {conv.title || 'Untitled'}
+                    {conv.title || t('history.untitled')}
                   </span>
                   <span className="history-drawer-item-meta">
-                    {isActive && <span className="history-drawer-item-status">Running</span>}
-                    <span>{relativeTime(conv.updated_at)}</span>
+                    {isActive && <span className="history-drawer-item-status">{t('history.running')}</span>}
+                    <span>{relativeTime(conv.updated_at, t)}</span>
                   </span>
                 </div>
               </button>
@@ -214,6 +211,7 @@ function HistoryDrawer({ conversations, activeIds, currentConversationId, onSele
 
 // ─── Exported wrapper ───────────────────────────────────────────────────
 export default function ConversationHistory({ currentConversationId, onSelect, refreshTrigger, onDrawerToggle, closeTrigger }) {
+  const { t } = useLanguage()
   const [conversations, setConversations] = useState([])
   const [activeIds, setActiveIds] = useState(new Set())
   const [loading, setLoading] = useState(false)
@@ -253,7 +251,6 @@ export default function ConversationHistory({ currentConversationId, onSelect, r
     }
   }, [refreshTrigger])
 
-  // Close drawer when closeTrigger changes (e.g. task instructions opened)
   useEffect(() => {
     setDrawerOpen(false)
   }, [closeTrigger])
@@ -262,15 +259,14 @@ export default function ConversationHistory({ currentConversationId, onSelect, r
 
   return (
     <>
-      {/* Always-visible current session block */}
       <CurrentSession
         currentConversationId={currentConversationId}
         conversations={conversations}
         activeIds={activeIds}
         onSelect={onSelect}
+        t={t}
       />
 
-      {/* Trigger to open the full history drawer */}
       <button
         ref={triggerRef}
         className={`history-trigger${drawerOpen ? ' active' : ''}`}
@@ -281,11 +277,10 @@ export default function ConversationHistory({ currentConversationId, onSelect, r
         }}
       >
         <History size={16} />
-        <span className="history-trigger-label">All History</span>
+        <span className="history-trigger-label">{t('history.allHistory')}</span>
         {mainCount > 0 && <span className="history-trigger-count">{mainCount}</span>}
       </button>
 
-      {/* Slide-out drawer */}
       {drawerOpen && (
         <HistoryDrawer
           conversations={conversations}
@@ -294,6 +289,7 @@ export default function ConversationHistory({ currentConversationId, onSelect, r
           onSelect={onSelect}
           onClose={() => setDrawerOpen(false)}
           triggerRef={triggerRef}
+          t={t}
         />
       )}
     </>

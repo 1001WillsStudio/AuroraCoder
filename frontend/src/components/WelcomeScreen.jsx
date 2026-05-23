@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { Code, Search, FileText, Terminal } from 'lucide-react'
+import useLanguage from '../hooks/useLanguage'
 
 /**
  * Typing animation hook - types out text character by character
@@ -35,30 +36,31 @@ function useTypingAnimation(text, speed = 30, startDelay = 500) {
 }
 
 function WelcomeScreen({ onExampleClick }) {
-  const subtitleText = "Your intelligent coding companion. I can search the web, analyze code, write and edit files, and execute commands to help you build faster."
+  const { t } = useLanguage()
+  const subtitleText = t('welcome.subtitle')
   
   const { displayedText, isComplete } = useTypingAnimation(subtitleText, 12, 300)
   
   const examples = [
     {
       icon: <Search size={20} />,
-      title: "Search the web",
-      prompt: "Search for the latest developments in AI agents and summarize the key trends"
+      title: t('welcome.example.search'),
+      prompt: t('welcome.example.searchPrompt')
     },
     {
       icon: <Code size={20} />,
-      title: "Analyze code",
-      prompt: "Read my codebase and explain the architecture of the main application"
+      title: t('welcome.example.analyze'),
+      prompt: t('welcome.example.analyzePrompt')
     },
     {
       icon: <FileText size={20} />,
-      title: "Create files",
-      prompt: "Create a Python script that fetches weather data from an API"
+      title: t('welcome.example.create'),
+      prompt: t('welcome.example.createPrompt')
     },
     {
       icon: <Terminal size={20} />,
-      title: "Run commands",
-      prompt: "Check my Python environment and list installed packages"
+      title: t('welcome.example.run'),
+      prompt: t('welcome.example.runPrompt')
     }
   ]
 

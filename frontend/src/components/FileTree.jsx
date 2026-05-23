@@ -4,6 +4,7 @@ import {
   RefreshCw, FileCode, FileText, Image, Database, Settings,
   FileJson, FileType, Coffee, Braces, Download, Trash2, FolderArchive
 } from 'lucide-react'
+import useLanguage from '../hooks/useLanguage'
 
 // Get icon based on file extension
 const getFileIcon = (extension) => {
@@ -122,7 +123,7 @@ const TreeNode = ({ node, level = 0, onFileClick, expandedFolders, toggleFolder,
 }
 
 // Context menu component
-const ContextMenu = ({ x, y, node, onClose, onDelete, onDownload, onExport }) => {
+const ContextMenu = ({ x, y, node, onClose, onDelete, onDownload, onExport, t }) => {
   const menuRef = useRef(null)
   const isFolder = node.type === 'folder'
 
@@ -164,12 +165,12 @@ const ContextMenu = ({ x, y, node, onClose, onDelete, onDownload, onExport }) =>
       {isFolder ? (
         <button className="context-menu-item" onClick={() => { onExport(node); onClose() }}>
           <FolderArchive size={14} />
-          <span>Export as .zip</span>
+          <span>{t('fileTree.export')}</span>
         </button>
       ) : (
         <button className="context-menu-item" onClick={() => { onDownload(node); onClose() }}>
           <Download size={14} />
-          <span>Download</span>
+          <span>{t('fileTree.download')}</span>
         </button>
       )}
       <button
@@ -177,7 +178,7 @@ const ContextMenu = ({ x, y, node, onClose, onDelete, onDownload, onExport }) =>
         onClick={() => { onDelete(node); onClose() }}
       >
         <Trash2 size={14} />
-        <span>Delete</span>
+        <span>{t('fileTree.delete')}</span>
       </button>
     </div>
   )
@@ -185,6 +186,7 @@ const ContextMenu = ({ x, y, node, onClose, onDelete, onDownload, onExport }) =>
 
 // Main FileTree component
 const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0 }) => {
+  const { t } = useLanguage()
   const [tree, setTree] = useState([])
   const [rootPath, setRootPath] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -302,12 +304,12 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0 }) => {
   return (
     <div className="file-tree">
       <div className="file-tree-header">
-        <span className="file-tree-title">Workspace</span>
+        <span className="file-tree-title">{t('fileTree.workspace')}</span>
         <button 
           className="file-tree-refresh"
           onClick={fetchTree}
           disabled={loading}
-          title="Refresh file tree"
+          title={t('fileTree.refresh')}
         >
           <RefreshCw size={14} className={loading ? 'spin' : ''} />
         </button>
@@ -317,18 +319,18 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0 }) => {
         {loading && tree.length === 0 ? (
           <div className="file-tree-loading">
             <RefreshCw size={16} className="spin" />
-            <span>Loading...</span>
+            <span>{t('fileTree.loading')}</span>
           </div>
         ) : error ? (
           <div className="file-tree-empty">
             <p>{error}</p>
-            <button onClick={fetchTree}>Retry</button>
+            <button onClick={fetchTree}>{t('fileTree.retry')}</button>
           </div>
         ) : tree.length === 0 ? (
           <div className="file-tree-empty">
             <Folder size={24} />
-            <p>Workspace is empty</p>
-            <span>Files will appear here when created</span>
+            <p>{t('fileTree.empty')}</p>
+            <span>{t('fileTree.emptyHint')}</span>
           </div>
         ) : (
           <div className="file-tree-nodes">
@@ -357,6 +359,7 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0 }) => {
           onDelete={handleDeleteRequest}
           onDownload={handleDownload}
           onExport={handleExport}
+          t={t}
         />
       )}
 
@@ -364,10 +367,10 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0 }) => {
       {confirmDelete && (
         <div className="tree-confirm-overlay" onClick={() => setConfirmDelete(null)}>
           <div className="tree-confirm-dialog" onClick={(e) => e.stopPropagation()}>
-            <p>Delete <strong>{confirmDelete.name}</strong>{confirmDelete.type === 'folder' ? ' and all its contents' : ''}?</p>
+            <p>{t('fileTree.deleteConfirm', { name: confirmDelete.name, folderSuffix: confirmDelete.type === 'folder' ? t('fileTree.deleteConfirmFolder') : '' })}</p>
             <div className="tree-confirm-actions">
-              <button className="tree-confirm-cancel" onClick={() => setConfirmDelete(null)}>Cancel</button>
-              <button className="tree-confirm-delete" onClick={handleDeleteConfirm}>Delete</button>
+              <button className="tree-confirm-cancel" onClick={() => setConfirmDelete(null)}>{t('fileTree.cancel')}</button>
+              <button className="tree-confirm-delete" onClick={handleDeleteConfirm}>{t('fileTree.delete')}</button>
             </div>
           </div>
         </div>

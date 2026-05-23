@@ -1,5 +1,6 @@
 import React, { forwardRef } from 'react'
 import { Send, RotateCcw, ArrowRightFromLine } from 'lucide-react'
+import useLanguage from '../hooks/useLanguage'
 
 /**
  * Chat input area with 4 visual modes:
@@ -21,6 +22,7 @@ const ChatInput = forwardRef(({
   onCancelPendingInterrupt,
   onContinueInNewChat,
 }, ref) => {
+  const { t } = useLanguage()
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -44,10 +46,10 @@ const ChatInput = forwardRef(({
           onKeyDown={handleKeyDown}
           placeholder={
             pendingInterrupt
-              ? "Interrupt queued - waiting for safe point..."
+              ? t('chat.placeholder.pendingInterrupt')
               : isStreaming
-                ? "Type to interrupt and redirect the agent..."
-                : "Ask me anything..."
+                ? t('chat.placeholder.streaming')
+                : t('chat.placeholder.normal')
           }
           rows={1}
           disabled={!!pendingInterrupt}
@@ -58,19 +60,19 @@ const ChatInput = forwardRef(({
             <button
               className="send-btn pending-btn"
               onClick={onCancelPendingInterrupt}
-              title="Cancel pending interrupt"
+              title={t('chat.title.cancelPending')}
             >
               <RotateCcw size={18} />
             </button>
           ) : isStreaming && !hasText ? (
-            <button className="stop-btn" onClick={onStop} title="Stop generation">
+            <button className="stop-btn" onClick={onStop} title={t('chat.title.stop')}>
               <div className="stop-icon" />
             </button>
           ) : isStreaming && hasText ? (
             <button
               className="send-btn interrupt-btn"
               onClick={onInterruptSend}
-              title="Send and interrupt current generation"
+              title={t('chat.title.interrupt')}
             >
               <Send size={20} />
             </button>
@@ -87,22 +89,22 @@ const ChatInput = forwardRef(({
       </div>
       <div className="input-hint">
         {pendingInterrupt
-          ? `Interrupt queued: "${pendingInterrupt.message.substring(0, 50)}${pendingInterrupt.message.length > 50 ? '...' : ''}" - Waiting for tool calls to complete...`
+          ? t('chat.interruptQueued', { msg: pendingInterrupt.message.substring(0, 50) + (pendingInterrupt.message.length > 50 ? '...' : '') })
           : isStreaming
-            ? "Type a message to interrupt and redirect the agent with your new instructions."
+            ? t('chat.hint.streaming')
             : messagesCount > 0
               ? <>
-                  AuroraCoder can search, browse, write code, and execute commands.
+                  {t('chat.hint.normal')}
                   <button
                     className="continue-new-chat-link"
                     onClick={onContinueInNewChat}
-                    title="Ask the agent to summarize progress and continue in a fresh context"
+                    title={t('chat.continueNewChatTitle')}
                   >
                     <ArrowRightFromLine size={13} />
-                    Continue in new chat
+                    {t('chat.continueNewChat')}
                   </button>
                 </>
-              : "AuroraCoder can search, browse, write code, and execute commands."
+              : t('chat.hint.normal')
         }
       </div>
     </div>

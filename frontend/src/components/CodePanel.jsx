@@ -3,12 +3,14 @@ import {
   X, FileCode, Plus, Minus, Code2, FolderOpen, 
   Maximize2, Minimize2, RefreshCw
 } from 'lucide-react'
+import useLanguage from '../hooks/useLanguage'
 
 /**
  * Code Panel - Displays edited files with git-style diff highlighting
  * Shows tabs for each file edited during the session
  */
 function CodePanel({ files, activeFileId, onFileSelect, onFileClose, onClose, onRefresh, isLoading }) {
+  const { t } = useLanguage()
   const [isMinimized, setIsMinimized] = useState(false)
   const codeContentRef = useRef(null)
   
@@ -58,12 +60,12 @@ function CodePanel({ files, activeFileId, onFileSelect, onFileClose, onClose, on
   }, [activeFile, isMinimized])
   if (files.length === 0) {
     return (
-      <div className="code-panel">
+    <div className="code-panel">
         <div className="code-panel-header">
           <div className="code-tabs">
             <span className="code-tab active" style={{ cursor: 'default' }}>
               <Code2 size={14} />
-              Code View
+              {t('code.codeView')}
             </span>
           </div>
           <div className="code-panel-actions">
@@ -71,19 +73,19 @@ function CodePanel({ files, activeFileId, onFileSelect, onFileClose, onClose, on
               className="code-action-btn" 
               onClick={onRefresh}
               disabled={isLoading}
-              title="Refresh"
+              title={t('code.refresh')}
             >
               <RefreshCw size={16} className={isLoading ? 'spin' : ''} />
             </button>
-            <button className="code-action-btn close-panel" onClick={onClose} title="Close panel">
+            <button className="code-action-btn close-panel" onClick={onClose} title={t('code.closePanel')}>
               <X size={18} />
             </button>
           </div>
         </div>
         <div className="code-empty-state">
           <FolderOpen size={48} />
-          <h3>No files edited yet</h3>
-          <p>When the agent edits or creates files, they'll appear here with diff highlighting.</p>
+          <h3>{t('code.noFilesEdited')}</h3>
+          <p>{t('code.noFilesHint')}</p>
         </div>
       </div>
     )
@@ -99,12 +101,12 @@ function CodePanel({ files, activeFileId, onFileSelect, onFileClose, onClose, on
               key={file.id}
               className={`code-tab ${file.id === activeFileId ? 'active' : ''} ${file.isViewOnly ? 'view-only' : ''}`}
               onClick={() => onFileSelect(file.id)}
-              title={file.isViewOnly ? `Viewing: ${file.path}` : file.path}
+              title={file.isViewOnly ? t('code.viewing', { path: file.path }) : file.path}
             >
               <FileCode size={14} />
               <span>{getFileName(file.path)}</span>
               {file.hasChanges && <span className="code-tab-modified" />}
-              {file.isViewOnly && <span className="code-tab-view-badge">view</span>}
+              {file.isViewOnly && <span className="code-tab-view-badge">{t('code.viewBadge')}</span>}
               <span 
                 className="code-tab-close"
                 onClick={(e) => {
@@ -122,18 +124,18 @@ function CodePanel({ files, activeFileId, onFileSelect, onFileClose, onClose, on
             className="code-action-btn" 
             onClick={onRefresh}
             disabled={isLoading}
-            title="Refresh"
+            title={t('code.refresh')}
           >
             <RefreshCw size={16} className={isLoading ? 'spin' : ''} />
           </button>
           <button 
             className="code-action-btn" 
             onClick={() => setIsMinimized(!isMinimized)}
-            title={isMinimized ? "Expand" : "Minimize"}
+            title={isMinimized ? t('code.expand') : t('code.minimize')}
           >
             {isMinimized ? <Maximize2 size={16} /> : <Minimize2 size={16} />}
           </button>
-          <button className="code-action-btn close-panel" onClick={onClose} title="Close panel">
+          <button className="code-action-btn close-panel" onClick={onClose} title={t('code.closePanel')}>
             <X size={18} />
           </button>
         </div>
@@ -158,7 +160,7 @@ function CodePanel({ files, activeFileId, onFileSelect, onFileClose, onClose, on
                   <Minus size={12} /> {diffStats.removed}
                 </span>
               )}
-              <span>{diffStats.total} lines</span>
+              <span>{t('code.lines', { n: diffStats.total })}</span>
             </div>
           </div>
 

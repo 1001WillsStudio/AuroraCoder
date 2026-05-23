@@ -4,6 +4,7 @@ import {
   FolderOpen, Terminal, Package, CheckCircle, Loader2,
   ChevronDown, ChevronRight, Eye, StopCircle
 } from 'lucide-react'
+import useLanguage from '../hooks/useLanguage'
 
 /**
  * User-friendly tool activity display
@@ -40,6 +41,7 @@ function ToolActivity({ toolCalls, toolResults, onStopTool, onLoadConversation, 
 }
 
 function ToolActivityItem({ toolCall, result, onStop, onLoadConversation, childConversationId }) {
+  const { t } = useLanguage()
   const [expanded, setExpanded] = useState(true)  // Open by default
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const startTimeRef = useRef(Date.now())
@@ -78,7 +80,7 @@ function ToolActivityItem({ toolCall, result, onStop, onLoadConversation, childC
     args = {}
   }
 
-  const config = getToolConfig(toolCall.name, args, result)
+  const config = getToolConfig(toolCall.name, args, result, t)
   
   // Format elapsed time
   const formatElapsed = (seconds) => {
@@ -120,7 +122,7 @@ function ToolActivityItem({ toolCall, result, onStop, onLoadConversation, childC
         <span className="tool-activity-detail">{config.detail}</span>
 
         {config.isSubagent && childConversationId && (
-          <span className="subagent-view-link">View →</span>
+          <span className="subagent-view-link">{t('tool.viewSubagent')}</span>
         )}
         
         {/* Elapsed time for running tools */}
@@ -145,10 +147,10 @@ function ToolActivityItem({ toolCall, result, onStop, onLoadConversation, childC
           <button 
             className="tool-stop-btn"
             onClick={handleStopClick}
-            title="Stop this tool"
+            title={t('tool.stopTitle')}
           >
             <StopCircle size={14} />
-            <span>Stop</span>
+            <span>{t('tool.stop')}</span>
           </button>
         )}
         
@@ -171,14 +173,14 @@ function ToolActivityItem({ toolCall, result, onStop, onLoadConversation, childC
 /**
  * Get display configuration for each tool type
  */
-function getToolConfig(toolName, args, result) {
+function getToolConfig(toolName, args, result, t) {
   const resultContent = result?.content || ''
   
   switch (toolName) {
     case 'google_search':
       return {
         icon: <Search size={16} />,
-        label: 'Searching',
+        label: t('tool.searching'),
         detail: `"${args.search_term || 'the web'}"`,
         hasExpandedView: false
       }
@@ -186,7 +188,7 @@ function getToolConfig(toolName, args, result) {
     case 'web_browser':
       return {
         icon: <Globe size={16} />,
-        label: 'Reading',
+        label: t('tool.reading'),
         detail: truncateUrl(args.target_url || 'webpage'),
         hasExpandedView: false
       }
@@ -194,7 +196,7 @@ function getToolConfig(toolName, args, result) {
     case 'read_file':
       return {
         icon: <Eye size={16} />,
-        label: 'Reading file',
+        label: t('tool.readingFile'),
         detail: args.target_file || 'file',
         hasExpandedView: false
       }
@@ -202,7 +204,7 @@ function getToolConfig(toolName, args, result) {
     case 'write_file':
       return {
         icon: <FilePlus size={16} />,
-        label: 'Creating file',
+        label: t('tool.creatingFile'),
         detail: args.target_file || 'file',
         hasExpandedView: true,
         expandedContent: <FilePreview content={args.code_edit} isNew={true} />
@@ -213,7 +215,7 @@ function getToolConfig(toolName, args, result) {
       const editCount = edits.length
       return {
         icon: <FileEdit size={16} />,
-        label: 'Editing file',
+        label: t('tool.editingFile'),
         detail: `${args.target_file || 'file'}${editCount > 1 ? ` (${editCount} edits)` : ''}`,
         hasExpandedView: editCount > 0,
         expandedContent: (
@@ -233,7 +235,7 @@ function getToolConfig(toolName, args, result) {
     case 'delete_file':
       return {
         icon: <Trash2 size={16} />,
-        label: 'Deleting file',
+        label: t('tool.deletingFile'),
         detail: args.target_file || 'file',
         hasExpandedView: false
       }
@@ -241,7 +243,7 @@ function getToolConfig(toolName, args, result) {
     case 'close_file':
       return {
         icon: <FileText size={16} />,
-        label: 'Closing file',
+        label: t('tool.closingFile'),
         detail: args.target_file || 'file',
         hasExpandedView: false
       }
@@ -249,7 +251,7 @@ function getToolConfig(toolName, args, result) {
     case 'list_directory':
       return {
         icon: <FolderOpen size={16} />,
-        label: 'Listing directory',
+        label: t('tool.listingDirectory'),
         detail: args.relative_workspace_path || '/',
         hasExpandedView: false
       }
@@ -257,7 +259,7 @@ function getToolConfig(toolName, args, result) {
     case 'search_files':
       return {
         icon: <Search size={16} />,
-        label: 'Searching files',
+        label: t('tool.searchingFiles'),
         detail: `"${args.query || ''}"`,
         hasExpandedView: false
       }
@@ -265,7 +267,7 @@ function getToolConfig(toolName, args, result) {
     case 'grep_search':
       return {
         icon: <Search size={16} />,
-        label: 'Searching in files',
+        label: t('tool.searchingInFiles'),
         detail: `"${args.query || ''}"`,
         hasExpandedView: false
       }
@@ -273,7 +275,7 @@ function getToolConfig(toolName, args, result) {
     case 'run_terminal_command':
       return {
         icon: <Terminal size={16} />,
-        label: 'Running command',
+        label: t('tool.runningCommand'),
         detail: truncateCommand(args.command || ''),
         hasExpandedView: true,
         expandedContent: <CommandPreview command={args.command} output={resultContent} />
@@ -282,7 +284,7 @@ function getToolConfig(toolName, args, result) {
     case 'subagent':
       return {
         icon: <Package size={16} />,
-        label: 'Subagent',
+        label: t('tool.subagent'),
         detail: (args.task || '').slice(0, 60) + ((args.task || '').length > 60 ? '...' : ''),
         hasExpandedView: false,
         isSubagent: true,
@@ -291,7 +293,7 @@ function getToolConfig(toolName, args, result) {
     case 'tool_store':
       return {
         icon: <Package size={16} />,
-        label: args.action === 'search' ? 'Searching tools' : 'Using tool',
+        label: args.action === 'search' ? t('tool.searchingTools') : t('tool.usingTool'),
         detail: args.query || args.tool_name || '',
         hasExpandedView: false
       }
@@ -342,6 +344,7 @@ function parseContentToRemove(content_to_remove) {
  * and the full replacement content with line numbers.
  */
 function EditRangeView({ edit, editIndex }) {
+  const { t } = useLanguage()
   // Parse new-format fields
   const { remove_line_number, content_to_remove, replace_content } = edit
   const { start: start_line, end: end_line } = parseRemoveLineNumber(remove_line_number)
@@ -372,13 +375,12 @@ function EditRangeView({ edit, editIndex }) {
     <div className="diff-view">
       {(editIndex || locationLabel) && (
         <div className="diff-location">
-          {editIndex && <span className="diff-edit-index">Edit #{editIndex}</span>}
+          {editIndex && <span className="diff-edit-index">{t('tool.editIndex', { n: editIndex })}</span>}
           {editIndex && locationLabel && <span className="diff-location-sep"> · </span>}
           {locationLabel && <span>{locationLabel}</span>}
-          {isDelete && <span className="diff-delete-badge"> (deleted)</span>}
+          {isDelete && <span className="diff-delete-badge"> {t('tool.deletedBadge')}</span>}
         </div>
       )}
-      {/* Show the removed range as context */}
       {showRemovedStart && (
         <div className="diff-removed">
           <div className="diff-line removed">
@@ -388,7 +390,7 @@ function EditRangeView({ edit, editIndex }) {
           {showEllipsis && (
             <div className="diff-line removed diff-line-ellipsis">
               <span className="diff-line-num">⋮</span>
-              <span className="diff-content diff-ellipsis-text">({rangeSpan - 2} more line{rangeSpan - 2 > 1 ? 's' : ''})</span>
+              <span className="diff-content diff-ellipsis-text">({t('tool.moreLines', { n: rangeSpan - 2 })})</span>
             </div>
           )}
           {showRemovedEnd && (
@@ -399,7 +401,6 @@ function EditRangeView({ edit, editIndex }) {
           )}
         </div>
       )}
-      {/* Show the full replacement content */}
       {!isDelete && (
         <div className="diff-added">
           {displayLines.map((line, idx) => (
@@ -409,7 +410,7 @@ function EditRangeView({ edit, editIndex }) {
             </div>
           ))}
           {hasMore && (
-            <div className="diff-more">... {lines.length - maxPreview} more lines</div>
+            <div className="diff-more">{t('tool.moreLines', { n: lines.length - maxPreview })}</div>
           )}
         </div>
       )}
@@ -421,6 +422,7 @@ function EditRangeView({ edit, editIndex }) {
  * Preview for new file content
  */
 function FilePreview({ content, isNew }) {
+  const { t } = useLanguage()
   if (!content) return null
   
   const lines = content.split('\n')
@@ -438,7 +440,7 @@ function FilePreview({ content, isNew }) {
         ))}
         {hasMore && (
           <div className="file-preview-more">
-            ... {lines.length - 20} more lines
+            {t('tool.moreLines', { n: lines.length - 20 })}
           </div>
         )}
       </div>
@@ -450,6 +452,7 @@ function FilePreview({ content, isNew }) {
  * Terminal command preview with output
  */
 function CommandPreview({ command, output }) {
+  const { t } = useLanguage()
   const [showOutput, setShowOutput] = useState(false)
   
   return (
@@ -464,7 +467,7 @@ function CommandPreview({ command, output }) {
             className="command-output-toggle"
             onClick={() => setShowOutput(!showOutput)}
           >
-            {showOutput ? 'Hide output' : 'Show output'}
+            {showOutput ? t('tool.hideOutput') : t('tool.showOutput')}
           </button>
           {showOutput && (
             <pre className="command-output">{output.slice(0, 2000)}</pre>

@@ -1,41 +1,11 @@
-import { useState, useCallback } from 'react'
-import { getTranslations, DEFAULT_LANG } from '../i18n/translations'
-
-/** localStorage key for persisting the user's language choice. */
-const STORAGE_KEY = 'thinkwithtool:lang'
-
-/** Read the persisted language; fall back to default. */
-function readStoredLang() {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY)
-    if (stored && getTranslations(stored)) return stored
-  } catch { /* localStorage may be unavailable */ }
-  return DEFAULT_LANG
-}
-
 /**
- * Simple i18n hook that manages the current UI language.
+ * Re-exports useLanguage from the LanguageContext provider.
  *
- * Usage inside a component:
- *   const { t, lang, setLang, LANG_LABELS } = useLanguage()
- *   <label>{t('settings.title')}</label>
+ * Previously this hook owned its own useState — that meant every component
+ * had an independent copy of the language state.  Now it pulls from a React
+ * Context so that when setLang is called (e.g. in the Settings panel) every
+ * component that calls useLanguage() re-renders with the new language.
  */
-export default function useLanguage() {
-  const [lang, setLangState] = useState(readStoredLang)
-
-  const setLang = useCallback((newLang) => {
-    try { localStorage.setItem(STORAGE_KEY, newLang) } catch {}
-    setLangState(newLang)
-  }, [])
-
-  /**
-   * Translate a key into the current language.
-   * Falls back to 'en' for missing keys/unsupported languages.
-   */
-  const t = useCallback((key) => {
-    const dict = getTranslations(lang)
-    return dict[key] ?? getTranslations(DEFAULT_LANG)[key] ?? key
-  }, [lang])
-
-  return { t, lang, setLang }
-}
+export { useLanguage } from '../i18n/LanguageContext'
+export default useLanguage
+export { LANG_LABELS } from '../i18n/translations'

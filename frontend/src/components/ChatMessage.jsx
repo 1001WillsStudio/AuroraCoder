@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { User, Bot, ChevronDown, ChevronRight, Loader2, Brain, RotateCcw, AlertCircle } from 'lucide-react'
+import useLanguage from '../hooks/useLanguage'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
@@ -73,6 +74,7 @@ function MarkdownContent({ content }) {
  * Renders user messages and assistant responses with activity timeline
  */
 function ChatMessage({ message, isLatest, isStreaming, onRetry, onStopTool, onLoadConversation, subagentChildIds, senderLabel }) {
+  const { t } = useLanguage()
   const isUser = message.role === 'user'
   const activities = message.activities || []
   const hasContent = message.content && message.content.length > 0
@@ -118,12 +120,12 @@ function ChatMessage({ message, isLatest, isStreaming, onRetry, onStopTool, onLo
               
               if (group.type === 'thinking') {
                 thinkingIndex++
-                const label = thinkingCount > 1 
-                  ? `Reasoning ${thinkingIndex}/${thinkingCount}`
-                  : (isStreaming && isLatest && isLastGroup ? 'Thinking...' : 'Reasoning')
-                
+                const label = thinkingCount > 1
+                  ? t('chat.reasoning', { current: thinkingIndex, total: thinkingCount })
+                  : (isStreaming && isLatest && isLastGroup ? t('chat.thinking') : t('chat.reasoningShort'))
+
                 return (
-                  <ThinkingBlock 
+                  <ThinkingBlock
                     key={`thinking-${groupIdx}`}
                     content={group.content}
                     label={label}
@@ -132,7 +134,7 @@ function ChatMessage({ message, isLatest, isStreaming, onRetry, onStopTool, onLo
                   />
                 )
               }
-              
+
               if (group.type === 'content') {
                 return (
                   <div key={`content-${groupIdx}`} className="message-text">
@@ -140,10 +142,10 @@ function ChatMessage({ message, isLatest, isStreaming, onRetry, onStopTool, onLo
                   </div>
                 )
               }
-              
+
               if (group.type === 'tool_group') {
                 return (
-                  <ToolActivity 
+                  <ToolActivity
                     key={`tools-${groupIdx}`}
                     toolCalls={group.toolCalls}
                     toolResults={group.toolResults}
@@ -153,21 +155,21 @@ function ChatMessage({ message, isLatest, isStreaming, onRetry, onStopTool, onLo
                   />
                 )
               }
-              
+
               return null
             })}
-            
+
             {/* Error with retry button */}
             {isError && canRetry && (
               <div className="error-actions">
                 <button className="retry-btn" onClick={onRetry}>
                   <RotateCcw size={16} />
-                  <span>{isTimeout ? 'Retry Request' : 'Try Again'}</span>
+                  <span>{isTimeout ? t('chat.retryRequest') : t('chat.tryAgain')}</span>
                 </button>
                 {isTimeout && (
                   <span className="error-hint">
                     <AlertCircle size={14} />
-                    The request timed out. Click to retry.
+                    {t('chat.timeoutHint')}
                   </span>
                 )}
               </div>
