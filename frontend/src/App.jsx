@@ -2,6 +2,8 @@ import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { RotateCcw, X, ArrowDown } from 'lucide-react'
 import ChatMessage from './components/ChatMessage'
 import ChatInput from './components/ChatInput'
+import LoginScreen from './components/LoginScreen'
+import { isAuthenticated, checkAuth, isAuthRequired } from './utils/auth.js'
 import CodePanel from './components/CodePanel'
 import Sidebar from './components/Sidebar'
 import WelcomeScreen from './components/WelcomeScreen'
@@ -13,6 +15,14 @@ import useLanguage from './hooks/useLanguage'
 
 function App() {
   const { t } = useLanguage()
+
+  // ── Auth state ───────────────────────────────────────────────────────
+  const [authState, setAuthState] = useState({
+    checked: false,
+    required: false,
+    authenticated: false,
+  })
+
   const [messages, setMessages] = useState([])
   const [rawMessages, setRawMessages] = useState([])
   const [inputValue, setInputValue] = useState('')
@@ -75,6 +85,28 @@ function App() {
   const continuationNavigatedRef = useRef(new Set())
 
   // ── Effects ─────────────────────────────────────────────────────────────
+
+  // ── Auth check (runs before everything else) ────────────────────────
+  useEffect(() => {
+    let cancelled = false
+    async function check() {
+      const needed = await isAuthRequired()
+      if (cancelled) return
+      if (!needed) {
+        setAuthState({ checked: true, required: false, authenticated: true })
+        return
+      }
+      const authed = await checkAuth()
+      if (cancelled) return
+      setAuthState({ checked: true, required: true, authenticated: authed })
+    }
+    check()
+    return () => { cancelled = true }
+  }, [])
+
+  const handleLoginSuccess = useCallback(() => {
+    setAuthState(prev => ({ ...prev, authenticated: true }))
+  }, [])
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
@@ -538,6 +570,29 @@ function App() {
   }, [conversationId, inputValue])
 
   // ── Render ──────────────────────────────────────────────────────────────
+
+  // Auth gating: show login if password-protected and not authenticated
+  if (authState.checked && authState.required && !authState.authenticated) {
+    return <LoginScreen onLoginSuccess={handleLoginSuccess} />
+  }
+
+  // Brief loading spinner while checking auth
+  if (!authState.checked) {
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        height: '100vh', background: 'var(--bg-primary, #0d1117)',
+      }}>
+        <div style={{
+          width: 32, height: 32,
+          border: '3px solid var(--border-color, #30363d)',
+          borderTopColor: 'var(--accent, #58a6ff)',
+          borderRadius: '50%', animation: 'tlauthspin 0.7s linear infinite',
+        }} />
+        <style>{`@keyframes tlauthspin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    )
+  }
 
   return (
     <div className={`app ${(showCodePanel && editedFiles.length > 0) ? 'code-mode' : ''}`}>

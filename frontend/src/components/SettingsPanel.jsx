@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
-import { X, Plus, Trash2, Eye, EyeOff, Save, RefreshCw, Shield, Globe } from 'lucide-react'
+import { X, Plus, Trash2, Eye, EyeOff, Save, RefreshCw, Shield, Globe, LogOut } from 'lucide-react'
 import { getSettings, updateSettings, getProviders } from '../services/api'
+import { isAuthRequired, isAuthenticated, logout as authLogout, clearToken } from '../utils/auth.js'
 import useLanguage from '../hooks/useLanguage'
 import { LANG_LABELS } from '../i18n/translations'
 import '../styles/settings.css'
@@ -26,6 +27,8 @@ export default function SettingsPanel({ isOpen, onClose }) {
   const [message, setMessage] = useState(null)
   const [showKeys, setShowKeys] = useState({})
   const [errorFields, setErrorFields] = useState({})
+  const [authEnabled, setAuthEnabled] = useState(null)
+  const [isAuthed, setIsAuthed] = useState(isAuthenticated())
 
   // ── Sentinel for "key is configured but hidden" ─────────────────────────
   const KEY_SENTINEL = '••••••••'
@@ -67,6 +70,13 @@ export default function SettingsPanel({ isOpen, onClose }) {
       }
     })()
   }, [isOpen, t])
+
+  // Check server auth requirement when panel opens
+  useEffect(() => {
+    if (!isOpen) return
+    isAuthRequired().then(needed => setAuthEnabled(needed))
+    setIsAuthed(isAuthenticated())
+  }, [isOpen])
 
   if (!isOpen) return null
 
@@ -463,6 +473,77 @@ export default function SettingsPanel({ isOpen, onClose }) {
                       placeholder="15000" min="1000" max="100000"
                     />
                   </div>
+                </div>
+              </section>
+
+              {/* ── Security ──────────────────────────────────────────── */}
+              <section className="settings-section">
+                <h3 className="settings-section-title">
+                  <Shield size={16} style={{ marginRight: 6, verticalAlign: 'middle' }} />
+                  {t('settings.security') || 'Security'}
+                </h3>
+
+                {/* Status indicator */}
+                <div className="settings-security-status">
+                  <span className={`settings-security-dot ${authEnabled ? 'enabled' : authEnabled === false ? 'disabled' : ''}`} />
+                  <span className="settings-security-text">
+                    {authEnabled === null
+                      ? 'Checking…'
+                      : authEnabled
+                        ? 'Password protection is ENABLED — API endpoints require authentication.'
+                        : 'Password protection is DISABLED — set ACCESS_PASSWORD env var to enable.'
+                    }
+                  </span>
+                </div>
+
+                {/* Auth state */}
+                {authEnabled && (
+                  <div style={{ marginTop: 12 }}>
+                    <div className="settings-security-status" style={{ marginBottom: 10 }}>
+                      <span className={`settings-security-dot ${isAuthed ? 'authed' : 'noauth'}`} />
+                      <span className="settings-security-text">
+                        {isAuthed
+                          ? 'You are authenticated. API calls include your credentials.'
+                          : 'Not authenticated. API calls may fail.'
+                        }
+                      </span>
+                    </div>
+
+                    {isAuthed && (
+                      <button
+                        className="settings-btn-save"
+                        style={{ background: 'var(--danger, #f85149)', borderColor: 'var(--danger, #f85149)' }}
+                        onClick={() => {
+                          authLogout()
+                          clearToken()
+                          setIsAuthed(false)
+                          window.location.reload()
+                        }}
+                      >
+                        <LogOut size={14} style={{ marginRight: 6 }} />
+                        Logout
+                      </button>
+                    )}
+
+                    {!isAuthed && (
+                      <button
+                        className="settings-btn-save"
+                        onClick={() => window.location.reload()}
+                      >
+                        <RefreshCw size={14} style={{ marginRight: 6 }} />
+                        Login
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* Mobile app link */}
+                <div className="settings-security-status" style={{ marginTop: 14, borderTop: '1px solid var(--border-color)', paddingTop: 12 }}>
+                  <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+                    📱 <a href="/m" target="_blank" rel="noopener"
+                      style={{ color: 'var(--accent)' }}>Open mobile web app</a> —
+                    optimized for your phone.
+                  </span>
                 </div>
               </section>
 

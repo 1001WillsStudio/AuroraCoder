@@ -875,6 +875,57 @@ body {
   background: rgba(248,81,73,0.2);
 }
 
+/* ── Drawer Security Section ──────────────────────────────────────────── */
+.drawer-security-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.security-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-muted);
+  transition: background 0.3s;
+}
+
+.security-dot.enabled {
+  background: var(--danger);
+  box-shadow: 0 0 6px rgba(248,81,73,0.4);
+}
+
+.security-dot.disabled {
+  background: var(--success);
+  box-shadow: 0 0 6px rgba(63,185,80,0.3);
+}
+
+.security-dot.authed {
+  background: var(--success);
+  box-shadow: 0 0 6px rgba(63,185,80,0.4);
+}
+
+.security-text {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.drawer-desktop-link {
+  display: block;
+  font-size: 13px;
+  color: var(--accent);
+  text-decoration: none;
+  padding: 4px 0;
+  margin-top: 2px;
+}
+
+.drawer-desktop-link:active {
+  opacity: 0.7;
+}
+
 /* ============================================================================
    TOAST NOTIFICATIONS
    ============================================================================ */

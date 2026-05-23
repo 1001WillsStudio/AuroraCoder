@@ -192,11 +192,40 @@ const App = (() => {
     drawer.classList.remove('hidden');
     drawerOverlay.classList.remove('hidden');
     _loadConversations();
+    _updateSecurityStatus();
   }
 
   function _closeDrawer() {
     drawer.classList.add('hidden');
     drawerOverlay.classList.add('hidden');
+  }
+
+  // ── Security Status (populates drawer security section) ───────────────
+  function _updateSecurityStatus() {
+    const dot = document.getElementById('mobile-security-dot');
+    const text = document.getElementById('mobile-security-text');
+    if (!dot || !text) return;
+
+    const authed = Auth.isAuthenticated();
+    fetch('/api/providers')
+      .then(resp => {
+        if (resp.status === 401) {
+          dot.className = `security-dot ${authed ? 'authed' : 'enabled'}`;
+          text.textContent = authed
+            ? 'Authenticated — API access granted.'
+            : 'Password required — API blocked.';
+        } else if (resp.ok) {
+          dot.className = 'security-dot disabled';
+          text.textContent = 'No password set — open access.';
+        } else {
+          dot.className = 'security-dot';
+          text.textContent = 'Unknown — server unreachable.';
+        }
+      })
+      .catch(() => {
+        dot.className = 'security-dot';
+        text.textContent = 'Unknown — server unreachable.';
+      });
   }
 
   // ── Toast ──────────────────────────────────────────────────────────────

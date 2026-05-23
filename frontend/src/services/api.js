@@ -1,8 +1,9 @@
 /**
  * API Service for ThinkWithTool
- * 
+ *
  * Handles communication with the FastAPI backend, including SSE streaming.
  */
+import { getAuthHeader, clearToken } from '../utils/auth.js';
 
 const API_BASE = '/api'
 
@@ -11,6 +12,14 @@ function _ts() { return performance.now().toFixed(1) }
 function _tlog(label, seq, startMs) {
   const elapsed = startMs != null ? ` (+${(performance.now() - startMs).toFixed(1)}ms)` : ''
   console.log(`[timing][#${seq}] ${_ts()}ms | ${label}${elapsed}`)
+}
+
+/** Build headers including auth token when available */
+function _headers(extra = {}) {
+  const h = { ...extra };
+  const auth = getAuthHeader();
+  if (auth) h['Authorization'] = auth;
+  return h;
 }
 
 /**
@@ -77,9 +86,7 @@ export async function streamChat(message, conversationId, callbacks, signal, exi
     _tlog('fetch() about to fire', seq, t0)
     const response = await fetch(`${API_BASE}/chat`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: _headers({ 'Content-Type': 'application/json' }),
       body: bodyJson,
       signal
     })
@@ -161,7 +168,7 @@ export async function streamChat(message, conversationId, callbacks, signal, exi
  * Health check
  */
 export async function healthCheck() {
-  const response = await fetch(`${API_BASE}/health`)
+  const response = await fetch(`${API_BASE}/health`, { headers: _headers() })
   return response.json()
 }
 
@@ -169,7 +176,7 @@ export async function healthCheck() {
  * Get available model providers
  */
 export async function getProviders() {
-  const response = await fetch(`${API_BASE}/providers`)
+  const response = await fetch(`${API_BASE}/providers`, { headers: _headers() })
   if (!response.ok) {
     throw new Error(`HTTP error! status: ${response.status}`)
   }
@@ -179,7 +186,7 @@ export async function getProviders() {
  * Get user settings (API keys masked).
  */
 export async function getSettings() {
-  const response = await fetch(`${API_BASE}/settings`)
+  const response = await fetch(`${API_BASE}/settings`, { headers: _headers() })
   if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
   return response.json()
 }
@@ -190,7 +197,7 @@ export async function getSettings() {
 export async function updateSettings(payload) {
   const response = await fetch(`${API_BASE}/settings`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    headers: _headers({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload),
   })
   if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
@@ -208,6 +215,7 @@ export async function cancelConversation(conversationId) {
   try {
     const response = await fetch(`${API_BASE}/conversations/${conversationId}/cancel`, {
       method: 'POST',
+      headers: _headers(),
     })
     if (!response.ok && response.status !== 404) {
       console.warn('[cancelConversation] Failed:', response.status)
@@ -227,7 +235,7 @@ export async function listConversations(filters = {}) {
   if (filters.session_id) params.append('session_id', filters.session_id)
   if (filters.parent_id) params.append('parent_id', filters.parent_id)
 
-  const response = await fetch(`${API_BASE}/conversations?${params}`)
+  const response = await fetch(`${API_BASE}/conversations?${params}`, { headers: _headers() })
   if (!response.ok) {
     throw new Error(`HTTP error! status: ${response.status}`)
   }
@@ -239,7 +247,7 @@ export async function listConversations(filters = {}) {
  * @param {string} conversationId
  */
 export async function getConversation(conversationId) {
-  const response = await fetch(`${API_BASE}/conversations/${conversationId}`)
+  const response = await fetch(`${API_BASE}/conversations/${conversationId}`, { headers: _headers() })
   if (!response.ok) {
     throw new Error(`HTTP error! status: ${response.status}`)
   }
@@ -252,7 +260,7 @@ export async function getConversation(conversationId) {
 export async function getActiveStreams() {
   const t0 = performance.now()
   console.log(`[timing] getActiveStreams() called at ${_ts()}ms`)
-  const response = await fetch(`${API_BASE}/conversations/active`)
+  const response = await fetch(`${API_BASE}/conversations/active`, { headers: _headers() })
   console.log(`[timing] getActiveStreams() responded in ${(performance.now() - t0).toFixed(1)}ms`)
   if (!response.ok) {
     throw new Error(`HTTP error! status: ${response.status}`)
@@ -271,7 +279,7 @@ export async function resumeStream(conversationId, callbacks, signal) {
   const { onMessages, onDone, onError } = callbacks
 
   try {
-    const response = await fetch(`${API_BASE}/conversations/${conversationId}/stream`, { signal })
+    const response = await fetch(`${API_BASE}/conversations/${conversationId}/stream`, { signal, headers: _headers() })
 
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`)
@@ -323,7 +331,7 @@ export async function resumeStream(conversationId, callbacks, signal) {
  * Get workspace info (docker mode, path, file count)
  */
 export async function getWorkspaceInfo() {
-  const response = await fetch(`${API_BASE}/workspace/info`)
+  const response = await fetch(`${API_BASE}/workspace/info`, { headers: _headers() })
   if (!response.ok) {
     throw new Error(`HTTP error! status: ${response.status}`)
   }
@@ -405,6 +413,7 @@ export async function uploadWorkspace(fileList) {
 
   const response = await fetch(`${API_BASE}/workspace/upload`, {
     method: 'POST',
+    headers: _headers(),
     body: formData,
   })
   if (!response.ok) {
