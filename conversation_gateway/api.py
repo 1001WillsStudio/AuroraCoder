@@ -38,9 +38,12 @@ from typing import Optional, Dict, Any, List
 import httpx
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+import hashlib
+import secrets
+import functools
 
 from src.config import WORKSPACE_DIR
 from src.settings_store import (
@@ -697,6 +700,109 @@ app.add_middleware(
 
 
 # ============================================================================
+# Authentication System
+# ============================================================================
+# If ACCESS_PASSWORD is set, all /api/* routes require Bearer token auth.
+# Tokens are generated server-side on successful login.
+# Token expiry: 7 days by default.
+
+AUTH_PASSWORD = os.environ.get("ACCESS_PASSWORD", "").strip()
+_auth_tokens: Dict[str, float] = {}  # token -> expiry_timestamp
+_TOKEN_EXPIRY_SECONDS = 7 * 24 * 3600  # 7 days
+
+
+class LoginRequest(BaseModel):
+    password: str
+
+
+class LoginResponse(BaseModel):
+    token: str
+    expires_in_ms: int
+
+
+def _validate_token(token: str) -> bool:
+    """Check if a given bearer token is valid and not expired."""
+    if not AUTH_PASSWORD:
+        return True
+    expiry = _auth_tokens.get(token)
+    if expiry is None:
+        return False
+    if time.time() > expiry:
+        _auth_tokens.pop(token, None)
+        return False
+    return True
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    """Require Bearer token for all /api/* routes (except /api/auth/*, /health).
+    
+    If ACCESS_PASSWORD is not set, no auth is required.
+    Public paths: /health, /api/auth/*, /mobile/*, /m
+    """
+    path = request.url.path
+
+    if not AUTH_PASSWORD:
+        return await call_next(request)
+
+    public_prefixes = ("/health", "/api/auth/", "/mobile", "/m/")
+    if any(path.startswith(p) for p in public_prefixes) or path == "/m":
+        return await call_next(request)
+
+    if not path.startswith("/api/"):
+        return await call_next(request)
+
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Authentication required. Use Bearer token."},
+        )
+
+    token = auth_header[7:]
+    if not _validate_token(token):
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Invalid or expired token."},
+        )
+
+    return await call_next(request)
+
+
+@app.post("/api/auth/login", response_model=LoginResponse)
+async def login(body: LoginRequest):
+    """Authenticate with the access password. Returns a bearer token."""
+    if not AUTH_PASSWORD:
+        return {"token": "no-auth-needed", "expires_in_ms": _TOKEN_EXPIRY_SECONDS * 1000}
+
+    if body.password != AUTH_PASSWORD:
+        raise HTTPException(status_code=401, detail="Invalid password.")
+
+    token = secrets.token_hex(32)
+    _auth_tokens[token] = time.time() + _TOKEN_EXPIRY_SECONDS
+    return {"token": token, "expires_in_ms": _TOKEN_EXPIRY_SECONDS * 1000}
+
+
+@app.get("/api/auth/check")
+async def check_auth(request: Request):
+    """Verify that the current auth token is valid."""
+    if not AUTH_PASSWORD:
+        return {"authenticated": True}
+
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="No token provided.")
+
+    token = auth_header[7:]
+    if not _validate_token(token):
+        raise HTTPException(status_code=401, detail="Invalid or expired token.")
+
+    return {"authenticated": True}
+
+
+
+
+# ============================================================================
 # Endpoints — Streaming
 # ============================================================================
 
@@ -1229,6 +1335,19 @@ async def workspace_info():
         "workspace": str(work_dir) if work_dir else None,
         "file_count": file_count,
     }
+
+
+# ============================================================================
+# Serve mobile-friendly web app (phone-optimized, self-contained)
+# Accessed at /m (shortcut) or /mobile/
+mobile_dir = Path(__file__).resolve().parent.parent / "mobile"
+if mobile_dir.exists():
+    app.mount("/mobile", StaticFiles(directory=str(mobile_dir), html=True), name="mobile")
+
+    @app.get("/m")
+    async def mobile_shortcut():
+        """Shortcut redirect to the mobile web app."""
+        return RedirectResponse(url="/mobile/")
 
 
 # ============================================================================
