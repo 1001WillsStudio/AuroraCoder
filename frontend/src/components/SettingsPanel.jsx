@@ -254,7 +254,8 @@ export default function SettingsPanel({ isOpen, onClose }) {
                 </h3>
                 {!providersCollapsed && <p className="settings-section-desc">{t('providers.desc')}</p>}
 
-{!providersCollapsed && allProviders.map(prov => {
+{!providersCollapsed && <>
+                {allProviders.map(prov => {
                   const pid = prov.id
                   const isBuiltIn = prov._builtin
                   const ci = prov._customIndex
@@ -397,7 +398,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
                 <button className="settings-add-btn" onClick={addCustomProvider}>
                   <Plus size={16} /><span>{t('field.addProvider')}</span>
                 </button>
-                }
+                </>}
               </section>
 
               {/* ── Web Secondary Model ─────────────────────────────────── */}
