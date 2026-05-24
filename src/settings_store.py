@@ -58,6 +58,7 @@ def _save_raw(data: Dict[str, Any]) -> None:
         tmp.replace(SETTINGS_PATH)
     except Exception:
         logger.exception("Failed to save settings.json")
+        raise RuntimeError("Failed to persist settings — check disk space and permissions.") from None
 
 
 # ── public API ──────────────────────────────────────────────────────────────
