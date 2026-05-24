@@ -123,7 +123,7 @@ func buildBaseImage(cacheDir string, ps *progressServer) error {
 
 	ps.logLine("Building thinkwithtool-base (first time may take several minutes)...")
 
-	cmd = exec.Command("docker", "build", "-t", baseImageName, "-f", "Dockerfile.base", ".")
+	cmd = exec.Command("docker", "build", "-t", baseImageName, "-f", "docker/Dockerfile.base", ".")
 	cmd.Dir = cacheDir
 
 	return streamCommand(cmd, ps)
@@ -134,7 +134,7 @@ func buildBaseImage(cacheDir string, ps *progressServer) error {
 func buildAppImage(cacheDir string, ps *progressServer) error {
 	ps.logLine("Building thinkwithtool app image...")
 
-	cmd := exec.Command("docker", "build", "-t", appImageName, ".")
+	cmd := exec.Command("docker", "build", "-t", appImageName, "-f", "docker/Dockerfile", ".")
 	cmd.Dir = cacheDir
 
 	return streamCommand(cmd, ps)

@@ -1,5 +1,9 @@
-# First time:  docker build -t thinkwithtool-base -f Dockerfile.base .
-# Then:        docker compose up --build
+# Build and run:
+#   docker compose -f docker/docker-compose.yml up --build
+#
+# Or use the convenience scripts from project root:
+#   ./scripts/start.sh        # Linux/macOS
+#   scripts\start.bat         # Windows
 #
 # Seed workspace by uncommenting the volumes line below.
 #
@@ -12,7 +16,7 @@
 services:
   agent:
     build:
-      context: .
+      context: ..
       dockerfile: docker/Dockerfile
     ports:
       - "8080:8080"
@@ -21,7 +25,7 @@ services:
       - "8765:8765"  # ToolStore management UI
       - "8900-8902:8900-8902"
     env_file:
-      - .env
+      - ../.env
     environment:
       - THINKTOOL_DOCKER=1
       - THINKTOOL_VNC=1
