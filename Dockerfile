@@ -9,7 +9,7 @@ WORKDIR /app
 
 # Node.js 20.x for frontend build (Vite requires Node >= 18)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y --no-install-recommends nodejs && \
+    apt-get install -y --no-install-recommends nodejs git && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # ── Application source (only layer that changes between rebuilds) ─────────
@@ -17,14 +17,13 @@ COPY requirements.txt /app/requirements.txt
 # ToolStore install — uses GITHUB_TOKEN build arg for private repo; falls back gracefully
 # NOTE: once AgentToolStore is open-source the token won't be needed
 RUN conda run -n agent pip install --no-cache-dir -r requirements.txt && \
-    if [ -n "${GITHUB_TOKEN}" ]; then \
+    ( if [ -n "${GITHUB_TOKEN}" ]; then \
         echo "ToolStore: installing with GitHub token..." && \
         conda run -n agent pip install --no-cache-dir "git+https://x-access-token:${GITHUB_TOKEN}@github.com/Mrw33554432/AgentToolStore.git#subdirectory=client"; \
     else \
         echo "ToolStore: no GITHUB_TOKEN, trying anonymous clone..." && \
-        conda run -n agent pip install --no-cache-dir git+https://github.com/Mrw33554432/AgentToolStore.git#subdirectory=client || \
-        echo "WARNING: ToolStore install skipped (repo is private or unreachable)."; \
-    fi
+        conda run -n agent pip install --no-cache-dir git+https://github.com/Mrw33554432/AgentToolStore.git#subdirectory=client; \
+    fi ) || echo "WARNING: ToolStore install skipped (repo is private or unreachable)."
 
 ENV TOOLSTORE_HOME=/app/data/toolstore
 

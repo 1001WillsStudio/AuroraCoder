@@ -23,6 +23,7 @@ echo [base] Building base image -- first time, this may take a few minutes...
 docker build -t thinkwithtool-base -f Dockerfile.base .
 if errorlevel 1 (
     echo Base image build failed.
+    pause
     exit /b 1
 )
 echo [base] Done.
@@ -37,6 +38,7 @@ echo [app] Building app image...
 docker build -t thinkwithtool --build-arg GITHUB_TOKEN=%GITHUB_TOKEN% .
 if errorlevel 1 (
     echo App image build failed.
+    pause
     exit /b 1
 )
 
@@ -61,6 +63,7 @@ if not exist "%STORAGE_BASE%\workspace" mkdir "%STORAGE_BASE%\workspace"
 docker run --rm -d --name thinkwithtool-agent --env-file .env -e THINKTOOL_DOCKER=1 -e THINKTOOL_VNC=1 -v "%STORAGE_BASE%\data:/app/data" -v "%STORAGE_BASE%\workspace:/workspace" -p 8080:8080 -p 3000:3000 -p 6080:6080 -p 8765:8765 -p 8900-8902:8900-8902 thinkwithtool
 if errorlevel 1 (
     echo Failed to start container.
+    pause
     exit /b 1
 )
 echo Container started.
