@@ -343,7 +343,7 @@ generate_chat_responses_stream_native(
 
 Services started:
 - Backend API: http://localhost:8080 (agent loop)
-- Gateway / Frontend: http://localhost:3000 (SSE proxy, file display, conversation persistence)
+- Frontend: http://localhost:3000 (SPA + API proxy to internal gateway)
 - Frontend: http://localhost:3000
 - VNC Desktop: http://localhost:6080
 
