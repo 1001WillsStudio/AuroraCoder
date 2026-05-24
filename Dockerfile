@@ -12,7 +12,10 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
 
 # ── Application source (only layer that changes between rebuilds) ─────────
 COPY requirements.txt /app/requirements.txt
-RUN conda run -n agent pip install --no-cache-dir -r requirements.txt
+RUN conda run -n agent pip install --no-cache-dir -r requirements.txt && \
+    conda run -n agent pip install --no-cache-dir git+https://github.com/Mrw33554432/AgentToolStore.git#subdirectory=client
+
+ENV TOOLSTORE_HOME=/app/data/toolstore
 
 # Frontend dependencies (cached unless package.json changes)
 COPY frontend/package.json frontend/package-lock.json /app/frontend/
@@ -29,8 +32,8 @@ RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 RUN sed -i 's/\r$//' /etc/supervisor/conf.d/supervisord.conf
 
-# Agent API + conversation history + dev-server ports + noVNC
-# Agent API (8080), Frontend (3000), Gateway (8081 internal), dev-server + noVNC
-EXPOSE 8080 3000 8900 8901 8902 6080
+# Agent API + conversation history + dev-server ports + noVNC + ToolStore mgmt
+# Agent API (8080), Frontend (3000), Gateway (8081 internal), dev-server + noVNC, ToolStore (8765)
+EXPOSE 8080 3000 8900 8901 8902 6080 8765
 
 ENTRYPOINT ["/entrypoint.sh"]

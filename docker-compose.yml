@@ -16,6 +16,7 @@ services:
       - "8080:8080"
       - "3000:3000"  # Frontend — always on 3000-series port
       - "6080:6080"
+      - "8765:8765"  # ToolStore management UI
       - "8900-8902:8900-8902"
     env_file:
       - .env
