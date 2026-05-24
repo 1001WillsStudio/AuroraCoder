@@ -74,16 +74,19 @@ def find_anchor_tolerant(lines: List[str], total_lines: int,
     Returns 0-based index of first matched line, or None.
     """
     if not expected_content.strip():
+        # Empty or whitespace-only content: search for an empty line (±shift)
         positions = _candidates(total_lines, expected_line_num, 1)
         for pos in positions:
-            if lines[pos].strip() == '':
+            if normalise(lines[pos]) == '':
                 return pos
         return None
 
     anchor_lines = expected_content.splitlines(keepends=True)
     if not anchor_lines:
+        # Non-empty strip but no lines (unlikely, but guard)
         return None
-    if len(anchor_lines) > 1 and anchor_lines[-1].strip() == '':
+    # Drop trailing empty line so multi-line anchors match cleanly
+    if len(anchor_lines) > 1 and normalise(anchor_lines[-1]) == '':
         anchor_lines = anchor_lines[:-1]
 
     positions = _candidates(total_lines, expected_line_num, len(anchor_lines))

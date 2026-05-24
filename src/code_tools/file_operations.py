@@ -220,9 +220,13 @@ class FileOperations:
                 end_corrected = False
                 if not has_to_marker:
                     _blines = start_content.splitlines(keepends=True)
-                    if len(_blines) > 1 and _blines[-1].strip() == '':
+                    if len(_blines) > 1 and am.normalise(_blines[-1]) == '':
                         _blines = _blines[:-1]
-                    end_idx = start_idx + len(_blines) - 1
+                    if len(_blines) == 0:
+                        # Empty content_to_remove → single empty-line removal
+                        end_idx = start_idx
+                    else:
+                        end_idx = start_idx + len(_blines) - 1
                 elif end_is_multiline:
                     end_search_start = end_line - end_anchor_line_count + 1
                     found_idx = am.find_anchor_tolerant(original_lines, total_lines,
