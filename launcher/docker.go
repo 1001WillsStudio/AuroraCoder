@@ -38,6 +38,48 @@ func detectDocker() DockerStatus {
 	return ds
 }
 
+// ─── Chinese mirror fallback for Docker Hub pull failures ─────────────
+
+// chinaPullSources lists Chinese registries that serve as Docker Hub
+// pull-through caches and accept direct "docker pull" requests.
+// When a docker build fails (often due to Docker Hub being slow or
+// unreachable from mainland China), the launcher tries pulling the
+// base image from these mirrors, tags it locally, then retries.
+// Docker's system configuration (daemon.json) is NEVER modified.
+var chinaPullSources = []string{
+	"docker.m.daocloud.io",
+	"hub-mirror.c.163.com",
+}
+
+// tryChinaMirrorPull attempts to pull a Docker Hub image from Chinese
+// mirror registries. On success the image is tagged with the original
+// Docker Hub name so subsequent docker build steps find it cached.
+// Returns true if at least one mirror succeeded.
+func tryChinaMirrorPull(dockerHubImage string, ps *progressServer) bool {
+	for _, mirror := range chinaPullSources {
+		mirrorImage := mirror + "/" + dockerHubImage
+		ps.logLine(fmt.Sprintf("   Trying mirror pull: %s", mirrorImage))
+
+		// Pull from mirror — this is a regular docker pull, streamed to UI
+		cmd := exec.Command("docker", "pull", mirrorImage)
+		if err := streamCommand(cmd, ps); err != nil {
+			ps.logLine(fmt.Sprintf("   ✗ Mirror %s: %v", mirror, err))
+			continue
+		}
+
+		// Tag it so the original FROM line in the Dockerfile resolves locally
+		tagCmd := exec.Command("docker", "tag", mirrorImage, dockerHubImage)
+		if out, err := tagCmd.CombinedOutput(); err != nil {
+			ps.logLine(fmt.Sprintf("   ✗ Tag failed: %v — %s", err, strings.TrimSpace(string(out))))
+			continue
+		}
+
+		ps.logLine(fmt.Sprintf("   ✅ Pulled %s via %s and tagged for local use.", dockerHubImage, mirror))
+		return true
+	}
+	return false
+}
+
 // ─── Docker installation guide ────────────────────────────────────────────
 
 func printDockerInstallGuide() {
@@ -113,6 +155,10 @@ func printDockerInstallGuide() {
 
 // ─── Base image build ─────────────────────────────────────────────────────
 
+// baseImageDockerHub is the FROM image used in Dockerfile.base.
+// On build failure we try pulling it from Chinese mirrors and retrying.
+const baseImageDockerHub = "continuumio/miniconda3:latest"
+
 func buildBaseImage(cacheDir string, ps *progressServer) error {
 	// Check if base image already exists
 	cmd := exec.Command("docker", "inspect", "--type=image", baseImageName)
@@ -126,7 +172,31 @@ func buildBaseImage(cacheDir string, ps *progressServer) error {
 	cmd = exec.Command("docker", "build", "-t", baseImageName, "-f", "docker/Dockerfile.base", ".")
 	cmd.Dir = cacheDir
 
-	return streamCommand(cmd, ps)
+	err := streamCommand(cmd, ps)
+	if err != nil {
+		// Docker Hub might be slow or unreachable (common in mainland China).
+		// Try pulling the base image from a Chinese mirror, tag it locally,
+		// then retry the build. Docker daemon config is never touched.
+		ps.logLine("")
+		ps.logLine("⚠️  Build failed — may be a Docker Hub network issue.")
+		ps.logLine("   Attempting fallback: pull base image from Chinese mirrors...")
+
+		if tryChinaMirrorPull(baseImageDockerHub, ps) {
+			ps.logLine("   Retrying docker build with locally-cached base image...")
+			cmd2 := exec.Command("docker", "build", "-t", baseImageName, "-f", "docker/Dockerfile.base", ".")
+			cmd2.Dir = cacheDir
+			return streamCommand(cmd2, ps)
+		}
+
+		// Mirror pull also failed — give the user actionable guidance
+		ps.logLine("")
+		ps.logLine("   All mirrors exhausted. Manual fix options:")
+		ps.logLine("   1. Configure a Docker registry mirror in Docker Desktop / daemon.json:")
+		ps.logLine("      { \"registry-mirrors\": [\"https://registry.cn-hangzhou.aliyuncs.com\"] }")
+		ps.logLine("   2. Or use a VPN/proxy to access Docker Hub directly.")
+		ps.logLine("   3. Then re-run the launcher.")
+	}
+	return err
 }
 
 // ─── App image build ──────────────────────────────────────────────────────
