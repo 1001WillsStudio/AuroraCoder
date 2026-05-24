@@ -1,7 +1,6 @@
 FROM thinkwithtool-base
 
 ARG GITHUB_TOKEN=
-ENV GITHUB_TOKEN=${GITHUB_TOKEN}
 
 ENV THINKTOOL_DOCKER=1 \
     THINKTOOL_VNC=1
@@ -15,17 +14,17 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
 
 # ── Application source (only layer that changes between rebuilds) ─────────
 COPY requirements.txt /app/requirements.txt
+# ToolStore install — uses GITHUB_TOKEN build arg for private repo; falls back gracefully
+# NOTE: once AgentToolStore is open-source the token won't be needed
 RUN conda run -n agent pip install --no-cache-dir -r requirements.txt && \
-    conda run -n agent bash -c ' \
-        if [ -n "$GITHUB_TOKEN" ]; then \
-            echo "ToolStore: installing with GitHub token..." && \
-            pip install --no-cache-dir "git+https://x-access-token:${GITHUB_TOKEN}@github.com/Mrw33554432/AgentToolStore.git#subdirectory=client"; \
-        else \
-            echo "ToolStore: no GITHUB_TOKEN, trying anonymous clone..." && \
-            pip install --no-cache-dir git+https://github.com/Mrw33554432/AgentToolStore.git#subdirectory=client || \
-            echo "WARNING: ToolStore install skipped (repo is private or unreachable). tool_store will report not-installed to the agent."; \
-        fi \
-    '
+    if [ -n "${GITHUB_TOKEN}" ]; then \
+        echo "ToolStore: installing with GitHub token..." && \
+        conda run -n agent pip install --no-cache-dir "git+https://x-access-token:${GITHUB_TOKEN}@github.com/Mrw33554432/AgentToolStore.git#subdirectory=client"; \
+    else \
+        echo "ToolStore: no GITHUB_TOKEN, trying anonymous clone..." && \
+        conda run -n agent pip install --no-cache-dir git+https://github.com/Mrw33554432/AgentToolStore.git#subdirectory=client || \
+        echo "WARNING: ToolStore install skipped (repo is private or unreachable)."; \
+    fi
 
 ENV TOOLSTORE_HOME=/app/data/toolstore
 
