@@ -12,6 +12,10 @@ echo   ToolStore:      http://localhost:8765
 echo ========================================
 echo.
 
+:: Read GITHUB_TOKEN from .env for ToolStore (used in base image build)
+set "GITHUB_TOKEN="
+for /f "tokens=2 delims==" %%a in ('findstr /b /c:"GITHUB_TOKEN=" .env 2^>nul') do set "GITHUB_TOKEN=%%a"
+
 :: Check if base image exists; build if missing
 docker inspect --type=image thinkwithtool-base >nul 2>&1
 if errorlevel 1 goto :build_base
@@ -20,7 +24,7 @@ goto :build_app
 
 :build_base
 echo [base] Building base image -- first time, this may take a few minutes...
-docker build -t thinkwithtool-base -f Dockerfile.base .
+docker build -t thinkwithtool-base -f Dockerfile.base --build-arg GITHUB_TOKEN=%GITHUB_TOKEN% .
 if errorlevel 1 (
     echo Base image build failed.
     pause
@@ -29,9 +33,6 @@ if errorlevel 1 (
 echo [base] Done.
 
 :build_app
-:: Read GITHUB_TOKEN from .env for private repo access (ToolStore)
-set "GITHUB_TOKEN="
-for /f "tokens=2 delims==" %%a in ('findstr /b /c:"GITHUB_TOKEN=" .env 2^>nul') do set "GITHUB_TOKEN=%%a"
 
 :: Always rebuild app image (fast: just copies source code)
 echo [app] Building app image...

@@ -23,12 +23,15 @@ echo "  ToolStore:      http://localhost:8765"
 echo "========================================"
 echo ""
 
+# ── Read GITHUB_TOKEN from .env for ToolStore (used in base image build)
+GITHUB_TOKEN=$(grep '^GITHUB_TOKEN=' .env 2>/dev/null | cut -d= -f2-)
+
 # ── Check if base image exists; build if missing ─────────────────────────
 if docker inspect --type=image thinkwithtool-base >/dev/null 2>&1; then
     echo "[base] Base image found, skipping."
 else
     echo "[base] Building base image -- first time, this may take a few minutes..."
-    docker build -t thinkwithtool-base -f Dockerfile.base . || {
+    docker build -t thinkwithtool-base -f Dockerfile.base --build-arg GITHUB_TOKEN="$GITHUB_TOKEN" . || {
         echo "Base image build failed."
         exit 1
     }
@@ -36,10 +39,8 @@ else
 fi
 
 # ── Always rebuild app image (fast: just copies source code) ─────────────
-# Read GITHUB_TOKEN from .env for private repo access (ToolStore)
-GITHUB_TOKEN=$(grep '^GITHUB_TOKEN=' .env 2>/dev/null | cut -d= -f2-)
 echo "[app] Building app image..."
-docker build -t thinkwithtool --build-arg GITHUB_TOKEN="$GITHUB_TOKEN" . || {
+docker build -t thinkwithtool . || {
     echo "App image build failed."
     exit 1
 }
