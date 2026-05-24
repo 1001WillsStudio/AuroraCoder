@@ -21,7 +21,7 @@ from ..config import SUBAGENT_MAX_RESULT_CHARS
 
 logger = logging.getLogger(__name__)
 
-CONVO_SERVER_URL = os.environ.get("CONVO_SERVER_URL", "http://localhost:8081")
+CONVO_SERVER_URL = os.environ.get("CONVO_SERVER_URL", "http://localhost:3000")
 
 # Track active subagent runs so they can be cancelled from outside.
 _active_subagents: dict[str, tuple[threading.Event, requests.Response | None, str]] = {}

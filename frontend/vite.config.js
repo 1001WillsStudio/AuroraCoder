@@ -4,7 +4,7 @@ import http from 'node:http'
 
 const frontendPort  = parseInt(process.env.VITE_PORT            || '3000')
 const backendPort   = parseInt(process.env.VITE_BACKEND_PORT    || '8080')
-const gatewayPort   = parseInt(process.env.VITE_GATEWAY_PORT    || '8081')
+const gatewayPort   = parseInt(process.env.VITE_GATEWAY_PORT    || '3000')
 
 // Dedicated HTTP agent per proxy target — prevents SSE long-poll connections
 // from starving short-lived REST requests sharing the same socket pool.

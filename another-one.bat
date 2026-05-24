@@ -19,7 +19,6 @@ goto :find_next
 :: Port arithmetic — each instance offsets from the base by (INST-1)*2
 set /a "OFFSET=(%INST%-1)*2"
 set /a "BACKEND_PORT=8080+%OFFSET%"
-set /a "GATEWAY_PORT=8081+%OFFSET%"
 set /a "VNC_PORT=6080+%OFFSET%"
 set /a "DEV_PORT_START=8900+%OFFSET%*3/2"
 set /a "DEV_PORT_END=%DEV_PORT_START%+2"
@@ -41,7 +40,7 @@ echo ========================================
 echo.
 
 :: ── Port-availability check ─────────────────────────────────────────────
-for %%P in (%FRONTEND_PORT% %BACKEND_PORT% %GATEWAY_PORT% %VNC_PORT%) do (
+for %%P in (%FRONTEND_PORT% %BACKEND_PORT% %VNC_PORT%) do (
     netstat -an | findstr /r ":%%P " >nul 2>&1
     if not errorlevel 1 (
         echo WARNING: Port %%P appears to be in use. The container may fail to start.
@@ -86,10 +85,9 @@ docker run --rm -d ^
     -v "%DATA_DIR%:/app/data" ^
     -v "%WORKSPACE_DIR%:/workspace" ^
     -p %BACKEND_PORT%:8080 ^
-    -p %GATEWAY_PORT%:8081 ^
     -p %VNC_PORT%:6080 ^
     -p %DEV_PORT_START%-%DEV_PORT_END%:8900-8902 ^
-    -p %FRONTEND_PORT%:8081 ^
+    -p %FRONTEND_PORT%:3000 ^
     thinkwithtool
 if errorlevel 1 (
     echo Failed to start container.

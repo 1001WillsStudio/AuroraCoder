@@ -30,6 +30,7 @@ COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 RUN sed -i 's/\r$//' /etc/supervisor/conf.d/supervisord.conf
 
 # Agent API + conversation history + dev-server ports + noVNC
-EXPOSE 8080 8081 8900 8901 8902 6080
+# Agent API (8080) + Gateway/Frontend (3000) + dev-server ports + noVNC
+EXPOSE 8080 3000 8900 8901 8902 6080
 
 ENTRYPOINT ["/entrypoint.sh"]

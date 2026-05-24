@@ -32,10 +32,10 @@ the frontend must be **built inside Docker** and served by the existing gateway.
 | What Changes | File(s) |
 |---|---|
 | `npm install && npm run build` during `docker build` | `Dockerfile` |
-| Gateway serves `frontend/dist/` as static files on `:8081` | `gateway/api.py` |
+| Gateway serves `frontend/dist/` as static files on `:3000` | `gateway/api.py` |
 | Remove host-side frontend step from start scripts | `start.bat`, `start.sh` |
 
-After this, opening `http://localhost:8081` gives the full app — no separate Vite server.
+After this, opening `http://localhost:3000` gives the full app — no separate Vite server.
 
 ---
 
@@ -56,7 +56,7 @@ After this, opening `http://localhost:8081` gives the full app — no separate V
   │  4. docker build -t thinkwithtool ...   │
   │     (10-15 min first time, cached after)│
   │  5. docker run ... (backend+gateway+VNC)│
-  │  6. Open http://localhost:8081          │
+  │  6. Open http://localhost:3000          │
   │  7. Minimize to system tray             │
   └─────────────────────────────────────────┘
   ```

@@ -4,7 +4,7 @@ cd /d "%~dp0"
 echo ========================================
 echo   AuroraCoder
 echo ========================================
-echo   Frontend:       http://localhost:8081
+echo   Frontend:       http://localhost:3000
 echo   Backend API:    http://localhost:8080
 echo   API Docs:       http://localhost:8080/docs
 echo   VNC Desktop:    http://localhost:6080
@@ -53,12 +53,12 @@ if not exist ".env" (
 )
 if not exist "%STORAGE_BASE%\data" mkdir "%STORAGE_BASE%\data"
 if not exist "%STORAGE_BASE%\workspace" mkdir "%STORAGE_BASE%\workspace"
-docker run --rm -d --name thinkwithtool-agent --env-file .env -e THINKTOOL_DOCKER=1 -e THINKTOOL_VNC=1 -v "%STORAGE_BASE%\data:/app/data" -v "%STORAGE_BASE%\workspace:/workspace" -p 8080:8080 -p 8081:8081 -p 6080:6080 -p 8900-8902:8900-8902 thinkwithtool
+docker run --rm -d --name thinkwithtool-agent --env-file .env -e THINKTOOL_DOCKER=1 -e THINKTOOL_VNC=1 -v "%STORAGE_BASE%\data:/app/data" -v "%STORAGE_BASE%\workspace:/workspace" -p 8080:8080 -p 3000:3000 -p 6080:6080 -p 8900-8902:8900-8902 thinkwithtool
 if errorlevel 1 (
     echo Failed to start container.
     exit /b 1
 )
 echo Container started.
 echo.
-echo AuroraCoder is running at http://localhost:8081
+echo AuroraCoder is running at http://localhost:3000
 echo To stop: docker stop thinkwithtool-agent

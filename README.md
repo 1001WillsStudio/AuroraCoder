@@ -119,7 +119,7 @@ These are the architectural choices that make the innovations above possible —
 
 ### 🔗 Stateless Core × Stateful Gateway
 
-The agent loop (`main_flow.py`) is **completely stateless** — it takes messages in, yields `{messages, status}` out. All persistence, file diffing, conversation management, and context monitoring happen in a separate **conversation gateway** layer (port 8081). You can swap the frontend, add consumers, or test the loop in isolation.
+The agent loop (`main_flow.py`) is **completely stateless** — it takes messages in, yields `{messages, status}` out. All persistence, file diffing, conversation management, and context monitoring happen in a separate **conversation gateway** layer (port 3000). You can swap the frontend, add consumers, or test the loop in isolation.
 
 ### 🧵 Smart Parallel Tool Execution
 
@@ -188,7 +188,7 @@ cd frontend && npm install && npm run dev
 |---------|-----|---------|
 | 🖥️ **Frontend** | `http://localhost:3000` | Chat UI with streaming, thinking viz, file tree |
 | ⚙️ **Agent Backend** | `http://localhost:8080` | Stateless agent loop + tool execution |
-| 🌉 **Gateway** | `http://localhost:8081` | SSE proxy, conversation persistence, file display |
+| 🌉 **Gateway / Frontend** | `http://localhost:3000` | SSE proxy, conversation persistence, file display |
 | 🖱️ **VNC Desktop** | `http://localhost:6080` | Live Linux desktop for GUI apps |
 
 ### Multi-Instance Mode
@@ -211,7 +211,7 @@ Run `another-one.bat` (or `another-one.bat 5`) to spin up an additional isolated
 │                              │ SSE                               │
 │  ┌── Docker Container ───────────────────────────────────────┐  │
 │  │                                                            │  │
-│  │  ┌── Gateway (:8081) ──────────────────────────────────┐  │  │
+│  │  ┌── Gateway (:3000) ──────────────────────────────────┐  │  │
 │  │  │  FastAPI                                             │  │  │
 │  │  │  ├─ SSE proxy (intercepts agent events)              │  │  │
 │  │  │  ├─ Conversation persistence (atomic file writes)    │  │  │
@@ -300,7 +300,7 @@ auroracoder/
 │   └── web_api/
 │       └── app.py                # FastAPI backend (port 8080)
 ├── gateway/         # Middleware layer (the "dirty work")
-│   ├── api.py                    # SSE proxy + file endpoints (port 8081)
+│   ├── api.py                    # SSE proxy + file endpoints (port 3000)
 │   ├── conversation_store.py     # Thread-safe atomic file persistence
 │   └── workspace.py              # File diffs, tree, upload/export
 ├── frontend/                     # React + Vite SPA

@@ -21,7 +21,7 @@ A **single binary** that deploys AuroraCoder (formerly ThinkWithTool) on any pla
    - Builds Docker images (first time takes a few minutes; cached thereafter)
    - Streams live build output to the progress page
    - Starts the container
-   - Auto-redirects to `http://localhost:8081`
+   - Auto-redirects to `http://localhost:3000`
 4. **Done!** AuroraCoder is running.
 
 ## Prerequisites
@@ -66,7 +66,7 @@ Conversation data and workspace files are persisted in `Documents/ThinkTool/` (o
 | Port | Service        |
 | ---- | -------------- |
 | 8080 | Backend API    |
-| 8081 | Frontend App   |
+| 3000 | Frontend App (Gateway) |
 | 6080 | VNC Desktop    |
 | 8089 | Progress Page  |
 | 8900-8902 | Dev servers |

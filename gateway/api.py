@@ -3,7 +3,7 @@ Conversation Gateway — SSE proxy + conversation storage + file display.
 
 Sits between the frontend and the agent backend as an independent gate:
 
-    Frontend  ←SSE→  Gateway Server (8081)  ←SSE→  Backend (8080)
+    Frontend  ←SSE→  Gateway Server (3000)  ←SSE→  Backend (8080)
                            ↕
                    data/conversations/
 
@@ -18,7 +18,7 @@ Key behaviors:
 
 Start with::
 
-    uvicorn gateway.api:app --host 0.0.0.0 --port 8081
+    uvicorn gateway.api:app --host 0.0.0.0 --port 3000
 """
 
 import asyncio
@@ -1368,4 +1368,4 @@ else:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8081, log_level="warning")
+    uvicorn.run(app, host="0.0.0.0", port=3000, log_level="warning")
