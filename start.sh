@@ -36,8 +36,10 @@ else
 fi
 
 # ── Always rebuild app image (fast: just copies source code) ─────────────
+# Read GITHUB_TOKEN from .env for private repo access (ToolStore)
+GITHUB_TOKEN=$(grep '^GITHUB_TOKEN=' .env 2>/dev/null | cut -d= -f2-)
 echo "[app] Building app image..."
-docker build -t thinkwithtool . || {
+docker build -t thinkwithtool --build-arg GITHUB_TOKEN="$GITHUB_TOKEN" . || {
     echo "App image build failed."
     exit 1
 }

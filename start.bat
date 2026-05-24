@@ -28,9 +28,13 @@ if errorlevel 1 (
 echo [base] Done.
 
 :build_app
+:: Read GITHUB_TOKEN from .env for private repo access (ToolStore)
+set "GITHUB_TOKEN="
+for /f "tokens=2 delims==" %%a in ('findstr /b /c:"GITHUB_TOKEN=" .env 2^>nul') do set "GITHUB_TOKEN=%%a"
+
 :: Always rebuild app image (fast: just copies source code)
 echo [app] Building app image...
-docker build -t thinkwithtool .
+docker build -t thinkwithtool --build-arg GITHUB_TOKEN=%GITHUB_TOKEN% .
 if errorlevel 1 (
     echo App image build failed.
     exit /b 1
