@@ -116,6 +116,7 @@ func main() {
 	fmt.Println()
 	fmt.Println("  API Docs:      http://localhost:8080/docs")
 	fmt.Println("  VNC Desktop:   http://localhost:6080")
+	fmt.Printf("  ToolStore:     http://localhost:%d\n", toolStorePort)
 	fmt.Println()
 	fmt.Println("  To stop:  docker stop thinkwithtool-agent")
 	fmt.Println()

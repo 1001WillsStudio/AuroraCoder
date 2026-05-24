@@ -168,6 +168,7 @@ func startContainer(cacheDir string, ps *progressServer) error {
 		"-p", fmt.Sprintf("%d:%d", apiPort, apiPort),
 		"-p", fmt.Sprintf("%d:%d", appPort, appPort),
 		"-p", fmt.Sprintf("%d:%d", vncPort, vncPort),
+		"-p", fmt.Sprintf("%d:%d", toolStorePort, toolStorePort),
 		"-p", fmt.Sprintf("%d-%d:%d-%d", devPortStart, devPortEnd, devPortStart, devPortEnd),
 		appImageName,
 	}

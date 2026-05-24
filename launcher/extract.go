@@ -22,7 +22,8 @@ const (
 	baseImageName = "thinkwithtool-base"
 	appImageName  = "thinkwithtool"
 	containerName = "thinkwithtool-agent"
-	appPort       = 8081
+	appPort       = 3000
+	toolStorePort = 8765
 	vncPort       = 6080
 	apiPort       = 8080
 	devPortStart  = 8900
