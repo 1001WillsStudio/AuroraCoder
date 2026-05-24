@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
-import { X, Plus, Trash2, Eye, EyeOff, Save, RefreshCw, Shield, Globe, LogOut } from 'lucide-react'
-import { getSettings, updateSettings, getProviders } from '../services/api'
+import { X, Plus, Trash2, Eye, EyeOff, Save, RefreshCw, Shield, Globe, LogOut, ExternalLink, Wrench } from 'lucide-react'
+import { getSettings, updateSettings, getProviders, getToolStoreStatus, refreshToolStore } from '../services/api'
 import { isAuthRequired, isAuthenticated, logout as authLogout, clearToken } from '../utils/auth.js'
 import useLanguage from '../hooks/useLanguage'
 import { LANG_LABELS } from '../i18n/translations'
@@ -29,6 +29,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
   const [errorFields, setErrorFields] = useState({})
   const [authEnabled, setAuthEnabled] = useState(null)
   const [isAuthed, setIsAuthed] = useState(isAuthenticated())
+  const [toolStoreStatus, setToolStoreStatus] = useState(null)
 
   // ── Sentinel for "key is configured but hidden" ─────────────────────────
   const KEY_SENTINEL = '••••••••'
@@ -76,6 +77,12 @@ export default function SettingsPanel({ isOpen, onClose }) {
     if (!isOpen) return
     isAuthRequired().then(needed => setAuthEnabled(needed))
     setIsAuthed(isAuthenticated())
+  }, [isOpen])
+
+  // Load ToolStore status when panel opens
+  useEffect(() => {
+    if (!isOpen) return
+    getToolStoreStatus().then(s => setToolStoreStatus(s)).catch(() => setToolStoreStatus(null))
   }, [isOpen])
 
   if (!isOpen) return null
@@ -544,6 +551,71 @@ export default function SettingsPanel({ isOpen, onClose }) {
                       style={{ color: 'var(--accent)' }}>Open mobile web app</a> —
                     optimized for your phone.
                   </span>
+                </div>
+              </section>
+
+              {/* ── ToolStore ──────────────────────────────────────────── */}
+              <section className="settings-section">
+                <h3 className="settings-section-title">
+                  <Wrench size={16} style={{ marginRight: 6, verticalAlign: 'middle' }} />
+                  ToolStore
+                </h3>
+                <p className="settings-section-desc">
+                  Local MCP servers &amp; skills — managed via the ToolStore dashboard.
+                </p>
+
+                {/* Status */}
+                <div className="settings-security-status" style={{ marginTop: 8 }}>
+                  <span className={`settings-security-dot ${toolStoreStatus?.available ? 'authed' : ''}`} />
+                  <span className="settings-security-text">
+                    {toolStoreStatus === null
+                      ? 'Checking…'
+                      : toolStoreStatus.available
+                        ? `${toolStoreStatus.total} tool(s) indexed`
+                        : 'ToolStore not available — is it installed?'
+                    }
+                  </span>
+                </div>
+
+                {/* Source breakdown */}
+                {toolStoreStatus?.by_source && Object.keys(toolStoreStatus.by_source).length > 0 && (
+                  <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-muted)' }}>
+                    {Object.entries(toolStoreStatus.by_source).map(([src, count]) => (
+                      <span key={src} style={{ marginRight: 12 }}>
+                        <span style={{ fontWeight: 600 }}>{src}</span>: {count}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* Actions */}
+                <div style={{ marginTop: 14, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  <a
+                    href="http://localhost:8765"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="settings-btn-save"
+                    style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}
+                  >
+                    <ExternalLink size={14} style={{ marginRight: 6 }} />
+                    Open Management Dashboard
+                  </a>
+                  <button
+                    className="settings-btn-cancel"
+                    style={{ display: 'inline-flex', alignItems: 'center' }}
+                    onClick={async () => {
+                      try {
+                        const r = await refreshToolStore()
+                        if (r.ok) {
+                          const s = await getToolStoreStatus()
+                          setToolStoreStatus(s)
+                        }
+                      } catch {}
+                    }}
+                  >
+                    <RefreshCw size={14} style={{ marginRight: 6 }} />
+                    Refresh Index
+                  </button>
                 </div>
               </section>
 

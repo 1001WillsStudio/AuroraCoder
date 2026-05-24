@@ -1052,6 +1052,45 @@ async def update_settings(update: _SettingsUpdate):
     return result
 
 
+# ── ToolStore ─────────────────────────────────────────────────────
+
+@app.get("/api/toolstore/status")
+async def get_toolstore_status():
+    """Return tool counts from the local toolstore index."""
+    import json as _json
+    from pathlib import Path as _Path
+
+    home = os.environ.get("TOOLSTORE_HOME", os.path.expanduser("~/.toolstore"))
+    index_path = _Path(home) / "index.json"
+    total = 0
+    by_source = {}
+    if index_path.exists():
+        try:
+            tools = _json.loads(index_path.read_text())
+            for t in tools:
+                src = t.get("source", "unknown")
+                by_source[src] = by_source.get(src, 0) + 1
+                total += 1
+        except Exception:
+            pass
+    return {"total": total, "by_source": by_source, "available": True}
+
+
+@app.post("/api/toolstore/refresh")
+async def refresh_toolstore():
+    """Run `toolstore update` to rebuild the local tool index."""
+    import subprocess as _sp
+    try:
+        result = _sp.run(
+            ["toolstore", "update"],
+            capture_output=True, text=True, timeout=60,
+            env={**os.environ, "TOOLSTORE_HOME": os.environ.get("TOOLSTORE_HOME", os.path.expanduser("~/.toolstore"))}
+        )
+        return {"ok": True, "output": result.stdout[-2000:], "errors": result.stderr[-500:] if result.returncode != 0 else None}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 # ── Workspace info ───────────────────────────────────────────────
 
 @app.get("/api/workspace")

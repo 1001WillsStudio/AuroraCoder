@@ -420,5 +420,30 @@ export async function uploadWorkspace(fileList) {
     const err = await response.json().catch(() => ({ detail: 'Upload failed' }))
     throw new Error(err.detail || `HTTP error! status: ${response.status}`)
   }
+    return response.json()
+}
+
+// ============================================================================
+// ToolStore API
+// ============================================================================
+
+/**
+ * Get ToolStore status — tool counts and per-source breakdown.
+ */
+export async function getToolStoreStatus() {
+  const response = await fetch(`${API_BASE}/toolstore/status`, { headers: _headers() })
+  if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+  return response.json()
+}
+
+/**
+ * Trigger a tool index refresh (`toolstore update`).
+ */
+export async function refreshToolStore() {
+  const response = await fetch(`${API_BASE}/toolstore/refresh`, {
+    method: 'POST',
+    headers: _headers(),
+  })
+  if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
   return response.json()
 }
