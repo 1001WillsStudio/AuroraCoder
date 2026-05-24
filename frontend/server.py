@@ -22,24 +22,24 @@ app = FastAPI(title="AuroraCoder Frontend")
 # ── Proxy helpers ──────────────────────────────────────────────────────────
 
 async def _proxy(request: Request, target_path: str):
-    """Forward a request to the internal gateway and stream the response back."""
-    client = httpx.AsyncClient(timeout=httpx.Timeout(None))
+    """Forward a request to the internal gateway and stream the response back.
+
+    Uses ``client.send(..., stream=True)`` so SSE chunks are forwarded in
+    real-time rather than buffered.
+    """
     url = f"{GATEWAY_URL}{target_path}"
     if request.url.query:
         url += f"?{request.url.query}"
 
     body = await request.body()
-    headers = {
+    req_headers = {
         k: v for k, v in request.headers.items()
         if k.lower() not in ("host", "content-length")
     }
 
-    resp = await client.request(
-        method=request.method,
-        url=url,
-        content=body,
-        headers=headers,
-    )
+    client = httpx.AsyncClient(timeout=httpx.Timeout(None))
+    req = client.build_request(request.method, url, content=body, headers=req_headers)
+    resp = await client.send(req, stream=True)
 
     # Strip hop-by-hop headers so SSE streaming works
     resp_headers = {
@@ -47,8 +47,16 @@ async def _proxy(request: Request, target_path: str):
         if k.lower() not in ("transfer-encoding", "content-encoding", "content-length")
     }
 
+    async def stream_body():
+        try:
+            async for chunk in resp.aiter_bytes():
+                yield chunk
+        finally:
+            await resp.aclose()
+            await client.aclose()
+
     return StreamingResponse(
-        resp.aiter_bytes(),
+        stream_body(),
         status_code=resp.status_code,
         headers=resp_headers,
         media_type=resp.headers.get("content-type"),
