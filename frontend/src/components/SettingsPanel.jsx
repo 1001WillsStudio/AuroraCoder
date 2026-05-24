@@ -393,7 +393,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
                       </div>
                     </div>
                   )
-                })
+                })}
 
                 <button className="settings-add-btn" onClick={addCustomProvider}>
                   <Plus size={16} /><span>{t('field.addProvider')}</span>

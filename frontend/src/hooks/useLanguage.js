@@ -6,6 +6,5 @@
  * Context so that when setLang is called (e.g. in the Settings panel) every
  * component that calls useLanguage() re-renders with the new language.
  */
-export { useLanguage } from '../i18n/LanguageContext'
-export default useLanguage
+export { useLanguage, useLanguage as default } from '../i18n/LanguageContext'
 export { LANG_LABELS } from '../i18n/translations'
