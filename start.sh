@@ -19,6 +19,7 @@ echo "  Frontend:       http://localhost:3000"
 echo "  Backend API:    http://localhost:8080"
 echo "  API Docs:       http://localhost:8080/docs"
 echo "  VNC Desktop:    http://localhost:6080"
+echo "  ToolStore:      http://localhost:8765"
 echo "========================================"
 echo ""
 
@@ -78,6 +79,7 @@ docker run --rm -d \
     -p 8080:8080 \
     -p 3000:3000 \
     -p 6080:6080 \
+    -p 8765:8765 \
     -p 8900-8902:8900-8902 \
     thinkwithtool || {
     echo "Failed to start container."

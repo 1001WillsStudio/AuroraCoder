@@ -23,6 +23,7 @@ set /a "VNC_PORT=6080+%OFFSET%"
 set /a "DEV_PORT_START=8900+%OFFSET%*3/2"
 set /a "DEV_PORT_END=%DEV_PORT_START%+2"
 set /a "FRONTEND_PORT=3000+%INST%-1"
+set /a "TOOLSTORE_PORT=8765+%INST%-1"
 
 set "CONTAINER=thinkwithtool-agent-%INST%"
 set "STORAGE_BASE=%USERPROFILE%\Documents\ThinkTool"
@@ -36,6 +37,7 @@ echo   Frontend:       http://localhost:%FRONTEND_PORT%
 echo   Backend API:    http://localhost:%BACKEND_PORT%
 echo   API Docs:       http://localhost:%BACKEND_PORT%/docs
 echo   VNC Desktop:    http://localhost:%VNC_PORT%
+echo   ToolStore:      http://localhost:%TOOLSTORE_PORT%
 echo ========================================
 echo.
 
@@ -88,6 +90,7 @@ docker run --rm -d ^
     -p %VNC_PORT%:6080 ^
     -p %DEV_PORT_START%-%DEV_PORT_END%:8900-8902 ^
     -p %FRONTEND_PORT%:3000 ^
+    -p %TOOLSTORE_PORT%:8765 ^
     thinkwithtool
 if errorlevel 1 (
     echo Failed to start container.
