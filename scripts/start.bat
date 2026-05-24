@@ -1,5 +1,5 @@
 @echo off
-cd /d "%~dp0"
+cd /d "%~dp0\.."
 
 echo ========================================
 echo   AuroraCoder
@@ -24,7 +24,7 @@ goto :build_app
 
 :build_base
 echo [base] Building base image -- first time, this may take a few minutes...
-docker build -t thinkwithtool-base -f Dockerfile.base --build-arg GITHUB_TOKEN=%GITHUB_TOKEN% .
+docker build -t thinkwithtool-base -f docker\Dockerfile.base --build-arg GITHUB_TOKEN=%GITHUB_TOKEN% .
 if errorlevel 1 (
     echo Base image build failed.
     pause
@@ -36,7 +36,7 @@ echo [base] Done.
 
 :: Always rebuild app image (fast: just copies source code)
 echo [app] Building app image...
-docker build -t thinkwithtool --build-arg GITHUB_TOKEN=%GITHUB_TOKEN% .
+docker build -t thinkwithtool --build-arg GITHUB_TOKEN=%GITHUB_TOKEN% -f docker\Dockerfile .
 if errorlevel 1 (
     echo App image build failed.
     pause

@@ -10,7 +10,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$SCRIPT_DIR"
+cd "$SCRIPT_DIR/.."
 
 echo "========================================"
 echo "  AuroraCoder"
@@ -31,7 +31,7 @@ if docker inspect --type=image thinkwithtool-base >/dev/null 2>&1; then
     echo "[base] Base image found, skipping."
 else
     echo "[base] Building base image -- first time, this may take a few minutes..."
-    docker build -t thinkwithtool-base -f Dockerfile.base --build-arg GITHUB_TOKEN="$GITHUB_TOKEN" . || {
+    docker build -t thinkwithtool-base -f docker/Dockerfile.base --build-arg GITHUB_TOKEN="$GITHUB_TOKEN" . || {
         echo "Base image build failed."
         exit 1
     }
@@ -40,7 +40,7 @@ fi
 
 # ── Always rebuild app image (fast: just copies source code) ─────────────
 echo "[app] Building app image..."
-docker build -t thinkwithtool . || {
+docker build -t thinkwithtool -f docker/Dockerfile . || {
     echo "App image build failed."
     exit 1
 }

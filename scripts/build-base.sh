@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 echo "========================================"
 echo "  Build AuroraCoder Base Image"
@@ -15,5 +15,5 @@ if [ -z "$GITHUB_TOKEN" ]; then
 fi
 
 echo "[base] Building base image..."
-docker build -t thinkwithtool-base -f Dockerfile.base --build-arg GITHUB_TOKEN="$GITHUB_TOKEN" .
+docker build -t thinkwithtool-base -f docker/Dockerfile.base --build-arg GITHUB_TOKEN="$GITHUB_TOKEN" .
 echo "[base] Done."

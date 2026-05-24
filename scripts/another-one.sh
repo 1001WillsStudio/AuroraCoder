@@ -11,7 +11,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$SCRIPT_DIR"
+cd "$SCRIPT_DIR/.."
 
 # ── Instance configuration ──────────────────────────────────────────────
 # Auto-detects the next free instance number (2, 3, 4, …).

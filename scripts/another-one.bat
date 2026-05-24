@@ -1,5 +1,5 @@
 @echo off
-cd /d "%~dp0"
+cd /d "%~dp0\.."
 
 :: ── Instance configuration ──────────────────────────────────────────────
 :: Auto-detects the next free instance number (2, 3, 4, …).

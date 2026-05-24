@@ -14,10 +14,10 @@ COPY . /app
 # Build frontend (produces frontend/dist/)
 RUN cd /app/frontend && npm run build
 
-COPY entrypoint.sh /entrypoint.sh
+COPY docker/entrypoint.sh /entrypoint.sh
 RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
-COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 RUN sed -i 's/\r$//' /etc/supervisor/conf.d/supervisord.conf
 
 # Agent API + conversation history + dev-server ports + noVNC + ToolStore mgmt

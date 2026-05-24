@@ -1,5 +1,5 @@
 @echo off
-cd /d "%~dp0"
+cd /d "%~dp0\.."
 
 echo ========================================
 echo   Build AuroraCoder Base Image
@@ -15,7 +15,7 @@ if "%GITHUB_TOKEN%"=="" (
 )
 
 echo [base] Building base image...
-docker build -t thinkwithtool-base -f Dockerfile.base --build-arg GITHUB_TOKEN=%GITHUB_TOKEN% .
+docker build -t thinkwithtool-base -f docker\Dockerfile.base --build-arg GITHUB_TOKEN=%GITHUB_TOKEN% .
 if errorlevel 1 (
     echo Base image build failed.
     pause
