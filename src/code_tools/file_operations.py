@@ -190,6 +190,13 @@ class FileOperations:
                 """Strip trailing whitespace (trailing spaces usually have no meaning)."""
                 return line.rstrip('\n').rstrip()
 
+            def _search_entire_file(pattern: str) -> Optional[int]:
+                """Search the entire file for an anchor line. Returns 0-based index or None."""
+                for idx, line in enumerate(original_lines):
+                    if _normalise_line(line) == _normalise_line(pattern):
+                        return idx
+                return None
+
             def _indentation_hint(expected: str, actual: str) -> str:
                 """If content matches ignoring leading whitespace, return a hint."""
                 if expected.strip() == actual.strip() and expected != actual:
@@ -341,14 +348,27 @@ class FileOperations:
                         start_idx = found_idx
                         start_corrected = True
                     else:
-                        context_start = max(0, start_idx - 1)
-                        context_end = min(total_lines, start_idx + 4)
-                        context = ''.join(original_lines[context_start:context_end])
-                        return (f"Error in edit #{i + 1}: start_content does not match "
-                                f"file at line {start_line} (also searched ±{MAX_ANCHOR_SHIFT} lines).\n"
-                                f"File context around line {start_line}:\n"
-                                f"---\n{context}---"
-                                f"{_NO_CHANGES}")
+                    context_start = max(0, start_idx - 1)
+                    context_end = min(total_lines, start_idx + 4)
+                    context = ''.join(original_lines[context_start:context_end])
+                    # Check if the first anchor line exists anywhere in the file
+                    first_line = start_content.split('\n')[0] if '\n' in start_content else start_content
+                    global_idx = _search_entire_file(first_line)
+                    extra_hint = ""
+                    if global_idx is None:
+                        extra_hint = ("\n💡 The anchor's first line was NOT found anywhere in this file. "
+                                      "Are you sure this edit targets the correct file? "
+                                      "Re-read the file with read_file() to get current line numbers.")
+                    else:
+                        extra_hint = (f"\n💡 The anchor's first line WAS found at line {global_idx + 1} "
+                                      f"(you specified line {start_line}). "
+                                      f"Re-read the file to get current line numbers before retrying.")
+                    return (f"Error in edit #{i + 1}: start_content does not match "
+                            f"file at line {start_line} (also searched ±{MAX_ANCHOR_SHIFT} lines).\n"
+                            f"File context around line {start_line}:\n"
+                            f"---\n{context}---"
+                            f"{extra_hint}"
+                            f"{_NO_CHANGES}")
                 else:
                     actual_start = _normalise_line(original_lines[start_idx])
                     expected_start = _normalise_line(start_content)
@@ -358,18 +378,29 @@ class FileOperations:
                             start_idx = found_idx
                             start_corrected = True
                         else:
-                            context_start = max(0, start_idx - 1)
-                            context_end = min(total_lines, start_idx + 3)
-                            context = ''.join(original_lines[context_start:context_end])
-                            indent_hint = _indentation_hint(expected_start, actual_start)
-                            return (f"Error in edit #{i + 1}: start_content does not match "
-                                    f"file at line {start_line} (also searched ±{MAX_ANCHOR_SHIFT} lines).\n"
-                                    f"Expected: {repr(start_content.rstrip())}\n"
-                                    f"Actual:   {repr(original_lines[start_line - 1].rstrip())}\n"
-                                    f"File context around line {start_line}:\n"
-                                    f"---\n{context}---"
-                                    f"{indent_hint}"
-                                    f"{_NO_CHANGES}")
+                        context_start = max(0, start_idx - 1)
+                        context_end = min(total_lines, start_idx + 3)
+                        context = ''.join(original_lines[context_start:context_end])
+                        indent_hint = _indentation_hint(expected_start, actual_start)
+                        global_idx = _search_entire_file(start_content)
+                        extra_hint = ""
+                        if global_idx is None:
+                            extra_hint = ("\n💡 This anchor text was NOT found anywhere in the file. "
+                                          "Are you sure this edit targets the correct file? "
+                                          "Re-read the file with read_file() to get current line numbers.")
+                        else:
+                            extra_hint = (f"\n💡 This anchor text WAS found at line {global_idx + 1} "
+                                          f"(you specified line {start_line}). "
+                                          f"Re-read the file to get current line numbers before retrying.")
+                        return (f"Error in edit #{i + 1}: start_content does not match "
+                                f"file at line {start_line} (also searched ±{MAX_ANCHOR_SHIFT} lines).\n"
+                                f"Expected: {repr(start_content.rstrip())}\n"
+                                f"Actual:   {repr(original_lines[start_line - 1].rstrip())}\n"
+                                f"File context around line {start_line}:\n"
+                                f"---\n{context}---"
+                                f"{indent_hint}"
+                                f"{extra_hint}"
+                                f"{_NO_CHANGES}")
 
                 # Verify end anchor (with ±MAX_ANCHOR_SHIFT tolerance)
                 # For end anchor, the expected_line_num points to the LAST line
