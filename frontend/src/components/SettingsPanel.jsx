@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { X, Plus, Trash2, Eye, EyeOff, Save, RefreshCw, Shield, Globe, LogOut, ExternalLink, Wrench } from 'lucide-react'
+import { X, Plus, Trash2, Eye, EyeOff, Save, RefreshCw, Shield, Globe, LogOut, ExternalLink, Wrench, ChevronDown, ChevronRight } from 'lucide-react'
 import { getSettings, updateSettings, getProviders, getToolStoreStatus, refreshToolStore } from '../services/api'
 import { isAuthRequired, isAuthenticated, logout as authLogout, clearToken } from '../utils/auth.js'
 import useLanguage from '../hooks/useLanguage'
@@ -30,6 +30,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
   const [authEnabled, setAuthEnabled] = useState(null)
   const [isAuthed, setIsAuthed] = useState(isAuthenticated())
   const [toolStoreStatus, setToolStoreStatus] = useState(null)
+  const [providersCollapsed, setProvidersCollapsed] = useState(true)
 
   // ── Sentinel for "key is configured but hidden" ─────────────────────────
   const KEY_SENTINEL = '••••••••'
@@ -240,10 +241,20 @@ export default function SettingsPanel({ isOpen, onClose }) {
             <>
               {/* ── Providers ──────────────────────────────────────────── */}
               <section className="settings-section">
-                <h3 className="settings-section-title">{t('providers.title')}</h3>
-                <p className="settings-section-desc">{t('providers.desc')}</p>
+                <h3
+                  className="settings-section-title"
+                  style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                  onClick={() => setProvidersCollapsed(!providersCollapsed)}
+                >
+                  {providersCollapsed
+                    ? <ChevronRight size={16} style={{ marginRight: 4 }} />
+                    : <ChevronDown size={16} style={{ marginRight: 4 }} />
+                  }
+                  {t('providers.title')}
+                </h3>
+                {!providersCollapsed && <p className="settings-section-desc">{t('providers.desc')}</p>}
 
-                {allProviders.map(prov => {
+{!providersCollapsed && allProviders.map(prov => {
                   const pid = prov.id
                   const isBuiltIn = prov._builtin
                   const ci = prov._customIndex
@@ -381,11 +392,12 @@ export default function SettingsPanel({ isOpen, onClose }) {
                       </div>
                     </div>
                   )
-                })}
+                })
 
                 <button className="settings-add-btn" onClick={addCustomProvider}>
                   <Plus size={16} /><span>{t('field.addProvider')}</span>
                 </button>
+                }
               </section>
 
               {/* ── Web Secondary Model ─────────────────────────────────── */}
@@ -591,7 +603,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
                 {/* Actions */}
                 <div style={{ marginTop: 14, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                   <a
-                    href="http://localhost:8765"
+                    href={`//${window.location.hostname}:8765`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="settings-btn-save"
