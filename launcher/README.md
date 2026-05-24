@@ -66,7 +66,7 @@ Conversation data and workspace files are persisted in `Documents/ThinkTool/` (o
 | Port | Service        |
 | ---- | -------------- |
 | 8080 | Backend API    |
-| 3000 | Frontend App (Gateway) |
+| 3000 | Frontend App    |
 | 6080 | VNC Desktop    |
 | 8089 | Progress Page  |
 | 8900-8902 | Dev servers |

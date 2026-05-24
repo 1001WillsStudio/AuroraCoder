@@ -3,7 +3,7 @@ Conversation Gateway — SSE proxy + conversation storage + file display.
 
 Sits between the frontend and the agent backend as an independent gate:
 
-    Frontend  ←SSE→  Gateway Server (3000)  ←SSE→  Backend (8080)
+    Frontend (:3000)  ←proxy→  Gateway (8081, internal)  ←SSE→  Backend (8080)
                            ↕
                    data/conversations/
 
@@ -18,7 +18,7 @@ Key behaviors:
 
 Start with::
 
-    uvicorn gateway.api:app --host 0.0.0.0 --port 3000
+    uvicorn gateway.api:app --host 0.0.0.0 --port 8081
 """
 
 import asyncio
@@ -1349,17 +1349,6 @@ if mobile_dir.exists():
         return RedirectResponse(url="/mobile/")
 
 
-# ============================================================================
-# Serve frontend static files (SPA – must be mounted after all API routes)
-frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
-if frontend_dist.exists():
-    app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")
-else:
-    logger.warning(
-        "Frontend build not found at %s — rebuild the Docker image or run "
-        "`cd frontend && npm run build` to serve the UI at /",
-        frontend_dist,
-    )
 
 
 # ============================================================================
@@ -1368,4 +1357,4 @@ else:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=3000, log_level="warning")
+    uvicorn.run(app, host="0.0.0.0", port=8081, log_level="warning")

@@ -19,7 +19,7 @@ src/                          ← Stateless agent loop (messages in → messages
     All tools are stateless   ← No conversation-store access, no direct persistence
 
 gateway/         ← Middleware between frontend and backend (the "dirty work")
-    api.py                    ← SSE proxy + file display endpoints (port 3000)
+    api.py                    ← SSE proxy + file display endpoints (port 8081, internal)
     conversation_store.py     ← File-backed store (thread-safe, atomic writes)
     workspace.py              ← File diff, tree, upload/delete/export utilities
 
@@ -27,7 +27,7 @@ frontend/                     ← UI + conversation ownership
     App.jsx                   ← React SPA, owns conversation state
 ```
 
-**The rule**: `src/` never touches the conversation store. It just processes messages and returns signals. The proxy (port 3000) intercepts SSE events and handles all persistence, conversation creation, status management, and context-window monitoring. This keeps the agent loop testable, swappable, and dead-simple.
+**The rule**: `src/` never touches the conversation store. It just processes messages and returns signals. The proxy (port 8081, internal) intercepts SSE events and handles all persistence, conversation creation, status management, and context-window monitoring. This keeps the agent loop testable, swappable, and dead-simple.
 
 ### Capabilities
 
@@ -80,7 +80,7 @@ ThinkWithTool/
 │   └── web_api/
 │       └── app.py              ← FastAPI backend server (port 8080, agent loop only)
 ├── gateway/       ← Middleware layer (the "dirty work")
-│   ├── api.py                  ← SSE proxy + file display endpoints (port 3000)
+│   ├── api.py                  ← SSE proxy + file display endpoints (port 8081, internal)
 │   ├── conversation_store.py   ← File-backed store (thread-safe, atomic writes)
 │   └── workspace.py            ← File diff, tree, upload/delete/export utilities
 ├── frontend/                   ← React + Vite web UI

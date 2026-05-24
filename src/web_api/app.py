@@ -3,7 +3,7 @@ FastAPI Backend for ThinkWithTool AI Assistant
 
 Provides the core agent SSE streaming endpoint.
 All other endpoints (settings, providers, workspace, file display, conversations)
-have been moved to ``gateway/api.py`` (port 3000).
+have been moved to ``gateway/api.py`` (port 8081, internal).
 """
 
 import json
