@@ -429,17 +429,17 @@ class FileOperations:
         """Find files by name pattern — delegates to `find` subprocess (fast)."""
         import subprocess
         try:
-            # Exclude heavy/noisy dirs at the find level so we never touch them
+            # Prune heavy/noisy dirs — find never descends into them
             cmd = [
                 "find", str(self.workspace_root),
-                "-type", "f",
-                "-not", "-path", "*/.git/*",
-                "-not", "-path", "*/node_modules/*",
-                "-not", "-path", "*/__pycache__/*",
-                "-not", "-path", "*/.venv/*",
-                "-not", "-path", "*/venv/*",
-                "-not", "-path", "*/dist/*",
-                "-iname", f"*{query}*",
+                "(", "-name", ".git", "-o",
+                       "-name", "node_modules", "-o",
+                       "-name", "__pycache__", "-o",
+                       "-name", ".venv", "-o",
+                       "-name", "venv", "-o",
+                       "-name", "dist",
+                ")", "-prune", "-o",
+                "-type", "f", "-iname", f"*{query}*", "-print",
             ]
             cp = subprocess.run(cmd, capture_output=True, text=True, timeout=10, cwd=str(self.workspace_root))
         except subprocess.TimeoutExpired:
