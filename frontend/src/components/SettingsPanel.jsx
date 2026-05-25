@@ -56,10 +56,6 @@ export default function SettingsPanel({ isOpen, onClose }) {
         const other = s.other || {}
         other.web_secondary = other.web_secondary || {}
         other.agent = other.agent || {}
-        // Also handle web_secondary api_key (currently returned as a real key from get_all_settings)
-        if (other.web_secondary.api_key && other.web_secondary.api_key !== KEY_SENTINEL) {
-          other.web_secondary.api_key = KEY_SENTINEL
-        }
         setSettings({ ...s, other })
         setProviders(p.providers || [])
       } catch {
@@ -407,12 +403,15 @@ export default function SettingsPanel({ isOpen, onClose }) {
                 <p className="settings-section-desc">{t('webSecondary.desc')}</p>
                 <div className="settings-field-row">
                   <div className="settings-field-col">
-                    <label>{t('webSecondary.modelName')}</label>
-                    <input className="settings-input" type="text"
-                      value={other.web_secondary?.model_name || ''}
-                      onChange={e => setOther('web_secondary', 'model_name', e.target.value)}
-                      placeholder={t('webSecondary.modelNamePlaceholder')}
-                    />
+                    <label>{t('webSecondary.provider')}</label>
+                    <select className="settings-input"
+                      value={other.web_secondary?.provider || ''}
+                      onChange={e => setOther('web_secondary', 'provider', e.target.value)}>
+                      <option value="">{t('webSecondary.providerDefault')}</option>
+                      {allProviders.map(p => (
+                        <option key={p.id} value={p.id}>{p.name}{p.custom ? t('agent.customSuffix') : ''}</option>
+                      ))}
+                    </select>
                   </div>
                   <div className="settings-field-col">
                     <label>{t('webSecondary.maxTokens')}</label>
@@ -421,32 +420,6 @@ export default function SettingsPanel({ isOpen, onClose }) {
                       onChange={e => setOther('web_secondary', 'max_tokens', e.target.value)}
                       placeholder={t('webSecondary.maxTokensPlaceholder')} min="256" max="32768"
                     />
-                  </div>
-                </div>
-                <div className="settings-field-row" style={{ marginTop: '10px' }}>
-                  <div className="settings-field-col settings-field-col-wide">
-                    <label>{t('field.baseUrl')}</label>
-                    <input className="settings-input" type="text"
-                      value={other.web_secondary?.base_url || ''}
-                      onChange={e => setOther('web_secondary', 'base_url', e.target.value)}
-                      placeholder={t('webSecondary.baseUrlPlaceholder')}
-                    />
-                  </div>
-                </div>
-                <div className="settings-field-row" style={{ marginTop: '10px' }}>
-                  <div className="settings-field-col settings-field-col-wide">
-                    <label>{t('field.apiKey')}</label>
-                    <div className="settings-input-row">
-                      <input className="settings-input"
-                        type={showKeys['web-secondary'] ? 'text' : 'password'}
-                        value={other.web_secondary?.api_key || ''}
-                        onChange={e => setOther('web_secondary', 'api_key', e.target.value)}
-                        placeholder="sk-…"
-                      />
-                      <button className="settings-icon-btn" onClick={() => toggleShowKey('web-secondary')}>
-                        {showKeys['web-secondary'] ? <EyeOff size={16} /> : <Eye size={16} />}
-                      </button>
-                    </div>
                   </div>
                 </div>
               </section>

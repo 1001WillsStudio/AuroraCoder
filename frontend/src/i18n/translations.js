@@ -55,12 +55,11 @@ const LANG = {
     // ── Web Secondary Model section ───────────────────────────────
     'webSecondary.title': 'Web Secondary Model',
     'webSecondary.desc':
-      "Fast/cheap model for summarizing scraped web pages before they enter the agent's context.",
-    'webSecondary.modelName': 'Model Name',
-    'webSecondary.modelNamePlaceholder': 'deepseek-chat',
+      "Fast/cheap model for summarizing scraped web pages before they enter the agent's context — select a provider above.",
+    'webSecondary.provider': 'Provider',
+    'webSecondary.providerDefault': '(same as agent default)',
     'webSecondary.maxTokens': 'Max Tokens',
     'webSecondary.maxTokensPlaceholder': '4096',
-    'webSecondary.baseUrlPlaceholder': 'https://api.deepseek.com/v1',
 
     // ── Agent Behavior section ────────────────────────────────────
     'agent.title': 'Agent Behavior',
@@ -277,12 +276,11 @@ const LANG = {
 
     // ── Web Secondary Model section ───────────────────────────────
     'webSecondary.title': '网页辅助模型',
-    'webSecondary.desc': '用于在网页内容进入智能体上下文前对其进行摘要的快速/廉价模型。',
-    'webSecondary.modelName': '模型名称',
-    'webSecondary.modelNamePlaceholder': 'deepseek-chat',
+    'webSecondary.desc': '用于在网页内容进入智能体上下文前对其进行摘要的快速/廉价模型 — 从上方选择一个提供者。',
+    'webSecondary.provider': '提供者',
+    'webSecondary.providerDefault': '（与智能体默认相同）',
     'webSecondary.maxTokens': '最大 Token 数',
     'webSecondary.maxTokensPlaceholder': '4096',
-    'webSecondary.baseUrlPlaceholder': 'https://api.deepseek.com/v1',
 
     // ── Agent Behavior section ────────────────────────────────────
     'agent.title': '智能体行为',
