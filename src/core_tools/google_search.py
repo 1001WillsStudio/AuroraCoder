@@ -58,11 +58,37 @@ def format_for_llm(results: List[Dict[str, Any]], search_term: str) -> str:
 
     return "\n".join(output)
 
+def _get_google_config():
+    """Read Google Search API key and CSE ID.
+
+    API key uses the standard provider key path (settings.json api_keys.google_search
+    → GOOGLE_SEARCH_API_KEY env var). CSE ID is read from other.google_search.cse_id
+    → GOOGLE_CSE_ID env var.
+    """
+    import os
+    from ..settings_store import get_api_key, get_other_settings
+
+    # API key: standard path (settings.json api_keys → env var)
+    api_key = get_api_key("google_search")
+
+    # CSE ID: other section → env var
+    other = get_other_settings()
+    gs = other.get("google_search", {})
+    cse_id = gs.get("cse_id", "")
+    if not cse_id:
+        cse_id = os.environ.get("GOOGLE_CSE_ID", "")
+
+    return api_key, cse_id
+
+
 def search_for_llm(search_term: str) -> str:
-    # my_api_key: str = "[REDACTED]"
-    # my_cse_id: str = "[REDACTED]"
-    my_api_key: str = "[REDACTED]"
-    my_cse_id: str = "[REDACTED]"
+    my_api_key, my_cse_id = _get_google_config()
+    if not my_api_key or not my_cse_id:
+        return (
+            "Google Search is not configured. "
+            "Set GOOGLE_SEARCH_API_KEY and GOOGLE_CSE_ID in Settings "
+            "or via environment variables."
+        )
     results: List[Dict[str, Any]] = google_search(search_term, my_api_key, my_cse_id, num=10)
 
     if not results:

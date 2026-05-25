@@ -57,6 +57,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
         const other = s.other || {}
         other.web_secondary = other.web_secondary || {}
         other.agent = other.agent || {}
+        other.google_search = other.google_search || {}
         setSettings({ ...s, other })
         setProviders(p.providers || [])
       } catch {
@@ -512,6 +513,51 @@ export default function SettingsPanel({ isOpen, onClose }) {
                       style={{ color: 'var(--accent)' }}>Open mobile web app</a> —
                     optimized for your phone.
                   </span>
+                </div>
+              </section>
+
+              {/* ── Google Search ──────────────────────────────────────── */}
+              <section className="settings-section">
+                <h3 className="settings-section-title">
+                  🔍 Google Search
+                </h3>
+                <p className="settings-section-desc">
+                  Programmable Search Engine credentials for the google_search tool.
+                  <br />
+                  <a href="https://developers.google.com/custom-search/v1/overview" target="_blank" rel="noopener"
+                    style={{ color: 'var(--accent)', fontSize: 12 }}>
+                    Get an API key →
+                  </a>
+                  {' · '}
+                  <a href="https://programmablesearchengine.google.com/" target="_blank" rel="noopener"
+                    style={{ color: 'var(--accent)', fontSize: 12 }}>
+                    Create a CSE →
+                  </a>
+                </p>
+                <div className="settings-field-row">
+                  <div className="settings-field-col">
+                    <label>API Key</label>
+                    <div className="settings-input-row">
+                      <input className="settings-input"
+                        type={showKeys['google_search'] ? 'text' : 'password'}
+                        value={apiKeys['google_search'] || ''}
+                        onChange={e => setApiKey('google_search', e.target.value)}
+                        placeholder={apiKeys['google_search'] ? '••••••••' : 'AIza…'}
+                      />
+                      <button className="settings-icon-btn" onClick={() => toggleShowKey('google_search')}
+                        title={showKeys['google_search'] ? 'Hide' : 'Show'}>
+                        {showKeys['google_search'] ? <EyeOff size={16} /> : <Eye size={16} />}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="settings-field-col">
+                    <label>CSE ID</label>
+                    <input className="settings-input" type="text"
+                      value={other.google_search?.cse_id || ''}
+                      onChange={e => setOther('google_search', 'cse_id', e.target.value)}
+placeholder="abc123..."
+                    />
+                  </div>
                 </div>
               </section>
 
