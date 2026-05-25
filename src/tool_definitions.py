@@ -19,7 +19,7 @@ from .code_tools.file_operations import (
     file_search_tool,
     close_file_tool,
 )
-from .code_tools.grep_search import grep_search_tool
+# from .code_tools.grep_search import grep_search_tool  # COMMENTED OUT — agent can use terminal grep
 from .code_tools.terminal_runner import run_terminal_cmd_tool
 from .core_tools.tool_store_client import tool_store_tool
 from .core_tools.subagent import run_subagent
@@ -241,36 +241,37 @@ NATIVE_TOOL_DEFINITIONS = [
             }
         }
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "grep_search",
-            "description": "Performs regex-based text search across files in the workspace, similar to grep command.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "The regex pattern to search for"
-                    },
-                    "include_pattern": {
-                        "type": "string",
-                        "description": "Glob pattern for files to include (e.g., '*.py')"
-                    },
-                    "exclude_pattern": {
-                        "type": "string",
-                        "description": "Glob pattern for files to exclude (e.g., '*test*')"
-                    },
-                    "case_sensitive": {
-                        "type": "boolean",
-                        "description": "Whether the search should be case sensitive",
-                        "default": True
-                    }
-                },
-                "required": ["query"]
-            }
-        }
-    },
+    # COMMENTED OUT — agent can use terminal: grep -rn "pattern" .
+    # {
+    #     "type": "function",
+    #     "function": {
+    #         "name": "grep_search",
+    #         "description": "Performs regex-based text search across files in the workspace, similar to grep command.",
+    #         "parameters": {
+    #             "type": "object",
+    #             "properties": {
+    #                 "query": {
+    #                     "type": "string",
+    #                     "description": "The regex pattern to search for"
+    #                 },
+    #                 "include_pattern": {
+    #                     "type": "string",
+    #                     "description": "Glob pattern for files to include (e.g., '*.py')"
+    #                 },
+    #                 "exclude_pattern": {
+    #                     "type": "string",
+    #                     "description": "Glob pattern for files to exclude (e.g., '*test*')"
+    #                 },
+    #                 "case_sensitive": {
+    #                     "type": "boolean",
+    #                     "description": "Whether the search should be case sensitive",
+    #                     "default": True
+    #                 }
+    #             },
+    #             "required": ["query"]
+    #         }
+    #     }
+    # },
     {
         "type": "function",
         "function": {
@@ -385,7 +386,7 @@ NATIVE_TOOL_DEFINITIONS = [
 # These have no conflicting side effects / race conditions.
 # Used by partition_tool_calls() in main_flow.py to decide what can run concurrently.
 PARALLEL_SAFE_TOOLS = {
-    "read_file", "list_directory", "search_files", "grep_search",
+    "read_file", "list_directory", "search_files",  # "grep_search",  # COMMENTED OUT
     "google_search", "web_browser", "tool_store",
     "subagent",
 }
@@ -395,7 +396,7 @@ PARALLEL_SAFE_TOOLS = {
 # system state.  Used by get_filtered_tools() in web_api/app.py.
 # "subagent" itself is excluded by get_filtered_tools() to prevent nesting.
 SUBAGENT_READ_ONLY_TOOLS = {
-    "read_file", "list_directory", "search_files", "grep_search",
+    "read_file", "list_directory", "search_files",  # "grep_search",  # COMMENTED OUT
     "google_search", "web_browser", "close_file",
     # "tool_store",  # TODO: candidate — needs review.  Many external APIs
     #                 # are write-capable, so this can bypass subagent safety.
@@ -416,7 +417,7 @@ TOOL_FUNCTION_MAP = {
     "close_file": close_file_tool,
     "list_directory": list_dir_tool,
     "search_files": file_search_tool,
-    "grep_search": grep_search_tool,
+    # "grep_search": grep_search_tool,  # COMMENTED OUT — agent can use terminal grep
     "run_terminal_command": run_terminal_cmd_tool,
     "tool_store": tool_store_tool,
     "subagent": run_subagent,
