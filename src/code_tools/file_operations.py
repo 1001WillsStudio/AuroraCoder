@@ -425,34 +425,56 @@ class FileOperations:
         except Exception as e:
             return f"Error listing directory '{relative_workspace_path}': {str(e)}"
 
-    def file_search(self, query: str, max_results: int = 10) -> str:
+    def file_search(self, query: str, max_results: int = 12) -> str:
+        """Find files by name pattern — delegates to `find` subprocess (fast)."""
+        import subprocess
         try:
-            results = []
-            query_lower = query.lower()
-            for file_path in self.workspace_root.rglob('*'):
-                if file_path.is_file():
-                    name = file_path.name.lower()
-                    relative_path = str(file_path.relative_to(self.workspace_root))
-                    if query_lower in name or query_lower in relative_path.lower():
-                        results.append({
-                            'path': relative_path,
-                            'name': file_path.name,
-                            'size': file_path.stat().st_size
-                        })
-            results.sort(key=lambda x: (
-                0 if query_lower == x['name'].lower() else 1,
-                x['name'].lower()
-            ))
-            if not results:
-                return f"No files found matching '{query}'"
-            output = [f"Found {len(results)} files matching '{query}':\n"]
-            for result in results[:max_results]:
-                output.append(f"📄 {result['path']} ({result['size']} bytes)")
-            if len(results) > max_results:
-                output.append(f"\n... and {len(results) - max_results} more files")
-            return '\n'.join(output)
-        except Exception as e:
-            return f"Error searching for files: {str(e)}"
+            # Exclude heavy/noisy dirs at the find level so we never touch them
+            cmd = [
+                "find", str(self.workspace_root),
+                "-type", "f",
+                "-not", "-path", "*/.git/*",
+                "-not", "-path", "*/node_modules/*",
+                "-not", "-path", "*/__pycache__/*",
+                "-not", "-path", "*/.venv/*",
+                "-not", "-path", "*/venv/*",
+                "-not", "-path", "*/dist/*",
+                "-iname", f"*{query}*",
+            ]
+            cp = subprocess.run(cmd, capture_output=True, text=True, timeout=10, cwd=str(self.workspace_root))
+        except subprocess.TimeoutExpired:
+            return f"Error: file search timed out looking for '{query}'"
+        except FileNotFoundError:
+            return "Error: find binary not found on this system."
+
+        lines = [l.strip() for l in cp.stdout.strip().split("\n") if l.strip()]
+        if not lines:
+            return f"No files found matching '{query}'"
+
+        # Build relative paths
+        import os
+        results = []
+        ws = str(self.workspace_root)
+        for abs_path in lines:
+            rel = os.path.relpath(abs_path, ws)
+            name = os.path.basename(abs_path)
+            try:
+                size = os.path.getsize(abs_path)
+            except OSError:
+                size = 0
+            results.append({"path": rel, "name": name, "size": size})
+
+        results.sort(key=lambda x: (
+            0 if query.lower() == x["name"].lower() else 1,
+            x["name"].lower()
+        ))
+
+        output = [f"Found {len(results)} files matching '{query}':\n"]
+        for r in results[:max_results]:
+            output.append(f"📄 {r['path']} ({r['size']} bytes)")
+        if len(results) > max_results:
+            output.append(f"\n... and {len(results) - max_results} more files")
+        return "\n".join(output)
 
     def _resolve_path(self, path: str) -> Path:
         path_obj = Path(path)
