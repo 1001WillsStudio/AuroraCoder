@@ -31,6 +31,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
   const [isAuthed, setIsAuthed] = useState(isAuthenticated())
   const [toolStoreStatus, setToolStoreStatus] = useState(null)
   const [providersCollapsed, setProvidersCollapsed] = useState(true)
+  const [webSecondaryCollapsed, setWebSecondaryCollapsed] = useState(true)
 
   // ── Sentinel for "key is configured but hidden" ─────────────────────────
   const KEY_SENTINEL = '••••••••'
@@ -397,32 +398,6 @@ export default function SettingsPanel({ isOpen, onClose }) {
                 </>}
               </section>
 
-              {/* ── Web Secondary Model ─────────────────────────────────── */}
-              <section className="settings-section">
-                <h3 className="settings-section-title">{t('webSecondary.title')}</h3>
-                <p className="settings-section-desc">{t('webSecondary.desc')}</p>
-                <div className="settings-field-row">
-                  <div className="settings-field-col">
-                    <label>{t('webSecondary.provider')}</label>
-                    <select className="settings-input"
-                      value={other.web_secondary?.provider || ''}
-                      onChange={e => setOther('web_secondary', 'provider', e.target.value)}>
-                      <option value="">{t('webSecondary.providerDefault')}</option>
-                      {allProviders.map(p => (
-                        <option key={p.id} value={p.id}>{p.name}{p.custom ? t('agent.customSuffix') : ''}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="settings-field-col">
-                    <label>{t('webSecondary.maxTokens')}</label>
-                    <input className="settings-input" type="number"
-                      value={other.web_secondary?.max_tokens || ''}
-                      onChange={e => setOther('web_secondary', 'max_tokens', e.target.value)}
-                      placeholder={t('webSecondary.maxTokensPlaceholder')} min="256" max="32768"
-                    />
-                  </div>
-                </div>
-              </section>
 
               {/* ── Agent Behavior ──────────────────────────────────────── */}
               <section className="settings-section">
@@ -603,6 +578,46 @@ export default function SettingsPanel({ isOpen, onClose }) {
                     Refresh Index
                   </button>
                 </div>
+              </section>
+
+              {/* ── Web Secondary Model ─────────────────────────────────── */}
+              <section className="settings-section">
+                <h3
+                  className="settings-section-title"
+                  style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                  onClick={() => setWebSecondaryCollapsed(!webSecondaryCollapsed)}
+                >
+                  {webSecondaryCollapsed
+                    ? <ChevronRight size={16} style={{ marginRight: 4 }} />
+                    : <ChevronDown size={16} style={{ marginRight: 4 }} />
+                  }
+                  {t('webSecondary.title')}
+                </h3>
+                {!webSecondaryCollapsed && <p className="settings-section-desc">{t('webSecondary.desc')}</p>}
+
+                {!webSecondaryCollapsed && <>
+                  <div className="settings-field-row">
+                    <div className="settings-field-col">
+                      <label>{t('webSecondary.provider')}</label>
+                      <select className="settings-input"
+                        value={other.web_secondary?.provider || ''}
+                        onChange={e => setOther('web_secondary', 'provider', e.target.value)}>
+                        <option value="">{t('webSecondary.providerDefault')}</option>
+                        {allProviders.map(p => (
+                          <option key={p.id} value={p.id}>{p.name}{p.custom ? t('agent.customSuffix') : ''}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="settings-field-col">
+                      <label>{t('webSecondary.maxTokens')}</label>
+                      <input className="settings-input" type="number"
+                        value={other.web_secondary?.max_tokens || ''}
+                        onChange={e => setOther('web_secondary', 'max_tokens', e.target.value)}
+                        placeholder={t('webSecondary.maxTokensPlaceholder')} min="256" max="32768"
+                      />
+                    </div>
+                  </div>
+                </>}
               </section>
 
               {/* ── Persistence note ────────────────────────────────────── */}
