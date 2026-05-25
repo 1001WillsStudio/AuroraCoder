@@ -41,9 +41,9 @@ function App() {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('theme')
       if (saved) return saved
-      return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+      return 'light'
     }
-    return 'dark'
+    return 'light'
   })
   
   // ── File tracking hook ──
