@@ -40,7 +40,7 @@ fi
 
 # ── Always rebuild app image (fast: just copies source code) ─────────────
 echo "[app] Building app image..."
-docker build -t thinkwithtool -f docker/Dockerfile . || {
+docker build -t thinkwithtool --build-arg GITHUB_TOKEN="$GITHUB_TOKEN" -f docker/Dockerfile . || {
     echo "App image build failed."
     exit 1
 }

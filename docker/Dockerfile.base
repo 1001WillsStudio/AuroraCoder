@@ -56,15 +56,4 @@ COPY requirements.txt /app/requirements.txt
 RUN conda create -n agent python=3.12 pip -y && \
     conda run -n agent pip install --no-cache-dir -r requirements.txt
 
-# ── ToolStore client (pip install from GitHub; cached unless base rebuild) ──
-# NOTE: once AgentToolStore is open-source the GITHUB_TOKEN won't be needed
-ARG GITHUB_TOKEN=
-RUN ( if [ -n "${GITHUB_TOKEN}" ]; then \
-        echo "ToolStore: installing with GitHub token..." && \
-        conda run -n agent pip install --no-cache-dir "git+https://x-access-token:${GITHUB_TOKEN}@github.com/Mrw33554432/AgentToolStore.git#subdirectory=client"; \
-    else \
-        echo "ToolStore: no GITHUB_TOKEN, trying anonymous clone..." && \
-        conda run -n agent pip install --no-cache-dir git+https://github.com/Mrw33554432/AgentToolStore.git#subdirectory=client; \
-    fi ) || echo "WARNING: ToolStore install skipped (repo is private or unreachable)."
-
 ENV TOOLSTORE_HOME=/app/data/toolstore
