@@ -21,8 +21,7 @@ from openai import OpenAI
 
 from ..config import (
     DOCKER_MODE, proxy_host, proxy_port,
-    WEB_SECONDARY_MODEL_BASE_URL, WEB_SECONDARY_MODEL_API_KEY,
-    WEB_SECONDARY_MODEL_NAME, WEB_SECONDARY_MODEL_MAX_TOKENS,
+    get_web_secondary_config,
     WEB_MAX_MARKDOWN_LENGTH, WEB_FETCH_TIMEOUT_S,
     WEB_CACHE_MAX_ENTRIES, WEB_CACHE_TTL_S,
 )
@@ -198,18 +197,19 @@ def _summarize_with_secondary_model(markdown_content: str, prompt: str) -> str:
         f"Provide a concise, focused response based only on the content above."
     )
 
+    sec_cfg = get_web_secondary_config()
     try:
         client = OpenAI(
-            base_url=WEB_SECONDARY_MODEL_BASE_URL,
-            api_key=WEB_SECONDARY_MODEL_API_KEY,
+            base_url=sec_cfg["base_url"],
+            api_key=sec_cfg["api_key"],
         )
         response = client.chat.completions.create(
-            model=WEB_SECONDARY_MODEL_NAME,
+            model=sec_cfg["model_name"],
             messages=[
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": user_msg},
             ],
-            max_tokens=WEB_SECONDARY_MODEL_MAX_TOKENS,
+            max_tokens=sec_cfg["max_tokens"],
             temperature=0.1,
         )
         result = response.choices[0].message.content or ""

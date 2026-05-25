@@ -78,10 +78,6 @@ def get_all_settings() -> Dict[str, Any]:
     for cp in data.get("custom_providers", []):
         if isinstance(cp, dict):
             cp["api_key"] = bool(cp.get("api_key"))
-    # Also mask web_secondary api_key nested under "other"
-    ws = data.get("other", {}).get("web_secondary", {}) if isinstance(data.get("other"), dict) else {}
-    if isinstance(ws, dict) and ws.get("api_key"):
-        ws["api_key"] = True
     return data
 
 
@@ -112,9 +108,6 @@ def update_settings(partial: Dict[str, Any]) -> Dict[str, Any]:
             cp.get("id"): cp.get("api_key", "")
             for cp in saved_custom if isinstance(cp, dict)
         }
-        # Also remember web_secondary api_key
-        saved_ws = current.get("other", {}).get("web_secondary", {}) if isinstance(current.get("other"), dict) else {}
-        saved_ws_key = saved_ws.get("api_key", "") if isinstance(saved_ws, dict) else ""
 
         _deep_merge(current, partial)
 
@@ -135,13 +128,6 @@ def update_settings(partial: Dict[str, Any]) -> Dict[str, Any]:
                 else:
                     cp["api_key"] = ""
 
-        # Resolve boolean placeholder in other.web_secondary.api_key
-        ws = current.get("other", {}).get("web_secondary", {}) if isinstance(current.get("other"), dict) else {}
-        if isinstance(ws, dict) and ws.get("api_key") is True:
-            if saved_ws_key:
-                ws["api_key"] = saved_ws_key
-            else:
-                ws["api_key"] = ""
 
         # Prune empty values so the file stays clean
         _prune_empty(current)

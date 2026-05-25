@@ -166,9 +166,8 @@ TERMINAL_MAX_OUTPUT_CHARS = 15_000
 # =============================================================================
 # A cheap/fast model processes raw web pages so only a concise summary
 # enters the main agent's context window.
-WEB_SECONDARY_MODEL_BASE_URL = "https://api.deepseek.com/v1"
-WEB_SECONDARY_MODEL_API_KEY = os.environ.get("WEB_SECONDARY_MODEL_API_KEY", "")
-WEB_SECONDARY_MODEL_NAME = "deepseek-chat"
+# The provider ID references one of MODEL_PROVIDERS (or a custom provider).
+WEB_SECONDARY_PROVIDER = "deepseek"
 WEB_SECONDARY_MODEL_MAX_TOKENS = 4096
 
 # Max characters of page markdown fed to the secondary model
@@ -282,16 +281,46 @@ def get_terminal_max_output() -> int:
 
 
 
-
 def get_web_secondary_config() -> dict:
-    """Return the full web secondary model configuration from settings or defaults."""
+    """Return the full web secondary model configuration from settings or defaults.
+
+    Derives base_url, api_key, and model_name from the selected MODEL_PROVIDERS
+    entry.  Only the provider ID and max_tokens are user-configurable.
+    """
+    provider_id = os.environ.get("WEB_SECONDARY_PROVIDER") \
+                  or _get_from_settings("web_secondary", "provider", WEB_SECONDARY_PROVIDER)
+    provider = _resolve_provider(provider_id)
     return {
-        "base_url": os.environ.get("WEB_SECONDARY_MODEL_BASE_URL")
-                     or _get_from_settings("web_secondary", "base_url", WEB_SECONDARY_MODEL_BASE_URL),
-        "api_key": os.environ.get("WEB_SECONDARY_MODEL_API_KEY")
-                    or _get_from_settings("web_secondary", "api_key", WEB_SECONDARY_MODEL_API_KEY),
-        "model_name": os.environ.get("WEB_SECONDARY_MODEL_NAME")
-                       or _get_from_settings("web_secondary", "model_name", WEB_SECONDARY_MODEL_NAME),
+        "base_url": provider["base_url"],
+        "api_key": provider["api_key"],
+        "model_name": provider["model"],
         "max_tokens": int(os.environ.get("WEB_SECONDARY_MODEL_MAX_TOKENS", "") or
                           _get_from_settings("web_secondary", "max_tokens", WEB_SECONDARY_MODEL_MAX_TOKENS)),
     }
+
+
+def _resolve_provider(provider_id: str) -> dict:
+    """Resolve a provider ID to its full config, supporting custom providers."""
+    from . import settings_store
+    # Check built-in providers first
+    if provider_id in MODEL_PROVIDERS:
+        prov = dict(MODEL_PROVIDERS[provider_id])
+    else:
+        # Look up custom providers
+        custom = settings_store.get_custom_providers()
+        match = next((cp for cp in custom if cp.get("id") == provider_id), None)
+        if match is None:
+            # Fall back to default
+            prov = dict(MODEL_PROVIDERS[DEFAULT_PROVIDER])
+        else:
+            prov = dict(match)
+    # Resolve api_key through the settings store (env → settings.json → provider default)
+    prov["api_key"] = settings_store.get_api_key(provider_id) or prov.get("api_key", "")
+    # Apply per-provider overrides (base_url, model)
+    override_base = settings_store.get_setting_override(provider_id, "base_url")
+    if override_base:
+        prov["base_url"] = override_base
+    override_model = settings_store.get_setting_override(provider_id, "model")
+    if override_model:
+        prov["model"] = override_model
+    return prov
