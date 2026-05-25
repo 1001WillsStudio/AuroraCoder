@@ -32,20 +32,21 @@ class ProviderManager:
         # ── Built-in providers ─────────────────────────────────────────────
         for provider_id, config in MODEL_PROVIDERS.items():
             try:
-                api_key = config.get("api_key")
+                # Settings UI takes priority over env vars
+                from .settings_store import get_api_key as _s_key
+                api_key = _s_key(provider_id)
                 if not api_key or "YOUR_" in str(api_key):
-                    # Check settings_store for a user-provided key
-                    from .settings_store import get_api_key as _s_key
-                    api_key = _s_key(provider_id)
-                    if not api_key:
-                        if config.get("id") == "gemini-3-pro-api":
-                            logger.info(
-                                "[ProviderManager] Skipping %s: "
-                                "API key not configured (GEMINI_API_KEY or settings)",
-                                provider_id,
-                            )
-                            continue
+                    # Fall back to env var / MODEL_PROVIDERS default
+                    api_key = config.get("api_key", "")
+                if not api_key or "YOUR_" in str(api_key):
+                    if config.get("id") == "gemini-3-pro-api":
+                        logger.info(
+                            "[ProviderManager] Skipping %s: "
+                            "API key not configured (GEMINI_API_KEY or settings)",
+                            provider_id,
+                        )
                         continue
+                    continue
                 self._clients[provider_id] = OpenAI(
                     base_url=config["base_url"],
                     api_key=api_key,

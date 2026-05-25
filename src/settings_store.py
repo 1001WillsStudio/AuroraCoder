@@ -6,8 +6,8 @@ Reads/writes a JSON file in the data directory (/app/data/settings.json in Docke
 because the data directory is a host bind-mount.
 
 Priority (highest wins):
-    1. Environment variables (set via .env / docker-compose)
-    2. settings.json (persistent, editable via the frontend Settings panel)
+    1. settings.json (persistent, editable via the frontend Settings panel)
+    2. Environment variables (set via .env / docker-compose)
     3. Hard-coded defaults in config.py
 """
 
@@ -140,19 +140,25 @@ def get_api_key(provider_id: str) -> str:
     Return the API key for *provider_id*.
 
     Checks (in order):
-        1. Environment variable (uppercase, e.g. DEEPSEEK_API_KEY)
-        2. settings.json → api_keys → <provider_id>
+        1. settings.json → api_keys → <provider_id>  (Settings UI wins)
+        2. Environment variable (uppercase, e.g. DEEPSEEK_API_KEY)
         3. Empty string
     """
+    # Settings UI takes priority over environment variables
+    with _lock:
+        raw = _load_raw()
+    api_keys = raw.get("api_keys", {})
+    settings_val = api_keys.get(provider_id, "")
+    if settings_val:
+        return settings_val
+
+    # Fall back to environment variable
     env_var = f"{provider_id.upper()}_API_KEY"
     env_val = os.environ.get(env_var, "")
     if env_val:
         return env_val
 
-    with _lock:
-        raw = _load_raw()
-    api_keys = raw.get("api_keys", {})
-    return api_keys.get(provider_id, "")
+    return ""
 
 
 def get_custom_providers() -> List[Dict[str, Any]]:

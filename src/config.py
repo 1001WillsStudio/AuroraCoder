@@ -96,7 +96,7 @@ MODEL_PROVIDERS = {
         "name": "Gemini 3.1 Pro (AI Studio)",
         "description": "Google AI Studio API (Requires GEMINI_API_KEY)",
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
-        "api_key": os.environ.get("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY"),
+        "api_key": os.environ.get("GEMINI_API_KEY", ""),
         "model": "gemini-3.1-pro-preview",
         "supports_thinking": True,
         "extra_body": None,
@@ -314,7 +314,7 @@ def _resolve_provider(provider_id: str) -> dict:
             prov = dict(MODEL_PROVIDERS[DEFAULT_PROVIDER])
         else:
             prov = dict(match)
-    # Resolve api_key through the settings store (env → settings.json → provider default)
+    # Resolve api_key through the settings store (settings.json → env → provider default)
     prov["api_key"] = settings_store.get_api_key(provider_id) or prov.get("api_key", "")
     # Apply per-provider overrides (base_url, model)
     override_base = settings_store.get_setting_override(provider_id, "base_url")

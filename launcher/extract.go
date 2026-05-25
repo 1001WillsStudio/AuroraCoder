@@ -114,30 +114,23 @@ func extractProject(destDir string) error {
 
 func ensureEnvFile(cacheDir string, ps *progressServer) bool {
 	envPath := filepath.Join(cacheDir, ".env")
-	envExamplePath := filepath.Join(cacheDir, ".env.example")
 
 	if _, err := os.Stat(envPath); err == nil {
 		ps.logLine("✅ .env file found.")
 		return false
 	}
 
-	src, err := os.Open(envExamplePath)
-	if err != nil {
-		ps.logLine(fmt.Sprintf("⚠️  Could not open .env.example: %v", err))
-		return true
-	}
-	defer src.Close()
-
-	dst, err := os.Create(envPath)
-	if err != nil {
+	// Create a minimal .env — do NOT copy .env.example.
+	// .env.example is a user reference, not an application config source.
+	// Users set their API keys via the Settings UI in the web interface.
+	content := "# ThinkWithTool environment configuration\n" +
+		"# Set API keys via the Settings UI in the web interface instead.\n"
+	if err := os.WriteFile(envPath, []byte(content), 0644); err != nil {
 		ps.logLine(fmt.Sprintf("⚠️  Could not create .env: %v", err))
 		return true
 	}
-	defer dst.Close()
-
-	io.Copy(dst, src)
-	ps.logLine("⚠️  .env file created from template — please add your API keys.")
-	return true
+	ps.logLine("✅ Created minimal .env — set API keys via the Settings UI.")
+	return false
 }
 
 // ─── Storage base ──────────────────────────────────────────────────────────
