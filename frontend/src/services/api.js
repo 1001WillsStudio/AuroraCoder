@@ -276,7 +276,7 @@ export async function getActiveStreams() {
  * @param {AbortSignal} signal
  */
 export async function resumeStream(conversationId, callbacks, signal) {
-  const { onMessages, onDone, onError } = callbacks
+  const { onMessages, onDone, onError, onSubagentEvent } = callbacks
 
   try {
     const response = await fetch(`${API_BASE}/conversations/${conversationId}/stream`, { signal, headers: _headers() })
@@ -310,6 +310,10 @@ export async function resumeStream(conversationId, callbacks, signal) {
               break
             case 'error':
               onError?.(event.data)
+              break
+
+            case 'subagent_event':
+              onSubagentEvent?.(event.data)
               break
           }
         }

@@ -342,8 +342,9 @@ async def _start_continuation(new_cid: str, provider_id: str, user_msg: str):
     Simulate a user opening a new chat, typing the continuation message,
     and pressing Send.  POSTs to the backend via the normal proxy flow.
 
-    This makes the continuation conversation indistinguishable from
-    a human-initiated chat — the agent's prompt IS the user message.
+    The continuation is a standalone main chat (conv_type="user_chat",
+    parent_id=None) so the frontend displays it at the same level as the
+    original chat — NOT as a subagent child in the sidebar.
     """
     body = {
         "conversation_id": new_cid,
@@ -428,10 +429,13 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                                     # Build the user message: just the agent's prompt with a note
                                     user_msg = f"[Continued from previous agent session]\n\n{prompt}"
 
+                                    # Continuation is a new standalone main chat —
+                                    # no parent_id, so the frontend does NOT display
+                                    # it as a subagent child in the sidebar.
                                     store.create_conversation(
                                         conversation_id=new_cid,
-                                        parent_id=cid,
-                                        conv_type="user_chat",          # normal chat, not "user_chat_continued"
+                                        parent_id=None,
+                                        conv_type="user_chat",
                                         provider_id=stream.provider,
                                     )
                                     store.save_messages(new_cid, [

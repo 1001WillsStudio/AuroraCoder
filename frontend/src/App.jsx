@@ -558,6 +558,17 @@ function App() {
               setHistoryRefreshTrigger(prev => prev + 1)
             },
             onError: () => { setIsStreaming(false); setHistoryRefreshTrigger(prev => prev + 1) },
+            onSubagentEvent: (evt) => {
+              if (evt.child_id && evt.tool_call_id) {
+                setSubagentChildIds(prev => ({ ...prev, [evt.tool_call_id]: evt.child_id }))
+              } else if (evt.child_id) {
+                setSubagentChildIds(prev => {
+                  const arr = prev._fallback || []
+                  return { ...prev, _fallback: arr.includes(evt.child_id) ? arr : [...arr, evt.child_id] }
+                })
+              }
+              setHistoryRefreshTrigger(prev => prev + 1)
+            },
           }, abortControllerRef.current.signal)
         } catch (err) {
           if (err.name !== 'AbortError') console.error('[resume stream]', err)
