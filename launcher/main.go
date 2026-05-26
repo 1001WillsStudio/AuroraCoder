@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"runtime"
 	"time"
 )
 
@@ -13,36 +14,8 @@ var version = "dev"
 func main() {
 	printBanner()
 
-	// Check Docker — provide OS-specific install guide if missing
-	ds := detectDocker()
-
-	if !ds.Installed {
-		fmt.Println()
-		fmt.Println("❌  Docker is not installed on this system.")
-		fmt.Println()
-		printDockerInstallGuide()
-		pressEnterToExit(1)
-	}
-
-	if !ds.Running {
-		fmt.Println()
-		fmt.Println("❌  Docker is installed but not running.")
-		fmt.Println()
-		fmt.Println("  Please start Docker Desktop and try again:")
-		switch goos() {
-		case "windows":
-			fmt.Println("    → Search for 'Docker Desktop' in Start Menu and launch it")
-		case "darwin":
-			fmt.Println("    → Open Docker Desktop from /Applications")
-		default:
-			fmt.Println("    → Run: sudo systemctl start docker")
-		}
-		pressEnterToExit(1)
-	}
-
-	fmt.Println("  ✅ Docker is running.")
-
-	// Start the progress web server
+	// Start the progress web server early so Docker-detection errors
+	// show in the browser instead of a terminal-only message.
 	ps := newProgressServer()
 	go ps.listen()
 
@@ -50,12 +23,40 @@ func main() {
 	cacheDir, err := ensureCacheDir()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "❌ ERROR: %v\n", err)
-		pressEnterToExit(1)
+		os.Exit(1)
 	}
 
-	// Open progress page in browser
+	// Open progress page in browser before Docker checks
 	openBrowser(ps.url())
 	fmt.Printf("\n  Progress page: %s\n\n", ps.url())
+
+	// Check Docker — guide is now shown in the browser, not just terminal
+	ds := detectDocker()
+
+	if !ds.Installed {
+		fmt.Println()
+		fmt.Println("❌  Docker is not installed on this system.")
+		ps.fail(dockerInstallGuideMessage())
+		autoExit(1)
+	}
+
+	if !ds.Running {
+		fmt.Println()
+		fmt.Println("❌  Docker is installed but not running.")
+		msg := "Docker is installed but not running.\n\n  Please start Docker and try again:\n"
+		switch goos() {
+		case "windows":
+			msg += "    → Search for 'Docker Desktop' in Start Menu and launch it"
+		case "darwin":
+			msg += "    → Open Docker Desktop from /Applications"
+		default:
+			msg += "    → Run: sudo systemctl start docker"
+		}
+		ps.fail(msg)
+		autoExit(1)
+	}
+
+	fmt.Println("  ✅ Docker is running.")
 
 
 	// ── Run deployment steps ──────────────────────────────────────
@@ -65,7 +66,7 @@ func main() {
 	ps.logLine("Extracting project files...")
 	if err := extractProject(cacheDir); err != nil {
 		ps.fail(fmt.Sprintf("Failed to extract project: %v", err))
-		pressEnterToExit(1)
+		autoExit(1)
 	}
 	ps.logLine(fmt.Sprintf("Project extracted to: %s", cacheDir))
 	ps.setStep(1, "done")
@@ -86,7 +87,7 @@ func main() {
 	ps.setStep(3, "running")
 	if err := buildBaseImage(cacheDir, ps); err != nil {
 		ps.fail(fmt.Sprintf("Base image build failed: %v", err))
-		pressEnterToExit(1)
+		autoExit(1)
 	}
 	ps.setStep(3, "done")
 
@@ -94,7 +95,7 @@ func main() {
 	ps.setStep(4, "running")
 	if err := buildAppImage(cacheDir, ps); err != nil {
 		ps.fail(fmt.Sprintf("App image build failed: %v", err))
-		pressEnterToExit(1)
+		autoExit(1)
 	}
 	ps.setStep(4, "done")
 
@@ -103,7 +104,7 @@ func main() {
 	ps.logLine("Starting container...")
 	if err := startContainer(cacheDir, ps); err != nil {
 		ps.fail(fmt.Sprintf("Container start failed: %v", err))
-		pressEnterToExit(1)
+		autoExit(1)
 	}
 	ps.logLine("Container started, waiting for services to be ready...")
 	appURL := fmt.Sprintf("http://localhost:%d", appPort)
@@ -129,7 +130,7 @@ func main() {
 	fmt.Println("  To stop:  docker stop thinkwithtool-agent")
 	fmt.Println()
 
-	pressEnterToExit(0)
+	autoExit(0)
 }
 
 func printBanner() {
@@ -178,9 +179,92 @@ func waitForApp(url string, ps *progressServer, timeout time.Duration) error {
 	}
 }
 
-func pressEnterToExit(code int) {
-	fmt.Println()
-	fmt.Print("Press Enter to exit...")
-	fmt.Scanln()
+// autoExit waits briefly so the browser can receive the final SSE event,
+// then terminates the process without requiring user input.
+func autoExit(code int) {
+	if code != 0 {
+		fmt.Printf("\nExiting in 3 seconds... (error code %d)\n", code)
+	} else {
+		fmt.Println("\nLauncher finished — exiting in 3 seconds...")
+	}
+	time.Sleep(3 * time.Second)
 	os.Exit(code)
+}
+
+// dockerInstallGuideMessage returns a platform-specific Docker installation
+// guide as plain text.  It is shown in the browser via ps.fail(), replacing
+// the old terminal-only printDockerInstallGuide().
+func dockerInstallGuideMessage() string {
+	switch runtime.GOOS {
+	case "windows":
+		return `Docker is not installed on this system.
+
+═══ How to install Docker on Windows ═══
+
+  1. Download Docker Desktop for Windows:
+     https://www.docker.com/products/docker-desktop/
+
+  2. Run the installer (Docker Desktop Installer.exe)
+
+  3. After installation, Docker Desktop starts automatically.
+     Look for the whale icon in the system tray.
+
+  4. If prompted, install WSL 2 (Windows Subsystem for Linux).
+     Docker Desktop will guide you through it.
+
+  5. Once the whale icon stops animating, Docker is ready.
+     Then run this launcher again.`
+
+	case "darwin":
+		arch := runtime.GOARCH
+		url := "https://desktop.docker.com/mac/main/amd64/Docker.dmg"
+		if arch == "arm64" {
+			url = "https://desktop.docker.com/mac/main/arm64/Docker.dmg"
+		}
+		return fmt.Sprintf(`Docker is not installed on this system.
+
+═══ How to install Docker on macOS ═══
+
+  Option A — Homebrew (recommended):
+    brew install --cask docker
+
+  Option B — Direct download:
+    %s
+    Open the .dmg and drag Docker to /Applications
+    Launch Docker from /Applications
+
+  Once installed, run this launcher again.`, url)
+
+	default:
+		return `Docker is not installed on this system.
+
+═══ How to install Docker on Linux ═══
+
+  Use the official convenience script:
+
+    curl -fsSL https://get.docker.com | sudo sh
+
+  Then add your user to the docker group:
+
+    sudo usermod -aG docker $USER
+
+  Log out and back in, or run:
+
+    newgrp docker
+
+  Then run this launcher again.
+
+  ── Distro-specific packages ──
+
+  Ubuntu / Debian:
+    sudo apt-get update && sudo apt-get install -y docker.io docker-compose-v2
+
+  Fedora:
+    sudo dnf install -y docker docker-compose
+    sudo systemctl enable --now docker
+
+  Arch:
+    sudo pacman -S docker docker-compose
+    sudo systemctl enable --now docker`
+	}
 }
