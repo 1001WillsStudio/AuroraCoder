@@ -35,6 +35,7 @@ func main() {
 	if !ds.Installed {
 		fmt.Println()
 		fmt.Println("❌  Docker is not installed on this system.")
+		openBrowser("https://www.docker.com/products/docker-desktop/")
 		ps.fail(dockerInstallGuideMessage())
 		autoExit(1)
 	}
