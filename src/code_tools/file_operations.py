@@ -184,15 +184,23 @@ class FileOperations:
                         start_idx = found_idx
                         start_corrected = True
                     else:
-                        ctx_s = max(0, start_idx - 1)
-                        ctx_e = min(total_lines, start_idx + 4)
-                        ctx = ''.join(original_lines[ctx_s:ctx_e])
-                        return (f"Error in edit #{i + 1}: start_content does not match "
-                                f"file at line {start_line} (searched ±{am.MAX_ANCHOR_SHIFT}).\n"
-                                f"File context around line {start_line}:\n"
-                                f"---\n{ctx}---"
-                                f"{am.anchor_hint(original_lines, start_content, start_line, True)}"
-                                f"{NO}")
+                        # Fallback: full-file search for aider-style big-block pastes
+                        found_idx = am.find_anchor_anywhere(original_lines, total_lines,
+                                                            start_content)
+                        if found_idx is not None:
+                            start_idx = found_idx
+                            start_corrected = True
+                        else:
+                            ctx_s = max(0, start_idx - 1)
+                            ctx_e = min(total_lines, start_idx + 4)
+                            ctx = ''.join(original_lines[ctx_s:ctx_e])
+                            return (f"Error in edit #{i + 1}: start_content does not match "
+                                    f"file at line {start_line} (searched ±{am.MAX_ANCHOR_SHIFT} "
+                                    f"and entire file).\n"
+                                    f"File context around line {start_line}:\n"
+                                    f"---\n{ctx}---"
+                                    f"{am.anchor_hint(original_lines, start_content, start_line, True)}"
+                                    f"{NO}")
                 else:
                     actual_start = am.normalise(original_lines[start_idx])
                     expected_start = am.normalise(start_content)

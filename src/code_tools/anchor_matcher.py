@@ -99,6 +99,34 @@ def find_anchor_tolerant(lines: List[str], total_lines: int,
     return None
 
 
+def find_anchor_anywhere(lines: List[str], total_lines: int,
+                         expected_content: str) -> Optional[int]:
+    """Fallback: search the ENTIRE file for anchor content.
+
+    Used when the ±MAX_ANCHOR_SHIFT tolerant search fails — typically
+    because an LLM pasted a large block (aider-style confusion) and the
+    line numbers are far off.  Scans every possible position.
+    Returns 0-based index of first matched line, or None.
+    """
+    if not expected_content.strip():
+        return None
+
+    anchor_lines = expected_content.splitlines(keepends=True)
+    if not anchor_lines:
+        return None
+    if len(anchor_lines) > 1 and normalise(anchor_lines[-1]) == '':
+        anchor_lines = anchor_lines[:-1]
+
+    block_len = len(anchor_lines)
+    for pos in range(total_lines - block_len + 1):
+        if _block_match(lines, total_lines, pos, anchor_lines, strict=True):
+            return pos
+    for pos in range(total_lines - block_len + 1):
+        if _block_match(lines, total_lines, pos, anchor_lines, strict=False):
+            return pos
+    return None
+
+
 def anchor_hint(lines: List[str], anchor_text: str,
                 specified_line: int, is_multiline: bool) -> str:
     """Search whole file for anchor; return a diagnostic hint."""
