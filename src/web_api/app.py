@@ -22,7 +22,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from ..main_flow import generate_chat_responses_stream_native
-from ..providers import get_available_providers, get_default_provider
 from ..code_sandbox import shell, get_workspace, WORKSPACE
 from ..code_tools.file_operations import set_file_tracking_callbacks, set_current_conversation
 from ..core_tools.subagent import cancel_active_subagents

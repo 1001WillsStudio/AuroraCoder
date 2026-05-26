@@ -59,25 +59,14 @@ def format_for_llm(results: List[Dict[str, Any]], search_term: str) -> str:
     return "\n".join(output)
 
 def _get_google_config():
-    """Read Google Search API key and CSE ID.
+    """Read Google Search API key and CSE ID from environment variables.
 
-    API key uses the standard provider key path (settings.json api_keys.google_search
-    → GOOGLE_SEARCH_API_KEY env var). CSE ID is read from other.google_search.cse_id
-    → GOOGLE_CSE_ID env var.
+    The gateway (``gateway.provider_registry._sync_tool_env_vars``) pushes
+    these into the environment on startup and after every settings save.
     """
     import os
-    from ..settings_store import get_api_key, get_other_settings
-
-    # API key: standard path (settings.json api_keys → env var)
-    api_key = get_api_key("google_search")
-
-    # CSE ID: other section → env var
-    other = get_other_settings()
-    gs = other.get("google_search", {})
-    cse_id = gs.get("cse_id", "")
-    if not cse_id:
-        cse_id = os.environ.get("GOOGLE_CSE_ID", "")
-
+    api_key = os.environ.get("GOOGLE_SEARCH_API_KEY", "")
+    cse_id = os.environ.get("GOOGLE_CSE_ID", "")
     return api_key, cse_id
 
 

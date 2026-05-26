@@ -45,11 +45,15 @@ import hashlib
 import secrets
 
 from src.config import WORKSPACE_DIR
-from src.settings_store import (
+from gateway.settings_store import (
     get_all_settings,
     update_settings as _store_update_settings,
 )
-from src.providers import get_available_providers, get_default_provider, provider_manager
+from gateway.provider_registry import (
+    get_available_providers,
+    get_default_provider,
+    sync_clients_to_src,
+)
 from src.code_sandbox import shell
 
 from .conversation_store import ConversationStore, strip_task_instruction
@@ -690,9 +694,9 @@ app = FastAPI(
 
 
 @app.on_event("startup")
-async def _startup_reload_providers():
-    """Ensure ProviderManager is in sync with settings.json on every boot."""
-    provider_manager.reload()
+async def _startup_sync_providers():
+    """Push resolved clients into src.providers on every boot."""
+    sync_clients_to_src()
 
 app.add_middleware(
     CORSMiddleware,
@@ -1047,7 +1051,7 @@ async def update_settings(update: _SettingsUpdate):
     if update.other is not None:
         payload["other"] = update.other
     result = _store_update_settings(payload)
-    provider_manager.reload()
+    sync_clients_to_src()
     return result
 
 

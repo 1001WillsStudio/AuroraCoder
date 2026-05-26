@@ -21,10 +21,25 @@ from openai import OpenAI
 
 from ..config import (
     DOCKER_MODE, proxy_host, proxy_port,
-    get_web_secondary_config,
     WEB_MAX_MARKDOWN_LENGTH, WEB_FETCH_TIMEOUT_S,
     WEB_CACHE_MAX_ENTRIES, WEB_CACHE_TTL_S,
 )
+
+
+def _get_web_secondary_config():
+    """Read web secondary model config from environment variables.
+
+    The gateway (``gateway.provider_registry._sync_tool_env_vars``) pushes
+    these into the environment on startup and after every settings save,
+    since ``src/`` cannot import from ``gateway/``.
+    """
+    import os
+    return {
+        "base_url": os.environ.get("WEB_SECONDARY_BASE_URL", ""),
+        "api_key": os.environ.get("WEB_SECONDARY_API_KEY", ""),
+        "model_name": os.environ.get("WEB_SECONDARY_MODEL", ""),
+        "max_tokens": int(os.environ.get("WEB_SECONDARY_MAX_TOKENS", "4096")),
+    }
 
 logger = logging.getLogger(__name__)
 
@@ -197,7 +212,7 @@ def _summarize_with_secondary_model(markdown_content: str, prompt: str) -> str:
         f"Provide a concise, focused response based only on the content above."
     )
 
-    sec_cfg = get_web_secondary_config()
+    sec_cfg = _get_web_secondary_config()
     try:
         client = OpenAI(
             base_url=sec_cfg["base_url"],
