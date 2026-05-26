@@ -202,7 +202,6 @@ export default function SettingsPanel({ isOpen, onClose }) {
   const builtIn = providers.filter(p => !p.custom)
   const custom = settings?.custom_providers || []
   const apiKeys = settings?.api_keys || {}
-  const overrides = settings?.provider_overrides || {}
   const other = settings?.other || {}
 
   // Merge built-in + custom into one list for rendering
@@ -268,18 +267,12 @@ export default function SettingsPanel({ isOpen, onClose }) {
                   const pid = prov.id
                   const isBuiltIn = prov._builtin
                   const ci = prov._customIndex
-                  // key from settings.json (user-entered) or empty
-                  const settingsKey = isBuiltIn ? (apiKeys[pid] || '') : (custom[ci]?.api_key || '')
-                  // If configured via env var but not in settings.json, show sentinel
-                  const key = settingsKey || (prov.api_key_configured && isBuiltIn ? KEY_SENTINEL : '')
+                  // key from settings.json only — env vars are opaque to the UI
+                  const key = isBuiltIn ? (apiKeys[pid] || '') : (custom[ci]?.api_key || '')
                   const isKeySet = key.length > 0
-                  const isFromEnv = !settingsKey && prov.api_key_configured
-                  const baseUrl = isBuiltIn
-                    ? (overrides[pid]?.base_url || '')
-                    : (custom[ci]?.base_url || '')
-                  const model = isBuiltIn
-                    ? (overrides[pid]?.model || '')
-                    : (custom[ci]?.model || '')
+                  const baseUrl = custom[ci]?.base_url || ''
+                  // Model: custom only (built-in model is locked)
+                  const model = isBuiltIn ? '' : (custom[ci]?.model || '')
                   const thinking = isBuiltIn ? prov.supports_thinking : (custom[ci]?.supports_thinking !== false)
                   const errKey = isBuiltIn ? null : `custom-${ci}`
                   const hasError = errKey && !!errorFields[errKey]
@@ -312,11 +305,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
                               <input className="settings-input"
                                 type={showKeys[pid] ? 'text' : 'password'} value={key}
                                 onChange={e => setApiKey(pid, e.target.value)}
-                                placeholder={
-                                  isFromEnv ? '(from env var)' :
-                                  isKeySet ? t('field.apiKeyPlaceholderSet') : t('field.apiKeyPlaceholder')
-                                }
-                                style={isFromEnv ? { fontStyle: 'italic', color: 'var(--text-muted)' } : {}}
+                                placeholder={isKeySet ? t('field.apiKeyPlaceholderSet') : t('field.apiKeyPlaceholder')}
                               />
                               <button className="settings-icon-btn" onClick={() => toggleShowKey(pid)}
                                 title={showKeys[pid] ? t('field.hide') : t('field.show')}>
@@ -346,40 +335,31 @@ export default function SettingsPanel({ isOpen, onClose }) {
                         )}
                       </div>
 
-                      {/* Base URL row */}
-                      <div className="settings-field-row" style={{ marginTop: '10px' }}>
-                        <div className="settings-field-col settings-field-col-wide">
-                          <label>{t('field.baseUrl')}</label>
-                          {isBuiltIn ? (
-                            <input className="settings-input" type="text" value={baseUrl}
-                              onChange={e => setOverride(pid, 'base_url', e.target.value)}
-                              placeholder={t('field.baseUrlPlaceholderBuiltin')}
-                            />
-                          ) : (
+                      {/* Base URL row — custom providers only */}
+                      {!isBuiltIn && (
+                        <div className="settings-field-row" style={{ marginTop: '10px' }}>
+                          <div className="settings-field-col settings-field-col-wide">
+                            <label>{t('field.baseUrl')}</label>
                             <input className="settings-input" type="text" value={baseUrl}
                               onChange={e => updateCustomProvider(ci, 'base_url', e.target.value)}
                               placeholder={t('field.baseUrlPlaceholderCustom')}
                             />
-                          )}
+                          </div>
                         </div>
-                      </div>
+                      )}
 
                       {/* Model + API key + thinking row */}
                       <div className="settings-field-row" style={{ marginTop: '10px' }}>
-                        <div className="settings-field-col">
-                          <label>{t('field.model')}</label>
-                          {isBuiltIn ? (
-                            <input className="settings-input" type="text" value={model}
-                              onChange={e => setOverride(pid, 'model', e.target.value)}
-                              placeholder={t('field.modelPlaceholderBuiltin')}
-                            />
-                          ) : (
+                        {/* Model — custom providers only (built-in model is locked) */}
+                        {!isBuiltIn && (
+                          <div className="settings-field-col">
+                            <label>{t('field.model')}</label>
                             <input className="settings-input" type="text" value={model}
                               onChange={e => updateCustomProvider(ci, 'model', e.target.value)}
                               placeholder={t('field.modelPlaceholderCustom')}
                             />
-                          )}
-                        </div>
+                          </div>
+                        )}
                         {!isBuiltIn && (
                           <div className="settings-field-col">
                             <label>{t('field.apiKey')}</label>
