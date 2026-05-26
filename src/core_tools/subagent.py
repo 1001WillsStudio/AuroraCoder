@@ -105,7 +105,7 @@ def run_subagent(
             f"{CONVO_SERVER_URL}/api/chat",
             json=body,
             stream=True,
-            timeout=None,
+            timeout=(5, 60),
         )
 
         # Store the response so cancel_active_subagents() can close it
@@ -151,7 +151,7 @@ def run_subagent(
         with _active_lock:
             _active_subagents.pop(child_id, None)
 
-    if cancel_event.is_set():
+    if cancel_event.is_set() and not final_text:
         return "[Subagent was stopped by user.]"
 
     if not final_text:

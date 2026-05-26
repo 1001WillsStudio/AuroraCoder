@@ -640,6 +640,8 @@ async def _subscriber_sse(
             try:
                 if await request.is_disconnected():
                     break
+                if stream.finished:
+                    break
                 event = await asyncio.wait_for(queue.get(), timeout=2.0)
                 if event is None:
                     break
@@ -648,6 +650,8 @@ async def _subscriber_sse(
                 idle_ticks = 0
             except asyncio.TimeoutError:
                 if await request.is_disconnected():
+                    break
+                if stream.finished:
                     break
                 idle_ticks += 1
                 if idle_ticks >= _KEEPALIVE_INTERVAL:
