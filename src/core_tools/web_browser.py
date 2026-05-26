@@ -29,15 +29,18 @@ from ..config import (
 def _get_web_secondary_config():
     """Read web secondary model config from environment variables.
 
-    The gateway (``gateway.provider_registry._sync_tool_env_vars``) pushes
-    these into the environment on startup and after every settings save,
-    since ``src/`` cannot import from ``gateway/``.
+    Falls back to the default provider config when env vars are not set.
     """
     import os
+    from ..config import MODEL_PROVIDERS, DEFAULT_PROVIDER
+    default_prov = MODEL_PROVIDERS.get(DEFAULT_PROVIDER, {})
     return {
-        "base_url": os.environ.get("WEB_SECONDARY_BASE_URL", ""),
-        "api_key": os.environ.get("WEB_SECONDARY_API_KEY", ""),
-        "model_name": os.environ.get("WEB_SECONDARY_MODEL", ""),
+        "base_url": os.environ.get("WEB_SECONDARY_BASE_URL")
+                     or default_prov.get("base_url", ""),
+        "api_key": os.environ.get("WEB_SECONDARY_API_KEY")
+                    or os.environ.get("DEEPSEEK_API_KEY", ""),
+        "model_name": os.environ.get("WEB_SECONDARY_MODEL")
+                       or default_prov.get("model", ""),
         "max_tokens": int(os.environ.get("WEB_SECONDARY_MAX_TOKENS", "4096")),
     }
 
