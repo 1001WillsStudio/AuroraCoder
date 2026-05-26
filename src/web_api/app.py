@@ -28,6 +28,11 @@ from ..core_tools.subagent import cancel_active_subagents
 from ..config import DEFAULT_PROVIDER
 
 from gateway.workspace import snapshot_file, mark_file_touched, clear_conversation_snapshots
+from gateway.provider_registry import sync_clients_to_src
+
+# Push resolved clients into src.providers on every boot.
+# The gateway does this too, but web_api is a separate process.
+sync_clients_to_src()
 
 logger = logging.getLogger(__name__)
 
