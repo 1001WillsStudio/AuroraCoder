@@ -268,8 +268,12 @@ export default function SettingsPanel({ isOpen, onClose }) {
                   const pid = prov.id
                   const isBuiltIn = prov._builtin
                   const ci = prov._customIndex
-                  const key = isBuiltIn ? (apiKeys[pid] || '') : (custom[ci]?.api_key || '')
+                  // key from settings.json (user-entered) or empty
+                  const settingsKey = isBuiltIn ? (apiKeys[pid] || '') : (custom[ci]?.api_key || '')
+                  // If configured via env var but not in settings.json, show sentinel
+                  const key = settingsKey || (prov.api_key_configured && isBuiltIn ? KEY_SENTINEL : '')
                   const isKeySet = key.length > 0
+                  const isFromEnv = !settingsKey && prov.api_key_configured
                   const baseUrl = isBuiltIn
                     ? (overrides[pid]?.base_url || '')
                     : (custom[ci]?.base_url || '')
@@ -308,7 +312,11 @@ export default function SettingsPanel({ isOpen, onClose }) {
                               <input className="settings-input"
                                 type={showKeys[pid] ? 'text' : 'password'} value={key}
                                 onChange={e => setApiKey(pid, e.target.value)}
-                                placeholder={isKeySet ? t('field.apiKeyPlaceholderSet') : t('field.apiKeyPlaceholder')}
+                                placeholder={
+                                  isFromEnv ? '(from env var)' :
+                                  isKeySet ? t('field.apiKeyPlaceholderSet') : t('field.apiKeyPlaceholder')
+                                }
+                                style={isFromEnv ? { fontStyle: 'italic', color: 'var(--text-muted)' } : {}}
                               />
                               <button className="settings-icon-btn" onClick={() => toggleShowKey(pid)}
                                 title={showKeys[pid] ? t('field.hide') : t('field.show')}>
