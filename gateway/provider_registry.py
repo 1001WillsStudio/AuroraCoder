@@ -64,9 +64,10 @@ def resolve_provider(provider_id: str) -> dict:
 
     # ── api_key: settings.json → env var → MODEL_PROVIDERS default ──
     resolved_key = get_api_key(provider_id)
-    if resolved_key:
+    # Reject non-string values (boolean True is a sentinel, not a real key)
+    if isinstance(resolved_key, str) and resolved_key and "YOUR_" not in resolved_key:
         prov["api_key"] = resolved_key
-    elif not prov.get("api_key"):
+    elif not isinstance(prov.get("api_key"), str) or not prov["api_key"]:
         prov["api_key"] = ""
 
     # ── Per-provider overrides (base_url, model) ──

@@ -22,7 +22,24 @@ from .config import MODEL_PROVIDERS, DEFAULT_PROVIDER
 
 logger = logging.getLogger(__name__)
 
-DATA_DIR = Path(os.environ.get("DATA_DIR", os.path.expanduser("~/.thinktool/data")))
+
+def _is_docker() -> bool:
+    """Best-effort Docker detection."""
+    return os.path.exists("/.dockerenv") or "docker" in (os.environ.get("container", "") or "")
+
+
+def _data_dir() -> Path:
+    if _is_docker():
+        return Path("/app/data")
+    return Path(
+        os.environ.get(
+            "THINKTOOL_DATA_DIR",
+            os.environ.get("DATA_DIR", os.path.expanduser("~/.thinktool/data")),
+        )
+    )
+
+
+DATA_DIR = _data_dir()
 SETTINGS_PATH = DATA_DIR / "settings.json"
 
 
