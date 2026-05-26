@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"runtime"
 	"time"
 )
 
@@ -191,80 +190,11 @@ func autoExit(code int) {
 	os.Exit(code)
 }
 
-// dockerInstallGuideMessage returns a platform-specific Docker installation
-// guide as plain text.  It is shown in the browser via ps.fail(), replacing
-// the old terminal-only printDockerInstallGuide().
+// dockerInstallGuideMessage returns a short message pointing the user to
+// the Docker download page.  It fits cleanly inside the progress-page
+// error box and opens the download URL in their browser.
 func dockerInstallGuideMessage() string {
-	switch runtime.GOOS {
-	case "windows":
-		return `Docker is not installed on this system.
-
-═══ How to install Docker on Windows ═══
-
-  1. Download Docker Desktop for Windows:
-     https://www.docker.com/products/docker-desktop/
-
-  2. Run the installer (Docker Desktop Installer.exe)
-
-  3. After installation, Docker Desktop starts automatically.
-     Look for the whale icon in the system tray.
-
-  4. If prompted, install WSL 2 (Windows Subsystem for Linux).
-     Docker Desktop will guide you through it.
-
-  5. Once the whale icon stops animating, Docker is ready.
-     Then run this launcher again.`
-
-	case "darwin":
-		arch := runtime.GOARCH
-		url := "https://desktop.docker.com/mac/main/amd64/Docker.dmg"
-		if arch == "arm64" {
-			url = "https://desktop.docker.com/mac/main/arm64/Docker.dmg"
-		}
-		return fmt.Sprintf(`Docker is not installed on this system.
-
-═══ How to install Docker on macOS ═══
-
-  Option A — Homebrew (recommended):
-    brew install --cask docker
-
-  Option B — Direct download:
-    %s
-    Open the .dmg and drag Docker to /Applications
-    Launch Docker from /Applications
-
-  Once installed, run this launcher again.`, url)
-
-	default:
-		return `Docker is not installed on this system.
-
-═══ How to install Docker on Linux ═══
-
-  Use the official convenience script:
-
-    curl -fsSL https://get.docker.com | sudo sh
-
-  Then add your user to the docker group:
-
-    sudo usermod -aG docker $USER
-
-  Log out and back in, or run:
-
-    newgrp docker
-
-  Then run this launcher again.
-
-  ── Distro-specific packages ──
-
-  Ubuntu / Debian:
-    sudo apt-get update && sudo apt-get install -y docker.io docker-compose-v2
-
-  Fedora:
-    sudo dnf install -y docker docker-compose
-    sudo systemctl enable --now docker
-
-  Arch:
-    sudo pacman -S docker docker-compose
-    sudo systemctl enable --now docker`
-	}
+	return "Docker is not installed on this system.\n\n" +
+		"👉  https://www.docker.com/products/docker-desktop/\n\n" +
+		"Download and install Docker, then run this launcher again."
 }
