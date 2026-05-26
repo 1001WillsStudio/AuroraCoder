@@ -132,7 +132,16 @@ def update_settings(partial: Dict[str, Any]) -> Dict[str, Any]:
         # Prune empty values so the file stays clean
         _prune_empty(current)
         _save_raw(current)
-        return _masked_copy(current)
+
+        # Return the SAME masked format as GET /api/settings.
+        # Never leak real API keys in responses.
+        data = _deep_copy(current)
+        for k in list(data.get("api_keys", {})):
+            data["api_keys"][k] = bool(data["api_keys"][k])
+        for cp in data.get("custom_providers", []):
+            if isinstance(cp, dict):
+                cp["api_key"] = bool(cp.get("api_key"))
+        return data
 
 
 def get_api_key(provider_id: str) -> str:
