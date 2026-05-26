@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"net/http"
 	"os"
+	"time"
 )
 
 // version is set at build time via -ldflags
@@ -103,11 +105,16 @@ func main() {
 		ps.fail(fmt.Sprintf("Container start failed: %v", err))
 		pressEnterToExit(1)
 	}
-	ps.logLine("Container started, waiting for services...")
+	ps.logLine("Container started, waiting for services to be ready...")
+	appURL := fmt.Sprintf("http://localhost:%d", appPort)
+	if err := waitForApp(appURL, ps, 60*time.Second); err != nil {
+		ps.logLine(fmt.Sprintf("⚠️  Health check warning: %v", err))
+		ps.logLine("The app may still be starting — please refresh if needed.")
+	}
 	ps.setStep(5, "done")
 
 	// ── Done ──────────────────────────────────────────────────────
-	ps.done(fmt.Sprintf("http://localhost:%d", appPort))
+	ps.done(appURL)
 
 	fmt.Println()
 	fmt.Println("════════════════════════════════════════")
@@ -134,6 +141,41 @@ func printBanner() {
 	}
 	fmt.Println("║     One-Click Docker Deployment              ║")
 	fmt.Println("╚══════════════════════════════════════════════╝")
+}
+
+// waitForApp polls the app URL until it responds with a non-5xx status,
+// or the timeout expires.  Services inside the container are not
+// guaranteed to be ready immediately after `docker run` returns,
+// so this gives them a grace period before the browser redirects.
+func waitForApp(url string, ps *progressServer, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	client := &http.Client{Timeout: 3 * time.Second}
+	consecutive := 0
+
+	for {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out after %v", timeout)
+		}
+
+		resp, err := client.Get(url)
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode < 500 {
+				consecutive++
+				// Require 2 consecutive successful responses
+				// to avoid a false-positive during a restart
+				if consecutive >= 2 {
+					return nil
+				}
+			} else {
+				consecutive = 0
+			}
+		} else {
+			consecutive = 0
+		}
+
+		time.Sleep(2 * time.Second)
+	}
 }
 
 func pressEnterToExit(code int) {
