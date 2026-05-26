@@ -1,42 +1,117 @@
 """
-Model Provider Manager — thin client cache.
+Model Provider Manager — self-contained client cache.
 
-Holds OpenAI client objects that the agent loop needs at runtime.
-Does NOT resolve providers, does NOT import settings_store, does
-NOT know about persistence.  The gateway (``gateway.provider_registry``)
-pushes clients in via ``set_client()`` after settings changes.
+Holds OpenAI client objects for the agent loop.  On ``reload()``, reads
+``settings.json`` directly from disk (shared Docker volume) and merges
+with ``MODEL_PROVIDERS`` static config — **no** gateway imports.
 
-This keeps the dependency direction one-way: gateway → src.
+The gateway triggers reload by POSTing to the backend's ``/api/reload``
+endpoint after settings changes.
 """
 
+import json
 import logging
-from typing import Dict, Optional
+import os
+from pathlib import Path
+from typing import Dict
 
+import httpx
 from openai import OpenAI
+
 from .config import MODEL_PROVIDERS, DEFAULT_PROVIDER
 
 logger = logging.getLogger(__name__)
 
+DATA_DIR = Path(os.environ.get("DATA_DIR", os.path.expanduser("~/.thinktool/data")))
+SETTINGS_PATH = DATA_DIR / "settings.json"
+
+
+def _load_settings() -> dict:
+    """Read settings.json from disk (shared volume).  Returns {} on any error."""
+    try:
+        if SETTINGS_PATH.exists():
+            return json.loads(SETTINGS_PATH.read_text())
+    except Exception:
+        pass
+    return {}
+
+
+def _resolve_api_key(provider_id: str, default_val: str) -> str:
+    """Resolve an API key: settings.json → env var → default."""
+    settings = _load_settings()
+    key = settings.get("api_keys", {}).get(provider_id, "")
+    if key and key is not True and "YOUR_" not in str(key):
+        return key
+    if default_val and "YOUR_" not in str(default_val):
+        return default_val
+    return ""
+
+
+def _resolve_base_url(provider_id: str, default_val: str) -> str:
+    """Resolve base_url: settings override → default."""
+    settings = _load_settings()
+    override = settings.get("provider_overrides", {}).get(provider_id, {}).get("base_url", "")
+    return override or default_val
+
+
+def _resolve_model(provider_id: str, default_val: str) -> str:
+    """Resolve model: settings override → default."""
+    settings = _load_settings()
+    override = settings.get("provider_overrides", {}).get(provider_id, {}).get("model", "")
+    return override or default_val
+
+
+def _get_custom_providers() -> list:
+    """Read custom providers from settings.json."""
+    return _load_settings().get("custom_providers", [])
+
+
 # =============================================================================
-# Provider Manager — dumb cache
+# Provider Manager
 # =============================================================================
 
 
 class ProviderManager:
-    """Dumb cache of OpenAI clients.  The gateway owns all intelligence."""
+    """Self-contained cache of OpenAI clients.  ``reload()`` reads disk directly."""
 
     def __init__(self):
         self._clients: Dict[str, OpenAI] = {}
 
-    # ── Gateway API (push) ──────────────────────────────────────────────
+    # ── Reload (self-contained, no gateway imports) ──────────────────────
 
-    def set_client(self, provider_id: str, client: OpenAI) -> None:
-        """Store a ready-to-use OpenAI client.  Called by the gateway."""
-        self._clients[provider_id] = client
+    def reload(self) -> None:
+        """Re-read settings.json, resolve all providers, rebuild client cache.
 
-    def clear(self) -> None:
-        """Remove all cached clients.  Called by the gateway before a full sync."""
+        Called at startup and when the gateway POSTs to ``/api/reload``.
+        """
         self._clients.clear()
+        all_ids = list(MODEL_PROVIDERS.keys())
+
+        for cp in _get_custom_providers():
+            cpid = cp.get("id")
+            if cpid and cpid not in all_ids:
+                all_ids.append(cpid)
+
+        for provider_id in all_ids:
+            try:
+                default = MODEL_PROVIDERS.get(provider_id, {})
+                api_key = _resolve_api_key(provider_id, default.get("api_key", ""))
+                base_url = _resolve_base_url(provider_id, default.get("base_url", ""))
+                if not api_key or "YOUR_" in str(api_key) or not base_url:
+                    continue
+                self._clients[provider_id] = OpenAI(
+                    base_url=base_url,
+                    api_key=api_key,
+                    timeout=httpx.Timeout(300.0, connect=30.0),
+                )
+                logger.info(
+                    "[ProviderManager] Loaded client: %s (%s)",
+                    provider_id, default.get("name", provider_id),
+                )
+            except Exception as e:
+                logger.warning(
+                    "[ProviderManager] Failed to load %s: %s", provider_id, e
+                )
 
     # ── Agent API (pull) ────────────────────────────────────────────────
 
@@ -53,19 +128,20 @@ class ProviderManager:
         """Check whether a client is cached for *provider_id*."""
         return provider_id in self._clients
 
-    # ── Config (static, for main_flow) ──────────────────────────────────
+    # ── Config (static + settings.json, for main_flow) ──────────────────
 
     def get_config(self, provider_id: str) -> dict:
-        """Return the static provider config for *main_flow*.
+        """Return resolved provider config for *main_flow*.
 
-        Reads from ``MODEL_PROVIDERS`` (env vars + built-in defaults).
-        Does NOT consult ``settings.json`` — that's the gateway's job.
+        Resolves from settings.json + MODEL_PROVIDERS.
         """
-        if provider_id in MODEL_PROVIDERS:
-            return dict(MODEL_PROVIDERS[provider_id])
-        return dict(MODEL_PROVIDERS[DEFAULT_PROVIDER])
+        default = MODEL_PROVIDERS.get(provider_id, MODEL_PROVIDERS.get(DEFAULT_PROVIDER, {}))
+        resolved = dict(default)
+        resolved["api_key"] = _resolve_api_key(provider_id, default.get("api_key", ""))
+        resolved["base_url"] = _resolve_base_url(provider_id, default.get("base_url", ""))
+        resolved["model"] = _resolve_model(provider_id, default.get("model", ""))
+        return resolved
 
 
-# Global singleton — the gateway pushes clients into this at startup and
-# after every settings save.
+# Global singleton
 provider_manager = ProviderManager()

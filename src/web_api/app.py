@@ -27,12 +27,7 @@ from ..code_tools.file_operations import set_file_tracking_callbacks, set_curren
 from ..core_tools.subagent import cancel_active_subagents
 from ..config import DEFAULT_PROVIDER
 
-from gateway.workspace import snapshot_file, mark_file_touched, clear_conversation_snapshots
-from gateway.provider_registry import sync_clients_to_src
-
-# Push resolved clients into src.providers on every boot.
-# The gateway does this too, but web_api is a separate process.
-sync_clients_to_src()
+from ..providers import provider_manager
 
 logger = logging.getLogger(__name__)
 
@@ -262,8 +257,8 @@ async def lifespan(app: FastAPI):
         workspace = get_workspace()
         logger.info(f"Workspace: {workspace}")
         shell.start()
-        set_file_tracking_callbacks(on_read=snapshot_file, on_write=mark_file_touched)
-        logger.info("File tracking callbacks registered")
+        provider_manager.reload()
+        logger.info("Provider clients loaded from settings.json")
     except Exception as e:
         logger.error(f"Failed to initialize sandbox: {e}")
     yield
@@ -290,6 +285,13 @@ async def health_check():
         "shell_alive": shell.is_alive,
     }
 
+@app.post("/api/reload")
+async def reload_providers():
+    """Called by the gateway after settings change.  Re-reads settings.json
+    from disk and rebuilds the in-memory client cache."""
+    provider_manager.reload()
+    return {"ok": True}
+
 
 @app.post("/api/chat")
 async def chat(chat_request: ChatRequest, request: Request):
@@ -297,7 +299,7 @@ async def chat(chat_request: ChatRequest, request: Request):
     set_current_conversation(conversation_id)
     is_new = not chat_request.conversation_id
     if is_new:
-        clear_conversation_snapshots(conversation_id)
+        pass  # File tracking is now handled by gateway/_track_file_changes (SSE scanning)
 
     messages = (chat_request.messages or []).copy()
     if chat_request.message:

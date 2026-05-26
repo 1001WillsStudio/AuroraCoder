@@ -52,7 +52,7 @@ from gateway.settings_store import (
 from gateway.provider_registry import (
     get_available_providers,
     get_default_provider,
-    sync_clients_to_src,
+    sync_tool_env_vars,
 )
 from src.code_sandbox import shell
 
@@ -694,9 +694,14 @@ app = FastAPI(
 
 
 @app.on_event("startup")
-async def _startup_sync_providers():
-    """Push resolved clients into src.providers on every boot."""
-    sync_clients_to_src()
+async def _startup_sync():
+    """On boot: sync env vars for src tools, then ping backend to reload providers."""
+    sync_tool_env_vars()
+    try:
+        async with httpx.AsyncClient() as c:
+            await c.post(f"{BACKEND_URL}/api/reload", timeout=5)
+    except Exception:
+        logger.warning("Backend not reachable at startup — will sync on first request")
 
 app.add_middleware(
     CORSMiddleware,
@@ -1051,7 +1056,12 @@ async def update_settings(update: _SettingsUpdate):
     if update.other is not None:
         payload["other"] = update.other
     result = _store_update_settings(payload)
-    sync_clients_to_src()
+    sync_tool_env_vars()
+    try:
+        async with httpx.AsyncClient() as c:
+            await c.post(f"{BACKEND_URL}/api/reload", timeout=5)
+    except Exception:
+        logger.warning("Backend not reachable — provider reload skipped")
     return result
 
 

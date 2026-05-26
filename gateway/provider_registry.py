@@ -195,56 +195,14 @@ def get_toolstore_token() -> str:
 # Client sync — push resolved clients into src.providers
 # ═══════════════════════════════════════════════════════════════════════════
 
-def sync_clients_to_src():
-    """Resolve all configured providers, create OpenAI clients, push to src.
-
-    Called by the gateway after settings are saved and on startup.
-    Also updates environment variables for src-side tools (e.g. Google Search).
-    """
-    from src.providers import provider_manager
-
-    provider_manager.clear()
-
-    all_ids = set(MODEL_PROVIDERS.keys())
-    for cp in get_custom_providers():
-        cpid = cp.get("id")
-        if cpid:
-            all_ids.add(cpid)
-
-    for provider_id in sorted(all_ids):
-        try:
-            r = resolve_provider(provider_id)
-            api_key = r.get("api_key", "")
-            base_url = r.get("base_url", "")
-            if not api_key or "YOUR_" in str(api_key) or not base_url:
-                continue
-
-            client = OpenAI(
-                base_url=base_url,
-                api_key=api_key,
-                timeout=httpx.Timeout(300.0, connect=30.0),
-            )
-            provider_manager.set_client(provider_id, client)
-            tag = "custom" if r.get("custom") else "built-in"
-            logger.info(
-                "[ProviderRegistry] Synced %s client: %s (%s)",
-                tag, provider_id, r.get("name", provider_id),
-            )
-        except Exception as e:
-            logger.warning(
-                "[ProviderRegistry] Failed to sync %s: %s", provider_id, e
-            )
-
-    # ── Also sync env vars for src-side tools that don't use providers ──
-    _sync_tool_env_vars()
-
-
-def _sync_tool_env_vars():
+def sync_tool_env_vars():
     """Push non-provider settings into environment for src-side tool access.
 
     Since ``src/`` cannot import from ``gateway/``, tools like Google Search
     and Web Browser read their config from environment variables.  This
     function keeps those env vars in sync with settings.json.
+
+    Called by the gateway on startup and after every settings save.
     """
     # ── Google Search ──
     api_key = get_api_key("google_search")
