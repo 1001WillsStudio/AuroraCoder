@@ -13,7 +13,7 @@ from openai import OpenAI
 
 logger = logging.getLogger(__name__)
 
-from .config import MODEL_PROVIDERS, DEFAULT_PROVIDER
+from .config import MODEL_PROVIDERS, DEFAULT_PROVIDER, resolve_provider as _resolve_provider
 
 
 # =============================================================================
@@ -28,48 +28,41 @@ class ProviderManager:
         self._initialize_clients()
 
     def _initialize_clients(self):
-        """Initialize clients for all configured providers (built-in + custom)."""
-        # ── Built-in providers ─────────────────────────────────────────────
-        for provider_id, config in MODEL_PROVIDERS.items():
+        """Initialize OpenAI clients for every provider with a valid API key.
+
+        Uses ``resolve_provider()`` from config.py (single source of truth)
+        to get the canonical config for each provider."""
+        from .settings_store import get_custom_providers as _gcp
+
+        all_provider_ids = set(MODEL_PROVIDERS.keys())
+        for cp in _gcp():
+            cpid = cp.get("id")
+            if cpid:
+                all_provider_ids.add(cpid)
+
+        for provider_id in sorted(all_provider_ids):
             try:
-                # Settings UI takes priority over env vars
-                from .settings_store import get_api_key as _s_key
-                api_key = _s_key(provider_id)
-                if not api_key or "YOUR_" in str(api_key):
-                    # Fall back to env var / MODEL_PROVIDERS default
-                    api_key = config.get("api_key", "")
-                if not api_key or "YOUR_" in str(api_key):
-                    if config.get("id") == "gemini-3-pro-api":
-                        logger.info(
-                            "[ProviderManager] Skipping %s: "
-                            "API key not configured (GEMINI_API_KEY or settings)",
-                            provider_id,
-                        )
-                        continue
-                    continue
+                resolved = _resolve_provider(provider_id)
+                api_key = resolved.get("api_key", "")
+                base_url = resolved.get("base_url", "")
+
+                if not api_key or "YOUR_" in str(api_key) or not base_url:
+                    continue  # Not configured — skip silently (frontend shows it anyway)
+
                 self._clients[provider_id] = OpenAI(
-                    base_url=config["base_url"],
+                    base_url=base_url,
                     api_key=api_key,
                     timeout=httpx.Timeout(300.0, connect=30.0),
                 )
-                logger.info("[ProviderManager] Initialized: %s (%s)", provider_id, config["name"])
+                tag = "custom" if resolved.get("custom") else "built-in"
+                logger.info(
+                    "[ProviderManager] Initialized %s: %s (%s)",
+                    tag, provider_id, resolved.get("name", provider_id),
+                )
             except Exception as e:
-                logger.warning("[ProviderManager] Failed to initialize %s: %s", provider_id, e)
-
-        # ── Custom providers from settings_store ───────────────────────────
-        from .settings_store import get_custom_providers as _gcp
-        for cp_data in _gcp():
-            cpid = cp_data.get("id")
-            if not cpid or cpid in self._clients:
-                continue
-            try:
-                api_key = cp_data.get("api_key", "")
-                base_url = cp_data.get("base_url", "")
-                if api_key and base_url:
-                    self._clients[cpid] = OpenAI(base_url=base_url, api_key=api_key)
-                    logger.info("[ProviderManager] Initialized custom: %s", cp_data.get("name", cpid))
-            except Exception as e:
-                logger.warning("[ProviderManager] Failed to initialize custom provider %s: %s", cpid, e)
+                logger.warning(
+                    "[ProviderManager] Failed to initialize %s: %s", provider_id, e
+                )
 
     def get_client(self, provider_id: str) -> OpenAI:
         """Get the client for a specific provider.
@@ -78,56 +71,23 @@ class ProviderManager:
         or completely unknown.
         """
         if provider_id not in self._clients:
-            # Distinguish between "unknown" and "known but unconfigured"
-            known = provider_id in MODEL_PROVIDERS or any(
-                cp.get("id") == provider_id
-                for cp in (__import__("src.settings_store", fromlist=["get_custom_providers"])
-                           .get_custom_providers())
-            )
-            if known:
+            # Use resolve_provider to check if it's known but unconfigured
+            resolved = _resolve_provider(provider_id)
+            if resolved.get("id") == provider_id:
                 raise ValueError(
                     f"Provider '{provider_id}' is not configured. "
                     f"Please add an API key in Settings."
                 )
-            raise ValueError(
-                f"Unknown provider: {provider_id}."
-            )
+            raise ValueError(f"Unknown provider: {provider_id}.")
         return self._clients[provider_id]
 
     def get_config(self, provider_id: str) -> dict:
-        """Get the configuration for a specific provider, merging user overrides."""
-        from .settings_store import (
-            get_api_key as _gs_key,
-            get_custom_providers as _gs_cp,
-            get_setting_override as _gs_override,
-        )
-        # Check custom providers first
-        for cp in _gs_cp():
-            if cp["id"] == provider_id:
-                return {
-                    "id": cp["id"],
-                    "name": cp.get("name", cp["id"]),
-                    "description": cp.get("description", "Custom provider"),
-                    "supports_thinking": cp.get("supports_thinking", False),
-                    "base_url": cp.get("base_url", ""),
-                    "api_key": cp.get("api_key", ""),
-                    "model": cp.get("model", ""),
-                    "custom": True,
-                }
-        if provider_id not in MODEL_PROVIDERS:
-            raise ValueError(f"Unknown provider: {provider_id}")
-        cfg = dict(MODEL_PROVIDERS[provider_id])
-        # Override with settings from settings.json
-        key = _gs_key(provider_id)
-        if key:
-            cfg["api_key"] = key
-        override_url = _gs_override(provider_id, "base_url")
-        if override_url:
-            cfg["base_url"] = override_url
-        override_model = _gs_override(provider_id, "model")
-        if override_model:
-            cfg["model"] = override_model
-        return cfg
+        """Get the fully-resolved configuration for a provider.
+
+        Delegates to ``resolve_provider()`` in config.py — the single source
+        of truth.  Kept as a thin wrapper for backwards compatibility.
+        """
+        return _resolve_provider(provider_id)
 
     def reload(self) -> None:
         """Re-initialize all clients, picking up new/changed settings."""
@@ -139,29 +99,36 @@ class ProviderManager:
         """List all built-in AND custom providers in a frontend-friendly format.
 
         Built-in providers are ALWAYS returned regardless of whether an API key
-        has been configured yet.  The ``api_key_configured`` flag lets the UI
-        distinguish between providers that are ready to use and those that just
-        need a key.
+        has been configured yet.  Uses ``resolve_provider()`` to get the
+        canonical ``api_key_configured`` flag for every provider.
         """
-        result = [
-            {
-                "id": config["id"],
-                "name": config["name"],
-                "description": config["description"],
-                "supports_thinking": config["supports_thinking"],
-                "api_key_configured": config["id"] in self._clients,
-            }
-            for provider_id, config in MODEL_PROVIDERS.items()
-        ]
-        # Add custom providers
+        result = []
+        seen = set()
+        # Built-in providers
+        for provider_id in MODEL_PROVIDERS:
+            seen.add(provider_id)
+            resolved = _resolve_provider(provider_id)
+            result.append({
+                "id": resolved["id"],
+                "name": resolved["name"],
+                "description": resolved["description"],
+                "supports_thinking": resolved["supports_thinking"],
+                "api_key_configured": resolved["api_key_configured"],
+            })
+        # Custom providers (only those not shadowing a built-in)
         from .settings_store import get_custom_providers as _gcp
         for cp in _gcp():
+            cpid = cp.get("id")
+            if not cpid or cpid in seen:
+                continue
+            seen.add(cpid)
+            resolved = _resolve_provider(cpid)
             result.append({
-                "id": cp["id"],
-                "name": cp.get("name", cp["id"]),
-                "description": cp.get("description", "Custom provider"),
-                "supports_thinking": cp.get("supports_thinking", False),
-                "api_key_configured": cp.get("id") in self._clients,
+                "id": resolved["id"],
+                "name": resolved["name"],
+                "description": resolved["description"],
+                "supports_thinking": resolved["supports_thinking"],
+                "api_key_configured": resolved["api_key_configured"],
                 "custom": True,
             })
         return result

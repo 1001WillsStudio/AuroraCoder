@@ -139,6 +139,7 @@ const LANG = {
     'sidebar.taskInstructionsActive': 'Task instructions active',
     'sidebar.model': 'Model',
     'sidebar.selectModel': 'Select Model',
+    'sidebar.noProviders': 'No providers available. Add an API key in Settings ⚙',
     'sidebar.thinkingBadge': 'Thinking',
 
     // ── File tree ──────────────────────────────────────────────────
@@ -360,6 +361,7 @@ const LANG = {
     'sidebar.taskInstructionsActive': '任务指令已激活',
     'sidebar.model': '模型',
     'sidebar.selectModel': '选择模型',
+    'sidebar.noProviders': '没有可用的提供者。请在设置中添加 API 密钥 ⚙',
     'sidebar.thinkingBadge': '思考',
 
     // ── File tree ──────────────────────────────────────────────────

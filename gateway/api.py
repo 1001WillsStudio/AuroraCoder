@@ -47,7 +47,6 @@ import secrets
 from src.config import WORKSPACE_DIR
 from src.settings_store import (
     get_all_settings,
-    get_custom_providers,
     update_settings as _store_update_settings,
 )
 from src.providers import get_available_providers, get_default_provider, provider_manager
@@ -689,6 +688,12 @@ app = FastAPI(
     version="1.0.0",
 )
 
+
+@app.on_event("startup")
+async def _startup_reload_providers():
+    """Ensure ProviderManager is in sync with settings.json on every boot."""
+    provider_manager.reload()
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -1000,18 +1005,12 @@ async def list_active_streams():
 # Endpoints — CRUD (storage)
 @app.get("/api/providers")
 async def list_providers():
-    """Return available model providers (built-in + custom)."""
-    providers = get_available_providers()
-    for cp in get_custom_providers():
-        if not any(p["id"] == cp["id"] for p in providers):
-            providers.append({
-                "id": cp["id"],
-                "name": cp.get("name", cp["id"]),
-                "description": cp.get("description", "Custom provider"),
-                "supports_thinking": cp.get("supports_thinking", False),
-                "custom": True,
-            })
-    return {"providers": providers, "default": get_default_provider()}
+    """Return available model providers (built-in + custom).
+
+    Delegates entirely to ``get_available_providers()`` which already
+    returns every built-in and custom provider with ``api_key_configured``.
+    """
+    return {"providers": get_available_providers(), "default": get_default_provider()}
 
 
 # ── Settings ─────────────────────────────────────────────────────

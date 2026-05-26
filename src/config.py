@@ -299,28 +299,69 @@ def get_web_secondary_config() -> dict:
     }
 
 
-def _resolve_provider(provider_id: str) -> dict:
-    """Resolve a provider ID to its full config, supporting custom providers."""
+def resolve_provider(provider_id: str) -> dict:
+    """Resolve a provider ID to its **full canonical config**.
+
+    This is the **single source of truth** for provider resolution.
+    Every consumer (client init, frontend listing, web secondary, etc.)
+    should call this instead of rolling its own resolution logic.
+
+    Priority chain:
+        1. settings.json  (api_keys, provider_overrides.base_url/model)
+        2. Environment variables
+        3. MODEL_PROVIDERS defaults (config.py)
+
+    Returns a dict with **every** field consumers need:
+        id, name, description, base_url, api_key, model,
+        supports_thinking, extra_body, context_window, custom,
+        api_key_configured
+
+    For unknown provider IDs the default provider is returned as a fallback.
+    """
     from . import settings_store
-    # Check built-in providers first
+
+    custom = False
     if provider_id in MODEL_PROVIDERS:
         prov = dict(MODEL_PROVIDERS[provider_id])
     else:
-        # Look up custom providers
-        custom = settings_store.get_custom_providers()
-        match = next((cp for cp in custom if cp.get("id") == provider_id), None)
+        custom_list = settings_store.get_custom_providers()
+        match = next((cp for cp in custom_list if cp.get("id") == provider_id), None)
         if match is None:
-            # Fall back to default
+            # Unknown — fall back to default provider
             prov = dict(MODEL_PROVIDERS[DEFAULT_PROVIDER])
         else:
             prov = dict(match)
-    # Resolve api_key through the settings store (settings.json → env → provider default)
-    prov["api_key"] = settings_store.get_api_key(provider_id) or prov.get("api_key", "")
-    # Apply per-provider overrides (base_url, model)
+            custom = True
+
+    # ── api_key: settings.json → env var → MODEL_PROVIDERS default ──
+    resolved_key = settings_store.get_api_key(provider_id)
+    if resolved_key:
+        prov["api_key"] = resolved_key
+    elif not prov.get("api_key"):
+        prov["api_key"] = ""
+
+    # ── Per-provider overrides (base_url, model) ──
     override_base = settings_store.get_setting_override(provider_id, "base_url")
     if override_base:
         prov["base_url"] = override_base
     override_model = settings_store.get_setting_override(provider_id, "model")
     if override_model:
         prov["model"] = override_model
+
+    # ── Derived fields ──
+    key = prov.get("api_key", "")
+    prov["custom"] = custom
+    prov["api_key_configured"] = bool(key and "YOUR_" not in str(key))
+
+    # Ensure all expected keys exist (fill from defaults for custom providers)
+    prov.setdefault("name", prov.get("id", provider_id))
+    prov.setdefault("description", "Custom provider" if custom else "")
+    prov.setdefault("supports_thinking", True)
+    prov.setdefault("extra_body", None)
+    prov.setdefault("context_window", 128_000)
+
     return prov
+
+
+# Backwards-compatible alias used by get_web_secondary_config
+_resolve_provider = resolve_provider

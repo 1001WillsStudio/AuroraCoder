@@ -134,21 +134,27 @@ export default function Sidebar({
             </button>
             {showProviderDropdown && (
               <div className="provider-dropdown-menu">
-                {providers.map(provider => (
-                  <button
-                    key={provider.id}
-                    className={`provider-option ${provider.id === selectedProvider ? 'selected' : ''}`}
-                    onClick={() => {
-                      onSelectProvider(provider.id)
-                    }}
-                  >
-                    <div className="provider-option-name">{provider.name}</div>
-                    <div className="provider-option-desc">{provider.description}</div>
-                    {provider.supports_thinking && (
-                      <span className="provider-badge">{t('sidebar.thinkingBadge')}</span>
-                    )}
-                  </button>
-                ))}
+                {providers.length === 0 ? (
+                  <div className="provider-option provider-option-empty">
+                    {t('sidebar.noProviders')}
+                  </div>
+                ) : (
+                  providers.map(provider => (
+                    <button
+                      key={provider.id}
+                      className={`provider-option ${provider.id === selectedProvider ? 'selected' : ''}`}
+                      onClick={() => {
+                        onSelectProvider(provider.id)
+                      }}
+                    >
+                      <div className="provider-option-name">{provider.name}</div>
+                      <div className="provider-option-desc">{provider.description}</div>
+                      {provider.supports_thinking && (
+                        <span className="provider-badge">{t('sidebar.thinkingBadge')}</span>
+                      )}
+                    </button>
+                  ))
+                )}
               </div>
             )}
           </div>

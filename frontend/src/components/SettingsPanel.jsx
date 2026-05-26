@@ -36,6 +36,17 @@ export default function SettingsPanel({ isOpen, onClose }) {
   // ── Sentinel for "key is configured but hidden" ─────────────────────────
   const KEY_SENTINEL = '••••••••'
 
+  /** Hardcoded fallback provider list — used when the backend is unreachable.
+   *  Must be kept in sync with MODEL_PROVIDERS in src/config.py. */
+  const BUILT_IN_FALLBACK = [
+    { id: 'deepseek',          name: 'DeepSeek V4 Pro',                  description: 'Fast reasoning model with thinking (~2s TTFT)',   supports_thinking: true,  api_key_configured: false },
+    { id: 'nvidia',            name: 'NVIDIA DeepSeek V4 Pro',           description: 'NVIDIA hosted V4 Pro with thinking',              supports_thinking: true,  api_key_configured: false },
+    { id: 'nvidia-fast',       name: 'NVIDIA DeepSeek V4 Pro (No Thinking)', description: 'NVIDIA hosted V4 Pro, no reasoning (faster)',      supports_thinking: false, api_key_configured: false },
+    { id: 'nvidia-glm5',       name: 'NVIDIA GLM-5.1',                   description: 'Z-AI GLM-5.1 on NVIDIA with deep thinking',       supports_thinking: true,  api_key_configured: false },
+    { id: 'nvidia-glm5-fast',  name: 'NVIDIA GLM-5.1 (No Thinking)',    description: 'Z-AI GLM-5.1 on NVIDIA, no reasoning (faster)',    supports_thinking: false, api_key_configured: false },
+    { id: 'gemini-3-pro-api',  name: 'Gemini 3.1 Pro (AI Studio)',      description: 'Google AI Studio API (Requires GEMINI_API_KEY)',    supports_thinking: true,  api_key_configured: false },
+  ]
+
   // ── Load ────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!isOpen) return
@@ -63,7 +74,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
       } catch {
         // Backend unavailable — set safe defaults so the UI still works
         setSettings({ api_keys: {}, provider_overrides: {}, custom_providers: [], other: { web_secondary: {}, agent: {} } })
-        setProviders([])
+        setProviders(BUILT_IN_FALLBACK)
         setMessage({ type: 'error', text: t('settings.loadError') })
       } finally {
         setLoading(false)
