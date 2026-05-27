@@ -52,6 +52,10 @@ echo "Stopping old container if any..."
 docker stop thinkwithtool-agent >/dev/null 2>&1 || true
 docker rm thinkwithtool-agent >/dev/null 2>&1 || true
 
+# Short delay to ensure ports are fully released
+echo "Waiting for port cleanup..."
+sleep 2
+
 # ── Storage base — all persistent data lives under Documents/ThinkTool ────
 # Uses platform-appropriate Documents path
 if [ -d "$HOME/Documents" ]; then

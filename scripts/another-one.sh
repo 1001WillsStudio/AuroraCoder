@@ -92,6 +92,10 @@ echo "Stopping old container \"$CONTAINER\" if any..."
 docker stop "$CONTAINER" >/dev/null 2>&1 || true
 docker rm   "$CONTAINER" >/dev/null 2>&1 || true
 
+# Short delay to ensure ports are fully released
+echo "Waiting for port cleanup..."
+sleep 2
+
 # ── Start backend container ─────────────────────────────────────────────
 echo "Starting backend in Docker (instance $INST)..."
 docker run --rm -d \
