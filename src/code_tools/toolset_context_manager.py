@@ -16,6 +16,7 @@ import re
 from typing import Dict, List, Set
 
 from .context_tracker import ContextTracker, register
+from ..config import TOOLSET_WARN_CHARS, TOOLSET_MAX_TOOLS
 
 TOOLSTORE_START = "<====TOOLSTORE_START====>"
 TOOLSTORE_END   = "<====TOOLSTORE_END====>"
@@ -286,7 +287,16 @@ class ToolsetContextTracker(ContextTracker):
             return ""
 
         combined = "\n\n".join(sections)
-        return f"{self.block_start}\n{combined}\n{self.block_end}"
+        hint = ""
+        if len(state) > TOOLSET_MAX_TOOLS or len(combined) > TOOLSET_WARN_CHARS:
+            names = ", ".join(sorted(state))
+            hint = (
+                f"\n⚠️ CONTEXT WARNING: You have {len(state)} toolsets open "
+                f"({names}). To avoid running out of context, please close "
+                f"toolsets you no longer need by calling "
+                f"tool_store(action='close', tool_name='X')."
+            )
+        return f"{self.block_start}\n{combined}{hint}\n{self.block_end}"
 
 
 register(ToolsetContextTracker())
