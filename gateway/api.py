@@ -1081,7 +1081,12 @@ async def get_toolstore_status():
     import json as _json
     from pathlib import Path as _Path
 
-    home = os.environ.get("TOOLSTORE_HOME", os.path.expanduser("~/.toolstore"))
+    # Use ConfigManager's resolution (TOOLSTORE_HOME → /app/data/toolstore/ → ~/.toolstore/)
+    try:
+        from toolstore.config_manager import ConfigManager as _CM
+        home = str(_CM().config_dir)
+    except ImportError:
+        home = os.environ.get("TOOLSTORE_HOME", os.path.expanduser("~/.toolstore"))
     index_path = _Path(home) / "index.json"
     total = 0
     by_source = {}
@@ -1101,11 +1106,17 @@ async def get_toolstore_status():
 async def refresh_toolstore():
     """Run `toolstore update` to rebuild the local tool index."""
     import subprocess as _sp
+    # Resolve home the same way as get_toolstore_status
+    try:
+        from toolstore.config_manager import ConfigManager as _CM
+        _home = str(_CM().config_dir)
+    except ImportError:
+        _home = os.environ.get("TOOLSTORE_HOME", os.path.expanduser("~/.toolstore"))
     try:
         result = _sp.run(
             ["toolstore", "update"],
             capture_output=True, text=True, timeout=60,
-            env={**os.environ, "TOOLSTORE_HOME": os.environ.get("TOOLSTORE_HOME", os.path.expanduser("~/.toolstore"))}
+            env={**os.environ, "TOOLSTORE_HOME": _home}
         )
         return {"ok": True, "output": result.stdout[-2000:], "errors": result.stderr[-500:] if result.returncode != 0 else None}
     except Exception as e:
