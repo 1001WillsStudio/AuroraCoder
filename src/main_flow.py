@@ -265,17 +265,7 @@ def generate_chat_responses_stream_native(
         ]
         
         if current_tool_calls:
-            formatted_tool_calls = []
-            for tc in current_tool_calls:
-                formatted_tool_calls.append({
-                    "id": tc["id"],
-                    "type": "function",
-                    "function": {
-                        "name": tc["function"]["name"],
-                        "arguments": tc["function"]["arguments"]
-                    }
-                })
-            assistant_message["tool_calls"] = formatted_tool_calls
+            assistant_message["tool_calls"] = current_tool_calls
         
         # If no tool calls, we're done (or retry if also no content)
         if not current_tool_calls:

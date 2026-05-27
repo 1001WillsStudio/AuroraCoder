@@ -371,7 +371,6 @@ class FileOperations:
 
         start_is_multi = "\n" in start_content
         end_is_multi = "\n" in end_content
-        sa_count = len([l for l in start_content.splitlines() if l.strip()]) if start_is_multi else 1
         ea_count = len([l for l in end_content.splitlines() if l.strip()]) if end_is_multi else 1
 
         corrected = False
@@ -427,15 +426,16 @@ class FileOperations:
         corrected = corrected or start_is_multi or end_is_multi
 
         # ---- 5. Build self-correction marker ----
-        if has_to:
-            sp = ''.join(original_lines[start_idx:start_idx + sa_count]).rstrip('\n')
-            ep = ''.join(original_lines[end_idx - ea_count + 1:end_idx + 1]).rstrip('\n')
+        removed = original_lines[start_idx:end_idx + 1]
+        sp = removed[0].rstrip('\n')
+        ep = removed[-1].rstrip('\n')
+        if start_idx == end_idx:
+            ctr = sp
         else:
-            sp = original_lines[start_idx].rstrip('\n')
-            ep = original_lines[end_idx].rstrip('\n')
+            ctr = sp + '\n[TO]\n' + ep
         marker = {
             "remove_line_number": f"{start_idx + 1}-{end_idx + 1}",
-            "content_to_remove": sp + '\n[TO]\n' + ep,
+            "content_to_remove": ctr,
             "replace_content": replace_content,
         }
 
