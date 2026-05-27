@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { X, Plus, Trash2, Eye, EyeOff, Save, RefreshCw, Shield, Globe, LogOut, ExternalLink, Wrench, ChevronDown, ChevronRight } from 'lucide-react'
+import { X, Plus, Trash2, Save, RefreshCw, Shield, Globe, LogOut, ExternalLink, Wrench, ChevronDown, ChevronRight } from 'lucide-react'
 import { getSettings, updateSettings, getProviders, getToolStoreStatus, refreshToolStore } from '../services/api'
 import { isAuthRequired, isAuthenticated, logout as authLogout, clearToken } from '../utils/auth.js'
 import useLanguage from '../hooks/useLanguage'
@@ -25,7 +25,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState(null)
-  const [showKeys, setShowKeys] = useState({})
+  const [apiKeysConfigured, setApiKeysConfigured] = useState({})
   const [errorFields, setErrorFields] = useState({})
   const [authEnabled, setAuthEnabled] = useState(null)
   const [isAuthed, setIsAuthed] = useState(isAuthenticated())
@@ -33,13 +33,11 @@ export default function SettingsPanel({ isOpen, onClose }) {
   const [providersCollapsed, setProvidersCollapsed] = useState(true)
   const [webSecondaryCollapsed, setWebSecondaryCollapsed] = useState(true)
 
-  // ── Sentinel for "key is configured but hidden" ─────────────────────────
-  const KEY_SENTINEL = '••••••••'
-
   /** Hardcoded fallback provider list — used when the backend is unreachable.
    *  Must be kept in sync with MODEL_PROVIDERS in src/config.py. */
   const BUILT_IN_FALLBACK = [
     { id: 'deepseek',          name: 'DeepSeek V4 Pro',                  description: 'Fast reasoning model with thinking (~2s TTFT)',   supports_thinking: true,  api_key_configured: false },
+    { id: 'deepseek-flash',    name: 'DeepSeek V4 Flash',                description: 'DeepSeek V4 Flash — fast, no reasoning',           supports_thinking: false, api_key_configured: false },
     { id: 'nvidia',            name: 'NVIDIA DeepSeek V4 Pro',           description: 'NVIDIA hosted V4 Pro with thinking',              supports_thinking: true,  api_key_configured: false },
     { id: 'nvidia-fast',       name: 'NVIDIA DeepSeek V4 Pro (No Thinking)', description: 'NVIDIA hosted V4 Pro, no reasoning (faster)',      supports_thinking: false, api_key_configured: false },
     { id: 'nvidia-glm5',       name: 'NVIDIA GLM-5.1',                   description: 'Z-AI GLM-5.1 on NVIDIA with deep thinking',       supports_thinking: true,  api_key_configured: false },
@@ -55,15 +53,18 @@ export default function SettingsPanel({ isOpen, onClose }) {
       setMessage(null)
       try {
         const [s, p] = await Promise.all([getSettings(), getProviders()])
-        // Backend returns boolean true for configured keys — convert to sentinel
+        // Backend returns boolean true for configured keys — track separately
         const normApiKeys = {}
+        const configured = {}
         for (const [k, v] of Object.entries(s.api_keys || {})) {
-          normApiKeys[k] = v === true ? KEY_SENTINEL : (typeof v === 'string' ? v : '')
+          if (v === true) { normApiKeys[k] = ''; configured[k] = true }
+          else normApiKeys[k] = typeof v === 'string' ? v : ''
         }
         s.api_keys = normApiKeys
-        // Same for custom providers
+        setApiKeysConfigured(configured)
+        // Same for custom providers — track configured keys
         for (const cp of s.custom_providers || []) {
-          if (cp?.api_key === true) cp.api_key = KEY_SENTINEL
+          if (cp?.api_key === true) { cp.api_key = ''; cp._key_configured = true }
         }
         const other = s.other || {}
         other.web_secondary = other.web_secondary || {}
@@ -143,7 +144,6 @@ export default function SettingsPanel({ isOpen, onClose }) {
     setSettings(prev => ({ ...prev, custom_providers: (prev.custom_providers || []).filter((_, i) => i !== idx) }))
   }
 
-  const toggleShowKey = (id) => setShowKeys(prev => ({ ...prev, [id]: !prev[id] }))
 
   // ── Validation ──────────────────────────────────────────────────────────
   const validate = () => {
@@ -166,23 +166,23 @@ export default function SettingsPanel({ isOpen, onClose }) {
     try {
       // Prune empty custom providers
       const cp = (settings.custom_providers || []).filter(c => c.name?.trim() || c.base_url?.trim())
-      // Convert sentinel back to boolean true so backend preserves the real key
+      // Convert empty-kept keys back to boolean true so backend preserves the real key
       for (const c of cp) {
-        if (c.api_key === KEY_SENTINEL) c.api_key = true
+        if (c.api_key === '' && c._key_configured) { c.api_key = true; delete c._key_configured }
       }
-      // Convert api_keys: sentinel → true, empty → skip
+      // Convert api_keys: empty+configured → true, non-empty → actual value
       const outApiKeys = {}
       for (const [k, v] of Object.entries(settings.api_keys || {})) {
-        if (v === KEY_SENTINEL) outApiKeys[k] = true           // keep existing
-        else if (v && v.trim()) outApiKeys[k] = v               // new key
+        if (v === '' && apiKeysConfigured[k]) outApiKeys[k] = true   // keep existing
+        else if (v && v.trim()) outApiKeys[k] = v                     // new key
       }
-      // Prune empty 'other' sub-objects (also convert sentinel for web_secondary api_key)
+      // Prune empty 'other' sub-objects (also convert empty+configured for web_secondary api_key)
       const prunedOther = {}
       for (const [sec, fields] of Object.entries(settings.other || {})) {
         if (fields && typeof fields === 'object') {
           const clean = {}
           for (const [k, v] of Object.entries(fields)) {
-            if (v === KEY_SENTINEL) clean[k] = true             // keep existing
+            if (v === '' && apiKeysConfigured[k]) clean[k] = true    // keep existing
             else if (v !== '' && v !== null && v !== undefined) clean[k] = v
           }
           if (Object.keys(clean).length > 0) prunedOther[sec] = clean
@@ -298,20 +298,15 @@ export default function SettingsPanel({ isOpen, onClose }) {
 
                       {/* Name + API key row */}
                       <div className="settings-field-row">
-                        {isBuiltIn ? (
+                      {isBuiltIn ? (
                           <div className="settings-field-col">
                             <label>{t('field.apiKey')}</label>
-                            <div className="settings-input-row">
-                              <input className="settings-input"
-                                type={showKeys[pid] ? 'text' : 'password'} value={key}
-                                onChange={e => setApiKey(pid, e.target.value)}
-                                placeholder={isKeySet ? t('field.apiKeyPlaceholderSet') : t('field.apiKeyPlaceholder')}
-                              />
-                              <button className="settings-icon-btn" onClick={() => toggleShowKey(pid)}
-                                title={showKeys[pid] ? t('field.hide') : t('field.show')}>
-                                {showKeys[pid] ? <EyeOff size={16} /> : <Eye size={16} />}
-                              </button>
-                            </div>
+                            <input className="settings-input" type="text" value={key}
+                              onChange={e => setApiKey(pid, e.target.value)}
+                              placeholder={apiKeysConfigured[pid]
+                                ? t('field.apiKeyPlaceholderSet').replace('{provider}', prov.name)
+                                : t('field.apiKeyPlaceholder')}
+                            />
                           </div>
                         ) : (
                           <>
@@ -363,16 +358,12 @@ export default function SettingsPanel({ isOpen, onClose }) {
                         {!isBuiltIn && (
                           <div className="settings-field-col">
                             <label>{t('field.apiKey')}</label>
-                            <div className="settings-input-row">
-                              <input className="settings-input"
-                                type={showKeys[`custom-${ci}`] ? 'text' : 'password'} value={key}
-                                onChange={e => updateCustomProvider(ci, 'api_key', e.target.value)}
-                                placeholder="sk-or-…"
-                              />
-                              <button className="settings-icon-btn" onClick={() => toggleShowKey(`custom-${ci}`)}>
-                                {showKeys[`custom-${ci}`] ? <EyeOff size={16} /> : <Eye size={16} />}
-                              </button>
-                            </div>
+                            <input className="settings-input" type="text" value={key}
+                              onChange={e => updateCustomProvider(ci, 'api_key', e.target.value)}
+                              placeholder={key === '' && custom[ci]?._key_configured
+                                ? t('field.apiKeyPlaceholderSet').replace('{provider}', custom[ci]?.name || 'Custom')
+                                : 'sk-or-…'}
+                            />
                           </div>
                         )}
                         <div className="settings-field-col settings-field-col-checkbox" style={isBuiltIn ? { paddingTop: '20px' } : {}}>
@@ -536,18 +527,11 @@ export default function SettingsPanel({ isOpen, onClose }) {
                 <div className="settings-field-row">
                   <div className="settings-field-col">
                     <label>API Key</label>
-                    <div className="settings-input-row">
-                      <input className="settings-input"
-                        type={showKeys['google_search'] ? 'text' : 'password'}
-                        value={apiKeys['google_search'] || ''}
-                        onChange={e => setApiKey('google_search', e.target.value)}
-                        placeholder={apiKeys['google_search'] ? '••••••••' : 'AIza…'}
-                      />
-                      <button className="settings-icon-btn" onClick={() => toggleShowKey('google_search')}
-                        title={showKeys['google_search'] ? 'Hide' : 'Show'}>
-                        {showKeys['google_search'] ? <EyeOff size={16} /> : <Eye size={16} />}
-                      </button>
-                    </div>
+                    <input className="settings-input" type="text"
+                      value={apiKeys['google_search'] || ''}
+                      onChange={e => setApiKey('google_search', e.target.value)}
+                      placeholder={apiKeysConfigured['google_search'] ? 'Google Search API key has been set, enter another to override' : 'AIza…'}
+                    />
                   </div>
                   <div className="settings-field-col">
                     <label>CSE ID</label>

@@ -36,9 +36,7 @@ const LANG = {
     // ── Provider fields ───────────────────────────────────────────
     'field.apiKey': 'API Key',
     'field.apiKeyPlaceholder': 'Overrides env var',
-    'field.apiKeyPlaceholderSet': '••••••••••••••••',
-    'field.show': 'Show',
-    'field.hide': 'Hide',
+    'field.apiKeyPlaceholderSet': '{provider} API key has been set, enter another to override',
     'field.displayName': 'Display Name',
     'field.displayNamePlaceholder': 'My OpenRouter',
     'field.providerId': 'Provider ID',
@@ -259,9 +257,7 @@ const LANG = {
     // ── Provider fields ───────────────────────────────────────────
     'field.apiKey': 'API 密钥',
     'field.apiKeyPlaceholder': '覆盖环境变量',
-    'field.apiKeyPlaceholderSet': '••••••••••••••••',
-    'field.show': '显示',
-    'field.hide': '隐藏',
+    'field.apiKeyPlaceholderSet': '{provider} API 密钥已设置，输入新密钥以覆盖',
     'field.displayName': '显示名称',
     'field.displayNamePlaceholder': '我的 OpenRouter',
     'field.providerId': '提供者 ID',

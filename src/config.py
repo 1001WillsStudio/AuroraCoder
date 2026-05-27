@@ -45,6 +45,17 @@ MODEL_PROVIDERS = {
         "extra_body": None,
         "context_window": 1_048_576,
     },
+    "deepseek-flash": {
+        "id": "deepseek-flash",
+        "name": "DeepSeek V4 Flash",
+        "description": "DeepSeek V4 Flash — fast, no reasoning",
+        "base_url": "https://api.deepseek.com/v1",
+        "api_key": os.environ.get("DEEPSEEK_API_KEY", ""),
+        "model": "deepseek-v4-flash",
+        "supports_thinking": False,
+        "extra_body": None,
+        "context_window": 1_048_576,
+    },
     "nvidia": {
         "id": "nvidia",
         "name": "NVIDIA DeepSeek V4 Pro",
