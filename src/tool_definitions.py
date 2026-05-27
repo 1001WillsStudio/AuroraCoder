@@ -307,8 +307,8 @@ NATIVE_TOOL_DEFINITIONS = [
                 "properties": {
                     "action": {
                         "type": "string",
-"enum": ["search", "execute", "info", "close", "file"],
-"description": "The action to perform: 'search' for tools, 'execute' to run a tool, 'info' to add a tool to your context, 'close' to remove it, or 'file' to inspect tool files."
+"enum": ["search", "execute", "info", "close"],
+"description": "The action to perform: 'search' for tools, 'execute' to run a tool, 'info' to add a tool to your context, 'close' to remove it."
                     },
                     "query": {
                         "type": "string",
@@ -316,7 +316,7 @@ NATIVE_TOOL_DEFINITIONS = [
                     },
                     "tool_name": {
                         "type": "string",
-"description": "Name of the tool to execute, inspect, or manage context for (required for action='execute'/'info'/'close'/'file')"
+"description": "Name of the tool to execute, inspect, or manage context for (required for action='execute'/'info'/'close')"
                     },
                     "arguments": {
                         "type": "object",
