@@ -135,11 +135,8 @@
 
 .settings-section-key,
 .settings-section-deepseek {
-  background: linear-gradient(135deg, var(--accent-color, #6C47FF)08, transparent 60%);
-  border: 1px solid var(--accent-color, #6C47FF)20;
+  border-color: var(--accent-color, #6C47FF)40;
   border-radius: 12px;
-  padding: 16px;
-  margin-bottom: 20px;
 }
 
 .settings-input-deepseek-key {
@@ -150,18 +147,26 @@
 /* ── Sections ──────────────────────────────────────────────────────────── */
 
 .settings-section {
-  margin-bottom: 24px;
+  margin-bottom: 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.settings-section:last-of-type {
+  margin-bottom: 0;
 }
 
 .settings-section-title {
-  margin: 0 0 4px;
-  font-size: 15px;
+  margin: 0 0 6px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .settings-section-desc {
-  margin: 0 0 16px;
+  margin: 0 0 12px;
   font-size: 12px;
   color: var(--text-secondary);
   line-height: 1.5;
@@ -278,14 +283,60 @@
   flex: 1;
 }
 
-/* ── Custom Providers ──────────────────────────────────────────────────── */
+/* ── Provider List (compact rows for built-in, cards for custom) ──────── */
 
 .settings-custom-provider {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 12px;
+  border-radius: 10px;
   padding: 14px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
+}
+
+/* Compact row for built-in providers */
+.settings-provider-row-compact {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  margin-bottom: 4px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  min-height: 40px;
+}
+
+.settings-provider-row-compact:hover {
+  background: var(--bg-tertiary);
+}
+
+.settings-provider-row-compact .settings-provider-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  min-width: 160px;
+}
+
+.settings-provider-row-compact .settings-provider-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-provider-row-compact .settings-input {
+  width: 200px;
+  flex: none;
+  font-size: 12px;
+  padding: 5px 10px;
+}
+
+.settings-provider-row-compact .settings-checkbox-label {
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .settings-custom-header {
@@ -299,6 +350,20 @@
   font-size: 14px;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+/* ── Collapsible title ────────────────────────────────────────────────── */
+
+.settings-collapse-title {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  user-select: none;
+}
+
+.settings-collapse-title:hover {
+  color: var(--accent-color, #6C47FF);
 }
 
 /* ── Provider title row (name + badge) ────────────────────────────────── */
@@ -371,7 +436,7 @@ select.settings-input {
 .settings-field-col-checkbox {
   justify-content: flex-end;
   align-items: flex-start;
-  padding-top: 20px;
+  padding-top: 18px;
 }
 
 .settings-checkbox-label {

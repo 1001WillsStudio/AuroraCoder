@@ -301,152 +301,6 @@ export default function SettingsPanel({ isOpen, onClose }) {
                 </div>
               </section>
 
-              {/* ── Providers ──────────────────────────────────────────── */}
-              <section className="settings-section">
-                <h3
-                  className="settings-section-title"
-                  style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-                  onClick={() => setProvidersCollapsed(!providersCollapsed)}
-                >
-                  {providersCollapsed
-                    ? <ChevronRight size={16} style={{ marginRight: 4 }} />
-                    : <ChevronDown size={16} style={{ marginRight: 4 }} />
-                  }
-                  {t('providers.title')}
-                </h3>
-                {!providersCollapsed && <p className="settings-section-desc">{t('providers.desc')}</p>}
-
-{!providersCollapsed && <>
-                {allProviders.map(prov => {
-                  const pid = prov.id
-                  const isBuiltIn = prov._builtin
-                  const ci = prov._customIndex
-                  // key from settings.json only — env vars are opaque to the UI
-                  const key = isBuiltIn ? (apiKeys[pid] || '') : (custom[ci]?.api_key || '')
-                  const isKeySet = key.length > 0
-                  const baseUrl = custom[ci]?.base_url || ''
-                  // Model: custom only (built-in model is locked)
-                  const model = isBuiltIn ? '' : (custom[ci]?.model || '')
-                  const thinking = isBuiltIn ? prov.supports_thinking : (custom[ci]?.supports_thinking !== false)
-                  const errKey = isBuiltIn ? null : `custom-${ci}`
-                  const hasError = errKey && !!errorFields[errKey]
-
-                  return (
-                    <div key={pid} className="settings-custom-provider">
-                      <div className="settings-custom-header">
-                        <div className="settings-provider-title-row">
-                          <span className="settings-custom-label">{prov.name}</span>
-                          {isBuiltIn
-                            ? <span className="settings-badge settings-badge-builtin"><Shield size={10} /> {t('providers.badgeBuiltin')}</span>
-                            : <span className="settings-badge settings-badge-custom">{t('providers.badgeCustom')}</span>
-                          }
-                        </div>
-                        {!isBuiltIn && (
-                          <button className="settings-icon-btn settings-danger-btn" onClick={() => removeCustomProvider(ci)} title={t('providers.remove')}>
-                            <Trash2 size={16} />
-                          </button>
-                        )}
-                      </div>
-
-                      {hasError && <div className="settings-field-error">{errorFields[errKey]}</div>}
-
-                      {/* Name + API key row */}
-                      <div className="settings-field-row">
-                      {isBuiltIn && pid !== 'deepseek' && pid !== 'deepseek-flash'
-                        && pid !== 'nvidia' && pid !== 'nvidia-fast' && pid !== 'nvidia-glm5' && pid !== 'nvidia-glm5-fast' ? (
-                          <div className="settings-field-col">
-                            <label>{t('field.apiKey')}</label>
-                            <input className="settings-input" type="text" value={key}
-                              onChange={e => setApiKey(pid, e.target.value)}
-                              placeholder={apiKeysConfigured[pid]
-                                ? t('field.apiKeyPlaceholderSet').replace('{provider}', prov.name)
-                                : t('field.apiKeyPlaceholder')}
-                            />
-                          </div>
-                        ) : isBuiltIn ? (
-                          <div className="settings-field-col" />
-                        ) : (
-                          <>
-                            <div className="settings-field-col">
-                              <label>{t('field.displayName')}</label>
-                              <input className="settings-input" type="text"
-                                value={custom[ci]?.name || ''}
-                                onChange={e => updateCustomProvider(ci, 'name', e.target.value)}
-                                placeholder={t('field.displayNamePlaceholder')}
-                              />
-                            </div>
-                            <div className="settings-field-col">
-                              <label>{t('field.providerId')}</label>
-                              <input className="settings-input" type="text"
-                                value={custom[ci]?.id || ''}
-                                onChange={e => updateCustomProvider(ci, 'id', e.target.value)}
-                                placeholder={t('field.providerIdPlaceholder')}
-                              />
-                            </div>
-                          </>
-                        )}
-                      </div>
-
-                      {/* Base URL row — custom providers only */}
-                      {!isBuiltIn && (
-                        <div className="settings-field-row" style={{ marginTop: '10px' }}>
-                          <div className="settings-field-col settings-field-col-wide">
-                            <label>{t('field.baseUrl')}</label>
-                            <input className="settings-input" type="text" value={baseUrl}
-                              onChange={e => updateCustomProvider(ci, 'base_url', e.target.value)}
-                              placeholder={t('field.baseUrlPlaceholderCustom')}
-                            />
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Model + API key + thinking row */}
-                      <div className="settings-field-row" style={{ marginTop: '10px' }}>
-                        {/* Model — custom providers only (built-in model is locked) */}
-                        {!isBuiltIn && (
-                          <div className="settings-field-col">
-                            <label>{t('field.model')}</label>
-                            <input className="settings-input" type="text" value={model}
-                              onChange={e => updateCustomProvider(ci, 'model', e.target.value)}
-                              placeholder={t('field.modelPlaceholderCustom')}
-                            />
-                          </div>
-                        )}
-                        {!isBuiltIn && (
-                          <div className="settings-field-col">
-                            <label>{t('field.apiKey')}</label>
-                            <input className="settings-input" type="text" value={key}
-                              onChange={e => updateCustomProvider(ci, 'api_key', e.target.value)}
-                              placeholder={key === '' && custom[ci]?._key_configured
-                                ? t('field.apiKeyPlaceholderSet').replace('{provider}', custom[ci]?.name || 'Custom')
-                                : 'sk-or-…'}
-                            />
-                          </div>
-                        )}
-                        <div className="settings-field-col settings-field-col-checkbox" style={isBuiltIn ? { paddingTop: '20px' } : {}}>
-                          <label className="settings-checkbox-label">
-                            <input type="checkbox"
-                              checked={thinking}
-                              onChange={e => isBuiltIn
-                                ? setOverride(pid, 'supports_thinking', e.target.checked)
-                                : updateCustomProvider(ci, 'supports_thinking', e.target.checked)
-                              }
-                            />
-                            {t('field.thinking')}
-                          </label>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
-
-                <button className="settings-add-btn" onClick={addCustomProvider}>
-                  <Plus size={16} /><span>{t('field.addProvider')}</span>
-                </button>
-                </>}
-              </section>
-
-
               {/* ── Agent Behavior ──────────────────────────────────────── */}
               <section className="settings-section">
                 <h3 className="settings-section-title">{t('agent.title')}</h3>
@@ -472,7 +326,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
                     />
                   </div>
                 </div>
-                <div className="settings-field-row" style={{ marginTop: '12px' }}>
+                <div className="settings-field-row" style={{ marginTop: 12 }}>
                   <div className="settings-field-col">
                     <label>{t('agent.maxToolConcurrency')}</label>
                     <input className="settings-input" type="number"
@@ -492,75 +346,122 @@ export default function SettingsPanel({ isOpen, onClose }) {
                 </div>
               </section>
 
-              {/* ── Security ──────────────────────────────────────────── */}
+              {/* ── Models ───────────────────────────────────────────────── */}
               <section className="settings-section">
-                <h3 className="settings-section-title">
-                  <Shield size={16} style={{ marginRight: 6, verticalAlign: 'middle' }} />
-                  {t('settings.security') || 'Security'}
+                <h3 className="settings-section-title settings-collapse-title"
+                  onClick={() => setProvidersCollapsed(!providersCollapsed)}>
+                  {providersCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                  ⚙ {t('providers.title')}
                 </h3>
+                {!providersCollapsed && <p className="settings-section-desc">{t('providers.desc')}</p>}
 
-                {/* Status indicator */}
-                <div className="settings-security-status">
-                  <span className={`settings-security-dot ${authEnabled ? 'enabled' : authEnabled === false ? 'disabled' : ''}`} />
-                  <span className="settings-security-text">
-                    {authEnabled === null
-                      ? 'Checking…'
-                      : authEnabled
-                        ? 'Password protection is ENABLED — API endpoints require authentication.'
-                        : 'Password protection is DISABLED — set ACCESS_PASSWORD env var to enable.'
-                    }
-                  </span>
-                </div>
+                {!providersCollapsed && (
+                <>
+                  {/* Built‑in — compact rows */}
+                  {allProviders.filter(p => p._builtin).map(prov => {
+                    const pid = prov.id
+                    const key = apiKeys[pid] || ''
+                    const needsOwnKey = pid !== 'deepseek' && pid !== 'deepseek-flash'
+                      && pid !== 'nvidia' && pid !== 'nvidia-fast'
+                      && pid !== 'nvidia-glm5' && pid !== 'nvidia-glm5-fast'
+                    return (
+                      <div key={pid} className="settings-provider-row-compact">
+                        <span className="settings-provider-name" title={prov.description}>{prov.name}</span>
+                        <span className="settings-badge settings-badge-builtin"><Shield size={9} /> built‑in</span>
+                        {needsOwnKey && (
+                          <input className="settings-input" type="text" value={key}
+                            onChange={e => setApiKey(pid, e.target.value)}
+                            placeholder={apiKeysConfigured[pid]
+                              ? t('field.apiKeyPlaceholderSet').replace('{provider}', prov.name)
+                              : t('field.apiKeyPlaceholder')}
+                          />
+                        )}
+                        <label className="settings-checkbox-label">
+                          <input type="checkbox" checked={prov.supports_thinking}
+                            onChange={e => setOverride(pid, 'supports_thinking', e.target.checked)} />
+                          {t('field.thinking')}
+                        </label>
+                      </div>
+                    )
+                  })}
 
-                {/* Auth state */}
-                {authEnabled && (
-                  <div style={{ marginTop: 12 }}>
-                    <div className="settings-security-status" style={{ marginBottom: 10 }}>
-                      <span className={`settings-security-dot ${isAuthed ? 'authed' : 'noauth'}`} />
-                      <span className="settings-security-text">
-                        {isAuthed
-                          ? 'You are authenticated. API calls include your credentials.'
-                          : 'Not authenticated. API calls may fail.'
-                        }
-                      </span>
-                    </div>
+                  {/* Custom — full cards */}
+                  {allProviders.filter(p => !p._builtin).map(prov => {
+                    const ci = prov._customIndex
+                    const key = custom[ci]?.api_key || ''
+                    const hasError = errorFields[`custom-${ci}`]
+                    return (
+                      <div key={prov.id} className="settings-custom-provider">
+                        <div className="settings-custom-header">
+                          <div className="settings-provider-title-row">
+                            <span className="settings-custom-label">{prov.name || t('providers.untitled')}</span>
+                            <span className="settings-badge settings-badge-custom">{t('providers.badgeCustom')}</span>
+                          </div>
+                          <button className="settings-icon-btn settings-danger-btn"
+                            onClick={() => removeCustomProvider(ci)} title={t('providers.remove')}>
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                        {hasError && <div className="settings-field-error">{errorFields[`custom-${ci}`]}</div>}
+                        <div className="settings-field-row">
+                          <div className="settings-field-col">
+                            <label>{t('field.displayName')}</label>
+                            <input className="settings-input" type="text"
+                              value={custom[ci]?.name || ''}
+                              onChange={e => updateCustomProvider(ci, 'name', e.target.value)}
+                              placeholder={t('field.displayNamePlaceholder')} />
+                          </div>
+                          <div className="settings-field-col">
+                            <label>{t('field.providerId')}</label>
+                            <input className="settings-input" type="text"
+                              value={custom[ci]?.id || ''}
+                              onChange={e => updateCustomProvider(ci, 'id', e.target.value)}
+                              placeholder={t('field.providerIdPlaceholder')} />
+                          </div>
+                        </div>
+                        <div className="settings-field-row" style={{ marginTop: 10 }}>
+                          <div className="settings-field-col settings-field-col-wide">
+                            <label>{t('field.baseUrl')}</label>
+                            <input className="settings-input" type="text"
+                              value={custom[ci]?.base_url || ''}
+                              onChange={e => updateCustomProvider(ci, 'base_url', e.target.value)}
+                              placeholder={t('field.baseUrlPlaceholderCustom')} />
+                          </div>
+                        </div>
+                        <div className="settings-field-row" style={{ marginTop: 10 }}>
+                          <div className="settings-field-col">
+                            <label>{t('field.model')}</label>
+                            <input className="settings-input" type="text"
+                              value={custom[ci]?.model || ''}
+                              onChange={e => updateCustomProvider(ci, 'model', e.target.value)}
+                              placeholder={t('field.modelPlaceholderCustom')} />
+                          </div>
+                          <div className="settings-field-col">
+                            <label>{t('field.apiKey')}</label>
+                            <input className="settings-input" type="text" value={key}
+                              onChange={e => updateCustomProvider(ci, 'api_key', e.target.value)}
+                              placeholder={key === '' && custom[ci]?._key_configured
+                                ? t('field.apiKeyPlaceholderSet').replace('{provider}', custom[ci]?.name || 'Custom')
+                                : 'sk-or-…'} />
+                          </div>
+                          <div className="settings-field-col settings-field-col-checkbox">
+                            <label className="settings-checkbox-label">
+                              <input type="checkbox"
+                                checked={custom[ci]?.supports_thinking !== false}
+                                onChange={e => updateCustomProvider(ci, 'supports_thinking', e.target.checked)} />
+                              {t('field.thinking')}
+                            </label>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
 
-                    {isAuthed && (
-                      <button
-                        className="settings-btn-save"
-                        style={{ background: 'var(--danger, #f85149)', borderColor: 'var(--danger, #f85149)' }}
-                        onClick={() => {
-                          authLogout()
-                          clearToken()
-                          setIsAuthed(false)
-                          window.location.reload()
-                        }}
-                      >
-                        <LogOut size={14} style={{ marginRight: 6 }} />
-                        Logout
-                      </button>
-                    )}
-
-                    {!isAuthed && (
-                      <button
-                        className="settings-btn-save"
-                        onClick={() => window.location.reload()}
-                      >
-                        <RefreshCw size={14} style={{ marginRight: 6 }} />
-                        Login
-                      </button>
-                    )}
-                  </div>
+                  <button className="settings-add-btn" onClick={addCustomProvider}>
+                    <Plus size={16} /><span>{t('field.addProvider')}</span>
+                  </button>
+                </>
                 )}
-
-                {/* Mobile app link */}
-                <div className="settings-security-status" style={{ marginTop: 14, borderTop: '1px solid var(--border-color)', paddingTop: 12 }}>
-                  <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-                    📱 <a href="/m" target="_blank" rel="noopener"
-                      style={{ color: 'var(--accent)' }}>Open mobile web app</a> —
-                    optimized for your phone.
-                  </span>
-                </div>
               </section>
 
               {/* ── Google Search ──────────────────────────────────────── */}
@@ -604,8 +505,7 @@ placeholder="abc123..."
               {/* ── ToolStore ──────────────────────────────────────────── */}
               <section className="settings-section">
                 <h3 className="settings-section-title">
-                  <Wrench size={16} style={{ marginRight: 6, verticalAlign: 'middle' }} />
-                  ToolStore
+                  <Wrench size={14} style={{ marginRight: 2, verticalAlign: 'middle' }} /> ToolStore
                 </h3>
                 <p className="settings-section-desc">
                   Local MCP servers &amp; skills — managed via the ToolStore dashboard.
@@ -666,17 +566,58 @@ placeholder="abc123..."
                 </div>
               </section>
 
+              {/* ── Security ────────────────────────────────────────────── */}
+              <section className="settings-section">
+                <h3 className="settings-section-title">
+                  <Shield size={14} style={{ marginRight: 2, verticalAlign: 'middle' }} />
+                  {t('settings.security') || 'Security'}
+                </h3>
+                <div className="settings-security-status">
+                  <span className={`settings-security-dot ${authEnabled ? 'enabled' : authEnabled === false ? 'disabled' : ''}`} />
+                  <span className="settings-security-text">
+                    {authEnabled === null
+                      ? 'Checking…'
+                      : authEnabled
+                        ? 'Password protection is ENABLED — API endpoints require authentication.'
+                        : 'Password protection is DISABLED — set ACCESS_PASSWORD env var to enable.'
+                    }
+                  </span>
+                </div>
+                {authEnabled && (
+                  <div style={{ marginTop: 12 }}>
+                    <div className="settings-security-status" style={{ marginBottom: 10 }}>
+                      <span className={`settings-security-dot ${isAuthed ? 'authed' : 'noauth'}`} />
+                      <span className="settings-security-text">
+                        {isAuthed ? 'You are authenticated.' : 'Not authenticated.'}
+                      </span>
+                    </div>
+                    {isAuthed ? (
+                      <button className="settings-btn-save"
+                        style={{ background: 'var(--danger, #f85149)', borderColor: 'var(--danger, #f85149)' }}
+                        onClick={() => { authLogout(); clearToken(); setIsAuthed(false); window.location.reload() }}>
+                        <LogOut size={14} style={{ marginRight: 6 }} /> Logout
+                      </button>
+                    ) : (
+                      <button className="settings-btn-save" onClick={() => window.location.reload()}>
+                        <RefreshCw size={14} style={{ marginRight: 6 }} /> Login
+                      </button>
+                    )}
+                  </div>
+                )}
+                <div className="settings-security-status" style={{ marginTop: 14, borderTop: '1px solid var(--border-color)', paddingTop: 12 }}>
+                  <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+                    📱 <a href="/m" target="_blank" rel="noopener"
+                      style={{ color: 'var(--accent)' }}>Open mobile web app</a> —
+                    optimized for your phone.
+                  </span>
+                </div>
+              </section>
+
               {/* ── Web Secondary Model ─────────────────────────────────── */}
               <section className="settings-section">
-                <h3
-                  className="settings-section-title"
-                  style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-                  onClick={() => setWebSecondaryCollapsed(!webSecondaryCollapsed)}
-                >
-                  {webSecondaryCollapsed
-                    ? <ChevronRight size={16} style={{ marginRight: 4 }} />
-                    : <ChevronDown size={16} style={{ marginRight: 4 }} />
-                  }
+                <h3 className="settings-section-title settings-collapse-title"
+                  onClick={() => setWebSecondaryCollapsed(!webSecondaryCollapsed)}>
+                  {webSecondaryCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                   {t('webSecondary.title')}
                 </h3>
                 {!webSecondaryCollapsed && <p className="settings-section-desc">{t('webSecondary.desc')}</p>}
