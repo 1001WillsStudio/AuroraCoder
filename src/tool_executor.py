@@ -158,5 +158,6 @@ def execute_tool_calls(
                     "tool_call_id": tc_out["id"],
                     "content": result
                 })
+                _mark(tool_name)
 
     return triggered
