@@ -12,10 +12,14 @@ import (
 // ─── Progress server ──────────────────────────────────────────────────────
 
 type progressServer struct {
-	mu       sync.Mutex
-	clients  map[chan string]struct{}
-	port     int
-	listener net.Listener
+	mu           sync.Mutex
+	clients      map[chan string]struct{}
+	port         int
+	listener     net.Listener
+	failed       bool
+	errorMessage string
+	instructed   bool
+	infoMessage  string
 }
 
 func newProgressServer() *progressServer {
@@ -82,6 +86,15 @@ func (ps *progressServer) setStep(step int, status string) {
 	ps.broadcast("step", string(msg))
 }
 
+func (ps *progressServer) setStepMsg(step int, status string, message string) {
+	msg, _ := json.Marshal(map[string]interface{}{
+		"step":    step,
+		"status":  status,
+		"message": message,
+	})
+	ps.broadcast("step", string(msg))
+}
+
 func (ps *progressServer) warnStep(step int, message string) {
 	msg, _ := json.Marshal(map[string]interface{}{
 		"step":    step,
@@ -105,10 +118,27 @@ func (ps *progressServer) done(url string) {
 }
 
 func (ps *progressServer) fail(message string) {
+	ps.mu.Lock()
+	ps.failed = true
+	ps.errorMessage = message
+	ps.mu.Unlock()
+
 	msg, _ := json.Marshal(map[string]interface{}{
 		"message": message,
 	})
-	ps.broadcast("error", string(msg))
+	ps.broadcast("fail", string(msg))
+}
+
+func (ps *progressServer) instruction(message string) {
+	ps.mu.Lock()
+	ps.instructed = true
+	ps.infoMessage = message
+	ps.mu.Unlock()
+
+	msg, _ := json.Marshal(map[string]interface{}{
+		"message": message,
+	})
+	ps.broadcast("info", string(msg))
 }
 
 // ─── HTTP handlers ────────────────────────────────────────────────────────
@@ -143,15 +173,34 @@ func (ps *progressServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 
 	// Send initial step definitions
 	steps := []map[string]interface{}{
-		{"step": 1, "label": "Extracting project files"},
-		{"step": 2, "label": "Checking configuration"},
-		{"step": 3, "label": "Building base Docker image"},
-		{"step": 4, "label": "Building app Docker image"},
-		{"step": 5, "label": "Starting container"},
+		{"step": 1, "label": "Checking Docker"},
+		{"step": 2, "label": "Extracting project files"},
+		{"step": 3, "label": "Checking configuration"},
+		{"step": 4, "label": "Building base Docker image"},
+		{"step": 5, "label": "Building app Docker image"},
+		{"step": 6, "label": "Starting container"},
 	}
 	initMsg, _ := json.Marshal(steps)
 	fmt.Fprintf(w, "event: init\ndata: %s\n\n", initMsg)
 	flusher.Flush()
+
+	// Replay any error/instruction that fired before this client connected
+	ps.mu.Lock()
+	if ps.failed {
+		errMsg, _ := json.Marshal(map[string]interface{}{
+			"message": ps.errorMessage,
+		})
+		fmt.Fprintf(w, "event: fail\ndata: %s\n\n", errMsg)
+		flusher.Flush()
+	}
+	if ps.instructed {
+		infoMsg, _ := json.Marshal(map[string]interface{}{
+			"message": ps.infoMessage,
+		})
+		fmt.Fprintf(w, "event: info\ndata: %s\n\n", infoMsg)
+		flusher.Flush()
+	}
+	ps.mu.Unlock()
 
 	ctx := r.Context()
 	for {
@@ -250,6 +299,15 @@ const progressPageHTML = `<!DOCTYPE html>
   .error-box h3 { color: var(--red); font-size: 15px; margin-bottom: 8px; }
   .error-box pre { color: var(--text); font-size: 12px; white-space: pre-wrap; }
 
+  .info-box {
+    margin-top: 16px; padding: 16px; border-radius: 8px;
+    background: rgba(88,166,255,0.1); border: 1px solid var(--accent);
+    display: none;
+  }
+  .info-box.show { display: block; }
+  .info-box h3 { color: var(--accent); font-size: 15px; margin-bottom: 8px; }
+  .info-box pre { color: var(--text); font-size: 12px; white-space: pre-wrap; }
+
   .spinner {
     margin-top: 20px; display: flex; align-items: center; gap: 8px;
     color: var(--dim); font-size: 13px;
@@ -299,6 +357,11 @@ const progressPageHTML = `<!DOCTYPE html>
   <div class="error-box" id="errorBox">
     <h3>❌ Deployment Failed</h3>
     <pre id="errorMsg"></pre>
+  </div>
+
+  <div class="info-box" id="infoBox">
+    <h3>ℹ️ Setup Required</h3>
+    <pre id="infoMsg"></pre>
   </div>
 
   <div class="redirect-bar" id="redirectBar">
@@ -384,7 +447,7 @@ evtSource.addEventListener('done', function(e) {
   setTimeout(function() { window.location.href = d.url; }, 1000);
 });
 
-evtSource.addEventListener('error', function(e) {
+evtSource.addEventListener('fail', function(e) {
   spinnerEl.style.display = 'none';
   try {
     const d = JSON.parse(e.data);
@@ -395,9 +458,20 @@ evtSource.addEventListener('error', function(e) {
   errorBox.classList.add('show');
 });
 
+evtSource.addEventListener('info', function(e) {
+  spinnerEl.style.display = 'none';
+  try {
+    const d = JSON.parse(e.data);
+    infoMsg.textContent = d.message || '';
+  } catch(_) {
+    infoMsg.textContent = 'Check the terminal window for details.';
+  }
+  infoBox.classList.add('show');
+});
+
 evtSource.onerror = function() {
-  // SSE connection lost — if we haven't redirected yet, show a note
-  if (!redirectBar.classList.contains('show') && !errorBox.classList.contains('show')) {
+  // SSE connection lost — if we haven't redirected or shown an error/info yet, show a note
+  if (!redirectBar.classList.contains('show') && !errorBox.classList.contains('show') && !infoBox.classList.contains('show')) {
     addLog('⚠️  Lost connection to launcher process.');
   }
 };

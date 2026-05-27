@@ -29,78 +29,83 @@ func main() {
 	openBrowser(ps.url())
 	fmt.Printf("\n  Progress page: %s\n\n", ps.url())
 
-	// Check Docker — guide is now shown in the browser, not just terminal
+	// ── Step 1: Check Docker ───────────────────────────────────────
+
+	ps.setStep(1, "running")
+	ps.logLine("Checking Docker installation...")
+
 	ds := detectDocker()
 
 	if !ds.Installed {
+		ps.setStepMsg(1, "warning", "Docker is not installed")
 		fmt.Println()
 		fmt.Println("❌  Docker is not installed on this system.")
 		openBrowser("https://www.docker.com/products/docker-desktop/")
-		ps.fail(dockerInstallGuideMessage())
+		ps.instruction(dockerInstallGuideMessage())
 		autoExit(1)
 	}
 
 	if !ds.Running {
+		ps.setStepMsg(1, "warning", "Docker installed but not running")
 		fmt.Println()
 		fmt.Println("❌  Docker is installed but not running.")
-		msg := "Docker is installed but not running.\n\n  Please start Docker and try again:\n"
+		msg := "Docker is installed but not running.\n\nPlease start Docker and try again:\n"
 		switch goos() {
 		case "windows":
-			msg += "    → Search for 'Docker Desktop' in Start Menu and launch it"
+			msg += "  → Search for 'Docker Desktop' in Start Menu and launch it"
 		case "darwin":
-			msg += "    → Open Docker Desktop from /Applications"
+			msg += "  → Open Docker Desktop from /Applications"
 		default:
-			msg += "    → Run: sudo systemctl start docker"
+			msg += "  → Run: sudo systemctl start docker"
 		}
-		ps.fail(msg)
+		ps.instruction(msg)
 		autoExit(1)
 	}
 
-	fmt.Println("  ✅ Docker is running.")
+	ps.setStepMsg(1, "done", "Docker is installed and running")
+	ps.logLine("✅ Docker is running.")
 
+	// ── Step 2: Extract ───────────────────────────────────────────
 
-	// ── Run deployment steps ──────────────────────────────────────
-
-	// Step 1: Extract
-	ps.setStep(1, "running")
+	ps.setStep(2, "running")
 	ps.logLine("Extracting project files...")
 	if err := extractProject(cacheDir); err != nil {
 		ps.fail(fmt.Sprintf("Failed to extract project: %v", err))
 		autoExit(1)
 	}
 	ps.logLine(fmt.Sprintf("Project extracted to: %s", cacheDir))
-	ps.setStep(1, "done")
+	ps.setStep(2, "done")
 
-	// Step 2: .env file
-	ps.setStep(2, "running")
+	// Step 3: .env file
+	ps.setStep(3, "running")
 	ps.logLine("Checking environment configuration...")
 	needsEnvEdit := ensureEnvFile(cacheDir, ps)
 	if needsEnvEdit {
-		ps.warnStep(2, fmt.Sprintf(
+		ps.warnStep(3, fmt.Sprintf(
 			"Please edit your .env file with API keys:\n  %s\nThen restart the app.",
 			cacheDir,
 		))
 	}
-	ps.setStep(2, "done")
+	ps.setStep(3, "done")
 
-	// Step 3: Build base Docker image
-	ps.setStep(3, "running")
+	// Step 4: Build base Docker image
+	ps.setStep(4, "running")
 	if err := buildBaseImage(cacheDir, ps); err != nil {
 		ps.fail(fmt.Sprintf("Base image build failed: %v", err))
 		autoExit(1)
 	}
-	ps.setStep(3, "done")
+	ps.setStep(4, "done")
 
-	// Step 4: Build app Docker image
-	ps.setStep(4, "running")
+	// Step 5: Build app Docker image
+	ps.setStep(5, "running")
 	if err := buildAppImage(cacheDir, ps); err != nil {
 		ps.fail(fmt.Sprintf("App image build failed: %v", err))
 		autoExit(1)
 	}
-	ps.setStep(4, "done")
+	ps.setStep(5, "done")
 
-	// Step 5: Start container
-	ps.setStep(5, "running")
+	// Step 6: Start container
+	ps.setStep(6, "running")
 	ps.logLine("Starting container...")
 	if err := startContainer(cacheDir, ps); err != nil {
 		ps.fail(fmt.Sprintf("Container start failed: %v", err))
@@ -112,7 +117,7 @@ func main() {
 		ps.logLine(fmt.Sprintf("⚠️  Health check warning: %v", err))
 		ps.logLine("The app may still be starting — please refresh if needed.")
 	}
-	ps.setStep(5, "done")
+	ps.setStep(6, "done")
 
 	// ── Done ──────────────────────────────────────────────────────
 	ps.done(appURL)
