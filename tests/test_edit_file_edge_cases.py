@@ -9,7 +9,8 @@ import sys, os, tempfile, textwrap, traceback
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.code_tools.file_operations import range_replace_edit_tool, FileOperations
-from src.code_tools import anchor_matcher as am
+from src.code_tools import edit_anchors as am
+from src.code_tools.edit_file import adjust_indent
 
 _passed = 0
 _failed = 0
@@ -631,6 +632,48 @@ def test_block_match():
     print("  ✅ _block_match()")
 
 
+def test_indent_aware_block_match():
+    """_indent_aware_block_match returns (matched, indent_mismatch)."""
+    lines = ["    def foo():\n", "        pass\n"]
+    # exact match → no indent mismatch
+    assert am._indent_aware_block_match(lines, 2, 0, ["    def foo():\n"]) == (True, False)
+    # different indent → matched with indent_mismatch=True
+    assert am._indent_aware_block_match(lines, 2, 0, ["  def foo():\n"]) == (True, True)
+    # substantively different → not matched
+    assert am._indent_aware_block_match(lines, 2, 0, ["  def bar():\n"]) == (False, False)
+    print("  ✅ _indent_aware_block_match()")
+
+
+def test_indent_delta():
+    """indent_delta computes the indentation difference."""
+    # actual has 2 more spaces than expected → positive delta
+    assert am.indent_delta("  hello", "    hello") == 2
+    # expected has 2 more spaces → negative delta
+    assert am.indent_delta("    hello", "  hello") == -2
+    # equal indent → zero
+    assert am.indent_delta("  hello", "  hello") == 0
+    # substantively different content → zero (special case)
+    assert am.indent_delta("hello", "world") == 0
+    # tab (1 char) vs 4 spaces → delta = 3 (4-1)
+    assert am.indent_delta("\tdef foo():", "    def foo():") == 3
+    # mixed: expected has 0 indent, actual has 4
+    assert am.indent_delta("def foo():", "    def foo():") == 4
+    print("  ✅ indent_delta()")
+
+
+def test_find_anchor_tolerant_indent_mismatch():
+    """Tolerant search detects indentation mismatch."""
+    lines = ["z\n", "    target\n", "b\n"]
+    # wrong indent → should find position but report mismatch
+    result = am.find_anchor_tolerant(lines, 3, expected_line_num=1, expected_content="  target")
+    assert result == (1, True), f"Expected (1, True), got {result}"
+    # wrong indent in multi-line content
+    lines2 = ["z\n", "    A\n", "    B\n", "c\n"]
+    result2 = am.find_anchor_tolerant(lines2, 4, expected_line_num=1, expected_content="  A\n  B")
+    assert result2 == (1, True), f"Expected (1, True), got {result2}"
+    print("  ✅ find_anchor_tolerant() indent mismatch")
+
+
 def test_candidates():
     cand = am._candidates(total_lines=10, expected_line_num=5, block_len=1)
     assert cand[0] == 4  # exact position first
@@ -641,8 +684,8 @@ def test_candidates():
 
 def test_find_anchor_tolerant_single():
     lines = ["z\n", "a\n", "target\n", "b\n", "y\n"]
-    pos = am.find_anchor_tolerant(lines, 5, expected_line_num=1, expected_content="target")
-    assert pos == 2
+    result = am.find_anchor_tolerant(lines, 5, expected_line_num=1, expected_content="target")
+    assert result == (2, False), f"Expected (2, False), got {result}"
     # not found
     assert am.find_anchor_tolerant(lines, 5, 1, "nope") is None
     print("  ✅ find_anchor_tolerant() single-line")
@@ -650,19 +693,19 @@ def test_find_anchor_tolerant_single():
 
 def test_find_anchor_tolerant_multi():
     lines = ["x\n", "A\n", "B\n", "C\n", "y\n"]
-    pos = am.find_anchor_tolerant(lines, 5, expected_line_num=1, expected_content="A\nB")
-    assert pos == 1
+    result = am.find_anchor_tolerant(lines, 5, expected_line_num=1, expected_content="A\nB")
+    assert result == (1, False), f"Expected (1, False), got {result}"
     print("  ✅ find_anchor_tolerant() multi-line")
 
 
 def test_find_anchor_tolerant_empty():
     lines = ["a\n", "b\n", "\n", "c\n"]
-    pos = am.find_anchor_tolerant(lines, 4, expected_line_num=4, expected_content="")
-    assert pos == 2  # found the empty line
+    result = am.find_anchor_tolerant(lines, 4, expected_line_num=4, expected_content="")
+    assert result == (2, False), f"Expected (2, False), got {result}"
     # whitespace-only
     lines2 = ["a\n", "   \n", "b\n"]
-    pos2 = am.find_anchor_tolerant(lines2, 3, expected_line_num=1, expected_content="")
-    assert pos2 == 1
+    result2 = am.find_anchor_tolerant(lines2, 3, expected_line_num=1, expected_content="")
+    assert result2 == (1, False), f"Expected (1, False), got {result2}"
     print("  ✅ find_anchor_tolerant() empty line")
 
 
@@ -748,6 +791,90 @@ def test_to_empty_end():
 
 
 # ===================================================================
+# 20. INDENT AUTO-FIX (single-line)
+# ===================================================================
+def test_indent_auto_fix_single_line():
+    """content_to_remove has wrong indent → replace_content indent is auto-fixed."""
+    content = "    def foo():\n        pass\n"
+    f = _make_file(content)
+    try:
+        edit(path=f, edits=[{
+            "remove_line_number": "1",
+            "content_to_remove": "  def foo():",       # 2-space indent (wrong)
+            "replace_content": "  def bar():",         # 2-space (should become 4)
+        }], expected_content="    def bar():\n        pass\n",
+        result_contains="Indentation mismatch")
+        print("  ✅ indent auto-fix: single-line (2→4 spaces)")
+    finally:
+        _cleanup(f)
+
+
+def test_indent_auto_fix_multi_line():
+    """Multi-line [TO] with wrong indent — indent delta from first anchor line."""
+    content = "class Foo:\n    def one():\n        pass\n    def two():\n        pass\n"
+    f = _make_file(content)
+    try:
+        edit(path=f, edits=[{
+            "remove_line_number": "2-4",
+            "content_to_remove": "  def one():\n[TO]\n  def two():",  # 2-space (wrong)
+            "replace_content": "  def replaced():\n      pass",       # 2-space (should become 4)
+        }], expected_content="class Foo:\n    def replaced():\n        pass\n        pass\n",
+        result_contains="Indentation mismatch")
+        print("  ✅ indent auto-fix: multi-line [TO] (2→4 spaces)")
+    finally:
+        _cleanup(f)
+
+
+def test_indent_auto_fix_deletion():
+    """Indent mismatch + deletion: warns about indent but no replacement to adjust."""
+    content = "    delete_me\n    keep\n"
+    f = _make_file(content)
+    try:
+        result = range_replace_edit_tool(target_file=f, edits=[{
+            "remove_line_number": "1",
+            "content_to_remove": "  delete_me",   # wrong indent
+            "replace_content": "",                 # deletion
+        }])
+        # Should still work (delete) but no indent warning since replace is empty
+        assert _read(f) == "    keep\n"
+        print("  ✅ indent auto-fix: deletion with indent mismatch (no crash)")
+    finally:
+        _cleanup(f)
+
+
+def test_indent_correct_no_warning():
+    """Correct indent in content_to_remove → no indent warning."""
+    content = "    hello\n"
+    f = _make_file(content)
+    try:
+        result = range_replace_edit_tool(target_file=f, edits=[{
+            "remove_line_number": "1",
+            "content_to_remove": "    hello",
+            "replace_content": "    world",
+        }])
+        assert "Indentation mismatch" not in result
+        print("  ✅ indent: correct indent → no warning")
+    finally:
+        _cleanup(f)
+
+
+def test_adjust_indent_positive_delta():
+    """adjust_indent with positive delta adds spaces."""
+    assert adjust_indent("hello\nworld\n", 2) == "  hello\n  world\n"
+    # blank lines stay blank
+    assert adjust_indent("hello\n\nworld\n", 3) == "   hello\n\n   world\n"
+    print("  ✅ adjust_indent() positive delta")
+
+
+def test_adjust_indent_negative_delta():
+    """adjust_indent with negative delta removes spaces."""
+    assert adjust_indent("    hello\n    world\n", -2) == "  hello\n  world\n"
+    # can't go negative — stops at zero
+    assert adjust_indent("  hello\n", -5) == "hello\n"
+    print("  ✅ adjust_indent() negative delta")
+
+
+# ===================================================================
 # runner
 # ===================================================================
 if __name__ == "__main__":
@@ -807,11 +934,21 @@ if __name__ == "__main__":
         ("find_anchor_tolerant() multi", test_find_anchor_tolerant_multi),
         ("find_anchor_tolerant() empty", test_find_anchor_tolerant_empty),
         ("anchor_hint()", test_anchor_hint),
+        ("_indent_aware_block_match()", test_indent_aware_block_match),
+        ("indent_delta()", test_indent_delta),
+        ("find_anchor_tolerant() indent mismatch", test_find_anchor_tolerant_indent_mismatch),
         # 16-18: Misc edges
         ("no-op edit → no change message", test_noop_edit),
         ("single-line file", test_single_line_file),
         ("[TO] trailing newline in anchor", test_to_trailing_empty_in_anchor),
         ("[TO] with empty end anchor", test_to_empty_end),
+        # 20: Indent auto-fix
+        ("indent auto-fix: single-line (2→4)", test_indent_auto_fix_single_line),
+        ("indent auto-fix: multi-line [TO]", test_indent_auto_fix_multi_line),
+        ("indent auto-fix: deletion (no crash)", test_indent_auto_fix_deletion),
+        ("indent: correct → no warning", test_indent_correct_no_warning),
+        ("adjust_indent() positive delta", test_adjust_indent_positive_delta),
+        ("adjust_indent() negative delta", test_adjust_indent_negative_delta),
     ]
 
     for i, (name, fn) in enumerate(tests, 1):

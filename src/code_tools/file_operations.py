@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable
 from ..code_sandbox import WORKSPACE
-from . import anchor_matcher as am
+from . import edit_anchors as am
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,8 @@ def _notify_file_write(file_path: str):
 _EDIT_SELF_CORRECT_RE = re.compile(r'\n?\n?<!--SELF_CORRECT:(.*?)-->', re.DOTALL)
 MAX_EDITS_PER_CALL = 3
 
+
+from .edit_file import adjust_indent
 
 def maybe_truncate_edits(tc: Dict) -> None:
     if tc["function"]["name"] != "edit_file":
@@ -118,6 +120,7 @@ class FileOperations:
 
             validated_edits = []
             any_correction_needed = False
+            any_indent_corrected = False
             corrected_edits_for_marker = []
 
             for i, edit in enumerate(edits):
@@ -178,18 +181,32 @@ class FileOperations:
                 NO = am._NO_CHANGES
 
                 if start_is_multiline:
-                    found_idx = am.find_anchor_tolerant(original_lines, total_lines,
-                                                        start_line, start_content)
-                    if found_idx is not None:
-                        start_idx = found_idx
+                    found = am.find_anchor_tolerant(original_lines, total_lines,
+                                                    start_line, start_content)
+                    if found is not None:
+                        start_idx, indent_mismatch = found
                         start_corrected = True
+                        if indent_mismatch and replace_content:
+                            start_first_line = start_content.splitlines()[0]
+                            delta = am.indent_delta(start_first_line,
+                                                    am.normalise(original_lines[start_idx]))
+                            if delta != 0:
+                                replace_content = adjust_indent(replace_content, delta)
+                                any_indent_corrected = True
                     else:
                         # Fallback: full-file search for aider-style big-block pastes
-                        found_idx = am.find_anchor_anywhere(original_lines, total_lines,
-                                                            start_content)
-                        if found_idx is not None:
-                            start_idx = found_idx
+                        found = am.find_anchor_anywhere(original_lines, total_lines,
+                                                        start_content)
+                        if found is not None:
+                            start_idx, indent_mismatch = found
                             start_corrected = True
+                            if indent_mismatch and replace_content:
+                                start_first_line = start_content.splitlines()[0]
+                                delta = am.indent_delta(start_first_line,
+                                                        am.normalise(original_lines[start_idx]))
+                                if delta != 0:
+                                    replace_content = adjust_indent(replace_content, delta)
+                                    any_indent_corrected = True
                         else:
                             ctx_s = max(0, start_idx - 1)
                             ctx_e = min(total_lines, start_idx + 4)
@@ -205,11 +222,16 @@ class FileOperations:
                     actual_start = am.normalise(original_lines[start_idx])
                     expected_start = am.normalise(start_content)
                     if actual_start != expected_start:
-                        found_idx = am.find_anchor_tolerant(original_lines, total_lines,
-                                                            start_line, start_content)
-                        if found_idx is not None:
-                            start_idx = found_idx
+                        found = am.find_anchor_tolerant(original_lines, total_lines,
+                                                        start_line, start_content)
+                        if found is not None:
+                            start_idx, indent_mismatch = found
                             start_corrected = True
+                            if indent_mismatch and replace_content:
+                                delta = am.indent_delta(expected_start, actual_start)
+                                if delta != 0:
+                                    replace_content = adjust_indent(replace_content, delta)
+                                    any_indent_corrected = True
                         else:
                             ctx_s = max(0, start_idx - 1)
                             ctx_e = min(total_lines, start_idx + 3)
@@ -237,10 +259,10 @@ class FileOperations:
                         end_idx = start_idx + len(_blines) - 1
                 elif end_is_multiline:
                     end_search_start = end_line - end_anchor_line_count + 1
-                    found_idx = am.find_anchor_tolerant(original_lines, total_lines,
-                                                        end_search_start, end_content)
-                    if found_idx is not None:
-                        end_idx = found_idx + end_anchor_line_count - 1
+                    found = am.find_anchor_tolerant(original_lines, total_lines,
+                                                    end_search_start, end_content)
+                    if found is not None:
+                        end_idx = found[0] + end_anchor_line_count - 1
                         end_corrected = True
                     else:
                         ctx_s = max(0, end_idx - 2)
@@ -255,10 +277,10 @@ class FileOperations:
                     actual_end = am.normalise(original_lines[end_idx])
                     expected_end = am.normalise(end_content)
                     if actual_end != expected_end:
-                        found_idx = am.find_anchor_tolerant(original_lines, total_lines,
-                                                            end_line, end_content)
-                        if found_idx is not None:
-                            end_idx = found_idx
+                        found = am.find_anchor_tolerant(original_lines, total_lines,
+                                                        end_line, end_content)
+                        if found is not None:
+                            end_idx = found[0]
                             end_corrected = True
                         else:
                             ctx_s = max(0, end_idx - 1)
@@ -353,6 +375,11 @@ class FileOperations:
             if line_delta != 0:
                 result += (f"\n⚠️  Line numbers have shifted by "
                            f"{'+' if line_delta >= 0 else ''}{line_delta}.")
+
+            if any_indent_corrected:
+                result = ("⚠️  Indentation mismatch detected in content_to_remove — "
+                          "replace_content indentation was auto-adjusted to match the file.\n\n"
+                          + result)
 
             if any_correction_needed:
                 correction = {

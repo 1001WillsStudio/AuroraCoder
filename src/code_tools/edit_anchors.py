@@ -51,6 +51,41 @@ def _block_match(lines: List[str], total_lines: int,
     return True
 
 
+def _indent_aware_block_match(
+    lines: List[str], total_lines: int,
+    start_pos: int, anchor_lines: List[str]
+) -> tuple:
+    """Try strict first, then relaxed.  Returns (matched, indent_mismatch).
+
+    *matched* is True when the block matches at start_pos (strict or relaxed).
+    *indent_mismatch* is True when strict failed but relaxed succeeded —
+    meaning the expected and actual content differ **only** in leading
+    whitespace (indentation).
+    """
+    if _block_match(lines, total_lines, start_pos, anchor_lines, strict=True):
+        return (True, False)
+    if _block_match(lines, total_lines, start_pos, anchor_lines, strict=False):
+        return (True, True)
+    return (False, False)
+
+
+def indent_delta(expected: str, actual: str) -> int:
+    """Compute the indentation difference between expected and actual strings.
+
+    Returns a positive delta when *actual* has more leading whitespace than
+    *expected*; negative when *expected* has more.  Returns 0 when the two
+    have identical leading whitespace or when the stripped content differs
+    (i.e. the strings are not just indent-variants of each other).
+    """
+    exp_norm = normalise(expected)
+    act_norm = normalise(actual)
+    if exp_norm.strip() != act_norm.strip():
+        return 0  # substantively different — not an indentation-only mismatch
+    exp_indent = len(exp_norm) - len(exp_norm.lstrip())
+    act_indent = len(act_norm) - len(act_norm.lstrip())
+    return act_indent - exp_indent
+
+
 def _candidates(total_lines: int, expected_line_num: int, block_len: int) -> List[int]:
     """Generate candidate 0-based positions sorted by distance from expected."""
     seen = set()
@@ -67,18 +102,18 @@ def _candidates(total_lines: int, expected_line_num: int, block_len: int) -> Lis
 
 
 def find_anchor_tolerant(lines: List[str], total_lines: int,
-                         expected_line_num: int, expected_content: str) -> Optional[int]:
+                         expected_line_num: int, expected_content: str):
     """Search for anchor content within ±MAX_ANCHOR_SHIFT lines.
 
     Supports single-line and multi-line content.
-    Returns 0-based index of first matched line, or None.
+    Returns (0-based index of first matched line, indent_mismatch) or None.
     """
     if not expected_content.strip():
         # Empty or whitespace-only content: search for an empty line (±shift)
         positions = _candidates(total_lines, expected_line_num, 1)
         for pos in positions:
             if normalise(lines[pos]) == '':
-                return pos
+                return (pos, False)
         return None
 
     anchor_lines = expected_content.splitlines(keepends=True)
@@ -91,22 +126,21 @@ def find_anchor_tolerant(lines: List[str], total_lines: int,
 
     positions = _candidates(total_lines, expected_line_num, len(anchor_lines))
     for pos in positions:
-        if _block_match(lines, total_lines, pos, anchor_lines, strict=True):
-            return pos
-    for pos in positions:
-        if _block_match(lines, total_lines, pos, anchor_lines, strict=False):
-            return pos
+        matched, indent_mismatch = _indent_aware_block_match(
+            lines, total_lines, pos, anchor_lines)
+        if matched:
+            return (pos, indent_mismatch)
     return None
 
 
 def find_anchor_anywhere(lines: List[str], total_lines: int,
-                         expected_content: str) -> Optional[int]:
+                         expected_content: str):
     """Fallback: search the ENTIRE file for anchor content.
 
     Used when the ±MAX_ANCHOR_SHIFT tolerant search fails — typically
     because an LLM pasted a large block (aider-style confusion) and the
     line numbers are far off.  Scans every possible position.
-    Returns 0-based index of first matched line, or None.
+    Returns (0-based index of first matched line, indent_mismatch) or None.
     """
     if not expected_content.strip():
         return None
@@ -119,11 +153,10 @@ def find_anchor_anywhere(lines: List[str], total_lines: int,
 
     block_len = len(anchor_lines)
     for pos in range(total_lines - block_len + 1):
-        if _block_match(lines, total_lines, pos, anchor_lines, strict=True):
-            return pos
-    for pos in range(total_lines - block_len + 1):
-        if _block_match(lines, total_lines, pos, anchor_lines, strict=False):
-            return pos
+        matched, indent_mismatch = _indent_aware_block_match(
+            lines, total_lines, pos, anchor_lines)
+        if matched:
+            return (pos, indent_mismatch)
     return None
 
 
