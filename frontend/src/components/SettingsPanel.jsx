@@ -100,7 +100,22 @@ export default function SettingsPanel({ isOpen, onClose }) {
 
   // ── Helpers ─────────────────────────────────────────────────────────────
   const setApiKey = (providerId, value) => {
-    setSettings(prev => ({ ...prev, api_keys: { ...prev.api_keys, [providerId]: value }}))
+    setSettings(prev => {
+      const next = { ...prev.api_keys, [providerId]: value }
+      // DeepSeek V4 Pro and V4 Flash share the same key — keep in sync
+      if (providerId === 'deepseek' || providerId === 'deepseek-flash') {
+        next['deepseek'] = value
+        next['deepseek-flash'] = value
+      }
+      // All NVIDIA-hosted providers share NVIDIA_API_KEY — keep in sync
+      if (['nvidia', 'nvidia-fast', 'nvidia-glm5', 'nvidia-glm5-fast'].includes(providerId)) {
+        next['nvidia'] = value
+        next['nvidia-fast'] = value
+        next['nvidia-glm5'] = value
+        next['nvidia-glm5-fast'] = value
+      }
+      return { ...prev, api_keys: next }
+    })
     setErrorFields(prev => ({ ...prev, [providerId]: false }))
   }
 
@@ -247,6 +262,45 @@ export default function SettingsPanel({ isOpen, onClose }) {
             <div className="settings-loading">{t('settings.loading')}</div>
           ) : (
             <>
+              {/* ── DeepSeek API Key (primary) ────────────────────────── */}
+              <section className="settings-section settings-section-deepseek">
+                <h3 className="settings-section-title">🔑 DeepSeek API Key</h3>
+                <p className="settings-section-desc">
+                  One key for all DeepSeek models — DeepSeek V4 Pro (thinking) and DeepSeek V4 Flash (fast).
+                </p>
+                <div className="settings-field-row">
+                  <div className="settings-field-col settings-field-col-wide">
+                    <input className="settings-input settings-input-deepseek-key" type="text"
+                      value={apiKeys['deepseek'] || ''}
+                      onChange={e => setApiKey('deepseek', e.target.value)}
+                      placeholder={apiKeysConfigured['deepseek'] || apiKeysConfigured['deepseek-flash']
+                        ? 'DeepSeek API key has been set — enter a new key to override'
+                        : 'sk-…'}
+                    />
+                  </div>
+                </div>
+              </section>
+
+              {/* ── NVIDIA API Key ─────────────────────────────────────── */}
+              <section className="settings-section">
+                <h3 className="settings-section-title">🔑 NVIDIA API Key</h3>
+                <p className="settings-section-desc">
+                  One key for all NVIDIA-hosted models — DeepSeek V4 Pro, V4 Pro No-Thinking, GLM-5.1, and GLM-5.1 No-Thinking.
+                </p>
+                <div className="settings-field-row">
+                  <div className="settings-field-col settings-field-col-wide">
+                    <input className="settings-input" type="text"
+                      value={apiKeys['nvidia'] || ''}
+                      onChange={e => setApiKey('nvidia', e.target.value)}
+                      placeholder={apiKeysConfigured['nvidia'] || apiKeysConfigured['nvidia-fast']
+                        || apiKeysConfigured['nvidia-glm5'] || apiKeysConfigured['nvidia-glm5-fast']
+                        ? 'NVIDIA API key has been set — enter a new key to override'
+                        : 'nvapi-…'}
+                    />
+                  </div>
+                </div>
+              </section>
+
               {/* ── Providers ──────────────────────────────────────────── */}
               <section className="settings-section">
                 <h3
@@ -298,7 +352,8 @@ export default function SettingsPanel({ isOpen, onClose }) {
 
                       {/* Name + API key row */}
                       <div className="settings-field-row">
-                      {isBuiltIn ? (
+                      {isBuiltIn && pid !== 'deepseek' && pid !== 'deepseek-flash'
+                        && pid !== 'nvidia' && pid !== 'nvidia-fast' && pid !== 'nvidia-glm5' && pid !== 'nvidia-glm5-fast' ? (
                           <div className="settings-field-col">
                             <label>{t('field.apiKey')}</label>
                             <input className="settings-input" type="text" value={key}
@@ -308,6 +363,8 @@ export default function SettingsPanel({ isOpen, onClose }) {
                                 : t('field.apiKeyPlaceholder')}
                             />
                           </div>
+                        ) : isBuiltIn ? (
+                          <div className="settings-field-col" />
                         ) : (
                           <>
                             <div className="settings-field-col">

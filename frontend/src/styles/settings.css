@@ -131,6 +131,21 @@
   font-size: 14px;
 }
 
+/* ── Dedicated API Key Sections (DeepSeek / NVIDIA) ──────────────────── */
+
+.settings-section-deepseek {
+  background: linear-gradient(135deg, var(--accent-color, #6C47FF)08, transparent 60%);
+  border: 1px solid var(--accent-color, #6C47FF)20;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 20px;
+}
+
+.settings-input-deepseek-key {
+  font-size: 14px !important;
+  padding: 10px 14px !important;
+}
+
 /* ── Sections ──────────────────────────────────────────────────────────── */
 
 .settings-section {
