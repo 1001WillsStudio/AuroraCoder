@@ -288,7 +288,7 @@ class ToolsetContextTracker(ContextTracker):
 
         combined = "\n\n".join(sections)
         hint = ""
-if len(state) > CONTEXT_DISPLAY_MAX_ITEMS or len(combined) > CONTEXT_DISPLAY_WARN_CHARS:
+        if len(state) > CONTEXT_DISPLAY_MAX_ITEMS or len(combined) > CONTEXT_DISPLAY_WARN_CHARS:
             names = ", ".join(sorted(state))
             hint = (
                 f"\n⚠️ CONTEXT WARNING: You have {len(state)} toolsets open "
