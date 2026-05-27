@@ -22,6 +22,7 @@ TOOLSTORE_END   = "<====TOOLSTORE_END====>"
 
 # Actions that signal the agent is "looking at" a tool (opens it in context)
 _TOOL_OPEN_ACTIONS = {"info", "execute"}
+_TOOL_CLOSE_ACTION = "close"
 
 
 # ---------------------------------------------------------------------------
@@ -29,12 +30,12 @@ _TOOL_OPEN_ACTIONS = {"info", "execute"}
 # ---------------------------------------------------------------------------
 
 def discover_open_tools(messages: List[Dict]) -> Set[str]:
-    """Scan message history for ``tool_store`` calls that reference a
-    tool by name.  Returns the set of tool names currently "open".
+    """Scan message history for ``tool_store`` calls, replaying them in
+    order.  Returns the set of tool names currently "open".
 
-    A call to ``tool_store(action="info"/"execute", tool_name="X")``
-    opens *X*.  There is no explicit close — the display tracks all
-    referenced toolsets for the conversation lifetime.
+    ``action="info"`` or ``"execute"`` adds a toolset to the display.
+    ``action="close"`` removes it (order matters — a close cancels an
+    earlier open, and vice versa).
     """
     open_tools: Set[str] = set()
 
@@ -55,11 +56,14 @@ def discover_open_tools(messages: List[Dict]) -> Set[str]:
             except (json.JSONDecodeError, TypeError):
                 continue
 
+            action = args.get("action", "")
             name = args.get("tool_name")
             if not name:
                 continue
 
-            if args.get("action", "") in _TOOL_OPEN_ACTIONS:
+            if action == _TOOL_CLOSE_ACTION:
+                open_tools.discard(name)
+            elif action in _TOOL_OPEN_ACTIONS:
                 open_tools.add(name)
 
     return open_tools

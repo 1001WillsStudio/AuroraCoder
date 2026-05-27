@@ -301,14 +301,14 @@ NATIVE_TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "tool_store",
-            "description": "A universal tool manager that allows you to search for and execute thousands of public APIs and local utilities.",
+"description": "A universal tool manager that allows you to search for and execute thousands of public APIs and local utilities, and manage your tool context by opening/closing toolsets.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["search", "execute", "info"],
-                        "description": "The action to perform: 'search' for tools, 'execute' to run a tool, or 'info' to get tool details."
+"enum": ["search", "execute", "info", "close", "file"],
+"description": "The action to perform: 'search' for tools, 'execute' to run a tool, 'info' to add a tool to your context, 'close' to remove it, or 'file' to inspect tool files."
                     },
                     "query": {
                         "type": "string",
@@ -316,7 +316,7 @@ NATIVE_TOOL_DEFINITIONS = [
                     },
                     "tool_name": {
                         "type": "string",
-                        "description": "Name of the tool to execute or get info for (required for action='execute'/'info')"
+"description": "Name of the tool to execute, inspect, or manage context for (required for action='execute'/'info'/'close'/'file')"
                     },
                     "arguments": {
                         "type": "object",

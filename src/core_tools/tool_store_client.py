@@ -22,10 +22,10 @@ To check where config is stored at runtime::
 """
 
 try:
-    from toolstore.native_tool import tool_store_tool
+    from toolstore.native_tool import tool_store_tool as _raw_tool_store_tool
     from toolstore.config_manager import ConfigManager
 except ImportError as e:
-    def tool_store_tool(**kwargs):
+    def _raw_tool_store_tool(**kwargs):
         return f"Error: Could not load ToolStore library. Is 'toolstore' installed? Details: {e}"
 
     def get_config_path() -> str:
@@ -43,6 +43,23 @@ else:
 def get_tool_store_tool():
     """Return the tool_store tool function."""
     return tool_store_tool
+
+
+# Wrapper — intercept close locally; everything else passes through
+def tool_store_tool(**kwargs):
+    """ThinkWithTool wrapper around ToolStore's native tool.
+
+    ``action="close"`` is intercepted locally for context-management
+    (it never reaches the ToolStore server).  All other actions pass
+    through unchanged.
+    """
+    action = kwargs.get("action", "")
+    tool_name = kwargs.get("tool_name", "")
+
+    if action == "close":
+        return f"Closed toolset '{tool_name}' from the tool store display."
+
+    return _raw_tool_store_tool(**kwargs)
 
 
 __all__ = ["tool_store_tool", "get_tool_store_tool", "get_config_path"]
