@@ -3,18 +3,6 @@ FROM thinkwithtool-base
 ENV THINKTOOL_DOCKER=1 \
     THINKTOOL_VNC=1
 
-# ── ToolStore client — always pull latest from git ──
-# Bump this timestamp to bust the Docker build cache: 2026-05-27
-ARG GITHUB_TOKEN=
-RUN ( if [ -n "${GITHUB_TOKEN}" ]; then \
-        echo "ToolStore: installing with GitHub token..." && \
-        conda run -n agent pip install --no-cache-dir --force-reinstall \
-          "git+https://x-access-token:${GITHUB_TOKEN}@github.com/Mrw33554432/AgentToolStore.git#subdirectory=client"; \
-    else \
-        echo "ToolStore: no GITHUB_TOKEN, trying anonymous clone..." && \
-        conda run -n agent pip install --no-cache-dir --force-reinstall \
-          git+https://github.com/Mrw33554432/AgentToolStore.git#subdirectory=client; \
-    fi ) || echo "WARNING: ToolStore install skipped (repo is private or unreachable)."
 
 WORKDIR /app
 
@@ -26,6 +14,20 @@ COPY . /app
 
 # Build frontend (produces frontend/dist/)
 RUN cd /app/frontend && npm run build
+
+# ── ToolStore client — always pull latest from git (LAST layer = cache-bust cheap) ──
+ARG GITHUB_TOKEN=
+ARG CACHEBUST=0
+RUN ( echo "ToolStore cache-bust: ${CACHEBUST}" && \
+    if [ -n "${GITHUB_TOKEN}" ]; then \
+        echo "ToolStore: installing with GitHub token..." && \
+        conda run -n agent pip install --no-cache-dir --force-reinstall \
+          "git+https://x-access-token:${GITHUB_TOKEN}@github.com/Mrw33554432/AgentToolStore.git#subdirectory=client"; \
+    else \
+        echo "ToolStore: no GITHUB_TOKEN, trying anonymous clone..." && \
+        conda run -n agent pip install --no-cache-dir --force-reinstall \
+          git+https://github.com/Mrw33554432/AgentToolStore.git#subdirectory=client; \
+    fi ) || echo "WARNING: ToolStore install skipped (repo is private or unreachable)."
 
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh

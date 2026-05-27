@@ -39,8 +39,10 @@ else
 fi
 
 # ── Always rebuild app image (fast: just copies source code) ─────────────
-echo "[app] Building app image..."
-docker build -t thinkwithtool --build-arg GITHUB_TOKEN="$GITHUB_TOKEN" -f docker/Dockerfile . || {
+# Generate unique cache-bust key to force ToolStore reinstall every run
+CACHEBUST=$(date +%s)
+echo "[app] Building app image (cache-bust: $CACHEBUST)..."
+docker build -t thinkwithtool --build-arg GITHUB_TOKEN="$GITHUB_TOKEN" --build-arg CACHEBUST="$CACHEBUST" -f docker/Dockerfile . || {
     echo "App image build failed."
     exit 1
 }
