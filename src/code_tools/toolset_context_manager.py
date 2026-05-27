@@ -16,7 +16,7 @@ import re
 from typing import Dict, List, Set
 
 from .context_tracker import ContextTracker, register
-from ..config import TOOLSET_WARN_CHARS, TOOLSET_MAX_TOOLS
+from ..config import CONTEXT_DISPLAY_WARN_CHARS, CONTEXT_DISPLAY_MAX_ITEMS
 
 TOOLSTORE_START = "<====TOOLSTORE_START====>"
 TOOLSTORE_END   = "<====TOOLSTORE_END====>"
@@ -288,7 +288,7 @@ class ToolsetContextTracker(ContextTracker):
 
         combined = "\n\n".join(sections)
         hint = ""
-        if len(state) > TOOLSET_MAX_TOOLS or len(combined) > TOOLSET_WARN_CHARS:
+if len(state) > CONTEXT_DISPLAY_MAX_ITEMS or len(combined) > CONTEXT_DISPLAY_WARN_CHARS:
             names = ", ".join(sorted(state))
             hint = (
                 f"\n⚠️ CONTEXT WARNING: You have {len(state)} toolsets open "
