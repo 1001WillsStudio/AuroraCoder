@@ -23,6 +23,12 @@ from .config import (
 )
 from .providers import provider_manager
 from .code_tools.context_tracker import get_all as get_context_trackers
+from .code_tools import context_manager as _cm  # side-effect: register FileContextTracker
+from .code_tools import toolset_context_manager as _tcm  # side-effect: register ToolsetContextTracker
+from .code_tools import context_manager as _  # registers FileContextTracker
+from .code_tools import toolset_context_manager as _  # registers ToolsetContextTracker
+from .code_tools import context_manager              # registers FileContextTracker
+from .code_tools import toolset_context_manager      # registers ToolsetContextTracker
 from .tool_executor import execute_tool_calls
 
 _main_logger = logging.getLogger(__name__)
