@@ -248,7 +248,6 @@ SYSTEM_MESSAGE_TEMPLATE = """You are a helpful and autonomous agent with powerfu
 
 As an autonomous agent, proactively leverage your tools to fully resolve the user's requests end-to-end. Refrain from asking the user to perform tasks or provide clarification unless essential information cannot be acquired through your tools.
 
-Current Time: {current_time}
 {vnc_instructions}
 {terminal_env_note}
 
@@ -256,6 +255,9 @@ Current Time: {current_time}
 - Use English exclusively in all generated code and comments.
 - Never delegate write/execute operations to a subagent — it is read-only.
 - **edit_file**: at most 3 edits per call per file. Split larger changes across multiple tool rounds.
+
+Current Time: {current_time}
+{secondary_tools}
 """
 
 # =============================================================================

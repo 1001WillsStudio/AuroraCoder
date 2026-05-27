@@ -62,4 +62,27 @@ def tool_store_tool(**kwargs):
     return _raw_tool_store_tool(**kwargs)
 
 
-__all__ = ["tool_store_tool", "get_tool_store_tool", "get_config_path"]
+__all__ = ["tool_store_tool", "get_tool_store_tool", "get_config_path", "get_toolstore_tools_prompt"]
+
+
+def get_toolstore_tools_prompt() -> str:
+    """Return a compact name-only listing of all tools available in the tool store.
+
+    This is injected at the bottom of the system prompt so the agent can see
+    what tool-store tools are available without searching first.
+    Returns an empty string when no tools are registered.
+    """
+    try:
+        from toolstore.native_tool import index_manager
+        all_names = list(index_manager.index_data.get("tools", {}).keys())
+        if not all_names:
+            return ""
+        lines = [
+            "",
+            "Tool store includes but is not limited to the following tools:",
+        ]
+        for name in sorted(all_names):
+            lines.append(f"- {name}")
+        return "\n".join(lines)
+    except Exception:
+        return ""
