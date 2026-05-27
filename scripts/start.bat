@@ -38,7 +38,7 @@ echo [base] Done.
 :: Generate unique cache-bust key to force ToolStore reinstall every run
 for /f "tokens=2 delims==." %%I in ('wmic os get localdatetime /value ^| find "="') do set "CACHEBUST=%%I"
 echo [app] Building app image (cache-bust: %CACHEBUST%)...
-docker build --no-cache -t thinkwithtool --build-arg GITHUB_TOKEN=%GITHUB_TOKEN% --build-arg CACHEBUST=%CACHEBUST% -f docker\Dockerfile .
+docker build -t thinkwithtool --build-arg GITHUB_TOKEN=%GITHUB_TOKEN% --build-arg CACHEBUST=%CACHEBUST% -f docker\Dockerfile .
 if errorlevel 1 (
     echo App image build failed.
     pause

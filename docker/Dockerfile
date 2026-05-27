@@ -10,14 +10,17 @@ WORKDIR /app
 COPY frontend/package.json frontend/package-lock.json /app/frontend/
 RUN cd /app/frontend && npm install
 
+# ── Cache-bust boundary: cached above, always rebuilt below ──
+ARG CACHEBUST=0
+RUN echo "source: ${CACHEBUST}" > /dev/null
+
 COPY . /app
 
 # Build frontend (produces frontend/dist/)
 RUN cd /app/frontend && npm run build
 
-# ── ToolStore client — always pull latest from git (LAST layer = cache-bust cheap) ──
+# ── ToolStore client — always pull latest from git (cache-busted above) ──
 ARG GITHUB_TOKEN=
-ARG CACHEBUST=0
 RUN ( echo "ToolStore cache-bust: ${CACHEBUST}" && \
     if [ -n "${GITHUB_TOKEN}" ]; then \
         echo "ToolStore: installing with GitHub token..." && \
