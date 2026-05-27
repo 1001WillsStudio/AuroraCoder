@@ -50,6 +50,10 @@ echo Stopping old container if any...
 docker stop thinkwithtool-agent >nul 2>&1
 docker rm thinkwithtool-agent >nul 2>&1
 
+:: Short delay to ensure ports are fully released
+echo Waiting for port cleanup...
+timeout /t 2 /nobreak >nul
+
 :: Storage base — all persistent data lives under Documents\ThinkTool
 set "STORAGE_BASE=%USERPROFILE%\Documents\ThinkTool"
 
