@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable
 from ..code_sandbox import WORKSPACE
 from . import edit_anchors as am
-from .edit_file import adjust_indent
 
 logger = logging.getLogger(__name__)
 
@@ -237,7 +236,7 @@ class FileOperations:
         delta = am.indent_delta(expected, actual_line)
         if delta == 0:
             return replace_content, False
-        return adjust_indent(replace_content, delta), True
+        return am.adjust_indent(replace_content, delta), True
 
     @staticmethod
     def _resolve_start_anchor(original_lines, total_lines, start_line,

@@ -86,6 +86,28 @@ def indent_delta(expected: str, actual: str) -> int:
     return act_indent - exp_indent
 
 
+def adjust_indent(text: str, delta: int) -> str:
+    """Adjust leading whitespace of each non-blank line by *delta* spaces.
+
+    Positive delta adds spaces; negative delta removes up to abs(delta).
+    Blank lines and lines whose content differs substantively are unchanged.
+    """
+    if delta == 0 or not text:
+        return text
+    lines = text.splitlines(keepends=True)
+    adjusted = []
+    for line in lines:
+        stripped = line.lstrip(' ')
+        if not stripped.strip('\n\r'):
+            adjusted.append(line)                  # blank — leave alone
+        elif delta > 0:
+            adjusted.append(' ' * delta + line)
+        else:
+            removed = len(line) - len(stripped)
+            adjusted.append(line[min(abs(delta), removed):])
+    return ''.join(adjusted)
+
+
 def _candidates(total_lines: int, expected_line_num: int, block_len: int) -> List[int]:
     """Generate candidate 0-based positions sorted by distance from expected."""
     seen = set()

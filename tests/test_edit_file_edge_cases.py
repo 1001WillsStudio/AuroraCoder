@@ -10,7 +10,6 @@ import sys, os, tempfile, textwrap, traceback
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.code_tools.file_operations import range_replace_edit_tool, FileOperations
 from src.code_tools import edit_anchors as am
-from src.code_tools.edit_file import adjust_indent
 
 _passed = 0
 _failed = 0
@@ -860,17 +859,17 @@ def test_indent_correct_no_warning():
 
 def test_adjust_indent_positive_delta():
     """adjust_indent with positive delta adds spaces."""
-    assert adjust_indent("hello\nworld\n", 2) == "  hello\n  world\n"
+    assert am.adjust_indent("hello\nworld\n", 2) == "  hello\n  world\n"
     # blank lines stay blank
-    assert adjust_indent("hello\n\nworld\n", 3) == "   hello\n\n   world\n"
+    assert am.adjust_indent("hello\n\nworld\n", 3) == "   hello\n\n   world\n"
     print("  ✅ adjust_indent() positive delta")
 
 
 def test_adjust_indent_negative_delta():
     """adjust_indent with negative delta removes spaces."""
-    assert adjust_indent("    hello\n    world\n", -2) == "  hello\n  world\n"
+    assert am.adjust_indent("    hello\n    world\n", -2) == "  hello\n  world\n"
     # can't go negative — stops at zero
-    assert adjust_indent("  hello\n", -5) == "hello\n"
+    assert am.adjust_indent("  hello\n", -5) == "hello\n"
     print("  ✅ adjust_indent() negative delta")
 
 
