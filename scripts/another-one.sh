@@ -80,9 +80,6 @@ for port in "$FRONTEND_PORT" "$BACKEND_PORT" "$VNC_PORT"; do
     fi
 done
 
-# ── Build a filtered .env without GITHUB_TOKEN ──────────────────────────
-GUEST_ENV="$PWD/.env.guest-$INST"
-grep -vi "GITHUB_TOKEN" .env > "$GUEST_ENV"
 
 # ── Data directories ────────────────────────────────────────────────────
 mkdir -p "$DATA_DIR" "$WORKSPACE_DIR"
@@ -100,7 +97,7 @@ sleep 2
 echo "Starting backend in Docker (instance $INST)..."
 docker run --rm -d \
     --name "$CONTAINER" \
-    --env-file "$GUEST_ENV" \
+--env-file .env \
     -e THINKTOOL_DOCKER=1 \
     -e THINKTOOL_VNC=1 \
     -v "$DATA_DIR:/app/data" \
@@ -111,11 +108,9 @@ docker run --rm -d \
     -p "$FRONTEND_PORT:3000" \
     -p "$TOOLSTORE_PORT:8765" \
     thinkwithtool || {
-    rm -f "$GUEST_ENV"
     echo "Failed to start container."
     exit 1
 }
-rm -f "$GUEST_ENV"
 echo "Container \"$CONTAINER\" started."
 echo ""
 echo "AuroraCoder instance $INST is running at http://localhost:$FRONTEND_PORT"

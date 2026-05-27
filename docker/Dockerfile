@@ -11,26 +11,12 @@ COPY frontend/package.json frontend/package-lock.json /app/frontend/
 RUN cd /app/frontend && npm install
 
 # ── Cache-bust boundary: cached above, always rebuilt below ──
-ARG CACHEBUST=0
-RUN echo "source: ${CACHEBUST}" > /dev/null
 
 COPY . /app
 
 # Build frontend (produces frontend/dist/)
 RUN cd /app/frontend && npm run build
 
-# ── ToolStore client — always pull latest from git (cache-busted above) ──
-ARG GITHUB_TOKEN=
-RUN ( echo "ToolStore cache-bust: ${CACHEBUST}" && \
-    if [ -n "${GITHUB_TOKEN}" ]; then \
-        echo "ToolStore: installing with GitHub token..." && \
-        conda run -n agent pip install --no-cache-dir --force-reinstall \
-          "git+https://x-access-token:${GITHUB_TOKEN}@github.com/Mrw33554432/AgentToolStore.git#subdirectory=client"; \
-    else \
-        echo "ToolStore: no GITHUB_TOKEN, trying anonymous clone..." && \
-        conda run -n agent pip install --no-cache-dir --force-reinstall \
-          git+https://github.com/Mrw33554432/AgentToolStore.git#subdirectory=client; \
-    fi ) || echo "WARNING: ToolStore install skipped (repo is private or unreachable)."
 
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
