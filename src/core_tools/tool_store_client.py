@@ -66,22 +66,23 @@ __all__ = ["tool_store_tool", "get_tool_store_tool", "get_config_path", "get_too
 
 
 def get_toolstore_tools_prompt() -> str:
-    """Return a compact name-only listing of all tools available in the tool store.
+    """Return a compact name-only listing of *secondary* tools from the tool store.
 
-    This is injected at the bottom of the system prompt so the agent can see
-    what tool-store tools are available without searching first.
-    Returns an empty string when no tools are registered.
+    Only tools listed in the config's ``secondary_tools`` field appear in the
+    system prompt.  All index entries are hidden by default — the user must
+    explicitly mark a tool as secondary for it to be shown here.
+    Returns an empty string when no secondary tools are configured.
     """
     try:
-        from toolstore.native_tool import index_manager
-        all_names = list(index_manager.index_data.get("tools", {}).keys())
-        if not all_names:
+        from toolstore.native_tool import config_manager
+        secondary_names = config_manager.config.get("secondary_tools", [])
+        if not secondary_names:
             return ""
         lines = [
             "",
             "Tool store includes but is not limited to the following tools:",
         ]
-        for name in sorted(all_names):
+        for name in sorted(secondary_names):
             lines.append(f"- {name}")
         return "\n".join(lines)
     except Exception:
