@@ -23,12 +23,8 @@ from .config import (
 )
 from .providers import provider_manager
 from .code_tools.context_tracker import get_all as get_context_trackers
-from .code_tools import context_manager as _cm  # side-effect: register FileContextTracker
-from .code_tools import toolset_context_manager as _tcm  # side-effect: register ToolsetContextTracker
-from .code_tools import context_manager as _  # registers FileContextTracker
-from .code_tools import toolset_context_manager as _  # registers ToolsetContextTracker
-from .code_tools import context_manager              # registers FileContextTracker
-from .code_tools import toolset_context_manager      # registers ToolsetContextTracker
+from .code_tools import context_manager as _  # side-effect: register FileContextTracker
+from .code_tools import toolset_context_manager as _  # side-effect: register ToolsetContextTracker
 from .tool_executor import execute_tool_calls
 
 _main_logger = logging.getLogger(__name__)
@@ -109,10 +105,11 @@ def generate_chat_responses_stream_native(
     model_name = config["model"]
     extra_body = config.get("extra_body")
     
-    # Strip old code interpreter blocks from tool messages before copying
-    # Strip old context blocks from all trackers before the conversation starts
+    # Strip old context blocks, then rebuild them on tool messages
+    # so the LLM sees current state (open files, toolsets, etc.) before generating
     for tracker in get_context_trackers():
         tracker.clean_previous_blocks(messages)
+        tracker.refresh(messages)
     
     # Get tool definitions (or use override for subagents / force_continuation)
     tools = tools_override if tools_override is not None else get_tool_definitions()
