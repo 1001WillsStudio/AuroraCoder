@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable
 from ..code_sandbox import WORKSPACE
 from . import edit_anchors as am
+from .edit_file import adjust_indent
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +55,6 @@ _EDIT_SELF_CORRECT_RE = re.compile(r'\n?\n?<!--SELF_CORRECT:(.*?)-->', re.DOTALL
 MAX_EDITS_PER_CALL = 3
 
 
-from .edit_file import adjust_indent
-
 def maybe_truncate_edits(tc: Dict) -> None:
     if tc["function"]["name"] != "edit_file":
         return
@@ -82,6 +81,12 @@ def apply_self_correction(tc: Dict, result: str) -> str:
     return _EDIT_SELF_CORRECT_RE.sub('', result)
 
 
+# --- Internal anchor-error exception ---
+
+class _AnchorError(Exception):
+    """Raised internally when an anchor cannot be resolved."""
+
+
 # --- File Operations Class ---
 
 class FileOperations:
@@ -89,6 +94,10 @@ class FileOperations:
 
     def __init__(self, workspace_root: str = None):
         self.workspace_root = WORKSPACE
+
+    # -------------------------------------------------------------------
+    #  Read
+    # -------------------------------------------------------------------
 
     def read_file(self, target_file: str) -> str:
         try:
@@ -106,7 +115,10 @@ class FileOperations:
         except Exception as e:
             return f"Error reading file '{target_file}': {str(e)}"
 
-    # --- Range Replace Edit ---
+    # -------------------------------------------------------------------
+    #  Range Replace Edit  (edit_file)  —  public entry point
+    # -------------------------------------------------------------------
+
     def range_replace_edit(self, target_file: str, edits: List[Dict[str, Any]]) -> str:
         try:
             file_path = self._resolve_path(target_file)
@@ -118,240 +130,57 @@ class FileOperations:
             original_lines = original_text.splitlines(keepends=True)
             total_lines = len(original_lines)
 
-            validated_edits = []
-            any_correction_needed = False
-            any_indent_corrected = False
-            corrected_edits_for_marker = []
+            # ---- Phase 1: validate & resolve each edit ----
+            validated = []          # (start_idx, end_idx, replace_content, edit_num)
+            markers = []            # per-edit self-correction marker dicts
+            any_corrected = False
+            any_indent_fixed = False
 
             for i, edit in enumerate(edits):
-                remove_line_number = edit.get("remove_line_number", "")
-                try:
-                    parts = str(remove_line_number).strip().split("-")
-                    if len(parts) == 1:
-                        start_line = int(parts[0])
-                        end_line = start_line
-                    elif len(parts) == 2:
-                        start_line = int(parts[0])
-                        end_line = int(parts[1])
-                    else:
-                        return (f"Error in edit #{i + 1}: remove_line_number must be "
-                                f"like '13-15' or '42', got '{remove_line_number}'")
-                except (ValueError, AttributeError):
-                    return (f"Error in edit #{i + 1}: remove_line_number must be "
-                            f"like '13-15' or '42', got '{remove_line_number}'")
+                outcome = self._validate_one_edit(i, edit, original_lines, total_lines)
+                if isinstance(outcome, str):          # error message
+                    return outcome
+                (s, e, repl, corrected, indent_fixed, marker) = outcome
+                validated.append((s, e, repl, i))
+                markers.append(marker)
+                any_corrected |= corrected
+                any_indent_fixed |= indent_fixed
 
-                content_to_remove = str(edit.get("content_to_remove") or "")
-                has_to_marker = '\n[TO]\n' in content_to_remove
-                if has_to_marker:
-                    parts = content_to_remove.split('\n[TO]\n', 1)
-                    start_content = parts[0]
-                    end_content = parts[1]
-                else:
-                    start_content = content_to_remove
-                    end_content = ""
-                replace_content = str(edit.get("replace_content", ""))
-
-                if end_line is None:
-                    end_line = start_line
-                if not isinstance(end_line, int) or end_line < 1:
-                    return (f"Error in edit #{i + 1}: end_line must be a positive integer, "
-                            f"got {end_line}")
-                if end_line > total_lines:
-                    end_line = total_lines
-                if start_line > end_line:
-                    return (f"Error in edit #{i + 1}: start_line ({start_line}) must be "
-                            f"<= end_line ({end_line})")
-                if not end_content and has_to_marker:
-                    end_content = am.normalise(original_lines[end_line - 1])
-
-                if not isinstance(start_line, int) or start_line < 1:
-                    return (f"Error in edit #{i + 1}: start_line must be a positive integer, "
-                            f"got {start_line}")
-
-                start_idx = start_line - 1
-                end_idx = end_line - 1
-
-                start_is_multiline = "\n" in start_content
-                end_is_multiline = "\n" in end_content
-                start_anchor_line_count = len([l for l in start_content.splitlines() if l.strip()]) if start_is_multiline else 1
-                end_anchor_line_count = len([l for l in end_content.splitlines() if l.strip()]) if end_is_multiline else 1
-
-                # Verify start anchor
-                start_corrected = False
-                NO = am._NO_CHANGES
-
-                if start_is_multiline:
-                    found = am.find_anchor_tolerant(original_lines, total_lines,
-                                                    start_line, start_content)
-                    if found is not None:
-                        start_idx, indent_mismatch = found
-                        start_corrected = True
-                        if indent_mismatch and replace_content:
-                            start_first_line = start_content.splitlines()[0]
-                            delta = am.indent_delta(start_first_line,
-                                                    am.normalise(original_lines[start_idx]))
-                            if delta != 0:
-                                replace_content = adjust_indent(replace_content, delta)
-                                any_indent_corrected = True
-                    else:
-                        # Fallback: full-file search for aider-style big-block pastes
-                        found = am.find_anchor_anywhere(original_lines, total_lines,
-                                                        start_content)
-                        if found is not None:
-                            start_idx, indent_mismatch = found
-                            start_corrected = True
-                            if indent_mismatch and replace_content:
-                                start_first_line = start_content.splitlines()[0]
-                                delta = am.indent_delta(start_first_line,
-                                                        am.normalise(original_lines[start_idx]))
-                                if delta != 0:
-                                    replace_content = adjust_indent(replace_content, delta)
-                                    any_indent_corrected = True
-                        else:
-                            ctx_s = max(0, start_idx - 1)
-                            ctx_e = min(total_lines, start_idx + 4)
-                            ctx = ''.join(original_lines[ctx_s:ctx_e])
-                            return (f"Error in edit #{i + 1}: start_content does not match "
-                                    f"file at line {start_line} (searched ±{am.MAX_ANCHOR_SHIFT} "
-                                    f"and entire file).\n"
-                                    f"File context around line {start_line}:\n"
-                                    f"---\n{ctx}---"
-                                    f"{am.anchor_hint(original_lines, start_content, start_line, True)}"
-                                    f"{NO}")
-                else:
-                    actual_start = am.normalise(original_lines[start_idx])
-                    expected_start = am.normalise(start_content)
-                    if actual_start != expected_start:
-                        found = am.find_anchor_tolerant(original_lines, total_lines,
-                                                        start_line, start_content)
-                        if found is not None:
-                            start_idx, indent_mismatch = found
-                            start_corrected = True
-                            if indent_mismatch and replace_content:
-                                delta = am.indent_delta(expected_start, actual_start)
-                                if delta != 0:
-                                    replace_content = adjust_indent(replace_content, delta)
-                                    any_indent_corrected = True
-                        else:
-                            ctx_s = max(0, start_idx - 1)
-                            ctx_e = min(total_lines, start_idx + 3)
-                            ctx = ''.join(original_lines[ctx_s:ctx_e])
-                            return (f"Error in edit #{i + 1}: start_content does not match "
-                                    f"file at line {start_line} (searched ±{am.MAX_ANCHOR_SHIFT}).\n"
-                                    f"Expected: {repr(start_content.rstrip())}\n"
-                                    f"Actual:   {repr(original_lines[start_line - 1].rstrip())}\n"
-                                    f"File context around line {start_line}:\n"
-                                    f"---\n{ctx}---"
-                                    f"{am.indentation_hint(expected_start, actual_start)}"
-                                    f"{am.anchor_hint(original_lines, start_content, start_line, False)}"
-                                    f"{NO}")
-
-                # Verify end anchor
-                end_corrected = False
-                if not has_to_marker:
-                    _blines = start_content.splitlines(keepends=True)
-                    if len(_blines) > 1 and am.normalise(_blines[-1]) == '':
-                        _blines = _blines[:-1]
-                    if len(_blines) == 0:
-                        # Empty content_to_remove → single empty-line removal
-                        end_idx = start_idx
-                    else:
-                        end_idx = start_idx + len(_blines) - 1
-                elif end_is_multiline:
-                    end_search_start = end_line - end_anchor_line_count + 1
-                    found = am.find_anchor_tolerant(original_lines, total_lines,
-                                                    end_search_start, end_content)
-                    if found is not None:
-                        end_idx = found[0] + end_anchor_line_count - 1
-                        end_corrected = True
-                    else:
-                        ctx_s = max(0, end_idx - 2)
-                        ctx_e = min(total_lines, end_idx + 3)
-                        ctx = ''.join(original_lines[ctx_s:ctx_e])
-                        return (f"Error in edit #{i + 1}: end_content does not match "
-                                f"file at line {end_line} (searched ±{am.MAX_ANCHOR_SHIFT}).\n"
-                                f"File context around line {end_line}:\n"
-                                f"---\n{ctx}---"
-                                f"{NO}")
-                else:
-                    actual_end = am.normalise(original_lines[end_idx])
-                    expected_end = am.normalise(end_content)
-                    if actual_end != expected_end:
-                        found = am.find_anchor_tolerant(original_lines, total_lines,
-                                                        end_line, end_content)
-                        if found is not None:
-                            end_idx = found[0]
-                            end_corrected = True
-                        else:
-                            ctx_s = max(0, end_idx - 1)
-                            ctx_e = min(total_lines, end_idx + 3)
-                            ctx = ''.join(original_lines[ctx_s:ctx_e])
-                            return (f"Error in edit #{i + 1}: end_content does not match "
-                                    f"file at line {end_line} (searched ±{am.MAX_ANCHOR_SHIFT}).\n"
-                                    f"Expected: {repr(end_content.rstrip())}\n"
-                                    f"Actual:   {repr(original_lines[end_line - 1].rstrip())}\n"
-                                    f"File context around line {end_line}:\n"
-                                    f"---\n{ctx}---"
-                                    f"{am.indentation_hint(expected_end, actual_end)}"
-                                    f"{NO}")
-
-                if start_idx > end_idx:
-                    return (f"Error in edit #{i + 1}: after tolerance search, start_line "
-                            f"({start_idx + 1}) > end_line ({end_idx + 1}). "
-                            f"Check your line numbers and anchor content."
-                            f"{NO}")
-
-                validated_edits.append((start_idx, end_idx, replace_content, i))
-
-                if start_corrected or end_corrected or start_is_multiline or end_is_multiline:
-                    any_correction_needed = True
-
-                if has_to_marker:
-                    start_portion = ''.join(original_lines[start_idx:start_idx + start_anchor_line_count]).rstrip('\n')
-                    end_portion = ''.join(original_lines[end_idx - end_anchor_line_count + 1:end_idx + 1]).rstrip('\n')
-                else:
-                    start_portion = original_lines[start_idx].rstrip('\n')
-                    end_portion = original_lines[end_idx].rstrip('\n')
-                actual_block = start_portion + '\n[TO]\n' + end_portion
-                corrected_edits_for_marker.append({
-                    "remove_line_number": f"{start_idx + 1}-{end_idx + 1}",
-                    "content_to_remove": actual_block,
-                    "replace_content": replace_content,
-                })
-
-            # Check for overlapping edits
-            validated_edits_sorted = sorted(validated_edits, key=lambda e: e[0])
-            for a_i in range(len(validated_edits_sorted) - 1):
-                a_start, a_end, _, a_num = validated_edits_sorted[a_i]
-                b_start, b_end, _, b_num = validated_edits_sorted[a_i + 1]
-                if a_end >= b_start:
-                    return (f"Error: edit #{a_num + 1} (lines {a_start + 1}-{a_end + 1}) "
-                            f"overlaps edit #{b_num + 1} (lines {b_start + 1}-{b_end + 1}). "
+            # ---- Phase 2: guard against overlapping edits ----
+            sorted_edits = sorted(validated, key=lambda e: e[0])
+            for a_i in range(len(sorted_edits) - 1):
+                a_s, a_e, _, a_n = sorted_edits[a_i]
+                b_s, b_e, _, b_n = sorted_edits[a_i + 1]
+                if a_e >= b_s:
+                    return (f"Error: edit #{a_n + 1} (lines {a_s + 1}-{a_e + 1}) "
+                            f"overlaps edit #{b_n + 1} (lines {b_s + 1}-{b_e + 1}). "
                             f"Split overlapping edits into separate edit_file calls."
                             f"{am._NO_CHANGES}")
 
-            # Apply edits bottom-to-top
-            validated_edits.sort(key=lambda e: e[0], reverse=True)
+            # ---- Phase 3: apply edits bottom-to-top ----
+            validated.sort(key=lambda e: e[0], reverse=True)
             new_lines = list(original_lines)
-            summary_parts = []
+            summaries = []
 
-            for start_idx, end_idx, replace_content, edit_num in validated_edits:
-                old_range_len = end_idx - start_idx + 1
-                if replace_content:
-                    replace_lines = replace_content.splitlines(keepends=True)
-                    if original_lines[end_idx].endswith('\n') and replace_lines and not replace_lines[-1].endswith('\n'):
-                        replace_lines[-1] = replace_lines[-1] + '\n'
+            for s, e, repl, n in validated:
+                old_len = e - s + 1
+                if repl:
+                    rl = repl.splitlines(keepends=True)
+                    if original_lines[e].endswith('\n') and rl and not rl[-1].endswith('\n'):
+                        rl[-1] += '\n'
                 else:
-                    replace_lines = []
-                new_lines[start_idx:end_idx + 1] = replace_lines
-                new_range_len = len(replace_lines)
-                if not replace_content:
-                    summary_parts.append(f"edit #{edit_num + 1}: deleted lines {start_idx + 1}-{end_idx + 1}")
-                elif old_range_len == new_range_len:
-                    summary_parts.append(f"edit #{edit_num + 1}: replaced {old_range_len} lines at {start_idx + 1}-{end_idx + 1}")
+                    rl = []
+                new_lines[s:e + 1] = rl
+                new_len = len(rl)
+                if not repl:
+                    summaries.append(f"edit #{n + 1}: deleted lines {s + 1}-{e + 1}")
+                elif old_len == new_len:
+                    summaries.append(f"edit #{n + 1}: replaced {old_len} lines at {s + 1}-{e + 1}")
                 else:
-                    summary_parts.append(f"edit #{edit_num + 1}: replaced {old_range_len} lines with {new_range_len} lines at {start_idx + 1}-{end_idx + 1}")
+                    summaries.append(f"edit #{n + 1}: replaced {old_len} lines "
+                                     f"with {new_len} lines at {s + 1}-{e + 1}")
 
+            # ---- Phase 4: write result ----
             new_content = ''.join(new_lines)
             if original_text.endswith('\n') and not new_content.endswith('\n'):
                 new_content += '\n'
@@ -365,37 +194,286 @@ class FileOperations:
             os.replace(temp_path, file_path)
             _notify_file_write(target_file)
 
-            new_total = len(new_content.splitlines())
-            line_delta = new_total - total_lines
-            summary = "; ".join(summary_parts)
-            result = (f"✅ Applied {len(validated_edits)} edit(s) to '{target_file}': "
-                      f"{summary}")
-            result += (f"\n📏 File: {total_lines} → {new_total} lines "
-                       f"({'+' if line_delta >= 0 else ''}{line_delta})")
-            if line_delta != 0:
-                result += (f"\n⚠️  Line numbers have shifted by "
-                           f"{'+' if line_delta >= 0 else ''}{line_delta}.")
-
-            if any_indent_corrected:
-                result = ("⚠️  Indentation mismatch detected in content_to_remove — "
-                          "replace_content indentation was auto-adjusted to match the file.\n\n"
-                          + result)
-
-            if any_correction_needed:
-                correction = {
-                    "target_file": target_file,
-                    "edits": corrected_edits_for_marker,
-                }
-                result = ("⚠️  Original parameters were auto-corrected. "
-                          "No action needed from you.\n\n" + result)
-                result += "\n\n<!--SELF_CORRECT:" + json.dumps(correction) + "-->"
-
-            return result
+            return self._build_result(target_file, validated, markers, total_lines,
+                                      new_content, any_indent_fixed, any_corrected,
+                                      summaries)
 
         except Exception as e:
             return f"Error applying range replace edits to '{target_file}': {str(e)}"
 
-    # --- Full File Write ---
+    # -------------------------------------------------------------------
+    #  Edit-validation helpers  (static — pure logic, no side effects)
+    # -------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_line_range(raw: str, edit_num: int, total_lines: int):
+        """Parse '13-15' or '42' → (start_line, end_line); or an error string."""
+        try:
+            parts = str(raw).strip().split("-")
+            if len(parts) == 1:
+                sl = el = int(parts[0])
+            elif len(parts) == 2:
+                sl, el = int(parts[0]), int(parts[1])
+            else:
+                return f"Error in edit #{edit_num + 1}: remove_line_number must be " \
+                       f"like '13-15' or '42', got '{raw}'"
+        except (ValueError, AttributeError):
+            return f"Error in edit #{edit_num + 1}: remove_line_number must be " \
+                   f"like '13-15' or '42', got '{raw}'"
+        if sl < 1:
+            return f"Error in edit #{edit_num + 1}: start_line must be >= 1, got {sl}"
+        if el > total_lines:
+            el = total_lines
+        if sl > el:
+            return f"Error in edit #{edit_num + 1}: start_line ({sl}) must be <= end_line ({el})"
+        return (sl, el)
+
+    @staticmethod
+    def _maybe_fix_indent(replace_content: str, expected: str, actual_line: str):
+        """Auto-adjust indent of *replace_content* when expected/actual differ only in
+        leading whitespace.  Returns (content, fixed_bool)."""
+        if not replace_content:
+            return replace_content, False
+        delta = am.indent_delta(expected, actual_line)
+        if delta == 0:
+            return replace_content, False
+        return adjust_indent(replace_content, delta), True
+
+    @staticmethod
+    def _resolve_start_anchor(original_lines, total_lines, start_line,
+                              start_content, start_idx):
+        """Tolerant (+fallback) start-anchor search.
+        Returns (pos, indent_mismatch) or raises _AnchorError."""
+        found = am.find_anchor_tolerant(original_lines, total_lines, start_line, start_content)
+        if found is not None:
+            return found
+        found = am.find_anchor_anywhere(original_lines, total_lines, start_content)
+        if found is not None:
+            return found
+        ctx_s = max(0, start_idx - 1)
+        ctx_e = min(total_lines, start_idx + 4)
+        ctx = ''.join(original_lines[ctx_s:ctx_e])
+        raise _AnchorError(
+            f"start_content does not match file at line {start_line} "
+            f"(searched \u00b1{am.MAX_ANCHOR_SHIFT} and entire file).\n"
+            f"File context around line {start_line}:\n"
+            f"---\n{ctx}---"
+            f"{am.anchor_hint(original_lines, start_content, start_line, '\n' in start_content)}"
+            f"{am._NO_CHANGES}"
+        )
+
+    @staticmethod
+    def _resolve_singleline_start(original_lines, total_lines, start_line,
+                                  start_content, start_idx, edit_num):
+        """Verify a single-line start anchor; returns (pos, indent_mismatch)
+        or raises _AnchorError."""
+        actual = am.normalise(original_lines[start_idx])
+        expected = am.normalise(start_content)
+        if actual == expected:
+            return (start_idx, False)
+        found = am.find_anchor_tolerant(original_lines, total_lines, start_line, start_content)
+        if found is not None:
+            return found
+        ctx_s = max(0, start_idx - 1)
+        ctx_e = min(total_lines, start_idx + 3)
+        ctx = ''.join(original_lines[ctx_s:ctx_e])
+        raise _AnchorError(
+            f"start_content does not match file at line {start_line} "
+            f"(searched \u00b1{am.MAX_ANCHOR_SHIFT}).\n"
+            f"Expected: {repr(start_content.rstrip())}\n"
+            f"Actual:   {repr(original_lines[start_line - 1].rstrip())}\n"
+            f"File context around line {start_line}:\n"
+            f"---\n{ctx}---"
+            f"{am.indentation_hint(expected, actual)}"
+            f"{am.anchor_hint(original_lines, start_content, start_line, False)}"
+            f"{am._NO_CHANGES}"
+        )
+
+    @staticmethod
+    def _resolve_end_anchor(original_lines, total_lines, end_content,
+                            end_line, end_idx, ea_count, edit_num):
+        """Verify a multi-line end anchor; returns new end_idx or raises _AnchorError."""
+        search_start = end_line - ea_count + 1
+        found = am.find_anchor_tolerant(original_lines, total_lines, search_start, end_content)
+        if found is None:
+            ctx_s = max(0, end_idx - 2)
+            ctx_e = min(total_lines, end_idx + 3)
+            ctx = ''.join(original_lines[ctx_s:ctx_e])
+            raise _AnchorError(
+                f"end_content does not match file at line {end_line} "
+                f"(searched \u00b1{am.MAX_ANCHOR_SHIFT}).\n"
+                f"File context around line {end_line}:\n---\n{ctx}---{am._NO_CHANGES}"
+            )
+        return found[0] + ea_count - 1
+
+    @staticmethod
+    def _resolve_singleline_end(original_lines, total_lines, end_content,
+                                end_line, end_idx, edit_num):
+        """Verify a single-line end anchor; returns (pos, _) or raises _AnchorError."""
+        actual = am.normalise(original_lines[end_idx])
+        expected = am.normalise(end_content)
+        if actual == expected:
+            return (end_idx, False)
+        found = am.find_anchor_tolerant(original_lines, total_lines, end_line, end_content)
+        if found is None:
+            ctx_s = max(0, end_idx - 1)
+            ctx_e = min(total_lines, end_idx + 3)
+            ctx = ''.join(original_lines[ctx_s:ctx_e])
+            raise _AnchorError(
+                f"end_content does not match file at line {end_line} "
+                f"(searched \u00b1{am.MAX_ANCHOR_SHIFT}).\n"
+                f"Expected: {repr(end_content.rstrip())}\n"
+                f"Actual:   {repr(original_lines[end_line - 1].rstrip())}\n"
+                f"File context around line {end_line}:\n---\n{ctx}---"
+                f"{am.indentation_hint(expected, actual)}{am._NO_CHANGES}"
+            )
+        return (found[0], False)
+
+    @staticmethod
+    def _compute_end_idx_no_to(start_content, start_idx):
+        """Compute end_idx from *start_content* when [TO] marker is absent."""
+        blines = start_content.splitlines(keepends=True)
+        if len(blines) > 1 and am.normalise(blines[-1]) == '':
+            blines = blines[:-1]
+        if len(blines) == 0:
+            return start_idx          # empty → single empty-line removal
+        return start_idx + len(blines) - 1
+
+    def _validate_one_edit(self, n: int, edit: dict,
+                           original_lines, total_lines):
+        """Fully validate & resolve a single edit: parse params, resolve
+        start + end anchors (with tolerance + indent auto-fix), build marker.
+
+        Returns (start_idx, end_idx, replace_content, corrected, indent_fixed, marker)
+        or an error string.
+        """
+        NO = am._NO_CHANGES
+
+        # ---- 1. Parse line range ----
+        outcome = self._parse_line_range(edit.get("remove_line_number", ""), n, total_lines)
+        if isinstance(outcome, str):
+            return outcome
+        start_line, end_line = outcome
+
+        # ---- 2. Parse content_to_remove ----
+        raw_ctr = str(edit.get("content_to_remove") or "")
+        has_to = '\n[TO]\n' in raw_ctr
+        if has_to:
+            start_content, end_content = raw_ctr.split('\n[TO]\n', 1)
+        else:
+            start_content, end_content = raw_ctr, ""
+        replace_content = str(edit.get("replace_content", ""))
+
+        if not end_content and has_to:
+            end_content = am.normalise(original_lines[end_line - 1])
+
+        start_idx = start_line - 1
+        end_idx = end_line - 1
+
+        start_is_multi = "\n" in start_content
+        end_is_multi = "\n" in end_content
+        sa_count = len([l for l in start_content.splitlines() if l.strip()]) if start_is_multi else 1
+        ea_count = len([l for l in end_content.splitlines() if l.strip()]) if end_is_multi else 1
+
+        corrected = False
+        indent_fixed = False
+
+        # ---- 3. Resolve start anchor ----
+        original_start_idx = start_idx
+        if start_is_multi:
+            try:
+                start_idx, im = self._resolve_start_anchor(
+                    original_lines, total_lines, start_line, start_content, start_idx)
+            except _AnchorError as e:
+                return f"Error in edit #{n + 1}: {e.args[0]}"
+            corrected = True
+            if im:
+                fl = start_content.splitlines()[0]
+                al = am.normalise(original_lines[start_idx])
+                replace_content, indent_fixed = self._maybe_fix_indent(replace_content, fl, al)
+        else:
+            try:
+                start_idx, im = self._resolve_singleline_start(
+                    original_lines, total_lines, start_line, start_content, start_idx, n)
+            except _AnchorError as e:
+                return f"Error in edit #{n + 1}: {e.args[0]}"
+            if start_idx != original_start_idx:
+                corrected = True
+            if im:
+                actual = am.normalise(original_lines[start_idx])
+                expected = am.normalise(start_content)
+                replace_content, indent_fixed = self._maybe_fix_indent(replace_content, expected, actual)
+
+        # ---- 4. Resolve end anchor ----
+        try:
+            if not has_to:
+                end_idx = self._compute_end_idx_no_to(start_content, start_idx)
+            elif end_is_multi:
+                end_idx = self._resolve_end_anchor(
+                    original_lines, total_lines, end_content, end_line, end_idx, ea_count, n)
+                corrected = True
+            else:
+                end_idx, _ = self._resolve_singleline_end(
+                    original_lines, total_lines, end_content, end_line, end_idx, n)
+                if end_idx != (end_line - 1):
+                    corrected = True
+        except _AnchorError as e:
+            return f"Error in edit #{n + 1}: {e.args[0]}"
+
+        if start_idx > end_idx:
+            return (f"Error in edit #{n + 1}: after tolerance search, start_line "
+                    f"({start_idx + 1}) > end_line ({end_idx + 1}). Check your line numbers."
+                    f"{NO}")
+
+        corrected = corrected or start_is_multi or end_is_multi
+
+        # ---- 5. Build self-correction marker ----
+        if has_to:
+            sp = ''.join(original_lines[start_idx:start_idx + sa_count]).rstrip('\n')
+            ep = ''.join(original_lines[end_idx - ea_count + 1:end_idx + 1]).rstrip('\n')
+        else:
+            sp = original_lines[start_idx].rstrip('\n')
+            ep = original_lines[end_idx].rstrip('\n')
+        marker = {
+            "remove_line_number": f"{start_idx + 1}-{end_idx + 1}",
+            "content_to_remove": sp + '\n[TO]\n' + ep,
+            "replace_content": replace_content,
+        }
+
+        return (start_idx, end_idx, replace_content, corrected, indent_fixed, marker)
+
+    @staticmethod
+    def _build_result(target_file, validated, markers, total_lines, new_content,
+                      any_indent_fixed, any_corrected, summaries):
+        """Format the final human-readable result message."""
+        new_total = len(new_content.splitlines())
+        delta = new_total - total_lines
+
+        result = (f"\u2705 Applied {len(validated)} edit(s) to '{target_file}': "
+                  f"{'; '.join(summaries)}")
+        result += (f"\n\U0001f4cf File: {total_lines} \u2192 {new_total} lines "
+                   f"({'+' if delta >= 0 else ''}{delta})")
+        if delta != 0:
+            result += (f"\n\u26a0\ufe0f  Line numbers have shifted by "
+                       f"{'+' if delta >= 0 else ''}{delta}.")
+
+        if any_indent_fixed:
+            result = ("\u26a0\ufe0f  Indentation mismatch detected in content_to_remove \u2014 "
+                      "replace_content indentation was auto-adjusted to match the file.\n\n"
+                      + result)
+
+        if any_corrected:
+            correction = {"target_file": target_file, "edits": markers}
+            result = ("\u26a0\ufe0f  Original parameters were auto-corrected. "
+                      "No action needed from you.\n\n" + result)
+            result += "\n\n<!--SELF_CORRECT:" + json.dumps(correction) + "-->"
+
+        return result
+
+    # -------------------------------------------------------------------
+    #  Full File Write
+    # -------------------------------------------------------------------
+
     def full_file_write(self, target_file: str, code_edit: str) -> str:
         try:
             file_path = self._resolve_path(target_file)
@@ -449,10 +527,10 @@ class FileOperations:
             items = []
             for item in sorted(dir_path.iterdir()):
                 if item.is_dir():
-                    items.append(f"📁 {item.name}/")
+                    items.append(f"\U0001f4c1 {item.name}/")
                 else:
                     size = item.stat().st_size
-                    items.append(f"📄 {item.name} ({size} bytes)")
+                    items.append(f"\U0001f4c4 {item.name} ({size} bytes)")
             display_path = relative_workspace_path if relative_workspace_path else str(dir_path)
             if not items:
                 return f"Directory '{display_path}' is empty"
@@ -464,7 +542,6 @@ class FileOperations:
         """Find files by name pattern — delegates to `find` subprocess (fast)."""
         import subprocess
         try:
-            # Prune heavy/noisy dirs — find never descends into them
             cmd = [
                 "find", str(self.workspace_root),
                 "(", "-name", ".git", "-o",
@@ -486,7 +563,6 @@ class FileOperations:
         if not lines:
             return f"No files found matching '{query}'"
 
-        # Build relative paths
         import os
         results = []
         ws = str(self.workspace_root)
@@ -506,7 +582,7 @@ class FileOperations:
 
         output = [f"Found {len(results)} files matching '{query}':\n"]
         for r in results[:max_results]:
-            output.append(f"📄 {r['path']} ({r['size']} bytes)")
+            output.append(f"\U0001f4c4 {r['path']} ({r['size']} bytes)")
         if len(results) > max_results:
             output.append(f"\n... and {len(results) - max_results} more files")
         return "\n".join(output)
