@@ -1092,9 +1092,11 @@ async def get_toolstore_status():
     by_source = {}
     if index_path.exists():
         try:
-            tools = _json.loads(index_path.read_text())
-            for t in tools:
-                src = t.get("source", "unknown")
+            data = _json.loads(index_path.read_text())
+            # index.json is {"meta": {...}, "tools": {"name": {...}, ...}}
+            tools = data.get("tools", {}) if isinstance(data, dict) else []
+            for t in (tools.values() if isinstance(tools, dict) else tools):
+                src = t.get("source", "unknown") if isinstance(t, dict) else "unknown"
                 by_source[src] = by_source.get(src, 0) + 1
                 total += 1
         except Exception:
