@@ -15,6 +15,8 @@ import json
 import re
 from typing import Dict, List, Set
 
+from .context_tracker import ContextTracker, register
+
 TOOLSTORE_START = "<====TOOLSTORE_START====>"
 TOOLSTORE_END   = "<====TOOLSTORE_END====>"
 
@@ -242,3 +244,45 @@ def clean_previous_toolstore_blocks(messages: List[Dict]) -> List[Dict]:
 def should_trigger_toolstore_interpreter(tool_name: str) -> bool:
     """Return ``True`` when *tool_name* could change the toolset display."""
     return tool_name == "tool_store"
+
+
+# ---------------------------------------------------------------------------
+# ContextTracker wrapper — auto-registered
+# ---------------------------------------------------------------------------
+
+class ToolsetContextTracker(ContextTracker):
+    """Living Tool State tracker for open ToolStore tools."""
+
+    name = "toolsets"
+    trigger_tools = {"tool_store"}
+    block_start = TOOLSTORE_START
+    block_end = TOOLSTORE_END
+
+    def discover(self, messages):
+        return discover_open_tools(messages)
+
+    def render(self, state):
+        if not state:
+            return ""
+
+        from ..core_tools.tool_store_client import tool_store_tool
+
+        sections: List[str] = []
+        for name in sorted(state):
+            raw = tool_store_tool(action="info", tool_name=name)
+            try:
+                tool = json.loads(raw) if isinstance(raw, str) else raw
+            except (json.JSONDecodeError, TypeError):
+                continue
+            display = _format_tool_display(tool)
+            if display:
+                sections.append(f"### {name}\n{display}")
+
+        if not sections:
+            return ""
+
+        combined = "\n\n".join(sections)
+        return f"{self.block_start}\n{combined}\n{self.block_end}"
+
+
+register(ToolsetContextTracker())

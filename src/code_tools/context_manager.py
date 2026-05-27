@@ -11,6 +11,7 @@ import re
 from typing import Dict, List, Set
 
 from .code_interpreter import code_interpreter, CODE_INTERPRETER_START, CODE_INTERPRETER_END
+from .context_tracker import ContextTracker, register
 from ..code_sandbox import WORKSPACE
 from ..config import INTERPRETER_WARN_CHARS, INTERPRETER_MAX_FILES
 
@@ -159,3 +160,46 @@ def generate_consolidated_interpreter_display(messages: List[Dict]) -> str:
     display = display.replace(CODE_INTERPRETER_END, notes + "\n" + CODE_INTERPRETER_END)
 
     return display
+
+
+# ---------------------------------------------------------------------------
+# ContextTracker wrapper — auto-registered
+# ---------------------------------------------------------------------------
+
+class FileContextTracker(ContextTracker):
+    """Living Tool State tracker for workspace files."""
+
+    name = "files"
+    trigger_tools = CODE_RELATED_TOOLS | FILE_REMOVAL_TOOLS
+    block_start = CODE_INTERPRETER_START
+    block_end = CODE_INTERPRETER_END
+
+    def discover(self, messages):
+        return discover_open_files(messages)
+
+    def render(self, state):
+        if not state:
+            return ""
+        sorted_files = sorted(state)
+        code_interpreter.set_root_path(WORKSPACE)
+        display = code_interpreter.display_multiple_files(sorted_files)
+        notes = (
+            "\n\nNote: This display shows the LATEST state of each file "
+            "with accurate line numbers. Always use these line numbers "
+            "for edit_file calls — never use memorised line numbers. "
+            "Closing a file removes it from this display, including "
+            "previous tool responses — you will no longer see its "
+            "contents unless you open it again. Only close a file "
+            "after you have fully extracted all information you need from it."
+        )
+        if len(state) > INTERPRETER_MAX_FILES or len(display) > INTERPRETER_WARN_CHARS:
+            notes += (
+                f"\n⚠️ CONTEXT WARNING: You have {len(state)} files open "
+                f"({', '.join(sorted_files)}). "
+                "To avoid running out of context, please close files "
+                "you no longer need by calling close_file() on them."
+            )
+        return display.replace(self.block_end, notes + "\n" + self.block_end)
+
+
+register(FileContextTracker())

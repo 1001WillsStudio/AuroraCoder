@@ -12,8 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .tool_definitions import execute_tool_call, PARALLEL_SAFE_TOOLS
 from .code_tools.file_operations import maybe_truncate_edits, apply_self_correction
-from .code_tools.context_manager import should_trigger_code_interpreter
-from .code_tools.toolset_context_manager import should_trigger_toolstore_interpreter
+from .code_tools.context_tracker import triggered_by
 from .config import MAX_TOOL_CONCURRENCY
 
 
@@ -99,17 +98,22 @@ def _check_same_file_edit_guard(
 def execute_tool_calls(
     current_tool_calls: List[Dict],
     messages: List[Dict],
-) -> Tuple[bool, bool]:
+) -> Dict[str, int]:
     """
     Execute tool calls, running concurrent-safe tools in parallel.
     Appends tool response messages to `messages` in place.
 
     Returns:
-        (code_tool_called, toolstore_tool_called)
+        Dict mapping ContextTracker name → message index of the
+        tool response that triggered it (last one wins if multiple).
     """
-    code_tool_called = False
-    toolstore_tool_called = False
+    triggered: Dict[str, int] = {}
     files_edited_this_turn: set = set()
+
+    def _mark(tool_name: str):
+        nonlocal triggered
+        for tracker_name in triggered_by(tool_name):
+            triggered[tracker_name] = len(messages) - 1  # index just appended
 
     for is_safe, batch in partition_tool_calls(current_tool_calls):
         if is_safe and len(batch) > 1:
@@ -127,35 +131,27 @@ def execute_tool_calls(
             # Append in original batch order
             for tc in batch:
                 tc_out, tool_name, result = results_by_id[tc["id"]]
-                if should_trigger_code_interpreter(tool_name):
-                    code_tool_called = True
-                if should_trigger_toolstore_interpreter(tool_name):
-                    toolstore_tool_called = True
                 result = apply_self_correction(tc_out, result)
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc_out["id"],
                     "content": result
                 })
+                _mark(tool_name)
         else:
             for tc in batch:
                 guard_err = _check_same_file_edit_guard(tc, files_edited_this_turn)
                 if guard_err:
                     tool_name = tc["function"]["name"]
-                    if should_trigger_code_interpreter(tool_name):
-                        code_tool_called = True
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc["id"],
                         "content": guard_err
                     })
+                    _mark(tool_name)
                     continue
                 maybe_truncate_edits(tc)
                 tc_out, tool_name, result = _execute_single_tool(tc)
-                if should_trigger_code_interpreter(tool_name):
-                    code_tool_called = True
-                if should_trigger_toolstore_interpreter(tool_name):
-                    toolstore_tool_called = True
                 result = apply_self_correction(tc_out, result)
                 messages.append({
                     "role": "tool",
@@ -163,4 +159,4 @@ def execute_tool_calls(
                     "content": result
                 })
 
-    return code_tool_called
+    return triggered

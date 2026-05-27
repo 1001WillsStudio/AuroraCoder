@@ -22,14 +22,7 @@ from .config import (
     _CONTINUATION_NOTICE_MARKER, CONTINUATION_NOTICE,
 )
 from .providers import provider_manager
-from .code_tools.context_manager import (
-    clean_previous_interpreter_blocks,
-    generate_consolidated_interpreter_display,
-)
-from .code_tools.toolset_context_manager import (
-    clean_previous_toolstore_blocks,
-    generate_toolstore_display,
-)
+from .code_tools.context_tracker import get_all as get_context_trackers
 from .tool_executor import execute_tool_calls
 
 _main_logger = logging.getLogger(__name__)
@@ -111,7 +104,9 @@ def generate_chat_responses_stream_native(
     extra_body = config.get("extra_body")
     
     # Strip old code interpreter blocks from tool messages before copying
-    clean_previous_interpreter_blocks(messages)
+    # Strip old context blocks from all trackers before the conversation starts
+    for tracker in get_context_trackers():
+        tracker.clean_previous_blocks(messages)
     
     # Get tool definitions (or use override for subagents / force_continuation)
     tools = tools_override if tools_override is not None else get_tool_definitions()
@@ -299,7 +294,7 @@ def generate_chat_responses_stream_native(
         messages.append(assistant_message)
         
         # Delegate to the tool execution engine
-        code_tool_called, toolstore_tool_called = execute_tool_calls(current_tool_calls, messages)
+        triggered_trackers = execute_tool_calls(current_tool_calls, messages)
 
         # Warn once when estimated context nears the model's window.
         if context_window and current_usage and not _has_continuation_notice_been_shown(messages):
@@ -318,26 +313,11 @@ def generate_chat_responses_stream_native(
             }
             return
 
-        # If any code-related tool was called, refresh the interpreter display
-        if code_tool_called:
-            clean_previous_interpreter_blocks(messages)
-            interpreter_display = generate_consolidated_interpreter_display(messages)
-            if interpreter_display and messages:
-                # Append interpreter to the last tool message
-                for i in range(len(messages) - 1, -1, -1):
-                    if messages[i].get("role") == "tool":
-                        messages[i]["content"] += "\n\n" + interpreter_display
-                        break
-
-        # If any tool_store call was made, refresh the toolset display
-        if toolstore_tool_called:
-            clean_previous_toolstore_blocks(messages)
-            toolstore_display = generate_toolstore_display(messages)
-            if toolstore_display and messages:
-                for i in range(len(messages) - 1, -1, -1):
-                    if messages[i].get("role") == "tool":
-                        messages[i]["content"] += "\n\n" + toolstore_display
-                        break
+        # Refresh trackers — append display to the triggering tool's message
+        for tracker in get_context_trackers():
+            idx = triggered_trackers.get(tracker.name)
+            if idx is not None:
+                tracker.refresh(messages, at_index=idx)
 
         yield {
             "messages": messages,
