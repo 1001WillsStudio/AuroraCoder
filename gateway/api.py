@@ -1075,32 +1075,61 @@ async def update_settings(update: _SettingsUpdate):
 
 # ── ToolStore ─────────────────────────────────────────────────────
 
+def _count_tools_in_dict(tools_dict: dict, by_source: dict) -> int:
+    """Count tools in a {name: {source: ...}} dict, adding to by_source."""
+    added = 0
+    for name, t in tools_dict.items():
+        if not isinstance(t, dict):
+            continue
+        src = t.get("source", "unknown")
+        # Normalize source label: mcp:* → "mcp", skill:* → "skill", public/registry → "registry"
+        if src.startswith("mcp:"):
+            src = "mcp"
+        elif src.startswith("skill:"):
+            src = "skill"
+        elif src == "public":
+            src = "registry"
+        by_source[src] = by_source.get(src, 0) + 1
+        added += 1
+    return added
+
+
 @app.get("/api/toolstore/status")
 async def get_toolstore_status():
-    """Return tool counts from the local toolstore index."""
+    """Return tool counts — registry (online) + MCP/skills (local)."""
     import json as _json
     from pathlib import Path as _Path
 
-    # Use ConfigManager's resolution (TOOLSTORE_HOME → /app/data/toolstore/ → ~/.toolstore/)
+    by_source: dict = {}
+    total = 0
+
+    # Resolve toolstore home directory
     try:
         from toolstore.config_manager import ConfigManager as _CM
-        home = str(_CM().config_dir)
+        home = _Path(_CM().config_dir)
     except ImportError:
-        home = os.environ.get("TOOLSTORE_HOME", os.path.expanduser("~/.toolstore"))
-    index_path = _Path(home) / "index.json"
-    total = 0
-    by_source = {}
+        home = _Path(os.environ.get("TOOLSTORE_HOME", os.path.expanduser("~/.toolstore")))
+
+    # 1. Registry tools from index.json
+    index_path = home / "index.json"
     if index_path.exists():
         try:
             data = _json.loads(index_path.read_text())
-            # index.json is {"meta": {...}, "tools": {"name": {...}, ...}}
-            tools = data.get("tools", {}) if isinstance(data, dict) else []
-            for t in (tools.values() if isinstance(tools, dict) else tools):
-                src = t.get("source", "unknown") if isinstance(t, dict) else "unknown"
-                by_source[src] = by_source.get(src, 0) + 1
-                total += 1
+            tools = data.get("tools", {}) if isinstance(data, dict) else {}
+            total += _count_tools_in_dict(tools, by_source)
         except Exception:
             pass
+
+    # 2. Local MCP + skill tools from config.json
+    config_path = home / "config.json"
+    if config_path.exists():
+        try:
+            cfg = _json.loads(config_path.read_text())
+            local_tools = cfg.get("tools", {}) if isinstance(cfg, dict) else {}
+            total += _count_tools_in_dict(local_tools, by_source)
+        except Exception:
+            pass
+
     return {"total": total, "by_source": by_source, "available": True}
 
 
