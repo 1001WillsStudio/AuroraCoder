@@ -147,7 +147,7 @@ def generate_consolidated_interpreter_display(messages: List[Dict]) -> str:
 
     notes = "\n\nNote: This display shows the LATEST state of each file with accurate line numbers. Always use these line numbers for edit_file calls — never use memorised line numbers. Closing a file removes it from this display, including previous tool responses — you will no longer see its contents unless you open it again. Only close a file after you have fully extracted all information you need from it."
 
-if len(open_files) > CONTEXT_DISPLAY_MAX_ITEMS or len(display) > CONTEXT_DISPLAY_WARN_CHARS:
+    if len(open_files) > CONTEXT_DISPLAY_MAX_ITEMS or len(display) > CONTEXT_DISPLAY_WARN_CHARS:
         file_list = ", ".join(sorted_files)
         notes += (
             f"\n⚠️ CONTEXT WARNING: You have {len(open_files)} files open "
@@ -192,7 +192,7 @@ class FileContextTracker(ContextTracker):
             "contents unless you open it again. Only close a file "
             "after you have fully extracted all information you need from it."
         )
-if len(state) > CONTEXT_DISPLAY_MAX_ITEMS or len(display) > CONTEXT_DISPLAY_WARN_CHARS:
+        if len(state) > CONTEXT_DISPLAY_MAX_ITEMS or len(display) > CONTEXT_DISPLAY_WARN_CHARS:
             notes += (
                 f"\n⚠️ CONTEXT WARNING: You have {len(state)} files open "
                 f"({', '.join(sorted_files)}). "
