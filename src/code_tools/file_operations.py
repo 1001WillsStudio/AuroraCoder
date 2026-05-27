@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable
 from ..code_sandbox import WORKSPACE
-from . import edit_anchors as am
+from . import edit_file as am
 
 logger = logging.getLogger(__name__)
 

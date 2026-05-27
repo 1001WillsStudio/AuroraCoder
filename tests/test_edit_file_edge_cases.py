@@ -9,7 +9,7 @@ import sys, os, tempfile, textwrap, traceback
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.code_tools.file_operations import range_replace_edit_tool, FileOperations
-from src.code_tools import edit_anchors as am
+from src.code_tools import edit_file as am
 
 _passed = 0
 _failed = 0
