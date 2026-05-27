@@ -301,7 +301,7 @@ NATIVE_TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "tool_store",
-"description": "A universal tool manager that allows you to search for and execute thousands of public APIs and local utilities, and manage your tool context by opening/closing toolsets.",
+"description": "A universal tool manager that allows you to search for and execute thousands of public APIs and local utilities, and manage your tool context by adding/removing tools.",
             "parameters": {
                 "type": "object",
                 "properties": {
