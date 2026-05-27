@@ -133,6 +133,7 @@
 
 /* ── Dedicated API Key Sections (DeepSeek / NVIDIA) ──────────────────── */
 
+.settings-section-key,
 .settings-section-deepseek {
   background: linear-gradient(135deg, var(--accent-color, #6C47FF)08, transparent 60%);
   border: 1px solid var(--accent-color, #6C47FF)20;

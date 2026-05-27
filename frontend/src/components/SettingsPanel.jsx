@@ -282,14 +282,14 @@ export default function SettingsPanel({ isOpen, onClose }) {
               </section>
 
               {/* ── NVIDIA API Key ─────────────────────────────────────── */}
-              <section className="settings-section">
+              <section className="settings-section settings-section-key">
                 <h3 className="settings-section-title">🔑 NVIDIA API Key</h3>
                 <p className="settings-section-desc">
                   One key for all NVIDIA-hosted models — DeepSeek V4 Pro, V4 Pro No-Thinking, GLM-5.1, and GLM-5.1 No-Thinking.
                 </p>
                 <div className="settings-field-row">
                   <div className="settings-field-col settings-field-col-wide">
-                    <input className="settings-input" type="text"
+                    <input className="settings-input settings-input-deepseek-key" type="text"
                       value={apiKeys['nvidia'] || ''}
                       onChange={e => setApiKey('nvidia', e.target.value)}
                       placeholder={apiKeysConfigured['nvidia'] || apiKeysConfigured['nvidia-fast']
