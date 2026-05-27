@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from .tool_definitions import execute_tool_call, PARALLEL_SAFE_TOOLS
 from .code_tools.file_operations import maybe_truncate_edits, apply_self_correction
 from .code_tools.context_manager import should_trigger_code_interpreter
+from .code_tools.toolset_context_manager import should_trigger_toolstore_interpreter
 from .config import MAX_TOOL_CONCURRENCY
 
 
@@ -98,15 +99,16 @@ def _check_same_file_edit_guard(
 def execute_tool_calls(
     current_tool_calls: List[Dict],
     messages: List[Dict],
-) -> bool:
+) -> Tuple[bool, bool]:
     """
     Execute tool calls, running concurrent-safe tools in parallel.
     Appends tool response messages to `messages` in place.
 
     Returns:
-        True if any code-related tool was called
+        (code_tool_called, toolstore_tool_called)
     """
     code_tool_called = False
+    toolstore_tool_called = False
     files_edited_this_turn: set = set()
 
     for is_safe, batch in partition_tool_calls(current_tool_calls):
@@ -127,6 +129,8 @@ def execute_tool_calls(
                 tc_out, tool_name, result = results_by_id[tc["id"]]
                 if should_trigger_code_interpreter(tool_name):
                     code_tool_called = True
+                if should_trigger_toolstore_interpreter(tool_name):
+                    toolstore_tool_called = True
                 result = apply_self_correction(tc_out, result)
                 messages.append({
                     "role": "tool",
@@ -150,6 +154,8 @@ def execute_tool_calls(
                 tc_out, tool_name, result = _execute_single_tool(tc)
                 if should_trigger_code_interpreter(tool_name):
                     code_tool_called = True
+                if should_trigger_toolstore_interpreter(tool_name):
+                    toolstore_tool_called = True
                 result = apply_self_correction(tc_out, result)
                 messages.append({
                     "role": "tool",

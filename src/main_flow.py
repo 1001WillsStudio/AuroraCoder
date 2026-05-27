@@ -26,6 +26,10 @@ from .code_tools.context_manager import (
     clean_previous_interpreter_blocks,
     generate_consolidated_interpreter_display,
 )
+from .code_tools.toolset_context_manager import (
+    clean_previous_toolstore_blocks,
+    generate_toolstore_display,
+)
 from .tool_executor import execute_tool_calls
 
 _main_logger = logging.getLogger(__name__)
@@ -295,7 +299,7 @@ def generate_chat_responses_stream_native(
         messages.append(assistant_message)
         
         # Delegate to the tool execution engine
-        code_tool_called = execute_tool_calls(current_tool_calls, messages)
+        code_tool_called, toolstore_tool_called = execute_tool_calls(current_tool_calls, messages)
 
         # Warn once when estimated context nears the model's window.
         if context_window and current_usage and not _has_continuation_notice_been_shown(messages):
@@ -323,6 +327,16 @@ def generate_chat_responses_stream_native(
                 for i in range(len(messages) - 1, -1, -1):
                     if messages[i].get("role") == "tool":
                         messages[i]["content"] += "\n\n" + interpreter_display
+                        break
+
+        # If any tool_store call was made, refresh the toolset display
+        if toolstore_tool_called:
+            clean_previous_toolstore_blocks(messages)
+            toolstore_display = generate_toolstore_display(messages)
+            if toolstore_display and messages:
+                for i in range(len(messages) - 1, -1, -1):
+                    if messages[i].get("role") == "tool":
+                        messages[i]["content"] += "\n\n" + toolstore_display
                         break
 
         yield {
