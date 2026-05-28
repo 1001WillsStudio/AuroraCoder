@@ -14,8 +14,11 @@ export function createStreamCallbacks({
   withInterrupt = false,
   withRetry = false,
   overrides = {},
+  onFirstSse = null,
 }) {
+  let _firstMessage = true
   const onMessages = (frontendMessages, _status, data) => {
+    if (_firstMessage) { _firstMessage = false; onFirstSse?.() }
     setMessages(frontendMessages)
     if (data?.raw_messages) {
       setRawMessages(data.raw_messages)

@@ -30,7 +30,7 @@ function App() {
   // ── Auth check (runs once) ──
   useEffect(() => {
     async function check() {
-      const required = isAuthRequired()
+      const required = await isAuthRequired()
       if (!required) { setAuthState({ checked: true, required: false, authenticated: true }); return }
       let authed = false
       try { authed = await checkAuth() } catch { authed = false }
@@ -50,6 +50,7 @@ function App() {
   const [conversationId, setConversationId] = useState(null)
   const [canContinue, setCanContinue] = useState(false)
   const [pendingInterrupt, setPendingInterrupt] = useState(null)
+  const [sseReceived, setSseReceived] = useState(false)
   
   // Provider state
   const [providers, setProviders] = useState([])
@@ -218,6 +219,7 @@ function App() {
     setMessages(prev => [...prev, { role: 'user', content: userMessageText }])
     setInputValue('')
     setIsStreaming(true)
+    setSseReceived(false)
     setCanContinue(false)
     setHistoryRefreshTrigger(prev => prev + 1)
 
@@ -240,6 +242,7 @@ function App() {
         pendingInterruptRef, continuationNavigatedRef, abortControllerRef,
         withInterrupt: true,
         withRetry: true,
+        onFirstSse: () => setSseReceived(true),
       })
       await streamChat(apiMessage, conversationId, callbacks, abortControllerRef.current.signal, messagesToSend, selectedProvider, options)
     } catch (error) {
@@ -264,6 +267,7 @@ function App() {
   const handleContinue = async () => {
     if (!conversationId || isStreaming || rawMessages.length === 0) return
     setIsStreaming(true)
+    setSseReceived(false)
     setCanContinue(false)
     try {
       abortControllerRef.current = new AbortController()
@@ -274,6 +278,7 @@ function App() {
         pendingInterruptRef: null, continuationNavigatedRef, abortControllerRef: null,
         withInterrupt: false,
         withRetry: false,
+        onFirstSse: () => setSseReceived(true),
       })
       await streamChat(null, conversationId, callbacks, abortControllerRef.current.signal, rawMessages, selectedProvider)
     } catch (error) {
@@ -446,6 +451,7 @@ function App() {
       setInputValue(draft)
       if (conv.status === STATUS.RUNNING) {
         setIsStreaming(true)
+        setSseReceived(false)
         abortControllerRef.current = new AbortController()
         try {
           const callbacks = createStreamCallbacks({
@@ -455,6 +461,7 @@ function App() {
             pendingInterruptRef: null, continuationNavigatedRef, abortControllerRef: null,
             withInterrupt: false,
             withRetry: false,
+            onFirstSse: () => setSseReceived(true),
             overrides: {
               onDone: (data) => {
                 setIsStreaming(false)
@@ -564,7 +571,7 @@ function App() {
                   }
                 />
               ))}
-              {isStreaming && (messages.length === 0 || messages[messages.length - 1].role !== 'assistant') && (
+              {isStreaming && sseReceived && (messages.length === 0 || messages[messages.length - 1].role !== 'assistant') && (
                 <ChatMessage
                   message={{ role: 'assistant', content: '' }}
                   isLatest={true}
