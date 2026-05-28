@@ -73,7 +73,7 @@ function MarkdownContent({ content }) {
  * Main chat message component
  * Renders user messages and assistant responses with activity timeline
  */
-function ChatMessage({ message, msgIdx, isLatest, isStreaming, onRetry, onStopTool, onLoadConversation, subagentChildIds, senderLabel, onForkConversation, forkWarning, forkClickRef, messagesLength, onForkDismiss }) {
+function ChatMessage({ message, msgIdx, isLatest, isStreaming, onRetry, onStopTool, onLoadConversation, subagentChildIds, senderLabel, onForkConversation, forkWarning, forkClickRef, messagesLength, onForkDismiss, appIsStreaming }) {
   const { t } = useLanguage()
   const forkBtnRef = useRef(null)
   const isForkWarning = forkWarning?.frontendMsgIdx === msgIdx
@@ -130,7 +130,7 @@ function ChatMessage({ message, msgIdx, isLatest, isStreaming, onRetry, onStopTo
                 <p>{message.content}</p>
               </div>
               {/* Fork button — appears on user messages except the first, only when not streaming */}
-              {onForkConversation && msgIdx > 0 && msgIdx % 2 === 0 && !isStreaming && messagesLength > 2 && (
+              {onForkConversation && msgIdx > 0 && msgIdx % 2 === 0 && !appIsStreaming && (
                 <button
                   ref={forkBtnRef}
                   className={`fork-btn${isForkWarning ? ' fork-btn-warning' : ''}`}

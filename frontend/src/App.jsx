@@ -707,6 +707,7 @@ function App() {
                   forkWarning={forkWarning}
                   forkClickRef={forkClickRef}
                   messagesLength={messages.length}
+                  appIsStreaming={isStreaming}
                   senderLabel={
                     viewMode === 'subagent'
                       ? (msg.role === 'user' ? t('app.mainAgent') : t('app.subagent'))
