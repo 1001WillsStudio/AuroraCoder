@@ -1,5 +1,5 @@
-import React, { useState } from 'react'
-import { User, Bot, ChevronDown, ChevronRight, Loader2, Brain, RotateCcw, AlertCircle } from 'lucide-react'
+import React, { useState, useEffect, useRef } from 'react'
+import { User, Bot, ChevronDown, ChevronRight, Loader2, Brain, RotateCcw, AlertCircle, GitBranch, AlertTriangle } from 'lucide-react'
 import useLanguage from '../hooks/useLanguage'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -73,8 +73,23 @@ function MarkdownContent({ content }) {
  * Main chat message component
  * Renders user messages and assistant responses with activity timeline
  */
-function ChatMessage({ message, isLatest, isStreaming, onRetry, onStopTool, onLoadConversation, subagentChildIds, senderLabel }) {
+function ChatMessage({ message, msgIdx, isLatest, isStreaming, onRetry, onStopTool, onLoadConversation, subagentChildIds, senderLabel, onForkConversation, forkWarning, forkClickRef, messagesLength, onForkDismiss }) {
   const { t } = useLanguage()
+  const forkBtnRef = useRef(null)
+  const isForkWarning = forkWarning?.frontendMsgIdx === msgIdx
+
+  // Click outside warning to dismiss
+  useEffect(() => {
+    if (!isForkWarning) return
+    const handler = (e) => {
+      if (forkBtnRef.current && !forkBtnRef.current.contains(e.target)
+          && !e.target.closest('.fork-warning-bar')) {
+        onForkDismiss?.()
+      }
+    }
+    const timer = setTimeout(() => document.addEventListener('mousedown', handler), 0)
+    return () => { clearTimeout(timer); document.removeEventListener('mousedown', handler) }
+  }, [isForkWarning, onForkDismiss])
   const isUser = message.role === 'user'
   const activities = message.activities || []
   const hasContent = message.content && message.content.length > 0
@@ -109,9 +124,46 @@ function ChatMessage({ message, isLatest, isStreaming, onRetry, onStopTool, onLo
           <div className="sender-label">{senderLabel}</div>
         )}
         {isUser ? (
-          <div className="message-text">
-            <p>{message.content}</p>
-          </div>
+          <>
+            <div className="user-message-row">
+              <div className="message-text">
+                <p>{message.content}</p>
+              </div>
+              {/* Fork button — appears on user messages except the first, only when not streaming */}
+              {onForkConversation && msgIdx > 0 && msgIdx % 2 === 0 && !isStreaming && messagesLength > 2 && (
+                <button
+                  ref={forkBtnRef}
+                  className={`fork-btn${isForkWarning ? ' fork-btn-warning' : ''}`}
+                  title={t('app.forkConversation')}
+                  onClick={() => {
+                    const now = Date.now()
+                    const prev = forkClickRef.current
+                    const isDoubleClick = prev.idx === msgIdx && (now - prev.time) < 400
+                    forkClickRef.current = { time: now, idx: msgIdx }
+                    if (isForkWarning) {
+                      onForkConversation(msgIdx, true)
+                    } else {
+                      onForkConversation(msgIdx, isDoubleClick)
+                    }
+                  }}
+                >
+                  <GitBranch size={14} />
+                  {isForkWarning && (
+                    <span className="fork-btn-label">{t('app.forkAnyway')}</span>
+                  )}
+                </button>
+              )}
+            </div>
+            {/* Inline warning bar — rendered outside user-message-row for full-width layout */}
+            {isForkWarning && (
+              <div className="fork-warning-bar">
+                <AlertTriangle size={14} />
+                <span>
+                  {t('app.forkWarning', { count: forkWarning.toolsAfterFork.length })}
+                </span>
+              </div>
+            )}
+          </>
         ) : (
           // Assistant message - render activities timeline
           <>

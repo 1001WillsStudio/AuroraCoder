@@ -76,6 +76,7 @@ function App() {
   // subagent_event notifications and their originating tool calls.
   const [subagentChildIds, setSubagentChildIds] = useState({})
   const [showSettings, setShowSettings] = useState(false)
+  const [forkWarning, setForkWarning] = useState(null)
   const messagesEndRef = useRef(null)
   const chatContainerRef = useRef(null)
   const inputRef = useRef(null)
@@ -83,6 +84,7 @@ function App() {
   const pendingInterruptRef = useRef(null)
   const conversationIdRef = useRef(null)
   const continuationNavigatedRef = useRef(new Set())
+  const forkClickRef = useRef({ time: 0, idx: -1 })
 
   // ── Effects ─────────────────────────────────────────────────────────────
 
@@ -390,6 +392,50 @@ function App() {
       setIsStreaming(false)
     }
   }
+  // ── Fork helpers ─────────────────────────────────────────────────
+
+  /** Find the raw-message index of the Nth user message in frontend messages */
+  const findForkPoint = useCallback((frontendUserMsgIdx) => {
+    const userRound = Math.floor(frontendUserMsgIdx / 2)
+    let userCount = 0
+    for (let i = 0; i < rawMessages.length; i++) {
+      if (rawMessages[i].role === 'user') {
+        if (userCount === userRound) return i
+        userCount++
+      }
+    }
+    return rawMessages.length
+  }, [rawMessages])
+
+  const handleForkConversation = useCallback((frontendMsgIdx, skipWarning = false) => {
+    const rawIdx = findForkPoint(frontendMsgIdx)
+    const CODE_MUTATING = ['run_terminal_command', 'write_file', 'edit_file', 'delete_file']
+    const toolsAfterFork = []
+    for (let i = rawIdx; i < rawMessages.length; i++) {
+      for (const tc of rawMessages[i].tool_calls || []) {
+        const name = tc.function?.name || ''
+        if (CODE_MUTATING.includes(name)) toolsAfterFork.push({ name, idx: i })
+      }
+    }
+    if (toolsAfterFork.length > 0 && !skipWarning) {
+      setForkWarning({ frontendMsgIdx, rawIdx, toolsAfterFork })
+      return
+    }
+    if (abortControllerRef.current) { abortControllerRef.current.abort(); abortControllerRef.current = null }
+    if (inputValue.trim()) draftInputsRef.current.set(conversationId ?? '__new__', inputValue)
+    setConversationId(crypto.randomUUID())
+    setRawMessages(rawMessages.slice(0, rawIdx))
+    setMessages(messages.slice(0, frontendMsgIdx))
+    setIsStreaming(false)
+    setCanContinue(false)
+    setForkWarning(null)
+    setEditedFiles([])
+    setClosedFiles(new Set())
+    setViewMode('main')
+    setInputValue('')
+    setHistoryRefreshTrigger(prev => prev + 1)
+  }, [rawMessages, messages, conversationId, inputValue, findForkPoint])
+
   const handleClear = () => {
     if (inputValue.trim()) draftInputsRef.current.set(conversationId ?? '__new__', inputValue)
     if (abortControllerRef.current) abortControllerRef.current.abort()
@@ -406,6 +452,7 @@ function App() {
     setViewMode('main')
     setParentConversationId(null)
     setSubagentChildIds({})
+    setForkWarning(null)
     setHistoryRefreshTrigger(prev => prev + 1)
     const draft = draftInputsRef.current.get('__new__') || ''
     setInputValue(draft)
@@ -648,12 +695,18 @@ function App() {
                 <ChatMessage
                   key={idx}
                   message={msg}
+                  msgIdx={idx}
                   isLatest={idx === messages.length - 1}
                   isStreaming={isStreaming && idx === messages.length - 1 && msg.role === 'assistant'}
                   onRetry={msg.canRetry ? handleRetry : null}
                   onStopTool={handleStopTool}
                   onLoadConversation={handleLoadConversation}
                   subagentChildIds={subagentChildIds}
+                  onForkConversation={handleForkConversation}
+                  onForkDismiss={() => setForkWarning(null)}
+                  forkWarning={forkWarning}
+                  forkClickRef={forkClickRef}
+                  messagesLength={messages.length}
                   senderLabel={
                     viewMode === 'subagent'
                       ? (msg.role === 'user' ? t('app.mainAgent') : t('app.subagent'))

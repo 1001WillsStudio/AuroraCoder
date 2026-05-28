@@ -230,9 +230,12 @@ const LANG = {
     'app.toolStoppedByUser': 'The {tool} operation was terminated by user after running for {time}.',
     'app.toolStoppedByUserSys': 'Tool "{tool}" was stopped by the user.',
 
+    // ── Fork ────────────────────────────────────────────────────
+    'app.forkConversation': 'Fork conversation before this message',
+    'app.forkAnyway': 'Fork anyway',
+    'app.forkWarning': '{count} code/terminal tool(s) ran after this point — workspace state will NOT be restored.',
+
     // ── Theme names ────────────────────────────────────────────────
-    'theme.light': 'light',
-    'theme.dark': 'dark',
   },
 
   zh: {
@@ -450,9 +453,12 @@ const LANG = {
     'app.toolStoppedByUser': '{tool} 操作已被用户终止，运行时间为 {time}。',
     'app.toolStoppedByUserSys': '工具 "{tool}" 已被用户停止。',
 
+    // ── Fork ────────────────────────────────────────────────────
+    'app.forkConversation': '在此消息之前分叉对话',
+    'app.forkAnyway': '仍然分叉',
+    'app.forkWarning': '{count} 个工具在此点之后运行 — 工作区状态将不会恢复。',
+
     // ── Theme names ────────────────────────────────────────────────
-    'theme.light': '亮色',
-    'theme.dark': '暗色',
   },
 }
 

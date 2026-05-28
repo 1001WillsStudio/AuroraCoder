@@ -426,3 +426,84 @@
   border-color: var(--accent-primary);
   box-shadow: var(--shadow-glow);
 }
+
+/* ── Fork Button ─────────────────────────────────────────────── */
+.user-message-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.user-message-row .message-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.fork-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  white-space: nowrap;
+}
+
+.message:hover .fork-btn {
+  opacity: 1;
+}
+
+.fork-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--border-default);
+}
+
+/* Warning state — amber glow, always visible */
+.fork-btn-warning {
+  opacity: 1 !important;
+  background: rgba(251, 191, 36, 0.1);
+  color: var(--warning, #d97706);
+  border-color: rgba(251, 191, 36, 0.4);
+  box-shadow: 0 0 8px rgba(251, 191, 36, 0.15);
+}
+
+.fork-btn-warning:hover {
+  background: rgba(251, 191, 36, 0.2);
+  border-color: rgba(251, 191, 36, 0.6);
+}
+
+.fork-btn-label {
+  font-weight: 500;
+}
+
+/* ── Fork Warning Bar ────────────────────────────────────────── */
+.fork-warning-bar {
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px 14px;
+  background: rgba(251, 191, 36, 0.08);
+  border-left: 3px solid var(--warning, #d97706);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  line-height: 1.5;
+  animation: fadeIn 0.15s ease;
+}
+
+.fork-warning-bar svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--warning, #d97706);
+}
