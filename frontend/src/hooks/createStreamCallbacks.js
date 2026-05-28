@@ -17,11 +17,17 @@ export function createStreamCallbacks({
   onFirstSse = null,
   onStreamEnd = null,
   onInterruptFired = null,
+  ensureAssistantTail = false,
 }) {
   let _firstMessage = true
   const onMessages = (frontendMessages, _status, data) => {
     if (_firstMessage) { _firstMessage = false; onFirstSse?.() }
-    setMessages(frontendMessages)
+    if (ensureAssistantTail) {
+      const tail = frontendMessages.length > 0 ? frontendMessages[frontendMessages.length - 1] : null
+      setMessages(tail?.role === 'assistant' ? frontendMessages : [...frontendMessages, { role: 'assistant', content: '' }])
+    } else {
+      setMessages(frontendMessages)
+    }
     if (data?.raw_messages) {
       setRawMessages(data.raw_messages)
       if (withInterrupt && pendingInterruptRef?.current && isInterruptible(data.raw_messages)) {

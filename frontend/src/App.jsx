@@ -11,7 +11,7 @@ import SettingsPanel from './components/SettingsPanel'
 import { streamChat, getProviders, cancelConversation, getConversation, getActiveStreams, resumeStream } from './services/api'
 import { isInterruptible, TASK_MARKER_START, TASK_MARKER_END, formatElapsedTime } from './utils/streamUtils'
 import { injectOrphanToolStops, injectToolStopActivity } from './utils/injectToolStop'
-import { isAuthenticated, checkAuth, isAuthRequired } from './utils/auth.js'
+import { checkAuth, isAuthRequired } from './utils/auth.js'
 import CodePanel from './components/CodePanel'
 import { createStreamCallbacks } from './hooks/createStreamCallbacks'
 import { useFileTracking } from './hooks/useFileTracking'
@@ -216,7 +216,7 @@ function App() {
     }
 
     log('setState batch (messages, streaming, etc.)')
-    setMessages(prev => [...prev, { role: 'user', content: userMessageText }])
+    setMessages(prev => [...prev, { role: 'user', content: userMessageText }, { role: 'assistant', content: '' }])
     setInputValue('')
     setIsStreaming(true)
     setSseReceived(false)
@@ -245,6 +245,7 @@ function App() {
         onFirstSse: () => setSseReceived(true),
         onStreamEnd: () => { setPendingInterrupt(null); pendingInterruptRef.current = null },
         onInterruptFired: () => setPendingInterrupt(null),
+        ensureAssistantTail: true,
       })
       await streamChat(apiMessage, conversationId, callbacks, abortControllerRef.current.signal, messagesToSend, selectedProvider, options)
     } catch (error) {
@@ -281,6 +282,7 @@ function App() {
         withInterrupt: false,
         withRetry: false,
         onFirstSse: () => setSseReceived(true),
+        ensureAssistantTail: true,
       })
       await streamChat(null, conversationId, callbacks, abortControllerRef.current.signal, rawMessages, selectedProvider)
     } catch (error) {
@@ -465,6 +467,7 @@ function App() {
             withRetry: false,
             onFirstSse: () => setSseReceived(true),
             onStreamEnd: () => { setPendingInterrupt(null); pendingInterruptRef.current = null },
+            ensureAssistantTail: true,
             overrides: {
               onDone: (data) => {
                 setIsStreaming(false)
@@ -574,11 +577,6 @@ function App() {
                   }
                 />
               ))}
-              {isStreaming && sseReceived && (
-                <div className="typing-indicator">
-                  <span></span><span></span><span></span>
-                </div>
-              )}
               <div ref={messagesEndRef} />
             </div>
           )}
