@@ -345,6 +345,20 @@ export default function SettingsPanel({ isOpen, onClose }) {
                     />
                   </div>
                 </div>
+                <div className="settings-field-row" style={{ marginTop: 12 }}>
+                  <div className="settings-field-col settings-field-col-checkbox" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <label className="settings-checkbox-label">
+                      <input type="checkbox"
+                        checked={other.agent?.save_training_data !== false}
+                        onChange={e => setOther('agent', 'save_training_data', e.target.checked)}
+                      />
+                      {t('agent.saveTrainingData')}
+                    </label>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 4 }}>
+                      {t('agent.saveTrainingDataDesc')}
+                    </span>
+                  </div>
+                </div>
               </section>
 
               {/* ── Models ───────────────────────────────────────────────── */}

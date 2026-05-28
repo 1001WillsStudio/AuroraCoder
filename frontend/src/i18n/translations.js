@@ -68,6 +68,8 @@ const LANG = {
     'agent.maxIterations': 'Max Iterations Per Turn',
     'agent.maxToolConcurrency': 'Max Tool Concurrency',
     'agent.terminalMaxOutput': 'Terminal Max Output',
+    'agent.saveTrainingData': 'Save Training Data',
+    'agent.saveTrainingDataDesc': 'Log each API request/response pair for fine-tuning. Disable to save disk space and reduce I/O overhead.',
 
     // ── Persistence note ──────────────────────────────────────────
     'persistence.note':
@@ -291,6 +293,8 @@ const LANG = {
     'agent.maxIterations': '每轮最大迭代次数',
     'agent.maxToolConcurrency': '最大工具并发数',
     'agent.terminalMaxOutput': '终端最大输出',
+    'agent.saveTrainingData': '保存训练数据',
+    'agent.saveTrainingDataDesc': '记录每次 API 请求/响应用于微调。关闭可节省磁盘空间和 I/O 开销。',
 
     // ── Persistence note ──────────────────────────────────────────
     'persistence.note':

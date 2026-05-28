@@ -6,7 +6,6 @@ Tool execution is delegated to tool_executor.py; code-interpreter display
 management is delegated to code_tools/context_manager.py.
 """
 
-import json
 import time
 import datetime
 import logging
@@ -15,7 +14,7 @@ from typing import Dict, List, Generator, Optional
 from .tool_definitions import get_tool_definitions
 from .core_tools.tool_store_client import get_toolstore_tools_prompt
 from .config import (
-    TRAINING_DATA_DIR, DEFAULT_PROVIDER,
+    DEFAULT_PROVIDER,
     MAX_TOKENS, MAX_ITERATIONS,
     MAX_STREAMING_RETRIES,
     SYSTEM_MESSAGE_TEMPLATE, VNC_INSTRUCTIONS, TERMINAL_ENV_NOTE,
@@ -32,27 +31,31 @@ from .code_tools.toolset_context_manager import ToolsetContextTracker
 register(FileContextTracker())
 register(ToolsetContextTracker())
 from .tool_executor import execute_tool_calls
+from .training_log import record_api_call, load_save_training_flag
 
 _main_logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-#  Training Log
+#  Timing Helper
 # ---------------------------------------------------------------------------
 
-def record_api_call(request_messages: list, response_message: dict):
-    """Append one request→response pair to today's training log."""
-    try:
-        TRAINING_DATA_DIR.mkdir(parents=True, exist_ok=True)
-        path = TRAINING_DATA_DIR / f"{datetime.datetime.now():%Y-%m-%d}.jsonl"
-        entry = {
-            "request": request_messages,
-            "response": response_message,
-        }
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
-    except Exception:
-        pass
+def _log_api_timing(iteration_count: int, model_name: str,
+                    t_api_start: float, t_first_chunk: float,
+                    t_first_content: float | None):
+    """Log per‑API‑call latency (only when INFO logging is enabled)."""
+    if not _main_logger.isEnabledFor(logging.INFO):
+        return
+    t_now = time.time()
+    api_latency = t_first_chunk - t_api_start
+    content_latency = (t_first_content - t_first_chunk) if t_first_content else None
+    _main_logger.info(
+        "[main_flow] iter=%d model=%s api_ttfb=%.0fms first_content=%s total=%.0fms",
+        iteration_count, model_name,
+        api_latency * 1000,
+        ("%.0fms" % (content_latency * 1000)) if t_first_content else "N/A",
+        (t_now - t_api_start) * 1000,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -136,9 +139,12 @@ def generate_chat_responses_stream_native(
         messages.insert(0, {"role": "system", "content": system_message})
     
     iteration_count = 0
-    total_tokens = 0  # latest API call's total_tokens (prompt + completion)
+    total_tokens = 0
     streaming_errors = 0
-    
+
+    # Read the user's training-data preference *once* — it cannot change mid-request.
+    save_training = load_save_training_flag()
+
     while iteration_count < max_iterations:
         iteration_count += 1
         
@@ -232,18 +238,12 @@ def generate_chat_responses_stream_native(
                 }
 
             # Log timing for this API call
-            t_now = time.time()
-            api_latency = t_first_chunk - t_api_start
-            content_latency = (t_first_content - t_first_chunk) if t_first_content else None
-            _main_logger.info(
-                "[main_flow] iter=%d model=%s api_ttfb=%.0fms first_content=%s total=%.0fms",
-                iteration_count, model_name,
-                api_latency * 1000,
-                ("%.0fms" % ((t_first_content - t_first_chunk) * 1000)) if t_first_content else "N/A",
-                (t_now - t_api_start) * 1000,
-            )
+            _log_api_timing(iteration_count, model_name,
+                            t_api_start, t_first_chunk, t_first_content)
         
         except Exception as e:
+            # Retry the *same* iteration — transient stream errors
+            # shouldn't burn an iteration slot.
             streaming_errors += 1
             _main_logger.warning("Streaming error (%s/%s): %s", streaming_errors, MAX_STREAMING_RETRIES, e)
             if streaming_errors >= MAX_STREAMING_RETRIES:
@@ -261,7 +261,7 @@ def generate_chat_responses_stream_native(
         if current_usage:
             total_tokens = current_usage.get("total_tokens", 0)
 
-        record_api_call(messages, assistant_message)
+        record_api_call(messages, assistant_message, enabled=save_training)
 
         # ── Process tool calls ──────────────────────────────────────────
         current_tool_calls = [
@@ -333,5 +333,3 @@ def generate_chat_responses_stream_native(
     }
 
 
-# Backwards-compatible alias
-generate_chat_responses_stream = generate_chat_responses_stream_native
