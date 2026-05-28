@@ -45,19 +45,29 @@ def get_tool_store_tool():
     return tool_store_tool
 
 
-# Wrapper — intercept close locally; everything else passes through
+# Wrapper — intercept close + skill execute locally; everything else passes through
 def tool_store_tool(**kwargs):
     """ThinkWithTool wrapper around ToolStore's native tool.
 
     ``action="close"`` is intercepted locally for context-management
-    (it never reaches the ToolStore server).  All other actions pass
-    through unchanged.
+    (it never reaches the ToolStore server).
+
+    ``action="execute"`` for skills is redirected to ``info`` — the
+    agent already has native tools (read_file, list_directory,
+    run_terminal_command) to interact with bundled files, and ``info``
+    exposes the full body + ``skill_dir`` path for discovery.
     """
     action = kwargs.get("action", "")
     tool_name = kwargs.get("tool_name", "")
 
     if action == "close":
         return f"Closed toolset '{tool_name}' from the tool store display."
+
+    # Redirect skill execute to info — the agent uses native tools for
+    # scripts/references/files; the body + skill_dir from info is enough.
+    if action == "execute" and tool_name.startswith("skill:"):
+        skill_name = tool_name[len("skill:"):]
+        return _raw_tool_store_tool(action="info", tool_name=tool_name)
 
     return _raw_tool_store_tool(**kwargs)
 
