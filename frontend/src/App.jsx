@@ -396,7 +396,14 @@ function App() {
 
   /** Find the raw-message index of the Nth user message in frontend messages */
   const findForkPoint = useCallback((frontendUserMsgIdx) => {
-    const userRound = Math.floor(frontendUserMsgIdx / 2)
+    // Count user messages in frontend up to (but not including) the fork point.
+    // This correctly handles frontend messages with multiple consecutive
+    // assistant entries (thinking, tool_calls, content emitted as separate
+    // messages), which break the even-index assumption.
+    let userRound = 0
+    for (let i = 0; i < frontendUserMsgIdx; i++) {
+      if (messages[i].role === 'user') userRound++
+    }
     let userCount = 0
     for (let i = 0; i < rawMessages.length; i++) {
       if (rawMessages[i].role === 'user') {
@@ -405,7 +412,7 @@ function App() {
       }
     }
     return rawMessages.length
-  }, [rawMessages])
+  }, [rawMessages, messages])
 
   const handleForkConversation = useCallback((frontendMsgIdx, skipWarning = false) => {
     const rawIdx = findForkPoint(frontendMsgIdx)
