@@ -188,17 +188,18 @@ def _fmt_mcp(tool: Dict) -> str:
 
 
 def _fmt_skill(tool: Dict) -> str:
-    """Skill: full SKILL.md body + bundled file listing."""
-    body = tool.get("body", "") or tool.get("description", "")
-    files = tool.get("skill_files", {})
+    """Skill: summary line only — full body is in the info JSON response."""
+    desc = tool.get("description", "")
+    skill_dir = tool.get("skill_dir", "")
+    files = tool.get("skill_files_list", [])
 
-    lines = [body.strip()] if body.strip() else [tool.get("description", "")]
-
+    lines = [desc.strip()] if desc.strip() else []
+    if skill_dir:
+        lines.append(f"Location: {skill_dir}")
     if files:
-        lines.append("")
-        lines.append("Bundled files:")
-        for fname in sorted(files.keys()):
-            lines.append(f"  {fname}")
+        names = ", ".join(files[:10])
+        suffix = f" (+{len(files) - 10} more)" if len(files) > 10 else ""
+        lines.append(f"Bundled: {names}{suffix}")
 
     return "\n".join(lines)
 
