@@ -722,6 +722,17 @@ function App() {
                   }
                 />
               ))}
+              {/* Thinking bubble: show typing dots whenever streaming but no
+                  assistant message exists yet.  ChatMessage already knows how
+                  to render the three-dot indicator when isStreaming && !hasContent. */}
+              {isStreaming && (messages.length === 0 || messages[messages.length - 1].role !== 'assistant') && (
+                <ChatMessage
+                  message={{ role: 'assistant', content: '' }}
+                  isLatest={true}
+                  isStreaming={true}
+                  messagesLength={messages.length + 1}
+                />
+              )}
               <div ref={messagesEndRef} />
             </div>
           )}
