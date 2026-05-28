@@ -62,28 +62,10 @@ def tool_store_tool(**kwargs):
     if action == "close":
         return f"Closed toolset '{tool_name}' from the tool store display."
 
-    # Redirect skill execute + info — body is in the toolstore display block.
+    # Skill execute/info — body is in the toolstore display block.
     if action in ("execute", "info") and tool_name.startswith("skill:"):
         skill_name = tool_name[len("skill:"):]
-        raw = _raw_tool_store_tool(action="info", tool_name=tool_name)
-        try:
-            import json as _json
-            data = _json.loads(raw) if isinstance(raw, str) else raw
-        except Exception:
-            data = {}
-        desc = data.get("description", "")
-        skill_dir = data.get("skill_dir", "")
-        files = data.get("skill_files_list", [])
-        lines = [f"Skill '{skill_name}' loaded — see toolstore display below."]
-        if desc:
-            lines.append(f"Description: {desc}")
-        if skill_dir:
-            lines.append(f"Location: {skill_dir}")
-        if files:
-            names = ", ".join(files[:5])
-            suffix = f" (+{len(files) - 5} more)" if len(files) > 5 else ""
-            lines.append(f"Bundled files: {names}{suffix}")
-        return "\n".join(lines)
+        return f"Skill '{skill_name}' loaded — see toolstore display below."
 
     return _raw_tool_store_tool(**kwargs)
 
