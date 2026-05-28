@@ -443,25 +443,22 @@
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 4px 8px;
+  gap: 4px;
+  padding: 3px 7px;
   background: transparent;
   color: var(--text-muted);
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   font-family: var(--font-sans);
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   cursor: pointer;
-  opacity: 0;
+  opacity: 0.4;
   transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
   white-space: nowrap;
 }
 
-.message:hover .fork-btn {
-  opacity: 1;
-}
-
 .fork-btn:hover {
+  opacity: 1;
   background: var(--bg-elevated);
   color: var(--text-primary);
   border-color: var(--border-default);
