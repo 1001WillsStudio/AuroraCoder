@@ -130,7 +130,7 @@ function ChatMessage({ message, msgIdx, isLatest, isStreaming, onRetry, onStopTo
                 <p>{message.content}</p>
               </div>
               {/* Fork button — appears on user messages except the first, only when not streaming */}
-              {onForkConversation && msgIdx > 0 && msgIdx % 2 === 0 && !appIsStreaming && (
+              {onForkConversation && isUser && msgIdx > 0 && !appIsStreaming && (
                 <button
                   ref={forkBtnRef}
                   className={`fork-btn${isForkWarning ? ' fork-btn-warning' : ''}`}
