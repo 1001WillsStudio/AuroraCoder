@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef, useLayoutEffect } from 'react'
 import { 
   X, FileCode, Plus, Minus, Code2, FolderOpen, 
-  Maximize2, Minimize2, RefreshCw
+  RefreshCw
 } from 'lucide-react'
 import useLanguage from '../hooks/useLanguage'
 
@@ -11,7 +11,7 @@ import useLanguage from '../hooks/useLanguage'
  */
 function CodePanel({ files, activeFileId, onFileSelect, onFileClose, onClose, onRefresh, isLoading }) {
   const { t } = useLanguage()
-  const [isMinimized, setIsMinimized] = useState(false)
+  const tabsRef = useRef(null)
   const codeContentRef = useRef(null)
   
   const activeFile = files.find(f => f.id === activeFileId)
@@ -31,7 +31,7 @@ function CodePanel({ files, activeFileId, onFileSelect, onFileClose, onClose, on
 
   // ── Smart scroll: new file → first edit; updated file → latest edit; tab switch → no jump ──
   useLayoutEffect(() => {
-    if (!activeFile || !codeContentRef.current || isMinimized) return
+    if (!activeFile || !codeContentRef.current) return
 
     const fileId = activeFile.id
     const currCount = activeFile.lines?.length ?? 0
@@ -57,7 +57,7 @@ function CodePanel({ files, activeFileId, onFileSelect, onFileClose, onClose, on
       targetLine.scrollIntoView({ block: 'center', behavior: 'smooth' })
     })
     return () => cancelAnimationFrame(raf)
-  }, [activeFile, isMinimized])
+  }, [activeFile])
   if (files.length === 0) {
     return (
     <div className="code-panel">
@@ -92,10 +92,10 @@ function CodePanel({ files, activeFileId, onFileSelect, onFileClose, onClose, on
   }
 
   return (
-    <div className={`code-panel ${isMinimized ? 'minimized' : ''}`}>
+    <div className="code-panel">
       {/* Header with tabs */}
       <div className="code-panel-header">
-        <div className="code-tabs">
+        <div className="code-tabs" ref={tabsRef} onWheel={(e) => { if (tabsRef.current) { e.preventDefault(); tabsRef.current.scrollLeft += e.deltaY } }}>
           {files.map(file => (
             <button
               key={file.id}
@@ -128,20 +128,13 @@ function CodePanel({ files, activeFileId, onFileSelect, onFileClose, onClose, on
           >
             <RefreshCw size={16} className={isLoading ? 'spin' : ''} />
           </button>
-          <button 
-            className="code-action-btn" 
-            onClick={() => setIsMinimized(!isMinimized)}
-            title={isMinimized ? t('code.expand') : t('code.minimize')}
-          >
-            {isMinimized ? <Maximize2 size={16} /> : <Minimize2 size={16} />}
-          </button>
           <button className="code-action-btn close-panel" onClick={onClose} title={t('code.closePanel')}>
             <X size={18} />
           </button>
         </div>
       </div>
 
-      {!isMinimized && activeFile && (
+      {activeFile && (
         <>
           {/* File info bar */}
           <div className="code-file-info">
