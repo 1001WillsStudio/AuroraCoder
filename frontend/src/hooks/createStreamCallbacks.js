@@ -47,7 +47,6 @@ export function createStreamCallbacks({
     if (data.messages) setMessages(data.messages)
     if (data.raw_messages) setRawMessages(data.raw_messages)
     setHistoryRefreshTrigger(prev => prev + 1)
-    onStreamEnd?.()
   }
 
   const onError = (error) => {
