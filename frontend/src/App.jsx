@@ -10,6 +10,7 @@ import WelcomeScreen from './components/WelcomeScreen'
 import SettingsPanel from './components/SettingsPanel'
 import { streamChat, getProviders, cancelConversation, getConversation, getActiveStreams, resumeStream } from './services/api'
 import { isInterruptible, TASK_MARKER_START, TASK_MARKER_END, formatElapsedTime } from './utils/streamUtils'
+import { injectOrphanToolStops, injectToolStopActivity } from './utils/injectToolStop'
 import { isAuthenticated, checkAuth, isAuthRequired } from './utils/auth.js'
 import CodePanel from './components/CodePanel'
 import { createStreamCallbacks } from './hooks/createStreamCallbacks'
@@ -403,50 +404,14 @@ function App() {
     if (cid) cancelConversation(cid)
 
     const terminationMessage = `Tool terminated by user after ${formatElapsedTime(toolInfo.elapsedSeconds)}`
-
-    setRawMessages(prev => {
-      const newRawMessages = [...prev]
-      let lastAssistantIdx = -1
-      for (let i = newRawMessages.length - 1; i >= 0; i--) {
-        if (newRawMessages[i].role === 'assistant' && newRawMessages[i].tool_calls?.length > 0) {
-          lastAssistantIdx = i; break
-        }
-      }
-      if (lastAssistantIdx === -1) return prev
-      const toolCalls = newRawMessages[lastAssistantIdx].tool_calls || []
-      const existingToolResponseIds = new Set()
-      for (let i = lastAssistantIdx + 1; i < newRawMessages.length; i++) {
-        if (newRawMessages[i].role === 'tool' && newRawMessages[i].tool_call_id) {
-          existingToolResponseIds.add(newRawMessages[i].tool_call_id)
-        }
-      }
-      for (const tc of toolCalls) {
-        if (tc.id && !existingToolResponseIds.has(tc.id)) {
-          newRawMessages.push({ role: 'tool', tool_call_id: tc.id, content: terminationMessage })
-        }
-      }
-      return newRawMessages
-    })
-
-    setMessages(prev => {
-      const newMessages = [...prev]
-      const lastIdx = newMessages.length - 1
-      if (lastIdx >= 0 && newMessages[lastIdx].role === 'assistant') {
-        const lastMsg = { ...newMessages[lastIdx] }
-        const activities = [...(lastMsg.activities || [])]
-        activities.push({ type: 'tool_result', tool_call_id: toolInfo.toolCall.id, content: terminationMessage, isTerminated: true })
-        lastMsg.activities = activities
-        const terminationNote = `\n\n---\n**${t('app.toolStopped')}** ${t('app.toolStoppedByUser', { tool: toolInfo.config?.label || toolInfo.toolName, time: formatElapsedTime(toolInfo.elapsedSeconds) })}`
-        lastMsg.content = (lastMsg.content || '') + terminationNote
-        newMessages[lastIdx] = lastMsg
-      }
-      return newMessages
-    })
+    setRawMessages(prev => injectOrphanToolStops(prev, terminationMessage))
+    setMessages(prev => injectToolStopActivity(prev, toolInfo.toolCall.id, terminationMessage,
+      `\n\n---\n**${t('app.toolStopped')}** ${t('app.toolStoppedByUser', { tool: toolInfo.config?.label || toolInfo.toolName, time: formatElapsedTime(toolInfo.elapsedSeconds) })}`))
 
     setIsStreaming(false)
     setPendingInterrupt(null)
     pendingInterruptRef.current = null
-  }, [])
+  }, [t])
 
   const handleRetry = useCallback(() => {
     if (!lastRequest || isStreaming) return
@@ -483,35 +448,24 @@ function App() {
         setIsStreaming(true)
         abortControllerRef.current = new AbortController()
         try {
-          await resumeStream(targetConversationId, {
-            onMessages: (frontendMessages, status, data) => {
-              setMessages(frontendMessages)
-              if (data?.raw_messages) setRawMessages(data.raw_messages)
-              if (data?.new_conversation_id && !continuationNavigatedRef.current.has(data.new_conversation_id)) {
-                continuationNavigatedRef.current.add(data.new_conversation_id)
-                setTimeout(() => { handleLoadConversation(data.new_conversation_id) }, 500)
-              }
+          const callbacks = createStreamCallbacks({
+            setMessages, setRawMessages, setConversationId, setCanContinue,
+            setIsStreaming, setHistoryRefreshTrigger, setSubagentChildIds,
+            handleSend: null, handleLoadConversation,
+            pendingInterruptRef: null, continuationNavigatedRef, abortControllerRef: null,
+            withInterrupt: false,
+            withRetry: false,
+            overrides: {
+              onDone: (data) => {
+                setIsStreaming(false)
+                if (data.messages) setMessages(data.messages)
+                if (data.raw_messages) setRawMessages(data.raw_messages)
+                setCanContinue(!isSubagent && data.status === STATUS.MAX_ITERATIONS_REACHED)
+                setHistoryRefreshTrigger(prev => prev + 1)
+              },
             },
-            onDone: (data) => {
-              setIsStreaming(false)
-              if (data.messages) setMessages(data.messages)
-              if (data.raw_messages) setRawMessages(data.raw_messages)
-              setCanContinue(!isSubagent && data.status === STATUS.MAX_ITERATIONS_REACHED)
-              setHistoryRefreshTrigger(prev => prev + 1)
-            },
-            onError: () => { setIsStreaming(false); setHistoryRefreshTrigger(prev => prev + 1) },
-            onSubagentEvent: (evt) => {
-              if (evt.child_id && evt.tool_call_id) {
-                setSubagentChildIds(prev => ({ ...prev, [evt.tool_call_id]: evt.child_id }))
-              } else if (evt.child_id) {
-                setSubagentChildIds(prev => {
-                  const arr = prev._fallback || []
-                  return { ...prev, _fallback: arr.includes(evt.child_id) ? arr : [...arr, evt.child_id] }
-                })
-              }
-              setHistoryRefreshTrigger(prev => prev + 1)
-            },
-          }, abortControllerRef.current.signal)
+          })
+          await resumeStream(targetConversationId, callbacks, abortControllerRef.current.signal)
         } catch (err) {
           if (err.name !== 'AbortError') console.error('[resume stream]', err)
           setIsStreaming(false)

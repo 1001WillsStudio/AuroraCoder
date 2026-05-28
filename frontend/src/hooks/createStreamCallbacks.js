@@ -13,6 +13,7 @@ export function createStreamCallbacks({
   pendingInterruptRef, continuationNavigatedRef, abortControllerRef,
   withInterrupt = false,
   withRetry = false,
+  overrides = {},
 }) {
   const onMessages = (frontendMessages, _status, data) => {
     setMessages(frontendMessages)
@@ -68,5 +69,10 @@ export function createStreamCallbacks({
     setHistoryRefreshTrigger(prev => prev + 1)
   }
 
-  return { onMessages, onDone, onError, onSubagentEvent }
+  return {
+    onMessages: overrides.onMessages || onMessages,
+    onDone: overrides.onDone || onDone,
+    onError: overrides.onError || onError,
+    onSubagentEvent: overrides.onSubagentEvent || onSubagentEvent,
+  }
 }
