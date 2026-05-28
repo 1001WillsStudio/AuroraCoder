@@ -596,8 +596,6 @@ async def _subscriber_sse(
             try:
                 if await request.is_disconnected():
                     break
-                if stream.finished:
-                    break
                 event = await asyncio.wait_for(queue.get(), timeout=2.0)
                 if event is None:
                     break

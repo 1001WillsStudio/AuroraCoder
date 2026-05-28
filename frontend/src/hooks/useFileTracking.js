@@ -1,5 +1,15 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { CODE_TOOLS, FILE_SYSTEM_TOOLS } from '../utils/streamUtils'
+
+/**
+ * IMPORTANT — closedFiles closure trap:
+ * fetchFileDiffs is an async useCallback whose closure captures
+ * closedFiles at definition time.  When the code‑result effect fires
+ * it first calls setClosedFiles(new Set()) and then fetchFileDiffs() —
+ * but fetchFileDiffs still has the *previous* closedFiles.  We MUST
+ * read closedFiles through a ref so the async handler always sees the
+ * latest state that was applied before the HTTP response arrives.
+ */
 import { uploadWorkspace } from '../services/api'
 
 /**
@@ -10,6 +20,8 @@ export function useFileTracking(conversationId, messages, isStreaming) {
   const [editedFiles, setEditedFiles] = useState([])
   const [activeFileId, setActiveFileId] = useState(null)
   const [closedFiles, setClosedFiles] = useState(new Set())
+  const closedFilesRef = useRef(closedFiles)
+  closedFilesRef.current = closedFiles  // keep in sync on every render
   const [isLoadingFiles, setIsLoadingFiles] = useState(false)
   const [showCodePanel, setShowCodePanel] = useState(false)
   const [fileTreeRefreshTrigger, setFileTreeRefreshTrigger] = useState(0)
@@ -34,14 +46,16 @@ export function useFileTracking(conversationId, messages, isStreaming) {
       )
       const data = await response.json()
 
+      const cf = closedFilesRef.current  // ALWAYS latest — see comment at top of file
+
       setEditedFiles(prevFiles => {
-        const existingFiles = prevFiles.filter(f => !closedFiles.has(f.id))
+        const existingFiles = prevFiles.filter(f => !cf.has(f.id))
 
         if (!data.files || data.files.length === 0) {
           return existingFiles
         }
 
-        const apiFiles = data.files.filter(f => !closedFiles.has(f.id))
+        const apiFiles = data.files.filter(f => !cf.has(f.id))
         const apiFilesByPath = new Map(apiFiles.map(f => [f.path, f]))
 
         const mergedFiles = existingFiles.map(existingFile => {
@@ -61,7 +75,7 @@ export function useFileTracking(conversationId, messages, isStreaming) {
       })
 
       setActiveFileId(prevActiveId => {
-        if (!prevActiveId && data.files?.[0] && !closedFiles.has(data.files[0].id)) {
+        if (!prevActiveId && data.files?.[0] && !cf.has(data.files[0].id)) {
           return data.files[0].id
         }
         return prevActiveId
@@ -72,7 +86,7 @@ export function useFileTracking(conversationId, messages, isStreaming) {
     } finally {
       setIsLoadingFiles(false)
     }
-  }, [conversationId, closedFiles])
+  }, [conversationId])  // closedFiles read via ref — always latest
 
   // ── Count tool results for code tools and FS tools ─────────────────────
 
