@@ -1,7 +1,6 @@
 import React, { useState, useMemo, useRef, useLayoutEffect } from 'react'
 import { 
-  X, FileCode, Plus, Minus, Code2, FolderOpen, 
-  RefreshCw
+  X, FileCode, Plus, Minus, Code2, RefreshCw
 } from 'lucide-react'
 import useLanguage from '../hooks/useLanguage'
 
@@ -58,38 +57,6 @@ function CodePanel({ files, activeFileId, onFileSelect, onFileClose, onClose, on
     })
     return () => cancelAnimationFrame(raf)
   }, [activeFile])
-  if (files.length === 0) {
-    return (
-    <div className="code-panel">
-        <div className="code-panel-header">
-          <div className="code-tabs">
-            <span className="code-tab active" style={{ cursor: 'default' }}>
-              <Code2 size={14} />
-              {t('code.codeView')}
-            </span>
-          </div>
-          <div className="code-panel-actions">
-            <button 
-              className="code-action-btn" 
-              onClick={onRefresh}
-              disabled={isLoading}
-              title={t('code.refresh')}
-            >
-              <RefreshCw size={16} className={isLoading ? 'spin' : ''} />
-            </button>
-            <button className="code-action-btn close-panel" onClick={onClose} title={t('code.closePanel')}>
-              <X size={18} />
-            </button>
-          </div>
-        </div>
-        <div className="code-empty-state">
-          <FolderOpen size={48} />
-          <h3>{t('code.noFilesEdited')}</h3>
-          <p>{t('code.noFilesHint')}</p>
-        </div>
-      </div>
-    )
-  }
 
   return (
     <div className="code-panel">
