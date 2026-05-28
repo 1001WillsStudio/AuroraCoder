@@ -571,13 +571,10 @@ function App() {
                   }
                 />
               ))}
-              {isStreaming && sseReceived && (messages.length === 0 || messages[messages.length - 1].role !== 'assistant') && (
-                <ChatMessage
-                  message={{ role: 'assistant', content: '' }}
-                  isLatest={true}
-                  isStreaming={true}
-                  messagesLength={messages.length + 1}
-                />
+              {isStreaming && sseReceived && (
+                <div className="typing-indicator">
+                  <span></span><span></span><span></span>
+                </div>
               )}
               <div ref={messagesEndRef} />
             </div>
