@@ -332,3 +332,8 @@ class ConversationStore:
         if fe_path.exists():
             fe_path.unlink()
         logger.info(f"[store] Deleted conversation {conversation_id[:8]}...")
+
+
+# ── Module-level singleton ──────────────────────────────────────────────────
+
+store = ConversationStore()

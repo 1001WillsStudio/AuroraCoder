@@ -17,6 +17,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import subprocess
 from threading import Lock
 from typing import Any, Dict, List, Optional
 
@@ -161,13 +162,42 @@ def get_api_key(provider_id: str) -> str:
     if settings_val:
         return settings_val
 
-    # Fall back to environment variable
+    # Fall back to environment variable (supports _API_KEY and GitHub's _TOKEN convention)
     env_var = f"{provider_id.upper()}_API_KEY"
     env_val = os.environ.get(env_var, "")
     if env_val:
         return env_val
 
+    # Special case: GITHUB_TOKEN
+    if provider_id.lower() == "github":
+        github_token = os.environ.get("GITHUB_TOKEN", "")
+        if github_token:
+            return github_token
+
     return ""
+
+
+# ── GitHub auth ─────────────────────────────────────────────────────────────
+
+def configure_github_auth():
+    """If a GitHub PAT is saved in settings, configure git so that push/clone
+    to github.com works without prompting for credentials.
+
+    Uses the same url.insteadOf trick as docker/entrypoint.sh.
+    Safe to call repeatedly — git config is idempotent."""
+    token = get_api_key("github")
+    if not token:
+        return
+    try:
+        subprocess.run(
+            ["git", "config", "--global",
+             f"url.https://oauth2:{token}@github.com/.insteadOf",
+             "https://github.com/"],
+            check=True, capture_output=True, text=True, timeout=10,
+        )
+        logger.info("GitHub auth: configured for all github.com repos (via settings).")
+    except Exception as exc:
+        logger.warning(f"GitHub auth: git config failed — {exc}")
 
 
 def get_custom_providers() -> List[Dict[str, Any]]:

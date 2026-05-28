@@ -70,6 +70,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
         other.web_secondary = other.web_secondary || {}
         other.agent = other.agent || {}
         other.google_search = other.google_search || {}
+        other.github = other.github || {}
         setSettings({ ...s, other })
         setProviders(p.providers || [])
       } catch {
@@ -497,6 +498,33 @@ export default function SettingsPanel({ isOpen, onClose }) {
                       value={other.google_search?.cse_id || ''}
                       onChange={e => setOther('google_search', 'cse_id', e.target.value)}
 placeholder="abc123..."
+                    />
+                  </div>
+                </div>
+              </section>
+
+              {/* ── GitHub Personal Access Token ────────────────────── */}
+              <section className="settings-section">
+                <h3 className="settings-section-title">
+                  🐙 GitHub Personal Access Token
+                </h3>
+                <p className="settings-section-desc">
+                  For git push operations. Classic PAT (<code>ghp_xxx</code>) or fine-grained PAT (<code>github_pat_xxx</code>).
+                  <br />
+                  Required scopes: <code>repo</code> (private repos) or <code>public_repo</code> (public only).
+                  <br />
+                  <a href="https://github.com/settings/tokens" target="_blank" rel="noopener"
+                    style={{ color: 'var(--accent)', fontSize: 12 }}>
+                    Create a token →
+                  </a>
+                </p>
+                <div className="settings-field-row">
+                  <div className="settings-field-col settings-field-col-wide">
+                    <label>Personal Access Token</label>
+                    <input className="settings-input" type="password"
+                      value={apiKeys['github'] || ''}
+                      onChange={e => setApiKey('github', e.target.value)}
+                      placeholder={apiKeysConfigured['github'] ? 'GitHub token has been set — enter a new token to override' : 'ghp_… or github_pat_…'}
                     />
                   </div>
                 </div>
