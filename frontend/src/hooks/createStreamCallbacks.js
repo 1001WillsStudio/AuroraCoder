@@ -15,6 +15,8 @@ export function createStreamCallbacks({
   withRetry = false,
   overrides = {},
   onFirstSse = null,
+  onStreamEnd = null,
+  onInterruptFired = null,
 }) {
   let _firstMessage = true
   const onMessages = (frontendMessages, _status, data) => {
@@ -26,6 +28,7 @@ export function createStreamCallbacks({
         const msg = pendingInterruptRef.current.message
         const raw = data.raw_messages
         pendingInterruptRef.current = null
+        onInterruptFired?.()
         if (abortControllerRef?.current) abortControllerRef.current.abort()
         setTimeout(() => handleSend?.(raw, msg), 50)
       }
@@ -44,6 +47,7 @@ export function createStreamCallbacks({
     if (data.messages) setMessages(data.messages)
     if (data.raw_messages) setRawMessages(data.raw_messages)
     setHistoryRefreshTrigger(prev => prev + 1)
+    onStreamEnd?.()
   }
 
   const onError = (error) => {
@@ -58,6 +62,7 @@ export function createStreamCallbacks({
     }
     setIsStreaming(false)
     setHistoryRefreshTrigger(prev => prev + 1)
+    onStreamEnd?.()
   }
 
   const onSubagentEvent = (evt) => {

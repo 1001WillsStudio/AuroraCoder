@@ -243,6 +243,8 @@ function App() {
         withInterrupt: true,
         withRetry: true,
         onFirstSse: () => setSseReceived(true),
+        onStreamEnd: () => { setPendingInterrupt(null); pendingInterruptRef.current = null },
+        onInterruptFired: () => setPendingInterrupt(null),
       })
       await streamChat(apiMessage, conversationId, callbacks, abortControllerRef.current.signal, messagesToSend, selectedProvider, options)
     } catch (error) {
@@ -462,6 +464,7 @@ function App() {
             withInterrupt: false,
             withRetry: false,
             onFirstSse: () => setSseReceived(true),
+            onStreamEnd: () => { setPendingInterrupt(null); pendingInterruptRef.current = null },
             overrides: {
               onDone: (data) => {
                 setIsStreaming(false)
