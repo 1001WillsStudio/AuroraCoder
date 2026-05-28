@@ -1,4 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
+import { STATUS } from './constants'
+import { useAutoScroll } from './hooks/useAutoScroll'
 import { RotateCcw, X, ArrowDown } from 'lucide-react'
 import ChatMessage from './components/ChatMessage'
 import ChatInput from './components/ChatInput'
@@ -10,6 +12,7 @@ import WelcomeScreen from './components/WelcomeScreen'
 import SettingsPanel from './components/SettingsPanel'
 import { streamChat, getProviders, cancelConversation, getConversation, getActiveStreams, resumeStream } from './services/api'
 import { isInterruptible, TASK_MARKER_START, TASK_MARKER_END, formatElapsedTime } from './utils/streamUtils'
+import { createStreamCallbacks } from './hooks/createStreamCallbacks'
 import { useFileTracking } from './hooks/useFileTracking'
 import useLanguage from './hooks/useLanguage'
 
@@ -78,7 +81,6 @@ function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [forkWarning, setForkWarning] = useState(null)
   const messagesEndRef = useRef(null)
-  const chatContainerRef = useRef(null)
   const inputRef = useRef(null)
   const abortControllerRef = useRef(null)
   const pendingInterruptRef = useRef(null)
@@ -174,49 +176,7 @@ function App() {
     }
   }, [showTaskInstructions])
 
-  const [isUserScrolledUp, setIsUserScrolledUp] = useState(false)
-  const [showScrollButton, setShowScrollButton] = useState(false)
-
-  const scrollToBottom = useCallback((smooth = true) => {
-    if (chatContainerRef.current) {
-      chatContainerRef.current.scrollTo({
-        top: chatContainerRef.current.scrollHeight,
-        behavior: smooth ? 'smooth' : 'auto'
-      })
-    }
-  }, [])
-
-  // Track user scroll position on the chat container
-  useEffect(() => {
-    const container = chatContainerRef.current
-    if (!container) return
-    const handleScroll = () => {
-      const threshold = 100
-      const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
-      const scrolledUp = distanceFromBottom > threshold
-      setIsUserScrolledUp(scrolledUp)
-      setShowScrollButton(scrolledUp && isStreaming)
-    }
-    container.addEventListener('scroll', handleScroll, { passive: true })
-    return () => container.removeEventListener('scroll', handleScroll)
-  }, [isStreaming])
-
-  // Auto-scroll when messages update, but only if user hasn't scrolled up
-  useEffect(() => {
-    if (!isUserScrolledUp) {
-      scrollToBottom()
-    }
-  }, [messages, isUserScrolledUp, scrollToBottom])
-
-  // When streaming state changes, force scroll to bottom and reset state
-  useEffect(() => {
-    if (isStreaming) {
-      setIsUserScrolledUp(false)
-      scrollToBottom(false)
-    } else {
-      setShowScrollButton(false)
-    }
-  }, [isStreaming, scrollToBottom])
+  const { chatContainerRef, scrollToBottom, isUserScrolledUp, setIsUserScrolledUp, showScrollButton } = useAutoScroll(messages, isStreaming)
 
   // ── Handlers ────────────────────────────────────────────────────────────
 
@@ -277,58 +237,15 @@ function App() {
     log('about to call streamChat()')
     try {
       abortControllerRef.current = new AbortController()
-      await streamChat(apiMessage, conversationId, {
-        onMessages: (frontendMessages, status, data) => {
-          setMessages(frontendMessages)
-          if (data?.raw_messages) {
-            setRawMessages(data.raw_messages)
-            if (pendingInterruptRef.current && isInterruptible(data.raw_messages)) {
-              const interruptMessage = pendingInterruptRef.current.message
-              const messagesForInterrupt = data.raw_messages
-              setPendingInterrupt(null)
-              pendingInterruptRef.current = null
-              if (abortControllerRef.current) abortControllerRef.current.abort()
-              setTimeout(() => { handleSend(messagesForInterrupt, interruptMessage) }, 50)
-            }
-          }
-          if (data?.conversation_id) setConversationId(data.conversation_id)
-          if (data?.new_conversation_id && !continuationNavigatedRef.current.has(data.new_conversation_id)) {
-            continuationNavigatedRef.current.add(data.new_conversation_id)
-            setTimeout(() => { handleLoadConversation(data.new_conversation_id) }, 500)
-          }
-        },
-        onDone: (data) => {
-          setConversationId(data.conversation_id)
-          setCanContinue(data.status === 'max_iterations_reached')
-          setIsStreaming(false)
-          if (data.messages) setMessages(data.messages)
-          if (data.raw_messages) setRawMessages(data.raw_messages)
-          setHistoryRefreshTrigger(prev => prev + 1)
-        },
-        onError: (error) => {
-          const isTimeout = error.message?.toLowerCase().includes('timeout') ||
-            error.type === 'TimeoutError' || error.message?.toLowerCase().includes('timed out') ||
-            error.message?.toLowerCase().includes('504') || error.message?.toLowerCase().includes('gateway timeout')
-          setMessages(prev => [...prev, {
-            role: 'assistant', content: `Error: ${error.message}`,
-            isError: true, isTimeout, canRetry: true
-          }])
-          setIsStreaming(false)
-          setHistoryRefreshTrigger(prev => prev + 1)
-        },
-        onSubagentEvent: (evt) => {
-          if (evt.child_id && evt.tool_call_id) {
-            setSubagentChildIds(prev => ({ ...prev, [evt.tool_call_id]: evt.child_id }))
-          } else if (evt.child_id) {
-            // Fallback: use index-based mapping for events without tool_call_id
-            setSubagentChildIds(prev => {
-              const arr = prev._fallback || []
-              return { ...prev, _fallback: arr.includes(evt.child_id) ? arr : [...arr, evt.child_id] }
-            })
-          }
-          setHistoryRefreshTrigger(prev => prev + 1)
-        }
-      }, abortControllerRef.current.signal, messagesToSend, selectedProvider, options)
+      const callbacks = createStreamCallbacks({
+        setMessages, setRawMessages, setConversationId, setCanContinue,
+        setIsStreaming, setHistoryRefreshTrigger, setSubagentChildIds,
+        handleSend, handleLoadConversation,
+        pendingInterruptRef, continuationNavigatedRef, abortControllerRef,
+        withInterrupt: true,
+        withRetry: true,
+      })
+      await streamChat(apiMessage, conversationId, callbacks, abortControllerRef.current.signal, messagesToSend, selectedProvider, options)
     } catch (error) {
       if (error.name !== 'AbortError') console.error('Chat error:', error)
       setIsStreaming(false)
@@ -354,39 +271,15 @@ function App() {
     setCanContinue(false)
     try {
       abortControllerRef.current = new AbortController()
-      await streamChat(null, conversationId, {
-        onMessages: (frontendMessages, status, data) => {
-          setMessages(frontendMessages)
-          if (data?.raw_messages) setRawMessages(data.raw_messages)
-          if (data?.new_conversation_id && !continuationNavigatedRef.current.has(data.new_conversation_id)) {
-            continuationNavigatedRef.current.add(data.new_conversation_id)
-            setTimeout(() => { handleLoadConversation(data.new_conversation_id) }, 500)
-          }
-        },
-        onDone: (data) => {
-          setConversationId(data.conversation_id)
-          setCanContinue(data.status === 'max_iterations_reached')
-          setIsStreaming(false)
-          if (data.messages) setMessages(data.messages)
-          if (data.raw_messages) setRawMessages(data.raw_messages)
-          setHistoryRefreshTrigger(prev => prev + 1)
-        },
-        onError: () => {
-          setIsStreaming(false)
-          setHistoryRefreshTrigger(prev => prev + 1)
-        },
-        onSubagentEvent: (evt) => {
-          if (evt.child_id && evt.tool_call_id) {
-            setSubagentChildIds(prev => ({ ...prev, [evt.tool_call_id]: evt.child_id }))
-          } else if (evt.child_id) {
-            setSubagentChildIds(prev => {
-              const arr = prev._fallback || []
-              return { ...prev, _fallback: arr.includes(evt.child_id) ? arr : [...arr, evt.child_id] }
-            })
-          }
-          setHistoryRefreshTrigger(prev => prev + 1)
-        }
-      }, abortControllerRef.current.signal, rawMessages, selectedProvider)
+      const callbacks = createStreamCallbacks({
+        setMessages, setRawMessages, setConversationId, setCanContinue,
+        setIsStreaming, setHistoryRefreshTrigger, setSubagentChildIds,
+        handleSend: null, handleLoadConversation,
+        pendingInterruptRef: null, continuationNavigatedRef, abortControllerRef: null,
+        withInterrupt: false,
+        withRetry: false,
+      })
+      await streamChat(null, conversationId, callbacks, abortControllerRef.current.signal, rawMessages, selectedProvider)
     } catch (error) {
       if (error.name !== 'AbortError') console.error('Continue error:', error)
       setIsStreaming(false)
@@ -582,7 +475,7 @@ function App() {
       setConversationId(targetConversationId)
       setRawMessages(conv.messages || [])
       setMessages(conv.frontend_messages || [])
-      setCanContinue(!isSubagent && conv.status === 'max_iterations_reached')
+      setCanContinue(!isSubagent && conv.status === STATUS.MAX_ITERATIONS_REACHED)
       setIsStreaming(false)
       setActiveConvoWarning(false)
       setEditedFiles([])
@@ -591,7 +484,7 @@ function App() {
       setParentConversationId(isSubagent ? conv.parent_id : null)
       const draft = isSubagent ? '' : (draftInputsRef.current.get(targetConversationId) || '')
       setInputValue(draft)
-      if (conv.status === 'running') {
+      if (conv.status === STATUS.RUNNING) {
         setIsStreaming(true)
         abortControllerRef.current = new AbortController()
         try {
@@ -608,7 +501,7 @@ function App() {
               setIsStreaming(false)
               if (data.messages) setMessages(data.messages)
               if (data.raw_messages) setRawMessages(data.raw_messages)
-              setCanContinue(!isSubagent && data.status === 'max_iterations_reached')
+              setCanContinue(!isSubagent && data.status === STATUS.MAX_ITERATIONS_REACHED)
               setHistoryRefreshTrigger(prev => prev + 1)
             },
             onError: () => { setIsStreaming(false); setHistoryRefreshTrigger(prev => prev + 1) },
