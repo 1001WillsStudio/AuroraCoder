@@ -5,13 +5,13 @@ import { RotateCcw, X, ArrowDown } from 'lucide-react'
 import ChatMessage from './components/ChatMessage'
 import ChatInput from './components/ChatInput'
 import LoginScreen from './components/LoginScreen'
-import { isAuthenticated, checkAuth, isAuthRequired } from './utils/auth.js'
-import CodePanel from './components/CodePanel'
 import Sidebar from './components/Sidebar'
 import WelcomeScreen from './components/WelcomeScreen'
 import SettingsPanel from './components/SettingsPanel'
 import { streamChat, getProviders, cancelConversation, getConversation, getActiveStreams, resumeStream } from './services/api'
 import { isInterruptible, TASK_MARKER_START, TASK_MARKER_END, formatElapsedTime } from './utils/streamUtils'
+import { isAuthenticated, checkAuth, isAuthRequired } from './utils/auth.js'
+import CodePanel from './components/CodePanel'
 import { createStreamCallbacks } from './hooks/createStreamCallbacks'
 import { useFileTracking } from './hooks/useFileTracking'
 import useLanguage from './hooks/useLanguage'
@@ -25,6 +25,22 @@ function App() {
     required: false,
     authenticated: false,
   })
+
+  // ── Auth check (runs once) ──
+  useEffect(() => {
+    async function check() {
+      const required = isAuthRequired()
+      if (!required) { setAuthState({ checked: true, required: false, authenticated: true }); return }
+      let authed = false
+      try { authed = await checkAuth() } catch { authed = false }
+      setAuthState({ checked: true, required: true, authenticated: authed })
+    }
+    check()
+  }, [])
+
+  const handleLoginSuccess = useCallback(() => {
+    setAuthState({ checked: true, required: true, authenticated: true })
+  }, [])
 
   const [messages, setMessages] = useState([])
   const [rawMessages, setRawMessages] = useState([])
@@ -90,27 +106,6 @@ function App() {
 
   // ── Effects ─────────────────────────────────────────────────────────────
 
-  // ── Auth check (runs before everything else) ────────────────────────
-  useEffect(() => {
-    let cancelled = false
-    async function check() {
-      const needed = await isAuthRequired()
-      if (cancelled) return
-      if (!needed) {
-        setAuthState({ checked: true, required: false, authenticated: true })
-        return
-      }
-      const authed = await checkAuth()
-      if (cancelled) return
-      setAuthState({ checked: true, required: true, authenticated: authed })
-    }
-    check()
-    return () => { cancelled = true }
-  }, [])
-
-  const handleLoginSuccess = useCallback(() => {
-    setAuthState(prev => ({ ...prev, authenticated: true }))
-  }, [])
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
@@ -615,9 +610,6 @@ function App() {
                   }
                 />
               ))}
-              {/* Thinking bubble: show typing dots whenever streaming but no
-                  assistant message exists yet.  ChatMessage already knows how
-                  to render the three-dot indicator when isStreaming && !hasContent. */}
               {isStreaming && (messages.length === 0 || messages[messages.length - 1].role !== 'assistant') && (
                 <ChatMessage
                   message={{ role: 'assistant', content: '' }}
