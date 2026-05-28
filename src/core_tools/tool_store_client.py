@@ -45,17 +45,16 @@ def get_tool_store_tool():
     return tool_store_tool
 
 
-# Wrapper — intercept close + skill execute locally; everything else passes through
+# Wrapper — intercept close + skill execute/info locally; everything else passes through
 def tool_store_tool(**kwargs):
     """ThinkWithTool wrapper around ToolStore's native tool.
 
     ``action="close"`` is intercepted locally for context-management
     (it never reaches the ToolStore server).
 
-    ``action="execute"`` for skills is redirected to ``info`` — the
-    agent already has native tools (read_file, list_directory,
-    run_terminal_command) to interact with bundled files, and ``info``
-    exposes the full body + ``skill_dir`` path for discovery.
+    ``action="execute"`` and ``action="info"`` for skills return a short
+    acknowledgement — the full body lives in the ``<====TOOLSTORE_START/END>``
+    display block managed by the toolset context manager.
     """
     action = kwargs.get("action", "")
     tool_name = kwargs.get("tool_name", "")
@@ -63,11 +62,28 @@ def tool_store_tool(**kwargs):
     if action == "close":
         return f"Closed toolset '{tool_name}' from the tool store display."
 
-    # Redirect skill execute to info — the agent uses native tools for
-    # scripts/references/files; the body + skill_dir from info is enough.
-    if action == "execute" and tool_name.startswith("skill:"):
+    # Redirect skill execute + info — body is in the toolstore display block.
+    if action in ("execute", "info") and tool_name.startswith("skill:"):
         skill_name = tool_name[len("skill:"):]
-        return _raw_tool_store_tool(action="info", tool_name=tool_name)
+        raw = _raw_tool_store_tool(action="info", tool_name=tool_name)
+        try:
+            import json as _json
+            data = _json.loads(raw) if isinstance(raw, str) else raw
+        except Exception:
+            data = {}
+        desc = data.get("description", "")
+        skill_dir = data.get("skill_dir", "")
+        files = data.get("skill_files_list", [])
+        lines = [f"Skill '{skill_name}' loaded — see toolstore display below."]
+        if desc:
+            lines.append(f"Description: {desc}")
+        if skill_dir:
+            lines.append(f"Location: {skill_dir}")
+        if files:
+            names = ", ".join(files[:5])
+            suffix = f" (+{len(files) - 5} more)" if len(files) > 5 else ""
+            lines.append(f"Bundled files: {names}{suffix}")
+        return "\n".join(lines)
 
     return _raw_tool_store_tool(**kwargs)
 

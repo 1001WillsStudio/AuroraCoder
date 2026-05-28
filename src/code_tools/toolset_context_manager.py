@@ -84,12 +84,12 @@ def generate_toolstore_display(messages: List[Dict]) -> str:
     if not open_tools:
         return ""
 
-    # Lazy import — avoids circular dependency at module load time
-    from ..core_tools.tool_store_client import tool_store_tool
+    # Use raw tool directly — the wrapper returns short messages for skills
+    from toolstore.native_tool import tool_store_tool as _raw_ts
 
     sections: List[str] = []
     for name in sorted(open_tools):
-        raw = tool_store_tool(action="info", tool_name=name)
+        raw = _raw_ts(action="info", tool_name=name)
         try:
             tool = json.loads(raw) if isinstance(raw, str) else raw
         except (json.JSONDecodeError, TypeError):
@@ -188,18 +188,16 @@ def _fmt_mcp(tool: Dict) -> str:
 
 
 def _fmt_skill(tool: Dict) -> str:
-    """Skill: summary line only — full body is in the info JSON response."""
-    desc = tool.get("description", "")
-    skill_dir = tool.get("skill_dir", "")
+    """Skill: full SKILL.md body — the tool response is just a short ack."""
+    body = tool.get("body", "") or tool.get("description", "")
     files = tool.get("skill_files_list", [])
 
-    lines = [desc.strip()] if desc.strip() else []
-    if skill_dir:
-        lines.append(f"Location: {skill_dir}")
+    lines = [body.strip()] if body.strip() else [tool.get("description", "")]
     if files:
-        names = ", ".join(files[:10])
-        suffix = f" (+{len(files) - 10} more)" if len(files) > 10 else ""
-        lines.append(f"Bundled: {names}{suffix}")
+        lines.append("")
+        lines.append("Bundled files:")
+        for fname in files:
+            lines.append(f"  {fname}")
 
     return "\n".join(lines)
 
@@ -271,11 +269,11 @@ class ToolsetContextTracker(ContextTracker):
         if not state:
             return ""
 
-        from ..core_tools.tool_store_client import tool_store_tool
+        from toolstore.native_tool import tool_store_tool as _raw_ts
 
         sections: List[str] = []
         for name in sorted(state):
-            raw = tool_store_tool(action="info", tool_name=name)
+            raw = _raw_ts(action="info", tool_name=name)
             try:
                 tool = json.loads(raw) if isinstance(raw, str) else raw
             except (json.JSONDecodeError, TypeError):
