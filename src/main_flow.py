@@ -170,6 +170,14 @@ def generate_chat_responses_stream_native(
             api_kwargs["extra_body"] = extra_body
         
         # ── Call the LLM ────────────────────────────────────────────────
+        # Yield an immediate event so the SSE stream isn't silent for the
+        # entire LLM TTFB (5+ seconds on large contexts).  Without this the
+        # frontend reader.read() blocks with zero data and the UI looks frozen.
+        yield {
+            "messages": messages,
+            "status": "running",
+            "provider": provider_id
+        }
         t_api_start = time.time()
         completion_stream = client.chat.completions.create(**api_kwargs)
         
