@@ -15,7 +15,7 @@ import json
 import re
 from typing import Dict, List, Set
 
-from .context_tracker import ContextTracker, register
+from .context_tracker import ContextTracker
 from ..config import CONTEXT_DISPLAY_WARN_CHARS, CONTEXT_DISPLAY_MAX_ITEMS
 
 TOOLSTORE_START = "<====TOOLSTORE_START====>"
@@ -252,7 +252,7 @@ def should_trigger_toolstore_interpreter(tool_name: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# ContextTracker wrapper — auto-registered
+# ContextTracker implementation
 # ---------------------------------------------------------------------------
 
 class ToolsetContextTracker(ContextTracker):
@@ -299,4 +299,3 @@ class ToolsetContextTracker(ContextTracker):
         return f"{self.block_start}\n{combined}{hint}\n{self.block_end}"
 
 
-register(ToolsetContextTracker())

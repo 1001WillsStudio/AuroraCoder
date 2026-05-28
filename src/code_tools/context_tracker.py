@@ -10,7 +10,7 @@ Each ContextTracker:
 This replaces the hardcoded ``code_tool_called`` / ``toolstore_tool_called``
 booleans with a generic registry.  Adding a new living-state context
 (browser tabs, API connections, etc.) means implementing a ContextTracker
-and registering it — zero changes to ``tool_executor.py`` or ``main_flow.py``.
+and registering it — zero changes to ``tool_executor.py``.
 
 See ``README.md`` §1 "Living Tool State" for the design philosophy.
 """

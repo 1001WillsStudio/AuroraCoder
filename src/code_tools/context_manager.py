@@ -11,7 +11,7 @@ import re
 from typing import Dict, List, Set
 
 from .code_interpreter import code_interpreter, CODE_INTERPRETER_START, CODE_INTERPRETER_END
-from .context_tracker import ContextTracker, register
+from .context_tracker import ContextTracker
 from ..code_sandbox import WORKSPACE
 from ..config import CONTEXT_DISPLAY_WARN_CHARS, CONTEXT_DISPLAY_MAX_ITEMS
 
@@ -163,7 +163,7 @@ def generate_consolidated_interpreter_display(messages: List[Dict]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# ContextTracker wrapper — auto-registered
+# ContextTracker implementation
 # ---------------------------------------------------------------------------
 
 class FileContextTracker(ContextTracker):
@@ -202,4 +202,3 @@ class FileContextTracker(ContextTracker):
         return display.replace(self.block_end, notes + "\n" + self.block_end)
 
 
-register(FileContextTracker())

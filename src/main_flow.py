@@ -24,8 +24,13 @@ from .config import (
 )
 from .providers import provider_manager
 from .code_tools.context_tracker import get_all as get_context_trackers
-from .code_tools import context_manager as _  # side-effect: register FileContextTracker
-from .code_tools import toolset_context_manager as _  # side-effect: register ToolsetContextTracker
+from .code_tools.context_tracker import register
+from .code_tools.context_manager import FileContextTracker
+from .code_tools.toolset_context_manager import ToolsetContextTracker
+
+# ── Register all Living Tool State trackers ──────────────────────────
+register(FileContextTracker())
+register(ToolsetContextTracker())
 from .tool_executor import execute_tool_calls
 
 _main_logger = logging.getLogger(__name__)
