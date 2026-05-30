@@ -437,7 +437,7 @@ function App() {
   }, [lastRequest, isStreaming])
 
   const handleLoadConversation = useCallback(async (targetConversationId) => {
-    if (inputValue.trim()) draftInputsRef.current.set(conversationId ?? '__new__', inputValue)
+    if (inputValueRef.current.trim()) draftInputsRef.current.set(conversationId ?? '__new__', inputValueRef.current)
     if (abortControllerRef.current) {
       abortControllerRef.current.abort()
       abortControllerRef.current = null
@@ -491,7 +491,7 @@ function App() {
     } catch (e) {
       console.error('[handleLoadConversation] Failed:', e)
     }
-  }, [conversationId, inputValue])
+  }, [conversationId])
 
   // ── Render ──────────────────────────────────────────────────────────────
 
