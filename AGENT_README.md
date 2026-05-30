@@ -1,6 +1,6 @@
-# AuroraCoder — Agent Knowledge Base
+# Aurora Coder — Agent Knowledge Base
 
-**AuroraCoder** is an advanced AI agent framework designed for complex coding and research tasks. It leverages Native Tool Calling (OpenAI function calling format) with extended thinking/reasoning capabilities to provide a robust and precise interface for agentic operations.
+**Aurora Coder** is an advanced AI coding agent framework designed for complex coding and research tasks. It leverages native OpenAI function calling with extended thinking/reasoning capabilities to provide a robust and precise interface for agentic operations.
 
 > **Note to AI agents**: This document gives you a complete understanding of the codebase in a single read — it replaces exploratory `read_file` on every source file.
 
@@ -15,19 +15,41 @@ This project implements a **Code Agent** architecture with a strict separation o
 ```
 src/                          ← Stateless agent loop (messages in → messages out)
     main_flow.py              ← Pure: takes messages, streams responses, yields statuses
+    tool_executor.py          ← Parallel/serial tool execution dispatch
     tool_definitions.py       ← Pure: tool schemas + dispatch, all return strings
+    training_log.py           ← Daily JSONL training data logging
     All tools are stateless   ← No conversation-store access, no direct persistence
 
 gateway/         ← Middleware between frontend and backend (the "dirty work")
-    api.py                    ← SSE proxy + file display endpoints (port 8081, internal)
+    api.py                    ← FastAPI app factory + CORS (port 8081, internal)
+    routes.py                 ← SSE proxy, chat/continue endpoints, file display
+    streaming.py              ← SSE stream management, event queues, keepalive
     conversation_store.py     ← File-backed store (thread-safe, atomic writes)
+    settings_store.py         ← Provider & model settings persistence
+    provider_registry.py      ← Dynamic provider registration and listing
     workspace.py              ← File diff, tree, upload/delete/export utilities
 
 frontend/                     ← UI + conversation ownership
     App.jsx                   ← React SPA, owns conversation state
+    components/               ← 11 components (ChatInput, ChatMessage, CodePanel,
+                                 ConversationHistory, FileTree, LoginScreen,
+                                 SettingsPanel, Sidebar, ThinkingIndicator,
+                                 ToolActivity, WelcomeScreen)
+    hooks/                    ← useAutoScroll, useFileTracking, useLanguage,
+                                 createStreamCallbacks
+    services/api.js           ← SSE streaming client
+    utils/                    ← auth, injectToolStop, streamUtils
+    i18n/                     ← translations.js (27KB), LanguageContext
+    styles/                   ← 12 domain CSS files (tokens, layout, messages,
+                                 sidebar, settings, tool-activity, code-panel,
+                                 file-tree, input, welcome, reset, responsive)
+mobile/                       ← Standalone vanilla JS mobile web app (api.js,
+                                 app.js, auth.js, chat.js, mobile.css)
+launcher/                     ← One-click Go launcher (main.go, docker.go,
+                                 extract.go, progress.go, build.sh)
 ```
 
-**The rule**: `src/` never touches the conversation store. It just processes messages and returns signals. The proxy (port 8081, internal) intercepts SSE events and handles all persistence, conversation creation, status management, and context-window monitoring. This keeps the agent loop testable, swappable, and dead-simple.
+**The rule**: `src/` never touches the conversation store. It just processes messages and returns signals. The gateway layer intercepts SSE events and handles all persistence, conversation creation, status management, and context-window monitoring. This keeps the agent loop testable, swappable, and dead-simple.
 
 ### Capabilities
 
@@ -36,20 +58,26 @@ frontend/                     ← UI + conversation ownership
 - **Native Tool Calling**: Structured, reliable OpenAI function calling format.
 - **Extended Thinking**: Supports models with reasoning/thinking capabilities (e.g., DeepSeek, GLM).
 - **Docker Sandbox**: Runs in a container with a fixed `/workspace` directory and pre-built conda environment.
+- **VNC Desktop**: Xvfb + fluxbox + noVNC on port 6080 for GUI applications.
+- **Sub-Agent Delegation**: Delegates tasks to read-only child agents via HTTP.
+- **ToolStore Integration**: Universal tool discovery — search, inspect, and invoke tools from MCP servers, local skills, and tool packs.
+- **Living Tool State**: Tool responses are mutable — old code interpreter blocks are stripped, only the latest consolidated file display stays in context.
 
 ---
 
-## 1. What Is AuroraCoder?
+## 1. What Is Aurora Coder?
 
-AuroraCoder is an **autonomous AI agent framework** that wraps LLMs with native OpenAI function-calling tools. It gives an LLM the ability to:
+Aurora Coder is an **autonomous AI agent framework** that wraps LLMs with native OpenAI function-calling tools. It gives an LLM the ability to:
 
 - Read/write/edit/delete files on a real filesystem
-- Run terminal commands in a persistent shell
+- Run terminal commands in a persistent shell (with background process management)
 - Search the web (Google CSE)
 - Fetch and summarise web pages (via a cheap secondary model)
 - Delegate sub-tasks to sub-agents
-- Search code with regex (grep)
+- Search code with real grep (subprocess wrapper)
 - Display files in a consolidated "code interpreter" view
+- Discover and invoke tools from MCP servers, skill packs, and local tool stores
+- Display plots and GUI applications via VNC
 
 The agent runs inside a **Docker container** with an optional VNC desktop for GUI apps.
 
@@ -58,36 +86,94 @@ The agent runs inside a **Docker container** with an optional VNC desktop for GU
 ## 2. Repository Layout
 
 ```
-ThinkWithTool/
+Aurora Coder/
 ├── src/
+│   ├── __init__.py
 │   ├── main_flow.py            ← THE CORE: chat loop, streaming, tool execution
 │   ├── tool_definitions.py     ← All tool schemas + function dispatch
+│   ├── tool_executor.py        ← Parallel/serial tool executor
 │   ├── config.py               ← ALL config: API keys, limits, system prompt
 │   ├── providers.py            ← Multi-provider LLM client manager
+│   ├── training_log.py         ← Daily JSONL training telemetry
 │   ├── code_tools/
-│   │   ├── file_operations.py  ← read/write/edit/delete/list/search/close
-│   │   ├── terminal_runner.py  ← persistent shell command execution
-│   │   ├── grep_search.py      ← regex search across workspace
-│   │   └── code_interpreter.py ← consolidated file display (line numbers + pyright)
+│   │   ├── __init__.py
+│   │   ├── file_operations.py  ← read/write/delete/list/search/close
+│   │   ├── edit_file.py        ← Anchor-matching engine (tolerant ±3 line search)
+│   │   ├── terminal_runner.py  ← Persistent shell command execution
+│   │   ├── grep_search.py      ← Real grep subprocess wrapper
+│   │   ├── code_interpreter.py ← Consolidated file display (line numbers)
+│   │   ├── context_manager.py  ← Living Tool State: open/display/strip files
+│   │   ├── context_tracker.py  ← Abstract ContextTracker base class
+│   │   └── toolset_context_manager.py ← Living Tool State for ToolStore tools
 │   ├── core_tools/
+│   │   ├── __init__.py
 │   │   ├── google_search.py    ← Google Custom Search
 │   │   ├── web_browser.py      ← URL fetch → HTML→MD → secondary-model summary
 │   │   ├── subagent.py         ← HTTP-based sub-agent delegation
-│   │   ├── tool_store_client.py← ToolStore integration (optional)
-│   │   └── jupyter_code_runner.py ← Jupyter-style Python execution (UNUSED)
+│   │   ├── tool_store_client.py← ToolStore integration wrapper
+│   │   ├── jupyter_code_runner.py ← Jupyter-style code execution
+│   │   └── continue_chat.py    ← continue_as_new_chat tool
 │   ├── code_sandbox/
+│   │   ├── __init__.py
 │   │   └── sandbox.py          ← Workspace path (/workspace) + persistent shell
 │   └── web_api/
-│       └── app.py              ← FastAPI backend server (port 8080, agent loop only)
-├── gateway/       ← Middleware layer (the "dirty work")
-│   ├── api.py                  ← SSE proxy + file display endpoints (port 8081, internal)
+│       ├── __init__.py
+│       └── app.py              ← FastAPI backend server (port 8080, agent loop)
+├── gateway/
+│   ├── __init__.py             ← Re-exports ConversationStore
+│   ├── api.py                  ← FastAPI app factory (port 8081, internal)
+│   ├── routes.py               ← SSE proxy, chat/continue/stream endpoints
+│   ├── streaming.py            ← SSE stream management, event queues, keepalive
 │   ├── conversation_store.py   ← File-backed store (thread-safe, atomic writes)
-│   └── workspace.py            ← File diff, tree, upload/delete/export utilities
+│   ├── settings_store.py       ← Provider/model settings persistence
+│   ├── provider_registry.py    ← Dynamic provider registration
+│   └── workspace.py            ← File diff, tree, upload/delete/export
 ├── frontend/                   ← React + Vite web UI
-├── Dockerfile
-├── docker-compose.yml
-├── requirements.txt
-└── run_web.py                  ← Entry point for backend server
+│   ├── src/
+│   │   ├── App.jsx             ← Main app (~800 lines, refactored from ~1465)
+│   │   ├── main.jsx
+│   │   ├── constants.js
+│   │   ├── components/         ← 11 components
+│   │   ├── hooks/              ← useAutoScroll, useFileTracking, useLanguage,
+│   │   │                          createStreamCallbacks
+│   │   ├── services/api.js     ← SSE streaming client
+│   │   ├── utils/              ← auth, injectToolStop, streamUtils
+│   │   ├── i18n/               ← translations.js, LanguageContext
+│   │   └── styles/             ← 12 domain CSS files
+│   ├── server.py               ← Python static file server for production
+│   ├── package.json
+│   └── vite.config.js
+├── mobile/                     ← Standalone vanilla JS mobile web app
+│   ├── index.html
+│   ├── js/                     ← api.js, app.js, auth.js, chat.js
+│   └── css/mobile.css          ← 24KB standalone stylesheet
+├── launcher/                   ← Go source for one-click binary (built by CI)
+│   ├── main.go                 ← Entry point
+│   ├── docker.go               ← Docker image build logic
+│   ├── extract.go              ← Embedded project extraction
+│   ├── progress.go             ← Terminal progress UI
+│   ├── build.sh                ← Cross-compilation (used by CI, outputs to releases)
+│   └── go.mod
+├── docker/
+│   ├── Dockerfile              ← App image
+│   ├── Dockerfile.base         ← Base image with conda environment
+│   ├── docker-compose.yml      ← Multi-service orchestration
+│   ├── entrypoint.sh           ← Container entrypoint
+│   └── supervisord.conf        ← Process supervision config
+├── dev-scripts/                ← Power-user launch scripts (repo-clone workflow)
+│   ├── start.bat / start.sh    ← Docker build + launch + frontend
+│   ├── another-one.bat / .sh   ← Multi-instance launcher
+│   └── build-base.bat / .sh    ← Base image build
+├── tests/                      ← Test suite
+│   ├── test_context_fix_propagation.py
+│   ├── test_edit_file_edge_cases.py
+│   ├── test_mergePanelFiles.mjs
+│   └── test_streaming_race.py
+├── .github/workflows/release.yml ← CI/CD release workflow
+├── .env.example                ← Environment variable template
+├── requirements.txt            ← Python dependencies
+├── run_web.py                  ← Backend entry point
+└── AGENT_README.md             ← This file
 ```
 
 ---
@@ -98,21 +184,25 @@ ThinkWithTool/
 User Message
     │
     ▼
-web_api/app.py  ──►  main_flow.generate_chat_responses_stream_native()
-                          │
-                          ├─ Injects system message (from config.py template)
-                          ├─ Builds API call: model + messages + tools
-                          ├─ Streams response from LLM provider
-                          ├─ Parses tool_call deltas from stream
-                          ├─ Executes tools (parallel for read-only, sequential for write)
-                          ├─ Manages code interpreter display
-                          └─ Loops until: completion, max_iterations, or error
-                                │
-                                ▼
-                          Yields {messages, status, provider} dicts
-                                │
-                                ▼
-                          web_api/app.py streams SSE to frontend
+gateway/routes.py  ──►  main_flow.generate_chat_responses_stream_native()
+                              │
+                              ├─ Injects system message (from config.py template)
+                              ├─ Builds API call: model + messages + tools
+                              ├─ Streams response from LLM provider
+                              ├─ Parses tool_call deltas from stream
+                              ├─ Executes tools (parallel for read-only, sequential for write)
+                              ├─ Manages code interpreter display via ContextTracker system
+                              ├─ Manages ToolStore display via ToolsetContextTracker
+                              └─ Loops until: completion, max_iterations, or error
+                                    │
+                                    ▼
+                              Yields {messages, status, provider} dicts
+                                    │
+                                    ▼
+                              gateway/streaming.py manages SSE events
+                                    │
+                                    ▼
+                              gateway/routes.py serves streaming SSE to frontend
 ```
 
 ### Iteration loop (in `main_flow.py`):
@@ -120,8 +210,9 @@ web_api/app.py  ──►  main_flow.generate_chat_responses_stream_native()
 2. Stream response; collect `content`, `reasoning_content`, `tool_calls`
 3. If no tool calls → done (or retry if also no content)
 4. If tool calls → execute them, append results as `role: tool` messages
-5. If any code-related tool was called → regenerate interpreter display
-6. Loop back (max 30 iterations by default)
+5. If any code-related tool was called → regenerate interpreter display via ContextTracker
+6. If `tool_store` was called → regenerate toolset display via ToolsetContextTracker
+7. Loop back (max 30 iterations by default, then offers "Continue")
 
 ---
 
@@ -129,24 +220,26 @@ web_api/app.py  ──►  main_flow.generate_chat_responses_stream_native()
 
 ### 4.1 Tool Definitions & Function Map
 
-Defined in `tool_definitions.py`. 13 tools total:
+Defined in `tool_definitions.py`. 13 tools (plus 1 conditional):
 
-| # | Tool Name | Function | Read-Only? | Side Effects |
-|---|-----------|----------|------------|--------------|
-| 1 | `google_search` | `search_for_llm` | ✅ | None |
-| 2 | `web_browser` | `web_fetch` | ✅ | None (cached) |
-| 3 | `read_file` | `read_file_tool` | ✅ | None |
-| 4 | `write_file` | `full_file_write_tool` | ❌ | Creates/overwrites file |
-| 5 | `edit_file` | `search_replace_edit_tool` | ❌ | Aider-style edit |
-| 6 | `delete_file` | `delete_file_tool` | ❌ | Deletes file or dir |
-| 7 | `close_file` | `close_file_tool` | ✅ | Removes from interpreter view only |
-| 8 | `list_directory` | `list_dir_tool` | ✅ | None |
-| 9 | `search_files` | `file_search_tool` | ✅ | None |
-| 10 | `grep_search` | `grep_search_tool` | ✅ | None |
-| 11 | `run_terminal_command` | `run_terminal_cmd_tool` | ❌ | Executes shell commands |
-| 12 | `tool_store` | `tool_store_tool` | ⚠️ | Parallel-safe; excluded from subagent (can run write APIs) |
-| 13 | `subagent` | `run_subagent` | ✅ | Spawns child agent (excluded from subagent tool list) |
-| 14 | *(removed)* | — | — | Former `python_interpreter` (dead code purged) |
+| # | Tool Name | Function | Parallel-Safe? | Subagent? |
+|---|-----------|----------|:---:|:---:|
+| 1 | `google_search` | `search_for_llm` | ✅ | ✅ |
+| 2 | `web_browser` | `web_fetch` | ✅ | ✅ |
+| 3 | `read_file` | `read_file_tool` | ✅ | ✅ |
+| 4 | `write_file` | `full_file_write_tool` | ❌ | ❌ |
+| 5 | `edit_file` | `range_replace_edit_tool` | ❌ | ❌ |
+| 6 | `delete_file` | `delete_file_tool` | ❌ | ❌ |
+| 7 | `close_file` | `close_file_tool` | ✅ | ✅ |
+| 8 | `list_directory` | `list_dir_tool` | ✅ | ✅ |
+| 9 | `search_files` | `file_search_tool` | ✅ | ✅ |
+| 10 | `grep_search` | `grep_search_tool` | ✅ | ✅ |
+| 11 | `run_terminal_command` | `run_terminal_cmd_tool` | ❌ | ❌ |
+| 12 | `tool_store` | `tool_store_tool` | ✅ | ❌ |
+| 13 | `subagent` | `run_subagent` | ✅ | ❌ (recursive) |
+| * | `continue_as_new_chat` | `continue_chat_tool` | n/a | n/a |
+
+`continue_as_new_chat` is conditionally included — it only appears in the tool list when context usage exceeds ~80%.
 
 ### 4.2 Tool Parameter Signatures
 
@@ -155,38 +248,58 @@ google_search(search_term: str) → str
 web_browser(target_url: str, prompt: str) → str
 read_file(target_file: str) → str
 write_file(target_file: str, code_edit: str) → str
-edit_file(target_file: str, start_line: int, search_content: str, replace_content: str) → str
+edit_file(target_file: str, edits: array, remove_line_number: str, content_to_remove: str, replace_content: str) → str
 delete_file(target_file: str) → str
 close_file(target_file: str) → str
 list_directory(relative_workspace_path: str = "") → str
 search_files(query: str) → str
-grep_search(query: str, include_pattern: str = None, exclude_pattern: str = None, case_sensitive: bool = True) → str
+grep_search(query: str, include_pattern: str = None, exclude_pattern: str = None, case_sensitive: bool = True, max_lines: int = 200) → str
 run_terminal_command(command: str, timeout: int = 30, blocking: bool = True) → str
 tool_store(action: str, query: str = None, tool_name: str = None, arguments: dict = None) → str
 subagent(task: str) → str
+continue_as_new_chat() → str
 ```
 
-### 4.3 `edit_file` — Aider-Style Search & Replace
+### 4.3 `edit_file` — Anchor-Based Range Replace
 
-**Parameters:**
+**File:** `src/code_tools/edit_file.py` (anchor-matching engine) + `src/code_tools/file_operations.py` (orchestration)
+
+**Parameters (per edit in the `edits` array):**
 - `target_file`: Path to the file to edit
-- `start_line`: Line number to start searching from (1-based)
-- `search_content`: Exact content to find and replace (whitespace and indentation matter)
-- `replace_content`: The replacement content (use empty string to delete)
+- `remove_line_number`: Line range to remove, e.g., `"13-15"` or `"42"`
+- `content_to_remove`: Anchor-based block identifier using `[TO]` marker for multi-line ranges
+- `replace_content`: New content replacing the specified range (empty to delete)
 
-**Rules:**
-- `search_content` must match file content exactly (indentation, newlines matter; trailing spaces are ignored)
-- Include 1-3 lines of context to uniquely identify the location
-- One edit per call; use multiple calls for multiple edits
-- Use empty `replace_content` to delete content
+**Editing rules:**
+- At most 3 edits per call — extras are silently dropped
+- Same-file edit guard: cannot edit the same file twice in one turn (line numbers are stale until code interpreter refreshes)
+- All edits in batch are validated before ANY are applied — if any fail, zero edits touch the file
+- Anchor matching uses ±3 line tolerance with two-pass matching (strict then relaxed whitespace)
+- When line numbers are auto-corrected, a `<!--SELF_CORRECT:{...}-->` marker patches the LLM's original tool call in-place so the model only sees successful patterns
+- **SUPER IMPORTANT**: Always get line numbers from the code interpreter display — never use memorised or assumed line numbers
 
-**Example — changing a print statement on line 10:**
+**Example — single-line replacement:**
+```json
+{
+  "target_file": "src/main.py",
+  "edits": [{
+    "remove_line_number": "42",
+    "content_to_remove": "old_function_name()",
+    "replace_content": "new_function_name()"
+  }]
+}
 ```
-# Call edit_file with:
-target_file: "main.py"
-start_line: 10
-search_content: 'print("hello")'
-replace_content: 'print("world")'
+
+**Example — multi-line replacement:**
+```json
+{
+  "target_file": "src/main.py",
+  "edits": [{
+    "remove_line_number": "42-45",
+    "content_to_remove": "def foo():\n    pass\n\ndef bar():",
+    "replace_content": "def foo():\n    return 42\n\ndef bar():"
+  }]
+}
 ```
 
 ---
@@ -202,10 +315,12 @@ CODE_INTERPRETER_END   = "<====CODE_INTERPRETER_END====>"
 ```
 
 ### Mechanics
-1. `discover_open_files(messages)` — scans all assistant messages for `read_file`, `write_file`, `edit_file` calls → adds to `open_files` set. `delete_file` and `close_file` remove from set.
-2. `generate_consolidated_interpreter_display(messages)` — reads all open files, formats them with line numbers, wraps in markers, appends context warning if >5 files or >50K chars.
-3. `clean_previous_interpreter_blocks(messages)` — strips old markers from tool messages to save context.
-4. After any code-related tool execution, old blocks are cleaned and a fresh consolidated display is appended to the LAST tool message.
+1. `ContextTracker` base class in `context_tracker.py` defines the abstract interface
+2. `CodeContextTracker` in `context_manager.py` implements file tracking:
+   - `discover_open_files(messages)` — scans all assistant messages for `read_file`, `write_file`, `edit_file` calls → adds to `open_files` set. `delete_file` and `close_file` remove from set.
+   - `render(state)` — reads all open files, formats them with line numbers, wraps in markers, appends context warning if >5 files or >50K chars.
+3. `ToolsetContextTracker` in `toolset_context_manager.py` — same pattern for `tool_store` tools
+4. After any tool execution, old interpreter blocks are cleaned and fresh consolidated displays are appended to the LAST tool message.
 
 ---
 
@@ -226,11 +341,11 @@ Default: `deepseek`
 
 ### Key Limits
 ```python
-MAX_TOKENS = 8192
-MAX_ITERATIONS = 30         # loop iterations per user turn
-CONTINUE_ITERATIONS = 30    # extra iterations on "Continue"
+MAX_TOKENS = 32768           # Completion token limit
+MAX_ITERATIONS = 30          # Loop iterations per user turn
+CONTINUE_ITERATIONS = 30     # Extra iterations on "Continue"
 MAX_STREAMING_RETRIES = 10
-MAX_TOOL_CONCURRENCY = 5    # parallel threads for read-only tools
+MAX_TOOL_CONCURRENCY = 5     # Parallel threads for read-only tools
 SUBAGENT_MAX_ITERATIONS = 15
 SUBAGENT_MAX_RESULT_CHARS = 4000
 ```
@@ -250,7 +365,7 @@ SUBAGENT_MAX_RESULT_CHARS = 4000
 
 ## 7. Sandbox (`code_sandbox/sandbox.py`)
 
-The Docker-first sandbox replaces the former heavyweight session manager. It provides:
+The Docker-first sandbox. It provides:
 
 - **`WORKSPACE`** — `Path("/workspace")` (from `WORKSPACE_DIR` env var, falls back to `cwd`)
 - **`get_workspace()`** — returns `WORKSPACE`, creating it if needed
@@ -300,15 +415,29 @@ generate_chat_responses_stream_native(
 
 **Error handling**: Streaming errors trigger retry up to `MAX_STREAMING_RETRIES` (10). Empty responses with no tool calls get a corrective system message.
 
+### `edit_file.py` — ANCHOR-MATCHING ENGINE
+
+- `find_anchor_tolerant()` — searches within ±3 lines of stated position
+- `find_anchor_anywhere()` — fallback whole-file scan
+- Two-pass matching: strict (trailing whitespace ignored) → relaxed (all whitespace ignored)
+- `indent_delta()` / `adjust_indent()` — indentation-aware correction
+- `anchor_hint()` — diagnostic hints with actual locations
+
 ### `file_operations.py` — FILE TOOLS
 
 - `read_file` — validates existence, snapshots content for diff tracking
 - `write_file` — atomic write via temp file + `os.replace()`
-- `edit_file` — aider-style: normalize for comparison (strip trailing whitespace), search from start_line, replace, atomic write
 - `delete_file` — handles both files and directories
 - `list_directory` — emoji-prefixed listing
 - `search_files` — fuzzy filename search
-- File tracking callbacks (`set_file_tracking_callbacks`) for web API diffing
+- File tracking callbacks (`set_file_tracking_callbacks`) for gateway diffing
+
+### `context_manager.py` + `context_tracker.py` — LIVING TOOL STATE
+
+- `ContextTracker` — abstract base class (discover + render + strip pattern)
+- `CodeContextTracker` — tracks open files, generates consolidated display
+- `TOOLSTORE_START/END` blocks for ToolStore tools in `toolset_context_manager.py`
+- Previous blocks stripped from old messages; only latest display retained
 
 ### `web_browser.py` — WEB FETCH
 
@@ -324,39 +453,59 @@ generate_chat_responses_stream_native(
 - Streams SSE response, extracts final assistant message
 - Truncates to `SUBAGENT_MAX_RESULT_CHARS` (4000)
 
+### Gateway Layer
+
+- `api.py` — FastAPI app factory with CORS middleware
+- `routes.py` — All route handlers: chat, continue, conversations, files, settings, health
+- `streaming.py` — SSE stream registration, event queue management, keepalive, cancellation
+- `conversation_store.py` — File-backed store with thread-safe atomic writes and index management
+- `settings_store.py` — Provider and model settings persistence
+- `provider_registry.py` — Dynamic provider discovery and listing
+- `workspace.py` — File snapshots, diffs, tree building, upload/delete/export
+
 ---
 
 ## 10. Getting Started
 
-### Prerequisites
-- Docker
-- Node.js (for the frontend dev server)
-- Conda (optional, for running outside Docker)
+Two launch methods:
 
-### Running the Application
+### Easy: One-Click Launcher
 
-**`start.bat` is the sole supported entry point on the host.** It builds and runs the Docker container (backend + gateway server) with persistent data volumes, then starts the frontend dev server.
+Download the pre-built binary from the project's [GitHub Releases](https://github.com/1001WillsStudio/AuroraCoder/releases) page (built automatically by the CI workflow in `.github/workflows/release.yml`):
 
-```powershell
-.\start.bat
+```bash
+./auroracoder       # handles Docker build, start, and opens browser
+```
+
+**Requirements**: Docker Desktop only. No git clone, no terminal, no Node.js, no Python needed — the binary embeds the entire project and builds the Docker image on first launch. Subsequent launches are near-instant (cached image).
+
+### Power User: Dev Scripts
+
+For developers who clone the repo and want full control:
+
+**Prerequisites**: Docker, Node.js 18+, and API keys (at least `DEEPSEEK_API_KEY` in `.env`)
+
+```bash
+# Clone, set up .env, then run the dev script:
+./dev-scripts/start.sh     # Linux/macOS (handles build + launch + frontend)
+dev-scripts\start.bat      # Windows
+```
+
+Or manually step-by-step:
+
+```bash
+docker build -t auroracoder-base -f Dockerfile.base .
+docker compose up --build
+cd frontend && npm install && npm run dev
 ```
 
 Services started:
 - Backend API: http://localhost:8080 (agent loop)
-- Frontend: http://localhost:3000 (SPA + API proxy to internal gateway)
-- Frontend: http://localhost:3000
+- Gateway: *internal* `:8081` (SSE proxy, persistence)
+- Frontend: http://localhost:3000 (SPA + API proxy)
 - VNC Desktop: http://localhost:6080
 
-Press `Ctrl+C` to stop the frontend. To stop the backend: `docker stop thinkwithtool-agent`.
-
-**Alternative (docker compose):**
-```bash
-docker compose up --build
-# Then in a separate terminal:
-cd frontend && npm install && npm run dev
-```
-
-> **Important:** Do NOT run `python run_web.py` directly on the host. The backend must run inside Docker for proper session isolation, VNC support, and persistent data storage. Running outside Docker will lose conversation history on restart.
+> **Important:** Do NOT run `python run_web.py` directly on the host. The backend must run inside Docker for proper session isolation, VNC support, and persistent data storage.
 
 ### Data Persistence
 
@@ -374,11 +523,10 @@ data/                        ← host directory (git-ignored)
 
 Key implementation files:
 - `gateway/conversation_store.py` — file-backed store (thread-safe, atomic writes)
-- `gateway/api.py` — FastAPI server on port 8081, proxies to backend, persists on SSE events, serves file-display endpoints
+- `gateway/routes.py` — all route handlers proxying to the backend
+- `gateway/streaming.py` — SSE stream lifecycle management
 - `gateway/workspace.py` — file snapshots, diffs, tree building, workspace upload/delete/export
 - `src/config.py` — `DATA_DIR` / `TRAINING_DATA_DIR` path resolution
-
-Without the volume mount (`-v`), the `--rm` flag on `docker run` causes the container to be deleted on stop, destroying all data inside. The volume mount ensures conversations and training logs survive container restarts.
 
 ---
 
@@ -390,26 +538,14 @@ Core dependencies (see `requirements.txt`):
 - `google-api-python-client>=2.169.0` — Google Search
 - `pyright` — Python type checking (via nodejs)
 
----
-
-## 12. Known Issues & Quirks
-
-### Fixed issues
-
-1. ~~**`TEMPERATURE` not passed to API**~~ → **FIXED**: `TEMPERATURE` removed entirely (modern models handle defaults).
-2. ~~**`web_browser` prompt mismatch**~~ → **FIXED**: `prompt` is required in tool definition; function default `""` is a defensive fallback never reached.
-3. ~~**`python_interpreter` dead code**~~ → **FIXED**: All `run_like_jupyter` imports and commented-out definitions removed.
-4. ~~**`terminal_runner.py` background process stubs**~~ → **FIXED**: 3 stub functions + unused fields removed.
-5. ~~**Code interpreter note duplication**~~ → **VERIFIED NOT A BUG**: Note is only added once in `generate_consolidated_interpreter_display`; `display_multiple_files` does not include it.
-6. ~~**Fragile title extraction**~~ → **FIXED**: Task instructions are now wrapped in `[TASK INSTRUCTION]` / `[/TASK INSTRUCTION]` markers by the frontend (`App.jsx`). The full marked message passes through to the stateless agent backend unchanged. The conversation store (`conversation_store.py`) strips the markers via regex in `_extract_title()`, and `save_messages()` now **always** re-extracts the title (not just when "Untitled") so the first incremental persist overwrites the raw initial title from `api.py`. Legacy conversations without markers fall back to the old `\n\n` heuristic.
-
-**Still present:**
-1. **Hardcoded API keys** in `config.py`: Some defaults use plain text or placeholder values (e.g., `"YOUR_GEMINI_API_KEY"`). Most keys read from env vars, but fallback values exist.
-2. **Merged `stderr`**: The persistent shell redirects stderr into stdout (`stderr=subprocess.STDOUT`), so error output is interleaved with normal output.
+Frontend dependencies:
+- React 18 + Vite
+- react-syntax-highlighter, react-markdown
+- 12 domain CSS files with design tokens
 
 ---
 
-## 13. Key Patterns & Conventions
+## 12. Key Patterns & Conventions
 
 - **All tools return strings** — never raise exceptions to the agent
 - **Workspace root** comes from `code_sandbox.WORKSPACE` (`/workspace` in Docker)
@@ -417,26 +553,42 @@ Core dependencies (see `requirements.txt`):
 - **Tool wrappers** — each tool has a `_tool` suffix function for the registry
 - **Global singletons** — `shell` (PersistentShell), `provider_manager`, `code_interpreter`
 - **No async** — everything is synchronous, concurrency via threads
-- **Streaming** — SSE from main_flow to web API to frontend
+- **Streaming** — SSE from main_flow to gateway to frontend
+- **ContextTracker pattern** — discover + render + strip for living tool state
+- **English only** — all generated code and comments must be in English
 
 ---
 
-## 14. Quick Reference: If You Need To...
+## 13. Quick Reference: If You Need To...
 
 | Task | Where to look |
 |------|---------------|
 | Add a new tool | `tool_definitions.py` — add schema + function mapping |
 | Change the system prompt | `config.py` → `SYSTEM_MESSAGE_TEMPLATE` |
-| Add a new LLM provider | `config.py` → `MODEL_PROVIDERS` |
+| Add a new LLM provider | `config.py` → `MODEL_PROVIDERS` + `providers.py` |
 | Change iteration limits | `config.py` → `MAX_ITERATIONS`, `CONTINUE_ITERATIONS` |
 | Fix tool execution | `tool_definitions.py` → `execute_tool_call()` |
 | Change subagent behavior | `core_tools/subagent.py` |
 | Modify sandbox / workspace | `code_sandbox/sandbox.py` |
 | Change the web API | `web_api/app.py` |
+| Change the gateway | `gateway/routes.py` + `gateway/streaming.py` |
 | Change the frontend | `frontend/src/` (React + Vite) |
-| Understand the edit_file algorithm | `file_operations.py` → `search_replace_edit()` lines 105-223 |
+| Understand the edit_file algorithm | `edit_file.py` → `find_anchor_tolerant()` + `find_anchor_anywhere()` |
+| Understand context tracking | `context_manager.py` + `context_tracker.py` |
 | Understand web fetch pipeline | `web_browser.py` → `web_fetch()` |
 | Understand shell execution | `code_sandbox/sandbox.py` → `PersistentShell.run()` |
+| Understand SSE streaming | `gateway/streaming.py` |
+| Understand conversation persistence | `gateway/conversation_store.py` |
+
+---
+
+## 14. Tests
+
+Test files in `tests/`:
+- `test_context_fix_propagation.py` — ContextTracker display update tests
+- `test_edit_file_edge_cases.py` — Edit file matching edge cases
+- `test_streaming_race.py` — SSE streaming race condition tests
+- `test_mergePanelFiles.mjs` — Frontend panel merging tests
 
 ---
 

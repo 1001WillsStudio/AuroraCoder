@@ -5,10 +5,11 @@
 # This script:
 #   1. Copies the project files into launcher/embed/ (excluding build artifacts)
 #   2. Builds the Go binary for the current platform
-#   3. Output: thinkwithtool-launcher (or .exe on Windows)
+#   3. Output: auroracoder (or .exe on Windows)
 #
 # For cross-compilation (all platforms), use:
 #   ./build.sh --all
+#   (Outputs: auroracoder-linux, auroracoder-darwin-arm64, auroracoder-windows.exe, etc.)
 # ──────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -16,7 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$SCRIPT_DIR"
 
-OUTPUT_NAME="thinkwithtool-launcher"
+OUTPUT_NAME="auroracoder"
 EMBED_DIR="$SCRIPT_DIR/embed"
 
 # ── Clean & prepare embed directory ──────────────────────────────────────────
@@ -63,7 +64,12 @@ build_for() {
     local os="$1"
     local arch="$2"
     local ext="$3"
-    local out="${OUTPUT_NAME}-${os}-${arch}${ext}"
+    # Friendly name: auroracoder-{os} with -arm64 suffix for non-amd64
+    if [ "$arch" != "amd64" ]; then
+        local out="${OUTPUT_NAME}-${os}-${arch}${ext}"
+    else
+        local out="${OUTPUT_NAME}-${os}${ext}"
+    fi
 
     echo ""
     echo "═══ Building for ${os}/${arch}..."

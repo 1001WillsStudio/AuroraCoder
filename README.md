@@ -18,8 +18,7 @@
   <a href="#-tools">Tools</a> •
   <a href="#-configuration">Config</a> •
   <a href="#-browser-desktop">VNC Desktop</a> •
-  <a href="#-roadmap">Roadmap</a> •
-  <a href="#-contributing">Contributing</a>
+  <a href="#-development">Development</a>
 </p>
 
 ---
@@ -49,7 +48,7 @@ But beyond the append-only problem, there's a deeper design choice that divides 
 | **A: Minimal Response** | `"Edit applied successfully."` + diff | Low | Must mentally reconstruct file state from past actions | [OpenCode](https://github.com/anomalyco/opencode), Aider |
 | **B: Full State Response** | Complete file content with line numbers | Higher | Perfect — sees exact disk state every turn | AuroraCoder, Claude Code |
 
-**Pattern A** (used by [OpenCode](https://github.com/anomalyco/opencode) — 160K+ GitHub stars) returns only a status message and a unified diff. The model never sees the full updated file after an edit unless it explicitly calls `read` again. This saves context tokens but forces the model to mentally reconstruct file state across multiple edits — a fragile process prone to drift, phantom content, and cascading errors when the model's mental model diverges from what's actually on disk. The [OpenCode source](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/tool/edit.ts) confirms: its `edit` tool's output is literally `"Edit applied successfully."` — nothing more.
+**Pattern A** (used by [OpenCode](https://github.com/anomalyco/opencode) — 160K+ GitHub stars) returns only a status message and a unified diff. The model never sees the full updated file after an edit unless it explicitly calls `read` again. This saves context tokens but forces the model to mentally reconstruct file state across multiple edits — a fragile process prone to drift, phantom content, and cascading errors when the model's mental model diverges from what's actually on disk.
 
 **Pattern B** re-reads every affected file from disk after each code-changing operation and presents the authoritative state to the model. This costs extra tokens (re-sending file contents the model already edited) but eliminates state hallucination — the model always operates on ground truth.
 
@@ -75,7 +74,7 @@ This is not just deduplication — it's a **redefinition of what a tool response
 
 A context warning fires when >5 files or >50K characters are open. This turns the conversation from a growing append-only log into a **self-cleaning state machine**.
 
-**A forward-looking side effect**: because the consolidated code interpreter always displays each file with line numbers in a canonical format, the `edit_file` tool doesn't need the LLM to embed the target file's content in the tool call. The model references line numbers from the interpreter view, and the tool resolves them against the actual file on disk. Tool calls stay lean regardless of file size. In the future, as models grow more reliable at line-level reasoning, the anchor content could become optional — the model could edit using *only* start and end line numbers, making tool calls near-zero-token operations. The code interpreter lays the groundwork for that transition today.
+**A forward-looking side effect**: because the consolidated code interpreter always displays each file with line numbers in a canonical format, the `edit_file` tool doesn't need the LLM to embed the target file's content in the tool call. The model references line numbers from the interpreter view, and the tool resolves them against the actual file on disk. Tool calls stay lean regardless of file size.
 
 ### 2. 🚦 Strict Gates in a Loose Loop — Generous Acceptance, Rigorous Validation
 
@@ -83,7 +82,7 @@ LLMs are **pattern-following machines**. Let one malformed tool call slide throu
 
 AuroraCoder's `edit_file` tool takes a third path: **generous on input, ruthless on output**.
 
-**Loose acceptance** — the LLM doesn't need to get line numbers exactly right. The tool searches for its anchor content (`start_line_content`, `end_line_content`) within **±3 lines** of the stated position. Two-pass matching: first strict (trailing whitespace ignored), then relaxed (all whitespace ignored). If the anchors are found at different positions, the tool auto-corrects and proceeds.
+**Loose acceptance** — the LLM doesn't need to get line numbers exactly right. The tool searches for its anchor content within **±3 lines** of the stated position. Two-pass matching: first strict (trailing whitespace ignored), then relaxed (all whitespace ignored). If the anchors are found at different positions, the tool auto-corrects and proceeds.
 
 **Rigorous validation** — but before ANY edit touches the file, ALL edits in the batch are validated. Anchors must be found. Ranges must not overlap. If any edit fails, **zero edits are applied**. The file is untouched. The error message is precise: it shows the expected content, the actual content, the surrounding file context, and even an indentation hint when whitespace differs.
 
@@ -93,24 +92,6 @@ AuroraCoder's `edit_file` tool takes a third path: **generous on input, ruthless
 - **Same-file edit guard** — blocks editing the same file twice in one turn (line numbers are stale until the code interpreter refreshes). Returns a clear explanation, not a cryptic failure.
 - **Edit truncation** — silently caps at 3 edits per call. If the LLM tries more, the extras are dropped rather than letting an over-ambitious batch cause partial failures.
 
-```
-LLM calls edit_file with slightly wrong line numbers:
-  start_line: 148, start_line_content: "def foo():"
-  (but the function actually moved to line 150)
-
-AuroraCoder:
-  1. Searches ±3 lines → finds "def foo():" at line 150 ✓
-  2. Validates all edits in batch — all pass ✓
-  3. Applies edits atomically ✓
-  4. Emits SELF_CORRECT marker → patches LLM's message to say line 150
-  5. Returns: "⚠️ Original parameters were auto-corrected. ✅ Applied 1 edit"
-
-LLM on next turn: sees its own call at line 150, the correct position.
-It learned nothing about its mistake. Only good patterns are reinforced.
-```
-
-**The philosophy**: the agent loop is autonomous, free to explore, free to be slightly wrong. But the *gates* between the LLM and the filesystem are strict — every tool call either succeeds cleanly (possibly with silent correction) or fails with an actionable error that helps the model recover. There is no middle ground where the LLM thinks it succeeded but produced garbage, and no wasted turns from pedantic rejection of slightly-off input.
-
 ---
 
 ## 🏗️ Design Decisions
@@ -119,7 +100,7 @@ These are the architectural choices that make the innovations above possible —
 
 ### 🔗 Stateless Core × Stateful Gateway
 
-The agent loop (`main_flow.py`) is **completely stateless** — it takes messages in, yields `{messages, status}` out. All persistence, file diffing, conversation management, and context monitoring happen in a separate **conversation gateway** layer (port 8081, internal). You can swap the frontend, add consumers, or test the loop in isolation.
+The agent loop (`main_flow.py`) is **completely stateless** — it takes messages in, yields `{messages, status}` out. All persistence, file diffing, conversation management, and context monitoring happen in a separate **conversation gateway** layer (port 8081, internal). The gateway is composed of 7 modules: `api.py`, `routes.py`, `streaming.py`, `conversation_store.py`, `settings_store.py`, `provider_registry.py`, and `workspace.py`.
 
 ### 🧵 Smart Parallel Tool Execution
 
@@ -149,38 +130,53 @@ Xvfb + fluxbox + noVNC on port 6080. The agent can launch matplotlib (TkAgg back
 
 Seven model providers with reasoning mode toggled per provider. `ProviderManager` singleton initializes all clients at import time. Custom `VertexAIClient` wraps Google Cloud auth with automatic token refresh.
 
+### 🏪 ToolStore Integration
+
+Built-in `tool_store` meta-tool provides universal tool discovery. The `ToolsetContextTracker` in `toolset_context_manager.py` gives the agent a living, self-cleaning view of referenced tools, skills, and MCP servers — same pattern as the code interpreter display.
+
+### 📱 Mobile Support
+
+A standalone vanilla JS mobile web app lives in `mobile/` — no build step, just open `index.html`. Full chat, streaming, auth, and conversation management in a single-file deployment.
+
 ---
 
 ## 🚀 Quick Start
 
-### Prerequisites
+There are two ways to launch AuroraCoder:
 
-- **Docker** — the agent runs inside a container (sandbox + VNC + gateway)
-- **Node.js 18+** — for the React frontend dev server
-- **API Keys** — at least `DEEPSEEK_API_KEY` or `NVIDIA_API_KEY` (set in `.env`)
+### 🟢 Easy: One-Click Launcher
 
-### Installation
+Download the pre-built binary from [GitHub Releases](https://github.com/1001WillsStudio/AuroraCoder/releases) (built automatically by `.github/workflows/release.yml`). Double-click and you're done.
+
+**Requirements**: Docker Desktop only. No git clone, no terminal, no Node.js, no Python needed — the launcher binary embeds the entire project and builds the Docker image on first launch. Subsequent launches are near-instant (cached image).
+
+### 🔧 Power User: Dev Scripts
+
+For developers who clone the repo and want full control:
+
+**Prerequisites**: Docker, Node.js 18+, and API keys (at least `DEEPSEEK_API_KEY` in `.env`)
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/Mrw33554432/AuroraCoder.git
+git clone https://github.com/1001WillsStudio/AuroraCoder.git
 cd AuroraCoder
 
 # 2. Copy and fill in the environment file
 cp .env.example .env
-# Edit .env with your API keys — at minimum set DEEPSEEK_API_KEY
 
-# 3. Build the base Docker image (conda environment)
-docker build -t auroracoder-base -f Dockerfile.base .
-
-# 4. Launch via docker compose
-docker compose up --build
-
-# 5. In a separate terminal, start the frontend
-cd frontend && npm install && npm run dev
+# 3. Run the dev script (handles Docker build + launch + frontend)
+./dev-scripts/start.sh     # Linux/macOS
+dev-scripts\start.bat      # Windows
 ```
 
-> **Windows users**: Run `.\start.bat` which handles everything automatically.
+Or do it step-by-step:
+
+```bash
+# Build base image, launch Docker, start frontend
+docker build -t auroracoder-base -f Dockerfile.base .
+docker compose up --build
+cd frontend && npm install && npm run dev
+```
 
 ### Services
 
@@ -193,7 +189,7 @@ cd frontend && npm install && npm run dev
 
 ### Multi-Instance Mode
 
-Run `another-one.bat` (or `another-one.bat 5`) to spin up an additional isolated instance with auto-incremented ports — useful for running multiple agents side by side.
+Run `dev-scripts/another-one.bat` (or `another-one.bat 5`) to spin up an additional isolated instance with auto-incremented ports — useful for running multiple agents side by side.
 
 ---
 
@@ -206,7 +202,8 @@ Run `another-one.bat` (or `another-one.bat 5`) to spin up an additional isolated
 │  │  React SPA (Vite)                                         │  │
 │  │  ├─ Chat streaming via SSE                                │  │
 │  │  ├─ File tree + diff viewer                               │  │
-│  │  └─ Thinking visualization (reasoning tokens)             │  │
+│  │  ├─ Thinking visualization (reasoning tokens)             │  │
+│  │  └─ 12 domain CSS files with design tokens                │  │
 │  └───────────────────────────────────────────────────────────┘  │
 │                              │ SSE                               │
 │  ┌── Docker Container ───────────────────────────────────────┐  │
@@ -216,6 +213,7 @@ Run `another-one.bat` (or `another-one.bat 5`) to spin up an additional isolated
 │  │  │  ├─ SSE proxy (intercepts agent events)              │  │  │
 │  │  │  ├─ Conversation persistence (atomic file writes)    │  │  │
 │  │  │  ├─ File snapshots + diff generation                 │  │  │
+│  │  │  ├─ Settings & provider management                    │  │  │
 │  │  │  └─ Workspace management (upload/delete/export)      │  │  │
 │  │  └──────────────────────────────────────────────────────┘  │  │
 │  │                              │ HTTP                         │  │
@@ -224,7 +222,8 @@ Run `another-one.bat` (or `another-one.bat 5`) to spin up an additional isolated
 │  │  │  ├─ System prompt injection (config.py)              │  │  │
 │  │  │  ├─ LLM streaming (7 providers)                      │  │  │
 │  │  │  ├─ Tool execution (parallel read, sequential write) │  │  │
-│  │  │  ├─ Code interpreter display management              │  │  │
+│  │  │  ├─ ContextTracker — living file display             │  │  │
+│  │  │  ├─ ToolsetContextTracker — living toolset display   │  │  │
 │  │  │  └─ Context continuation logic                       │  │  │
 │  │  │                                                      │  │  │
 │  │  │  13 Built-in Tools (+1 conditional):                 │  │  │
@@ -246,80 +245,85 @@ Run `another-one.bat` (or `another-one.bat 5`) to spin up an additional isolated
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Data Flow
-
-```
-User sends message
-       │
-       ▼
-  Frontend wraps in [TASK INSTRUCTION] markers
-       │
-       ▼
-  Gateway proxies to backend on :8080
-       │
-       ▼
-  main_flow.py generate_chat_responses_stream_native()
-       │
-       ├─ 1. Inject system message
-       ├─ 2. Call LLM (DeepSeek/NVIDIA/Gemini)
-       ├─ 3. Stream thinking + content + tool calls
-       ├─ 4. Execute tools (parallelized by safety)
-       ├─ 5. Append tool results as role:tool messages
-       ├─ 6. Refresh code interpreter display
-       └─ 7. Loop (max 30 iterations, then "Continue")
-       │
-       ▼
-  Gateway intercepts SSE, persists conversation
-       │
-       ▼
-  Frontend renders streaming response + thinking
-```
-
 ### Repository Structure
 
 ```
-auroracoder/
+Aurora Coder/
 ├── src/                          # Stateless agent core
 │   ├── main_flow.py              # THE ENGINE: chat loop + streaming
 │   ├── tool_definitions.py       # Tool schemas + execution dispatch
 │   ├── tool_executor.py          # Parallel/serial tool executor
 │   ├── config.py                 # ALL config: models, limits, prompts
 │   ├── providers.py              # Multi-provider LLM client manager
+│   ├── training_log.py           # Daily JSONL training telemetry
 │   ├── code_tools/               # File & code manipulation tools
-│   │   ├── file_operations.py    # read/write/edit/delete/list/search
+│   │   ├── file_operations.py    # read/write/delete/list/search/close
+│   │   ├── edit_file.py          # Anchor-matching engine (±3 line tolerance)
 │   │   ├── terminal_runner.py    # Persistent shell execution
-│   │   ├── grep_search.py        # Regex search across workspace
-│   │   └── code_interpreter.py   # Consolidated file display
+│   │   ├── grep_search.py        # Real grep subprocess wrapper
+│   │   ├── code_interpreter.py   # Consolidated file display
+│   │   ├── context_manager.py    # Living Tool State: open/display/strip
+│   │   ├── context_tracker.py    # Abstract ContextTracker base class
+│   │   └── toolset_context_manager.py  # Living Tool State for ToolStore
 │   ├── core_tools/               # Higher-level agent tools
 │   │   ├── google_search.py      # Google Custom Search Engine
 │   │   ├── web_browser.py        # URL → MD → secondary-model summary
 │   │   ├── subagent.py           # Sub-agent delegation
-│   │   └── tool_store_client.py  # ToolStore integration
+│   │   ├── tool_store_client.py  # ToolStore integration wrapper
+│   │   ├── jupyter_code_runner.py # Jupyter-style code execution
+│   │   └── continue_chat.py      # continue_as_new_chat tool
 │   ├── code_sandbox/
 │   │   └── sandbox.py            # Workspace + persistent shell singleton
 │   └── web_api/
 │       └── app.py                # FastAPI backend (port 8080)
-├── gateway/         # Middleware layer (the "dirty work")
-│   ├── api.py                    # SSE proxy + file endpoints (port 8081, internal)
+├── gateway/                      # Middleware layer — 7 modules
+│   ├── api.py                    # FastAPI app factory (port 8081, internal)
+│   ├── routes.py                 # SSE proxy, chat/continue endpoints
+│   ├── streaming.py              # SSE stream management, event queues
 │   ├── conversation_store.py     # Thread-safe atomic file persistence
-│   └── workspace.py              # File diffs, tree, upload/export
+│   ├── settings_store.py         # Provider/model settings persistence
+│   ├── provider_registry.py      # Dynamic provider registration
+│   └── workspace.py              # File diffs, tree, upload/delete/export
 ├── frontend/                     # React + Vite SPA
 │   ├── src/
 │   │   ├── App.jsx               # Main app + conversation management
-│   │   ├── components/           # ChatMessage, ThinkingIndicator, etc.
+│   │   ├── components/           # 11 components
+│   │   ├── hooks/                # useAutoScroll, useFileTracking, etc.
 │   │   ├── services/api.js       # SSE streaming client
-│   │   └── styles/index.css      # Dark theme with gradient accents
+│   │   ├── utils/                # auth, injectToolStop, streamUtils
+│   │   ├── i18n/                 # translations.js, LanguageContext
+│   │   └── styles/               # 12 domain CSS files + design tokens
+│   ├── server.py                 # Production static file server
 │   ├── package.json
 │   └── vite.config.js
-├── .env.example                  # Template for API keys
-├── docker-compose.yml            # Docker service orchestration
-├── Dockerfile                    # App image
-├── Dockerfile.base               # Base image with conda environment
-├── start.bat                     # Windows one-click launcher
-├── another-one.bat               # Multi-instance launcher
+├── mobile/                       # Standalone vanilla JS mobile web app
+├── launcher/                     # Go one-click deployment binary
+│   ├── main.go                   # Entry point + progress UI
+│   ├── docker.go                 # Docker image build logic
+│   ├── extract.go                # Embedded project extraction
+│   ├── progress.go               # Terminal progress rendering
+│   └── build.sh                  # Cross-compilation (used by CI, not end users)
+├── docker/                       # Docker configuration
+│   ├── Dockerfile                # App image
+│   ├── Dockerfile.base           # Base image with conda environment
+│   ├── docker-compose.yml        # Multi-service orchestration
+│   ├── entrypoint.sh             # Container entrypoint
+│   └── supervisord.conf          # Process supervision
+├── dev-scripts/                  # Developer convenience scripts
+│   ├── start.bat / start.sh      # Local Docker launch
+│   ├── another-one.bat / .sh     # Multi-instance launcher
+│   └── build-base.bat / .sh      # Base image build
+├── tests/                        # Test suite
+│   ├── test_context_fix_propagation.py
+│   ├── test_edit_file_edge_cases.py
+│   ├── test_mergePanelFiles.mjs
+│   └── test_streaming_race.py
+├── docs/                         # Documentation
+├── .github/workflows/            # CI/CD (release.yml)
+├── .env.example                  # Environment variable template
 ├── requirements.txt              # Python dependencies
-├── AGENT_README.md               # Detailed internal docs for AI agents
-└── run_web.py                    # Backend entry point
+├── run_web.py                    # Backend entry point
+└── AGENT_README.md               # Detailed internal docs for AI agents
 ```
 
 ---
@@ -332,21 +336,20 @@ AuroraCoder gives the LLM **13 built-in tools** via native OpenAI function calli
 |------|------|-------------|
 | `read_file` | Read | Read any file with line numbers |
 | `write_file` | Write | Atomic file creation (temp + `os.replace()`) |
-| `edit_file` | Write | Aider-style search-and-replace editing |
+| `edit_file` | Write | Anchor-based range replace (±3 line tolerance) |
 | `delete_file` | Write | Delete files or directories |
 | `close_file` | Read | Remove from code interpreter view (no filesystem change) |
 | `list_directory` | Read | List directory contents with emoji prefixes |
 | `search_files` | Read | Fuzzy filename search across workspace |
-| `grep_search` | Read | Regex search with include/exclude patterns |
+| `grep_search` | Read | Real grep subprocess with include/exclude patterns |
 | `run_terminal_command` | Write | Execute commands in persistent Bash shell |
 | `google_search` | Read | Google Custom Search Engine |
 | `web_browser` | Read | URL fetch → Markdown → secondary-model summary |
 | `subagent` | Read | Delegate tasks to read-only child agents |
-| `tool_store` | Mixed | Universal tool discovery and execution |
+| `tool_store` | Mixed | Universal tool discovery — MCP servers, skills, tool packs |
 
 **Parallel execution**: Read-only tools run concurrently (5 threads max). Write tools serialize. Sub-agents get a filtered read-only subset.
 
-> **`tool_store`** is a built-in meta-tool that provides universal tool discovery and execution — search, inspect, and invoke thousands of public APIs and local utilities from a single interface.
 ---
 
 ## ⚙️ Configuration
@@ -422,35 +425,17 @@ All conversations and training data survive container restarts via Docker volume
 └── training/
 ```
 
-Override the data path with the `THINKTOOL_DATA_DIR` env var. For Docker deployments, `THINKTOOL_WORKSPACE_DIR` and `THINKTOOL_SESSIONS_DIR` can be set in `docker-compose.yml` to override volume mount paths.
+Override the data path with the `THINKTOOL_DATA_DIR` env var.
 
 ---
 
-## 🗺️ Roadmap
-
-### In Progress
-- [ ] **AgentToolStore Integration** — Dynamic tool discovery via MCP servers, skill registration, and a web-based tool management UI
-
-### Planned
-- [ ] **Semantic Code Search** — FAISS-based embedding search across workspace
-- [ ] **Linux/macOS Start Script** — `start.sh` equivalent of `start.bat`
-- [ ] **Production Mode** — Serve frontend from Docker, no separate Node process
-- [ ] **WebSocket Streaming** — Replace SSE with WebSocket for bidirectional streaming
-- [ ] **Tool Sandboxing** — Per-tool resource limits and permission scoping
-- [ ] **Conversation Branching** — Fork conversations at any message
-- [ ] **Plugin Ecosystem** — Community-contributed tool packs
-
----
-
-## 👥 Contributing
-
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+## 👥 Development
 
 ### Development Setup
 
 ```bash
 # Clone and enter the repo
-git clone https://github.com/Mrw33554432/AuroraCoder.git
+git clone https://github.com/1001WillsStudio/AuroraCoder.git
 cd AuroraCoder
 
 # Set up Python environment
@@ -478,6 +463,15 @@ cd frontend && npm run dev
 - **Global singletons** — `shell` (PersistentShell), `provider_manager`, code interpreter
 - **English only** — all generated code and comments must be in English
 - **Path hygiene** — all paths relative to `/workspace` (or `WORKSPACE` from `code_sandbox`)
+- **Stateless core** — `src/` modules never access conversation store or file persistence directly
+
+### Architecture Rules
+
+- **`src/`** — Stateless agent loop. Takes messages in, yields messages out.
+- **`gateway/`** — Middleware. Owns all persistence, proxying, and file display logic.
+- **`frontend/`** — UI. Owns conversation management state.
+
+For detailed internal documentation aimed at AI agents working on this codebase, see [AGENT_README.md](AGENT_README.md).
 
 ---
 
@@ -490,7 +484,7 @@ MIT License — see [LICENSE](LICENSE) for details.
 ## 🙏 Acknowledgments
 
 - **Aider** — the gold standard for LLM-powered code editing (search-and-replace pattern)
-- **[OpenCode](https://github.com/anomalyco/opencode)** — open-source AI coding agent (160K+ stars); follows Pattern A (minimal edit response — model must reconstruct state from past actions)
+- **[OpenCode](https://github.com/anomalyco/opencode)** — open-source AI coding agent (160K+ stars); follows Pattern A (minimal edit response)
 - **Claude Code** — Anthropic's agent architecture and skills system
 - **OpenAI** — Function calling API design
 - **Model Context Protocol (MCP)** — Standardized tool server interface

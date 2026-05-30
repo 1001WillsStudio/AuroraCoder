@@ -100,12 +100,12 @@ jobs:
             },
             "StringFileInfo": {
               "Comments": "AuroraCoder One-Click Launcher - Agentic coding environment",
-              "CompanyName": "ThinkWithTool",
+              "CompanyName": "1001WillsStudio",
               "FileDescription": "AuroraCoder Launcher",
               "FileVersion": "1.0.0.0",
-              "InternalName": "thinkwithtool-launcher",
-              "LegalCopyright": "Apache-2.0 License",
-              "OriginalFilename": "thinkwithtool-launcher-windows-amd64.exe",
+              "InternalName": "AuroraCoder",
+              "LegalCopyright": "MIT License",
+              "OriginalFilename": "AuroraCoder-windows.exe",
               "ProductName": "AuroraCoder",
               "ProductVersion": "1.0.0.0"
             },
@@ -124,7 +124,12 @@ jobs:
       - name: Build binary (${{ matrix.os }}-${{ matrix.arch }})
         run: |
           cd launcher
-          OUTPUT="thinkwithtool-launcher-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}"
+          # Friendly name: auroracoder-{os} with -arm64 suffix for non-amd64
+          BASE="auroracoder-${{ matrix.os }}"
+          if [ "${{ matrix.arch }}" != "amd64" ]; then
+            BASE="${BASE}-${{ matrix.arch }}"
+          fi
+          OUTPUT="${BASE}${{ matrix.ext }}"
           GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} CGO_ENABLED=0 \
             go build -trimpath -ldflags="-s -w" -o "$OUTPUT" .
           echo "BINARY=$OUTPUT" >> $GITHUB_ENV
@@ -135,7 +140,7 @@ jobs:
         if: matrix.os == 'windows'
         run: |
           cd launcher
-          ZIP_NAME="thinkwithtool-launcher-${{ matrix.os }}-${{ matrix.arch }}.zip"
+          ZIP_NAME="auroracoder-windows.zip"
           zip "$ZIP_NAME" "${{ env.BINARY }}"
           echo "BINARY=$ZIP_NAME" >> $GITHUB_ENV
           ls -lh "$ZIP_NAME"
@@ -144,7 +149,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: thinkwithtool-launcher-${{ matrix.os }}-${{ matrix.arch }}
+          name: auroracoder-${{ matrix.os }}-${{ matrix.arch }}
           path: |
             launcher/${{ env.BINARY }}
 
@@ -161,7 +166,7 @@ jobs:
       - name: Flatten artifact directory
         run: |
           mkdir -p dist
-          find artifacts -type f \( -name "thinkwithtool-launcher-*" \) -exec cp {} dist/ \;
+          find artifacts -type f -exec cp {} dist/ \;
           echo "Release assets:"
           ls -lh dist/
 
@@ -174,27 +179,27 @@ jobs:
           body: |
             ## Install
 
-            **Windows** — download `thinkwithtool-launcher-windows-amd64.zip`, extract, run `thinkwithtool-launcher-windows-amd64.exe`.
+            **Windows** — download `auroracoder-windows.zip`, extract, run `auroracoder-windows.exe`.
             > If SmartScreen warns: **More info → Run anyway**.
 
             **macOS (Apple Silicon)** —
             ```bash
-            xattr -d com.apple.quarantine ./thinkwithtool-launcher-darwin-arm64
-            chmod +x ./thinkwithtool-launcher-darwin-arm64
-            ./thinkwithtool-launcher-darwin-arm64
+            xattr -d com.apple.quarantine ./auroracoder-darwin-arm64
+            chmod +x ./auroracoder-darwin-arm64
+            ./auroracoder-darwin-arm64
             ```
 
             **macOS (Intel)** —
             ```bash
-            xattr -d com.apple.quarantine ./thinkwithtool-launcher-darwin-amd64
-            chmod +x ./thinkwithtool-launcher-darwin-amd64
-            ./thinkwithtool-launcher-darwin-amd64
+            xattr -d com.apple.quarantine ./auroracoder-darwin-amd64
+            chmod +x ./auroracoder-darwin-amd64
+            ./auroracoder-darwin-amd64
             ```
 
             **Linux** —
             ```bash
-            chmod +x ./thinkwithtool-launcher-linux-amd64
-            ./thinkwithtool-launcher-linux-amd64
+            chmod +x ./auroracoder-linux-amd64
+            ./auroracoder-linux-amd64
             ```
 
             Requires [Docker](https://docs.docker.com/get-docker/).
