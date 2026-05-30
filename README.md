@@ -1,25 +1,14 @@
 <div align="center">
-  <img src="https://img.shields.io/badge/status-active-success?style=flat-square" alt="Status" />
-  <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License" />
-  <img src="https://img.shields.io/badge/python-3.10+-blue?style=flat-square" alt="Python" />
-  <img src="https://img.shields.io/badge/node-18+-green?style=flat-square" alt="Node" />
-  <img src="https://img.shields.io/badge/docker-required-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker" />
+  <img src="frontend/public/favicon.svg" width="80" alt="AuroraCoder" />
+  <h1>AuroraCoder</h1>
+  <p><strong>Your intelligent coding companion powered by AI</strong></p>
+  <p>
+    <img src="https://img.shields.io/badge/python-3.10+-blue?style=flat-square" alt="Python" />
+    <img src="https://img.shields.io/badge/node-18+-green?style=flat-square" alt="Node" />
+    <img src="https://img.shields.io/badge/docker-required-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker" />
+    <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License" />
+  </p>
 </div>
-
-<h1 align="center">🌌 AuroraCoder</h1>
-<p align="center"><strong>An autonomous coding agent that thinks, reasons, and builds —<br/>powered by native OpenAI tool calling with deep reasoning models.</strong></p>
-
-<p align="center">
-  <a href="#-overview">Overview</a> •
-  <a href="#-key-innovations">Innovations</a> •
-  <a href="#-design-decisions">Design</a> •
-  <a href="#-quick-start">Quick Start</a> •
-  <a href="#-architecture">Architecture</a> •
-  <a href="#-tools">Tools</a> •
-  <a href="#-configuration">Config</a> •
-  <a href="#-browser-desktop">VNC Desktop</a> •
-  <a href="#-development">Development</a>
-</p>
 
 ---
 
