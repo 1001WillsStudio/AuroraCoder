@@ -1,8 +1,7 @@
-<p align="center">
-  <img src="frontend/public/assets/readme-logo.png" alt="AuroraCoder" />
-</p>
-
 <div align="center">
+  <img src="frontend/public/assets/readme-logo.png" width="100" alt="AuroraCoder" style="vertical-align:middle" />
+  <h1 style="display:inline-block;vertical-align:middle;margin:0 0 0 12px">AuroraCoder</h1>
+  <p><strong>Your intelligent coding companion powered by AI</strong></p>
   <p>
     <img src="https://img.shields.io/badge/python-3.10+-blue?style=flat-square" />
     <img src="https://img.shields.io/badge/node-18+-green?style=flat-square" />
