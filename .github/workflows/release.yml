@@ -4,7 +4,15 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:  # Allow manual trigger for testing
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag to release (e.g. v0.0.13)'
+        required: false
+        type: string
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 permissions:
   contents: write
@@ -40,6 +48,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.24'
+          cache-dependency-path: launcher/go.sum
 
       - name: Install rsync
         run: sudo apt-get update -qq && sudo apt-get install -y -qq rsync
@@ -170,9 +179,19 @@ jobs:
           echo "Release assets:"
           ls -lh dist/
 
+      - name: Determine tag name
+        id: tag
+        run: |
+          if [ -n "${{ inputs.tag_name }}" ]; then
+            echo "tag=${{ inputs.tag_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.tag.outputs.tag }}
           files: dist/*
           draft: true
           generate_release_notes: true
