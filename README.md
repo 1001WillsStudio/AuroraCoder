@@ -1,5 +1,7 @@
 <div align="center">
-  <img src="frontend/public/assets/logo.png" width="80" alt="AuroraCoder" />
+  <div style="display:inline-block;padding:16px 32px;border-radius:12px;background:#0f0f1a;margin-bottom:16px">
+    <img src="frontend/public/assets/logo.png" width="140" alt="AuroraCoder" />
+  </div>
   <h1>AuroraCoder</h1>
   <p><strong>Your intelligent coding companion powered by AI</strong></p>
   <p>
