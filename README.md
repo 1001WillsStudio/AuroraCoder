@@ -163,15 +163,15 @@ Seven model providers with reasoning mode toggled per provider. `ProviderManager
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/YOUR_USERNAME/auroracoder.git
-cd auroracoder
+git clone https://github.com/Mrw33554432/AuroraCoder.git
+cd AuroraCoder
 
 # 2. Copy and fill in the environment file
 cp .env.example .env
 # Edit .env with your API keys — at minimum set DEEPSEEK_API_KEY
 
 # 3. Build the base Docker image (conda environment)
-docker build -t thinkwithtool-base -f Dockerfile.base .
+docker build -t auroracoder-base -f Dockerfile.base .
 
 # 4. Launch via docker compose
 docker compose up --build
@@ -450,8 +450,8 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ```bash
 # Clone and enter the repo
-git clone https://github.com/YOUR_USERNAME/auroracoder.git
-cd auroracoder
+git clone https://github.com/Mrw33554432/AuroraCoder.git
+cd AuroraCoder
 
 # Set up Python environment
 conda create -n auroracoder python=3.11

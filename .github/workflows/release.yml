@@ -74,6 +74,53 @@ jobs:
             --exclude='.github' \
             ./ launcher/embed/
 
+      - name: Add Windows VERSIONINFO resource
+        if: matrix.os == 'windows'
+        run: |
+          cd launcher
+
+          # Install goversioninfo tool
+          go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest
+
+          # Create version info JSON (provides proper metadata for SmartScreen)
+          cat > versioninfo.json << 'VEOF'
+          {
+            "FixedFileInfo": {
+              "FileVersion": {
+                "Major": 1, "Minor": 0, "Patch": 0, "Build": 0
+              },
+              "ProductVersion": {
+                "Major": 1, "Minor": 0, "Patch": 0, "Build": 0
+              },
+              "FileFlagsMask": "3f",
+              "FileFlags": "00",
+              "FileOS": "040004",
+              "FileType": "01",
+              "FileSubType": "00"
+            },
+            "StringFileInfo": {
+              "Comments": "AuroraCoder One-Click Launcher - Agentic coding environment",
+              "CompanyName": "ThinkWithTool",
+              "FileDescription": "AuroraCoder Launcher",
+              "FileVersion": "1.0.0.0",
+              "InternalName": "thinkwithtool-launcher",
+              "LegalCopyright": "Apache-2.0 License",
+              "OriginalFilename": "thinkwithtool-launcher-windows-amd64.exe",
+              "ProductName": "AuroraCoder",
+              "ProductVersion": "1.0.0.0"
+            },
+            "VarFileInfo": {
+              "Translation": {
+                "LangID": "0409",
+                "CharsetID": "04B0"
+              }
+            }
+          }
+          VEOF
+
+          goversioninfo -64 -platform-specific=false -o resource_windows.syso versioninfo.json
+          echo "✅ Generated resource_windows.syso with VERSIONINFO metadata"
+
       - name: Build binary (${{ matrix.os }}-${{ matrix.arch }})
         run: |
           cd launcher
@@ -83,11 +130,23 @@ jobs:
           echo "BINARY=$OUTPUT" >> $GITHUB_ENV
           ls -lh "$OUTPUT"
 
+      # ── Windows: package .exe in .zip (dramatically reduces browser download blocks) ──
+      - name: Package Windows binary in ZIP
+        if: matrix.os == 'windows'
+        run: |
+          cd launcher
+          ZIP_NAME="thinkwithtool-launcher-${{ matrix.os }}-${{ matrix.arch }}.zip"
+          zip "$ZIP_NAME" "${{ env.BINARY }}"
+          echo "BINARY=$ZIP_NAME" >> $GITHUB_ENV
+          ls -lh "$ZIP_NAME"
+          echo "✅ Packaged Windows binary in ZIP: $ZIP_NAME"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: thinkwithtool-launcher-${{ matrix.os }}-${{ matrix.arch }}
-          path: launcher/${{ env.BINARY }}
+          path: |
+            launcher/${{ env.BINARY }}
 
   release:
     name: Create GitHub Release
@@ -102,7 +161,8 @@ jobs:
       - name: Flatten artifact directory
         run: |
           mkdir -p dist
-          find artifacts -type f -name "thinkwithtool-launcher-*" -exec cp {} dist/ \;
+          find artifacts -type f \( -name "thinkwithtool-launcher-*" \) -exec cp {} dist/ \;
+          echo "Release assets:"
           ls -lh dist/
 
       - name: Create GitHub Release
@@ -111,5 +171,32 @@ jobs:
           files: dist/*
           draft: true
           generate_release_notes: true
+          body: |
+            ## Install
+
+            **Windows** — download `thinkwithtool-launcher-windows-amd64.zip`, extract, run `thinkwithtool-launcher-windows-amd64.exe`.
+            > If SmartScreen warns: **More info → Run anyway**.
+
+            **macOS (Apple Silicon)** —
+            ```bash
+            xattr -d com.apple.quarantine ./thinkwithtool-launcher-darwin-arm64
+            chmod +x ./thinkwithtool-launcher-darwin-arm64
+            ./thinkwithtool-launcher-darwin-arm64
+            ```
+
+            **macOS (Intel)** —
+            ```bash
+            xattr -d com.apple.quarantine ./thinkwithtool-launcher-darwin-amd64
+            chmod +x ./thinkwithtool-launcher-darwin-amd64
+            ./thinkwithtool-launcher-darwin-amd64
+            ```
+
+            **Linux** —
+            ```bash
+            chmod +x ./thinkwithtool-launcher-linux-amd64
+            ./thinkwithtool-launcher-linux-amd64
+            ```
+
+            Requires [Docker](https://docs.docker.com/get-docker/).
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

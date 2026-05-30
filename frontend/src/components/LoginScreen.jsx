@@ -49,7 +49,7 @@ export default function LoginScreen({ onLoginSuccess }) {
     <div className="login-overlay">
       <div className="login-card">
         <div className="login-card-icon">🧠</div>
-        <h1 className="login-card-title">ThinkWithTool</h1>
+        <h1 className="login-card-title">🌌 AuroraCoder</h1>
         <p className="login-card-subtitle">Secure access required</p>
 
         <form onSubmit={handleSubmit} className="login-card-form">
