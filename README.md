@@ -1,14 +1,23 @@
 <div align="center">
-  <div style="display:inline-block;padding:16px 32px;border-radius:12px;background:#0f0f1a;margin-bottom:16px">
-    <img src="frontend/public/assets/logo.png" width="140" alt="AuroraCoder" />
-  </div>
-  <h1>AuroraCoder</h1>
+  <h1>
+    <svg width="48" height="48" viewBox="0 0 100 100" style="vertical-align:middle;margin-right:12px">
+      <defs>
+        <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" style="stop-color:#6366f1"/>
+          <stop offset="100%" style="stop-color:#a855f7"/>
+        </linearGradient>
+      </defs>
+      <circle cx="50" cy="50" r="45" fill="url(#g)"/>
+      <path d="M30 50 L45 65 L70 35" stroke="white" stroke-width="8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    AuroraCoder
+  </h1>
   <p><strong>Your intelligent coding companion powered by AI</strong></p>
   <p>
-    <img src="https://img.shields.io/badge/python-3.10+-blue?style=flat-square" alt="Python" />
-    <img src="https://img.shields.io/badge/node-18+-green?style=flat-square" alt="Node" />
-    <img src="https://img.shields.io/badge/docker-required-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker" />
-    <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License" />
+    <img src="https://img.shields.io/badge/python-3.10+-blue?style=flat-square" />
+    <img src="https://img.shields.io/badge/node-18+-green?style=flat-square" />
+    <img src="https://img.shields.io/badge/docker-required-2496ED?style=flat-square&logo=docker&logoColor=white" />
+    <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" />
   </p>
 </div>
 
