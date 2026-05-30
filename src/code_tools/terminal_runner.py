@@ -29,26 +29,28 @@ class TerminalRunner:
         self.workspace_root = WORKSPACE
     
     def run_command(
-        self, command: str, timeout: int = 30, blocking: bool = True, cwd: str = None
+        self, command: str, timeout: int = 30, blocking: bool = True, cwd: str = None, new_terminal: bool = False
     ) -> str:
         """
         Run a terminal command in the persistent session shell.
 
         Args:
-            command: The command to execute. If "start_new_terminal", it restarts the shell.
+            command: The command to execute.
             timeout: Command timeout in seconds.
             blocking: If False, launch in background and return the log file path.
             cwd: Working directory (now managed by the session).
+            new_terminal: If True, restart the persistent shell before running the command.
 
         Returns:
             Command output or process information
         """
         try:
-            if command.strip() == "start_new_terminal":
-                return shell.restart()
+
+            if new_terminal:
+                shell.restart()
 
             if not shell.is_alive:
-                return "Error: Persistent shell is not available. Try running 'start_new_terminal'."
+                return "Error: Persistent shell is not available. Use new_terminal=true to restart it."
 
             stdout, stderr = shell.run(command, timeout=timeout, blocking=blocking)
 
@@ -115,7 +117,7 @@ class TerminalRunner:
 
 
 def run_terminal_cmd_tool(
-    command: str, timeout: int = 30, blocking: bool = True, workspace_root: str = None
+    command: str, timeout: int = 30, blocking: bool = True, workspace_root: str = None, new_terminal: bool = False
 ) -> str:
     """Run terminal command tool wrapper."""
     runner = TerminalRunner(workspace_root=workspace_root)

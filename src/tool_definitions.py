@@ -282,7 +282,7 @@ NATIVE_TOOL_DEFINITIONS = [
                 "properties": {
                     "command": {
                         "type": "string",
-                        "description": "The shell command to execute. Do NOT include nohup or trailing &; use the blocking parameter instead. Use 'start_new_terminal' to restart the terminal if needed."
+                        "description": "The shell command to execute. Do NOT include nohup or trailing &; use the blocking parameter instead."
                     },
                     "timeout": {
                         "type": "integer",
@@ -291,6 +291,10 @@ NATIVE_TOOL_DEFINITIONS = [
                     "blocking": {
                         "type": "boolean",
                         "description": "If false, run the command in the background and return immediately with the PID and log file path. Use for servers, training scripts, or any long-running process. Default is true."
+                    },
+                    "new_terminal": {
+                        "type": "boolean",
+                        "description": "If true, restart the persistent shell before running the command. Use when the terminal is unresponsive or you need a clean environment. Default is false."
                     }
                 },
                 "required": ["command"]
