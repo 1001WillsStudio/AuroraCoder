@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { User, Bot, ChevronDown, ChevronRight, Loader2, Brain, RotateCcw, AlertCircle, GitBranch, AlertTriangle } from 'lucide-react'
 import useLanguage from '../hooks/useLanguage'
 import ReactMarkdown from 'react-markdown'
@@ -99,7 +99,7 @@ function ChatMessage({ message, msgIdx, isLatest, isStreaming, onRetry, onStopTo
   
   // Group consecutive activities for better display
   // Each block follows: thinking → content → tool_calls/results
-  const groupedActivities = groupActivities(activities, message.content)
+  const groupedActivities = useMemo(() => groupActivities(activities, message.content), [activities, message.content])
   
   // Count thinking blocks for labeling
   const thinkingCount = activities.filter(a => a.type === 'thinking').length
@@ -290,4 +290,4 @@ function groupActivities(activities, content) {
   return groups
 }
 
-export default ChatMessage
+export default React.memo(ChatMessage)

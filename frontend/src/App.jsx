@@ -100,6 +100,8 @@ function App() {
   const [forkWarning, setForkWarning] = useState(null)
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
+    const inputValueRef = useRef(inputValue)
+    inputValueRef.current = inputValue
   const abortControllerRef = useRef(null)
   const pendingInterruptRef = useRef(null)
   const conversationIdRef = useRef(null)
@@ -327,7 +329,7 @@ function App() {
       return
     }
     if (abortControllerRef.current) { abortControllerRef.current.abort(); abortControllerRef.current = null }
-    if (inputValue.trim()) draftInputsRef.current.set(conversationId ?? '__new__', inputValue)
+    if (inputValueRef.current.trim()) draftInputsRef.current.set(conversationId ?? '__new__', inputValueRef.current)
     setConversationId(crypto.randomUUID())
     setRawMessages(rawMessages.slice(0, rawIdx))
     setMessages(messages.slice(0, frontendMsgIdx))
@@ -339,9 +341,11 @@ function App() {
     setViewMode('main')
     setInputValue('')
     setHistoryRefreshTrigger(prev => prev + 1)
-  }, [rawMessages, messages, conversationId, inputValue, findForkPoint])
+  }, [rawMessages, messages, conversationId, findForkPoint])
 
-  const handleClear = () => {
+  const handleForkDismiss = useCallback(() => setForkWarning(null), [])
+
+    const handleClear = () => {
     if (inputValue.trim()) draftInputsRef.current.set(conversationId ?? '__new__', inputValue)
     if (abortControllerRef.current) abortControllerRef.current.abort()
     setMessages([])
@@ -565,7 +569,7 @@ function App() {
                   onLoadConversation={handleLoadConversation}
                   subagentChildIds={subagentChildIds}
                   onForkConversation={handleForkConversation}
-                  onForkDismiss={() => setForkWarning(null)}
+                  onForkDismiss={handleForkDismiss}
                   forkWarning={forkWarning}
                   forkClickRef={forkClickRef}
                   messagesLength={messages.length}
