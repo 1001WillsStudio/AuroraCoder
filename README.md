@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="frontend/public/favicon.svg" width="80" alt="AuroraCoder" />
+  <img src="frontend/public/assets/logo.png" width="80" alt="AuroraCoder" />
   <h1>AuroraCoder</h1>
   <p><strong>Your intelligent coding companion powered by AI</strong></p>
   <p>
