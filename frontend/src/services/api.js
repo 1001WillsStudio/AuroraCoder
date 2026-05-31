@@ -8,10 +8,14 @@ import { getAuthHeader, clearToken } from '../utils/auth.js';
 const API_BASE = '/api'
 
 let _reqSeq = 0
-function _ts() { return performance.now().toFixed(1) }
+function _wall() {
+  const d = new Date()
+  const pad = (n, len = 2) => String(n).padStart(len, '0')
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`
+}
 function _tlog(label, seq, startMs) {
   const elapsed = startMs != null ? ` (+${(performance.now() - startMs).toFixed(1)}ms)` : ''
-  console.log(`[timing][#${seq}] ${_ts()}ms | ${label}${elapsed}`)
+  console.log(`[timing][#${seq}] ${_wall()} | ${label}${elapsed}`)
 }
 
 /** Build headers including auth token when available */
@@ -256,7 +260,7 @@ export async function getConversation(conversationId) {
  */
 export async function getActiveStreams() {
   const t0 = performance.now()
-  console.log(`[timing] getActiveStreams() called at ${_ts()}ms`)
+  console.log(`[timing] getActiveStreams() called at ${_wall()}`)
   const response = await fetch(`${API_BASE}/conversations/active`, { headers: _headers() })
   console.log(`[timing] getActiveStreams() responded in ${(performance.now() - t0).toFixed(1)}ms`)
   if (!response.ok) {
