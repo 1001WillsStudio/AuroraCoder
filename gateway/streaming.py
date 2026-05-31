@@ -180,9 +180,15 @@ async def _cancel_active_stream(conversation_id: str) -> None:
 
     All cancellations are initiated concurrently so the total wait is bounded to a
     single timeout regardless of how many subagent children exist.
+
+    GUARANTEE: any stream that survives cancellation (task doesn't finish within
+    the 2 s timeout) is force-removed from ``active_streams``.  No stream ever
+    outlives a cancel call — a zombie stream would permanently block new
+    conversations via the ``/api/conversations/active`` check.
     """
     t_start = time.perf_counter()
     tasks_to_await: List[asyncio.Task] = []
+    streams_to_kill: List[ActiveStream] = []  # force-removed on timeout
 
     async with _streams_lock:
         old = active_streams.get(conversation_id)
@@ -199,6 +205,7 @@ async def _cancel_active_stream(conversation_id: str) -> None:
         if child.task and not child.task.done():
             child.task.cancel()
             tasks_to_await.append(child.task)
+        streams_to_kill.append(child)
 
     # Cancel the parent stream
     if old and not old.finished:
@@ -206,6 +213,7 @@ async def _cancel_active_stream(conversation_id: str) -> None:
         if old.task and not old.task.done():
             old.task.cancel()
             tasks_to_await.append(old.task)
+        streams_to_kill.append(old)
 
     # Cancel any continuation child created by this stream
     async with _streams_lock:
@@ -218,6 +226,7 @@ async def _cancel_active_stream(conversation_id: str) -> None:
                 if continuation.task and not continuation.task.done():
                     continuation.task.cancel()
                     tasks_to_await.append(continuation.task)
+                streams_to_kill.append(continuation)
 
     # Await all cancelled tasks concurrently — total wait bounded to 2 s
     if tasks_to_await:
@@ -228,18 +237,27 @@ async def _cancel_active_stream(conversation_id: str) -> None:
             )
         except (asyncio.TimeoutError, Exception):
             pass
+
+    # GUARANTEE: force-remove any stream that survived the timeout.
+    # The orphaned task will finish on its own eventually; its finally
+    # block will see a different stream (or nothing) on the identity check
+    # and exit cleanly.  Without this, a stuck task creates a permanent
+    # zombie that blocks all new conversations.
+    async with _streams_lock:
+        for s in streams_to_kill:
+            if not s.finished and active_streams.get(s.conversation_id) is s:
+                s.finished = True
+                del active_streams[s.conversation_id]
+                logger.warning(
+                    f"[cancel] Force-removed zombie stream "
+                    f"{s.conversation_id[:8]}... after timeout"
+                )
+
     elapsed = time.perf_counter() - t_start
     if elapsed > 0.1:
         logger.info(f"[cancel] [{conversation_id[:8]}...] duration={elapsed:.3f}s tasks_awaited={len(tasks_to_await)}")
 
 
-async def _has_active_main_stream(exclude: Optional[str] = None) -> Optional[str]:
-    """Return the conversation ID of any running user_chat stream, or None."""
-    async with _streams_lock:
-        for cid, s in active_streams.items():
-            if cid != exclude and s.conv_type == "user_chat" and not s.finished:
-                return cid
-    return None
 
 
 # ============================================================================

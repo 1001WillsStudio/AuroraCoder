@@ -51,7 +51,6 @@ from gateway.streaming import (
     active_streams,
     _streams_lock,
     _cancel_active_stream,
-    _has_active_main_stream,
     _fix_orphan_tool_calls,
     _proxy_backend_stream,
     _subscriber_sse,
@@ -140,17 +139,6 @@ async def proxy_chat(request: Request):
     parent_id = body.pop("parent_id", None)
     tool_call_id = body.pop("tool_call_id", None)
 
-    # 409 guard: only for user_chat (subagents are allowed alongside a main stream)
-    if conv_type == "user_chat":
-        existing = await _has_active_main_stream(exclude=conversation_id)
-        if existing:
-            return JSONResponse(
-                status_code=409,
-                content={
-                    "detail": "Another conversation is still running",
-                    "active_conversation_id": existing,
-                },
-            )
 
     # Cancel any previous stream for the SAME conversation (re-send / continue)
     t2 = time.perf_counter()
