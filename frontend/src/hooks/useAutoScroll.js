@@ -34,22 +34,32 @@ export function useAutoScroll(messages, isStreaming) {
     return () => container.removeEventListener('wheel', onWheel)
   }, [isStreaming])
 
-  // ── scroll event: normal position check ──
+  // ── scroll event: position check for scrollbar / keyboard ──
+  // Track previous distance to detect "scrolled up" (dist increased)
+  // vs "scrolled to bottom" (dist ≈ 0).  This avoids using a pixel
+  // threshold that would override the wheel handler.
+  const prevDistRef = useRef(0)
   useEffect(() => {
     const container = chatContainerRef.current
     if (!container) return
 
     const handleScroll = () => {
-      const threshold = 100
-      const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
-      const scrolledUp = distanceFromBottom > threshold
-      scrolledUpRef.current = scrolledUp
-      setIsUserScrolledUp(scrolledUp)
-      if (isStreaming && scrolledUp) {
-        setShowScrollButton(true)
-      } else if (!scrolledUp) {
-        setShowScrollButton(false)
+      const dist = container.scrollHeight - container.scrollTop - container.clientHeight
+      const prev = prevDistRef.current
+      prevDistRef.current = dist
+
+      // dist INCREASED → user scrolled UP (zero threshold)
+      if (dist > prev) {
+        scrolledUpRef.current = true
+        setIsUserScrolledUp(true)
       }
+      // dist DECREASED to bottom → user scrolled DOWN to bottom → re-enable
+      else if (dist <= 2 && dist < prev) {
+        scrolledUpRef.current = false
+        setIsUserScrolledUp(false)
+      }
+
+      setShowScrollButton(dist > 2 && isStreaming)
     }
 
     container.addEventListener('scroll', handleScroll, { passive: true })
