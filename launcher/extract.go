@@ -232,4 +232,3 @@ func getStorageBase() string {
 
 	return filepath.Join(home, "AuroraCoder")
 }
-}
