@@ -4,21 +4,25 @@ export function useAutoScroll(messages, isStreaming) {
   const chatContainerRef = useRef(null)
   const [isUserScrolledUp, setIsUserScrolledUp] = useState(false)
   const [showScrollButton, setShowScrollButton] = useState(false)
-  // Ref so the messages effect reads scroll intent *before* React re-renders
+  // Ref for zero-lag intent capture by the messages effect
   const scrolledUpRef = useRef(false)
+  // Flag: true while a programmatic scrollToBottom() is in flight so the
+  // scroll handler doesn't mistake it for a manual scroll-up.
+  const autoScrollingRef = useRef(false)
+  // Previous distance — used to detect "scrolled up" vs "scrolled down"
+  const prevDistRef = useRef(0)
 
   const scrollToBottom = useCallback((smooth = true) => {
-    if (chatContainerRef.current) {
-      chatContainerRef.current.scrollTo({
-        top: chatContainerRef.current.scrollHeight,
-        behavior: smooth ? 'smooth' : 'auto',
-      })
-    }
+    const container = chatContainerRef.current
+    if (!container) return
+    autoScrollingRef.current = true
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior: smooth ? 'smooth' : 'auto',
+    })
   }, [])
 
   // ── wheel event: capture scroll intent *before* the browser moves ──
-  // Setting the ref synchronously eliminates the old race where a content
-  // update arrived between a scroll-up and the async 'scroll' handler.
   useEffect(() => {
     const container = chatContainerRef.current
     if (!container) return
@@ -35,16 +39,21 @@ export function useAutoScroll(messages, isStreaming) {
   }, [isStreaming])
 
   // ── scroll event: position check for scrollbar / keyboard ──
-  // Track previous distance to detect "scrolled up" (dist increased)
-  // vs "scrolled to bottom" (dist ≈ 0).  This avoids using a pixel
-  // threshold that would override the wheel handler.
-  const prevDistRef = useRef(0)
   useEffect(() => {
     const container = chatContainerRef.current
     if (!container) return
 
     const handleScroll = () => {
       const dist = container.scrollHeight - container.scrollTop - container.clientHeight
+
+      // If the scroll was triggered by scrollToBottom(), ignore it —
+      // otherwise fast streaming can trigger dist > prev and false-disable.
+      if (autoScrollingRef.current) {
+        if (dist <= 2) autoScrollingRef.current = false
+        prevDistRef.current = dist
+        return
+      }
+
       const prev = prevDistRef.current
       prevDistRef.current = dist
 
@@ -59,7 +68,8 @@ export function useAutoScroll(messages, isStreaming) {
         setIsUserScrolledUp(false)
       }
 
-      setShowScrollButton(dist > 2 && isStreaming)
+      // Show button whenever user is not at the bottom — even outside streaming
+      setShowScrollButton(dist > 2)
     }
 
     container.addEventListener('scroll', handleScroll, { passive: true })
@@ -70,7 +80,7 @@ export function useAutoScroll(messages, isStreaming) {
   // takes effect instantly, avoiding the scroll-event race.
   useEffect(() => {
     if (!scrolledUpRef.current) {
-      scrollToBottom()
+      scrollToBottom(true)  // smooth scroll
     }
   }, [messages, scrollToBottom])
 
@@ -80,9 +90,9 @@ export function useAutoScroll(messages, isStreaming) {
       scrolledUpRef.current = false
       setIsUserScrolledUp(false)
       scrollToBottom(false)
-    } else {
-      setShowScrollButton(false)
     }
+    // Don't hide the scroll button on stream end — the user might still
+    // want to jump to the bottom of a long conversation.
   }, [isStreaming, scrollToBottom])
 
   return { chatContainerRef, scrollToBottom, isUserScrolledUp, setIsUserScrolledUp, showScrollButton }
