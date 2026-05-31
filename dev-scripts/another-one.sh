@@ -21,7 +21,7 @@ if [ -n "$INST" ]; then
     :  # explicit instance number provided
 else
     INST=2
-    while docker inspect --format="." "thinkwithtool-agent-$INST" >/dev/null 2>&1; do
+    while docker inspect --format="." "auroracoder-agent-$INST" >/dev/null 2>&1; do
         INST=$((INST + 1))
     done
 fi
@@ -35,15 +35,15 @@ DEV_PORT_END=$((DEV_PORT_START + 2))
 FRONTEND_PORT=$((3000 + INST - 1))
 TOOLSTORE_PORT=$((8765 + INST - 1))
 
-CONTAINER="thinkwithtool-agent-$INST"
+CONTAINER="auroracoder-agent-$INST"
 
 # ── Storage base ────────────────────────────────────────────────────────
 if [ -d "$HOME/Documents" ]; then
-    STORAGE_BASE="$HOME/Documents/ThinkTool"
+    STORAGE_BASE="$HOME/Documents/AuroraCoder"
 elif [ -d "$HOME/documents" ]; then
-    STORAGE_BASE="$HOME/documents/ThinkTool"
+    STORAGE_BASE="$HOME/documents/AuroraCoder"
 else
-    STORAGE_BASE="$HOME/ThinkTool"
+    STORAGE_BASE="$HOME/AuroraCoder"
 fi
 DATA_DIR="$STORAGE_BASE/data-$INST"
 WORKSPACE_DIR="$STORAGE_BASE/workspace-$INST"
@@ -61,8 +61,8 @@ echo ""
 
 # ── Pre-flight checks ───────────────────────────────────────────────────
 # The base + app images must already exist (built by start.sh)
-if ! docker inspect --type=image thinkwithtool >/dev/null 2>&1; then
-    echo "ERROR: App image \"thinkwithtool\" not found."
+if ! docker inspect --type=image auroracoder >/dev/null 2>&1; then
+    echo "ERROR: App image \"auroracoder\" not found."
     echo "Run start.sh first to build the Docker images."
     exit 1
 fi
@@ -98,8 +98,8 @@ echo "Starting backend in Docker (instance $INST)..."
 docker run --rm -d \
     --name "$CONTAINER" \
 --env-file .env \
-    -e THINKTOOL_DOCKER=1 \
-    -e THINKTOOL_VNC=1 \
+    -e AURORACODER_DOCKER=1 \
+    -e AURORACODER_VNC=1 \
     -v "$DATA_DIR:/app/data" \
     -v "$WORKSPACE_DIR:/workspace" \
     -p "$BACKEND_PORT:8080" \
@@ -107,7 +107,7 @@ docker run --rm -d \
     -p "$DEV_PORT_START-$DEV_PORT_END:8900-8902" \
     -p "$FRONTEND_PORT:3000" \
     -p "$TOOLSTORE_PORT:8765" \
-    thinkwithtool || {
+    auroracoder || {
     echo "Failed to start container."
     exit 1
 }

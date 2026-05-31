@@ -17,14 +17,14 @@ set "GITHUB_TOKEN="
 for /f "tokens=2 delims==" %%a in ('findstr /b /c:"GITHUB_TOKEN=" .env 2^>nul') do set "GITHUB_TOKEN=%%a"
 
 :: Check if base image exists; build if missing
-docker inspect --type=image thinkwithtool-base >nul 2>&1
+docker inspect --type=image auroracoder-base >nul 2>&1
 if errorlevel 1 goto :build_base
 echo [base] Base image found, skipping.
 goto :build_app
 
 :build_base
 echo [base] Building base image -- first time, this may take a few minutes...
-docker build -t thinkwithtool-base -f docker\Dockerfile.base --build-arg GITHUB_TOKEN=%GITHUB_TOKEN% .
+docker build -t auroracoder-base -f docker\Dockerfile.base --build-arg GITHUB_TOKEN=%GITHUB_TOKEN% .
 if errorlevel 1 (
     echo Base image build failed.
     pause
@@ -38,7 +38,7 @@ echo [base] Done.
 :: Generate unique cache-bust key to force ToolStore reinstall every run
 for /f "tokens=2 delims==." %%I in ('wmic os get localdatetime /value ^| find "="') do set "CACHEBUST=%%I"
 echo [app] Building app image (cache-bust: %CACHEBUST%)...
-docker build -t thinkwithtool --build-arg GITHUB_TOKEN=%GITHUB_TOKEN% --build-arg CACHEBUST=%CACHEBUST% -f docker\Dockerfile .
+docker build -t auroracoder --build-arg GITHUB_TOKEN=%GITHUB_TOKEN% --build-arg CACHEBUST=%CACHEBUST% -f docker\Dockerfile .
 if errorlevel 1 (
     echo App image build failed.
     pause
@@ -47,15 +47,15 @@ if errorlevel 1 (
 
 :: Stop existing container if running
 echo Stopping old container if any...
-docker stop thinkwithtool-agent >nul 2>&1
-docker rm thinkwithtool-agent >nul 2>&1
+docker stop auroracoder-agent >nul 2>&1
+docker rm auroracoder-agent >nul 2>&1
 
 :: Short delay to ensure ports are fully released
 echo Waiting for port cleanup...
 timeout /t 2 /nobreak >nul
 
-:: Storage base — all persistent data lives under Documents\ThinkTool
-set "STORAGE_BASE=%USERPROFILE%\Documents\ThinkTool"
+:: Storage base — all persistent data lives under Documents\AuroraCoder
+set "STORAGE_BASE=%USERPROFILE%\Documents\AuroraCoder"
 
 :: Start backend container (agent + conversation history server)
 echo Starting backend in Docker (app + frontend)...
@@ -67,7 +67,7 @@ if not exist ".env" (
 )
 if not exist "%STORAGE_BASE%\data" mkdir "%STORAGE_BASE%\data"
 if not exist "%STORAGE_BASE%\workspace" mkdir "%STORAGE_BASE%\workspace"
-docker run --rm -d --name thinkwithtool-agent --env-file .env -e THINKTOOL_DOCKER=1 -e THINKTOOL_VNC=1 -v "%STORAGE_BASE%\data:/app/data" -v "%STORAGE_BASE%\workspace:/workspace" -p 8080:8080 -p 3000:3000 -p 6080:6080 -p 8765:8765 -p 8900-8902:8900-8902 thinkwithtool
+docker run --rm -d --name auroracoder-agent --env-file .env -e AURORACODER_DOCKER=1 -e AURORACODER_VNC=1 -v "%STORAGE_BASE%\data:/app/data" -v "%STORAGE_BASE%\workspace:/workspace" -p 8080:8080 -p 3000:3000 -p 6080:6080 -p 8765:8765 -p 8900-8902:8900-8902 auroracoder
 if errorlevel 1 (
     echo Failed to start container.
     pause
@@ -76,4 +76,4 @@ if errorlevel 1 (
 echo Container started.
 echo.
 echo AuroraCoder is running at http://localhost:3000
-echo To stop: docker stop thinkwithtool-agent
+echo To stop: docker stop auroracoder-agent

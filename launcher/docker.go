@@ -180,7 +180,7 @@ func buildBaseImage(cacheDir string, ps *progressServer) error {
 		}
 	}
 
-	ps.logLine("Building thinkwithtool-base (may take several minutes)...")
+	ps.logLine("Building auroracoder-base (may take several minutes)...")
 
 	cmd := exec.Command("docker", "build", "-t", baseImageName, "-f", "docker/Dockerfile.base", ".")
 	cmd.Dir = cacheDir
@@ -220,7 +220,7 @@ func buildBaseImage(cacheDir string, ps *progressServer) error {
 // ─── App image build ──────────────────────────────────────────────────────
 
 func buildAppImage(cacheDir string, ps *progressServer) error {
-	ps.logLine("Building thinkwithtool app image...")
+	ps.logLine("Building auroracoder app image...")
 
 	cmd := exec.Command("docker", "build", "-t", appImageName, "-f", "docker/Dockerfile", ".")
 	cmd.Dir = cacheDir
@@ -249,8 +249,8 @@ func startContainer(cacheDir string, ps *progressServer) error {
 		"run", "--rm", "-d",
 		"--name", containerName,
 		"--env-file", envFile,
-		"-e", "THINKTOOL_DOCKER=1",
-		"-e", "THINKTOOL_VNC=1",
+		"-e", "AURORACODER_DOCKER=1",
+		"-e", "AURORACODER_VNC=1",
 		"-v", fmt.Sprintf("%s:/app/data", dataDir),
 		"-v", fmt.Sprintf("%s:/workspace", workspaceDir),
 		"-p", fmt.Sprintf("%d:%d", apiPort, apiPort),

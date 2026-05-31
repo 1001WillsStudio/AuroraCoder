@@ -1,12 +1,12 @@
 /**
- * ThinkWithTool Desktop — Authentication Module
+ * AuroraCoder — Authentication Module
  *
  * Handles token storage, login/logout, and auth headers.
  * Mirrors the mobile auth.js with ES module exports.
  */
 
-const TOKEN_KEY = 'thinkwithtool_token';
-const TOKEN_EXPIRY_KEY = 'thinkwithtool_token_expiry';
+const TOKEN_KEY = 'auroracoder_token';
+const TOKEN_EXPIRY_KEY = 'auroracoder_token_expiry';
 
 let _token = null;
 

@@ -134,7 +134,7 @@ func main() {
 	fmt.Println("  VNC Desktop:   http://localhost:6080")
 	fmt.Printf("  ToolStore:     http://localhost:%d\n", toolStorePort)
 	fmt.Println()
-	fmt.Println("  To stop:  docker stop thinkwithtool-agent")
+	fmt.Println("  To stop:  docker stop auroracoder-agent")
 	fmt.Println()
 
 	autoExit(0)

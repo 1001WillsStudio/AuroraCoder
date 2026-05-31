@@ -15,5 +15,5 @@ if [ -z "$GITHUB_TOKEN" ]; then
 fi
 
 echo "[base] Building base image..."
-docker build -t thinkwithtool-base -f docker/Dockerfile.base --build-arg GITHUB_TOKEN="$GITHUB_TOKEN" .
+docker build -t auroracoder-base -f docker/Dockerfile.base --build-arg GITHUB_TOKEN="$GITHUB_TOKEN" .
 echo "[base] Done."

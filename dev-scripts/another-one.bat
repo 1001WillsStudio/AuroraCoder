@@ -9,7 +9,7 @@ if not "%INST%"=="" goto :inst_ready
 
 set "INST=2"
 :find_next
-docker inspect --format="." thinkwithtool-agent-%INST% >nul 2>&1
+docker inspect --format="." auroracoder-agent-%INST% >nul 2>&1
 if errorlevel 1 goto :inst_ready
 set /a "INST+=1"
 goto :find_next
@@ -25,8 +25,8 @@ set /a "DEV_PORT_END=%DEV_PORT_START%+2"
 set /a "FRONTEND_PORT=3000+%INST%-1"
 set /a "TOOLSTORE_PORT=8765+%INST%-1"
 
-set "CONTAINER=thinkwithtool-agent-%INST%"
-set "STORAGE_BASE=%USERPROFILE%\Documents\ThinkTool"
+set "CONTAINER=auroracoder-agent-%INST%"
+set "STORAGE_BASE=%USERPROFILE%\Documents\AuroraCoder"
 set "DATA_DIR=%STORAGE_BASE%\data-%INST%"
 set "WORKSPACE_DIR=%STORAGE_BASE%\workspace-%INST%"
 
@@ -51,9 +51,9 @@ for %%P in (%FRONTEND_PORT% %BACKEND_PORT% %VNC_PORT%) do (
 
 :: ── Pre-flight checks ───────────────────────────────────────────────────
 :: The base + app images must already exist (built by start.bat)
-docker inspect --type=image thinkwithtool >nul 2>&1
+docker inspect --type=image auroracoder >nul 2>&1
 if errorlevel 1 (
-    echo ERROR: App image "thinkwithtool" not found.
+    echo ERROR: App image "auroracoder" not found.
     echo Run start.bat first to build the Docker images.
     exit /b 1
 )
@@ -86,8 +86,8 @@ echo Starting backend in Docker (instance %INST%)...
 docker run --rm -d ^
     --name %CONTAINER% ^
     --env-file "%GUEST_ENV%" ^
-    -e THINKTOOL_DOCKER=1 ^
-    -e THINKTOOL_VNC=1 ^
+    -e AURORACODER_DOCKER=1 ^
+    -e AURORACODER_VNC=1 ^
     -v "%DATA_DIR%:/app/data" ^
     -v "%WORKSPACE_DIR%:/workspace" ^
     -p %BACKEND_PORT%:8080 ^
@@ -95,7 +95,7 @@ docker run --rm -d ^
     -p %DEV_PORT_START%-%DEV_PORT_END%:8900-8902 ^
     -p %FRONTEND_PORT%:3000 ^
     -p %TOOLSTORE_PORT%:8765 ^
-    thinkwithtool
+    auroracoder
 if errorlevel 1 (
     echo Failed to start container.
     exit /b 1

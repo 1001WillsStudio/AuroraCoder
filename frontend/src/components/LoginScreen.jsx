@@ -28,8 +28,8 @@ export default function LoginScreen({ onLoginSuccess }) {
         throw new Error(data.detail || 'Login failed');
       }
       // Store token
-      const TOKEN_KEY = 'thinkwithtool_token';
-      const TOKEN_EXPIRY_KEY = 'thinkwithtool_token_expiry';
+      const TOKEN_KEY = 'auroracoder_token';
+      const TOKEN_EXPIRY_KEY = 'auroracoder_token_expiry';
       try {
         localStorage.setItem(TOKEN_KEY, data.token);
         localStorage.setItem(

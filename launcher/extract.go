@@ -21,9 +21,9 @@ var projectFS embed.FS
 // ─── Constants ─────────────────────────────────────────────────────────────
 
 const (
-	baseImageName = "thinkwithtool-base"
-	appImageName  = "thinkwithtool"
-	containerName = "thinkwithtool-agent"
+	baseImageName = "auroracoder-base"
+	appImageName  = "auroracoder"
+	containerName = "auroracoder-agent"
 	appPort       = 3000
 	toolStorePort = 8765
 	vncPort       = 6080
@@ -45,15 +45,15 @@ func ensureCacheDir() (string, error) {
 
 	switch runtime.GOOS {
 	case "darwin":
-		base = filepath.Join(os.Getenv("HOME"), "Library", "Caches", "ThinkWithTool")
+		base = filepath.Join(os.Getenv("HOME"), "Library", "Caches", "AuroraCoder")
 	case "windows":
-		base = filepath.Join(os.Getenv("APPDATA"), "ThinkWithTool")
+		base = filepath.Join(os.Getenv("APPDATA"), "AuroraCoder")
 	default:
 		cacheHome := os.Getenv("XDG_CACHE_HOME")
 		if cacheHome == "" {
 			cacheHome = filepath.Join(os.Getenv("HOME"), ".cache")
 		}
-		base = filepath.Join(cacheHome, "thinkwithtool")
+		base = filepath.Join(cacheHome, "auroracoder")
 	}
 
 	cacheDir := filepath.Join(base, "launcher-cache")
@@ -125,7 +125,7 @@ func ensureEnvFile(cacheDir string, ps *progressServer) bool {
 	// Create a minimal .env — do NOT copy .env.example.
 	// .env.example is a user reference, not an application config source.
 	// Users set their API keys via the Settings UI in the web interface.
-	content := "# ThinkWithTool environment configuration\n" +
+	content := "# AuroraCoder environment configuration\n" +
 		"# Set API keys via the Settings UI in the web interface instead.\n"
 	if err := os.WriteFile(envPath, []byte(content), 0644); err != nil {
 		ps.logLine(fmt.Sprintf("⚠️  Could not create .env: %v", err))
@@ -222,13 +222,14 @@ func getStorageBase() string {
 	}
 
 	if home == "" {
-		return filepath.Join(os.TempDir(), "ThinkTool")
+		return filepath.Join(os.TempDir(), "AuroraCoder")
 	}
 
 	documents := filepath.Join(home, "Documents")
 	if _, err := os.Stat(documents); err == nil {
-		return filepath.Join(documents, "ThinkTool")
+		return filepath.Join(documents, "AuroraCoder")
 	}
 
-	return filepath.Join(home, "ThinkTool")
+	return filepath.Join(home, "AuroraCoder")
+}
 }

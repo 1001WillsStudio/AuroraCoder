@@ -1,7 +1,7 @@
-FROM thinkwithtool-base
+FROM auroracoder-base
 
-ENV THINKTOOL_DOCKER=1 \
-    THINKTOOL_VNC=1
+ENV AURORACODER_DOCKER=1 \
+    AURORACODER_VNC=1
 
 
 WORKDIR /app

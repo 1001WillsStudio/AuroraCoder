@@ -10,16 +10,16 @@ import os
 # ---------------------------------------------------------------------------
 # Data directory — all runtime data (conversation logs, training data, etc.)
 # In Docker: /app/data  (volume-mounted to the host)
-# Locally:   ~/.thinktool/data  (outside the project tree)
-# Override:  set THINKTOOL_DATA_DIR env var
-# ---------------------------------------------------------------------------
-if os.environ.get("THINKTOOL_DOCKER", "0") == "1":
-    DATA_DIR = Path("/app/data")
+# Locally:   ~/.auroracoder/data  (outside the project tree)
+# Override:  set AURORACODER_DATA_DIR env var
+
+if os.environ.get("AURORACODER_DOCKER", "0") == "1":
+    DATA_DIR = "/app/data"  # Inside Docker (always at /app/data)
 else:
-    DATA_DIR = Path(os.environ.get(
-        "THINKTOOL_DATA_DIR",
-        os.path.expanduser("~/.thinktool/data"),
-    ))
+    DATA_DIR = os.environ.get(
+        "AURORACODER_DATA_DIR",
+        os.path.expanduser("~/.auroracoder/data"),
+        )
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 TRAINING_DATA_DIR = DATA_DIR / "training"
@@ -155,9 +155,9 @@ CONTINUATION_NOTICE = (
 # =============================================================================
 # Docker Mode
 # =============================================================================
-# Auto-detected via THINKTOOL_DOCKER env var (set in Dockerfile / docker-compose).
-DOCKER_MODE = os.environ.get("THINKTOOL_DOCKER", "0") == "1"
-DOCKER_VNC = os.environ.get("THINKTOOL_VNC", "0") == "1"
+# Auto-detected via AURORACODER_DOCKER env var (set in Dockerfile / docker-compose).
+DOCKER_MODE = os.environ.get("AURORACODER_DOCKER", "0") == "1"
+DOCKER_VNC = os.environ.get("AURORACODER_VNC", "0") == "1"
 WORKSPACE_DIR = "/workspace" if DOCKER_MODE else None
 
 # Session Configuration

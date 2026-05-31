@@ -14,7 +14,7 @@
 
 ## ✨ Overview
 
-**AuroraCoder** is a state-of-the-art autonomous AI coding agent that combines **reasoning LLMs** (DeepSeek V4 Pro, GLM-5.1, Gemini 3.1 Pro) with **native OpenAI function calling** to execute real-world tasks in a Docker sandbox. It's not just a chat interface — it's an autonomous agent that reads your codebase, writes code, runs commands, searches the web, delegates to sub-agents, and even launches GUI applications visible through a built-in VNC desktop.
+**AuroraCoder** is a state-of-the-art autonomous AI coding agent powered primarily by **DeepSeek V4 Pro** (GLM-5.1 and Gemini 3.1 Pro also supported) with **native OpenAI function calling**, executing real-world tasks in a Docker sandbox. It's not just a chat interface — it's an autonomous agent that reads your codebase, writes code, runs commands, searches the web, delegates to sub-agents, and even launches GUI applications visible through a built-in VNC desktop.
 
 > **Think of it as giving a frontier reasoning model a terminal, a file editor, a web browser, and a sub-agent workforce — all in an isolated Linux container.**
 
@@ -391,6 +391,8 @@ AuroraCoder gives the LLM **13 built-in tools** via native OpenAI function calli
 
 ### Supported Model Providers
 
+> DeepSeek V4 Pro is the primary and recommended model — all recent development of this project was done with it.
+
 | Provider | Model | Reasoning | Context |
 |----------|-------|-----------|---------|
 | **DeepSeek** | `deepseek-v4-pro` | ✅ | 1M tokens |
@@ -436,7 +438,7 @@ AuroraCoder includes a full virtual Linux desktop (Xvfb + fluxbox + noVNC) on po
 - **Web browsers**: Fire a browser and watch it live
 - **IDE demos**: Launch VS Code, Jupyter, anything
 
-The system prompt auto-includes VNC instructions when `THINKTOOL_VNC=1` is set.
+The system prompt auto-includes VNC instructions when `AURORACODER_VNC=1` is set.
 
 ---
 
@@ -455,12 +457,11 @@ All conversations and training data survive container restarts via Docker volume
     └── YYYY-MM-DD.jsonl     # Daily API call telemetry
 
 # Local mode (outside Docker, development only):
-~/.thinktool/data/
+~/.auroracoder/data/
 ├── conversations/           # Same structure as above
 └── training/
-```
 
-Override the data path with the `THINKTOOL_DATA_DIR` env var.
+Override the data path with the `AURORACODER_DATA_DIR` env var.
 
 ---
 

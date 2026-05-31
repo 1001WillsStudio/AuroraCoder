@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useMemo } from 'react'
 import { getTranslations, DEFAULT_LANG } from './translations'
 
-const STORAGE_KEY = 'thinkwithtool:lang'
+const STORAGE_KEY = 'auroracoder:lang'
 
 function readStoredLang() {
   try {

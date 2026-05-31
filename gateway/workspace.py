@@ -241,7 +241,7 @@ WORKSPACE_EXCLUDE = {
     "node_modules",
     ".venv",
     "venv",
-    ".thinktool_sessions",
+    ".auroracoder_sessions",
     ".mypy_cache",
     ".pytest_cache",
 }

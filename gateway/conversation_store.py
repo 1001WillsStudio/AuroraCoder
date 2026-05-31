@@ -35,11 +35,11 @@ _TASK_BLOCK_RE = re.compile(
 )
 
 def _default_storage_dir() -> Path:
-    if os.environ.get("THINKTOOL_DOCKER", "0") == "1":
+    if os.environ.get("AURORACODER_DOCKER", "0") == "1":
         return Path("/app/data/conversations")
     return Path(os.environ.get(
-        "THINKTOOL_DATA_DIR",
-        os.path.expanduser("~/.thinktool/data"),
+        "AURORACODER_DATA_DIR",
+        os.path.expanduser("~/.auroracoder/data"),
     )) / "conversations"
 
 DEFAULT_STORAGE_DIR = _default_storage_dir()

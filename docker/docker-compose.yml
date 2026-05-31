@@ -7,11 +7,11 @@
 #
 # Seed workspace by uncommenting the volumes line below.
 #
-# Data is stored outside the project tree (defaults to ~/.thinktool/).
+# Data is stored outside the project tree (defaults to ~/.auroracoder/).
 # Override via environment variables or a .env file:
-#   THINKTOOL_DATA_DIR=~/my-custom-path/data
-#   THINKTOOL_WORKSPACE_DIR=~/my-custom-path/workspace
-#   THINKTOOL_SESSIONS_DIR=~/my-custom-path/sessions
+#   AURORACODER_DATA_DIR=~/my-custom-path/data
+#   AURORACODER_WORKSPACE_DIR=~/my-custom-path/workspace
+#   AURORACODER_SESSIONS_DIR=~/my-custom-path/sessions
 
 services:
   agent:
@@ -27,14 +27,14 @@ services:
     env_file:
       - ../.env
     environment:
-      - THINKTOOL_DOCKER=1
-      - THINKTOOL_VNC=1
+      - AURORACODER_DOCKER=1
+      - AURORACODER_VNC=1
     volumes:
       # Docker socket — required for docker-type ToolStore tools (DinD)
       - /var/run/docker.sock:/var/run/docker.sock
       # Host bind mounts — stored outside the project tree
-      - ${THINKTOOL_DATA_DIR:-~/.thinktool/data}:/app/data
-      - ${THINKTOOL_WORKSPACE_DIR:-~/.thinktool/workspace}:/workspace
-      - ${THINKTOOL_SESSIONS_DIR:-~/.thinktool/sessions}:/root/.thinktool_sessions
+      - ${AURORACODER_DATA_DIR:-~/.auroracoder/data}:/app/data
+      - ${AURORACODER_WORKSPACE_DIR:-~/.auroracoder/workspace}:/workspace
+      - ${AURORACODER_SESSIONS_DIR:-~/.auroracoder/sessions}:/root/.auroracoder_sessions
       # Seed workspace (optional): uncomment below
       # - ./my-project:/seed:ro

@@ -352,8 +352,8 @@ SUBAGENT_MAX_RESULT_CHARS = 4000
 (Note: TEMPERATURE was intentionally removed — modern models have proper defaults for agent tasks.)
 
 ### Environment Detection
-- `THINKTOOL_DOCKER=1` → `DOCKER_MODE=True`, workspace at `/workspace`
-- `THINKTOOL_VNC=1` → `DOCKER_VNC=True`, VNC instructions added to system prompt
+- `AURORACODER_DOCKER=1` → `DOCKER_MODE=True`, workspace at `/workspace`
+- `AURORACODER_VNC=1` → `DOCKER_VNC=True`, VNC instructions added to system prompt
 
 ### Web Browser (Secondary Model)
 - Uses DeepSeek Chat (`deepseek-chat`) to summarise pages

@@ -2,7 +2,7 @@
 Persistent user settings store.
 
 Reads/writes a JSON file in the data directory (/app/data/settings.json in Docker,
-~/.thinktool/data/settings.json locally). This survives Docker restarts and rebuilds
+~/.auroracoder/data/settings.json locally). This survives Docker restarts and rebuilds
 because the data directory is a host bind-mount.
 
 Priority (highest wins):
@@ -24,13 +24,13 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 # Data directory — same logic as config.py so the file lands on the volume
-if os.environ.get("THINKTOOL_DOCKER", "0") == "1":
+if os.environ.get("AURORACODER_DOCKER", "0") == "1":
     DATA_DIR = Path("/app/data")
 else:
     DATA_DIR = Path(
         os.environ.get(
-            "THINKTOOL_DATA_DIR",
-            os.path.expanduser("~/.thinktool/data"),
+            "AURORACODER_DATA_DIR",
+            os.path.expanduser("~/.auroracoder/data"),
         )
     )
 

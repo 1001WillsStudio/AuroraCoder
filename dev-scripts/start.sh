@@ -27,11 +27,11 @@ echo ""
 GITHUB_TOKEN=$(grep '^GITHUB_TOKEN=' .env 2>/dev/null | cut -d= -f2-)
 
 # ── Check if base image exists; build if missing ─────────────────────────
-if docker inspect --type=image thinkwithtool-base >/dev/null 2>&1; then
+if docker inspect --type=image auroracoder-base >/dev/null 2>&1; then
     echo "[base] Base image found, skipping."
 else
     echo "[base] Building base image -- first time, this may take a few minutes..."
-    docker build -t thinkwithtool-base -f docker/Dockerfile.base --build-arg GITHUB_TOKEN="$GITHUB_TOKEN" . || {
+    docker build -t auroracoder-base -f docker/Dockerfile.base --build-arg GITHUB_TOKEN="$GITHUB_TOKEN" . || {
         echo "Base image build failed."
         exit 1
     }
@@ -40,30 +40,30 @@ fi
 
 # ── Always rebuild app image (fast: just copies source code) ─────────────
 echo "[app] Building app image..."
-docker build -t thinkwithtool -f docker/Dockerfile . || {
+docker build -t auroracoder -f docker/Dockerfile . || {
     echo "App image build failed."
     exit 1
 }
 
 # ── Stop existing container if running ───────────────────────────────────
 echo "Stopping old container if any..."
-docker stop thinkwithtool-agent >/dev/null 2>&1 || true
-docker rm thinkwithtool-agent >/dev/null 2>&1 || true
+docker stop auroracoder-agent >/dev/null 2>&1 || true
+docker rm auroracoder-agent >/dev/null 2>&1 || true
 
 # Short delay to ensure ports are fully released
 echo "Waiting for port cleanup..."
 sleep 2
 
-# ── Storage base — all persistent data lives under Documents/ThinkTool ────
+# ── Storage base — all persistent data lives under Documents/AuroraCoder ────
 # Uses platform-appropriate Documents path
 if [ -d "$HOME/Documents" ]; then
-    STORAGE_BASE="$HOME/Documents/ThinkTool"
+    STORAGE_BASE="$HOME/Documents/AuroraCoder"
 elif [ -d "$HOME/documents" ]; then
     # Some Linux distros use lowercase
-    STORAGE_BASE="$HOME/documents/ThinkTool"
+    STORAGE_BASE="$HOME/documents/AuroraCoder"
 else
     # Fallback: just use home directory
-    STORAGE_BASE="$HOME/ThinkTool"
+    STORAGE_BASE="$HOME/AuroraCoder"
 fi
 
 # ── Verify .env file exists ──────────────────────────────────────────────
@@ -77,10 +77,10 @@ fi
 echo "Starting backend in Docker (app + frontend)..."
 mkdir -p "$STORAGE_BASE/data" "$STORAGE_BASE/workspace"
 docker run --rm -d \
-    --name thinkwithtool-agent \
+    --name auroracoder-agent \
     --env-file .env \
-    -e THINKTOOL_DOCKER=1 \
-    -e THINKTOOL_VNC=1 \
+    -e AURORACODER_DOCKER=1 \
+    -e AURORACODER_VNC=1 \
     -v "$STORAGE_BASE/data:/app/data" \
     -v "$STORAGE_BASE/workspace:/workspace" \
     -p 8080:8080 \
@@ -88,11 +88,11 @@ docker run --rm -d \
     -p 6080:6080 \
     -p 8765:8765 \
     -p 8900-8902:8900-8902 \
-    thinkwithtool || {
+    auroracoder || {
     echo "Failed to start container."
     exit 1
 }
 echo "Container started."
 echo ""
 echo "AuroraCoder is running at http://localhost:3000"
-echo "To stop: docker stop thinkwithtool-agent"
+echo "To stop: docker stop auroracoder-agent"
