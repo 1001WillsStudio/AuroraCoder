@@ -66,6 +66,7 @@ cd frontend && npm install && npm run dev
 | ⚙️ **Agent Backend** | `http://localhost:8080` | Stateless agent loop + tool execution |
 | 🌉 **Gateway** | *internal* `:8081` | SSE proxy, conversation persistence, file display |
 | 🖱️ **VNC Desktop** | `http://localhost:6080` | Live Linux desktop for GUI apps |
+| 🏪 **ToolStore** | `http://localhost:8765` | Manage MCP servers, skills, and tool packs |
 
 ### Multi-Instance Mode
 
@@ -222,6 +223,8 @@ Seven model providers with reasoning mode toggled per provider. `ProviderManager
 ### 🏪 ToolStore Integration
 
 Built-in `tool_store` meta-tool provides universal tool discovery. The `ToolsetContextTracker` in `toolset_context_manager.py` gives the agent a living, self-cleaning view of referenced tools, skills, and MCP servers — same pattern as the code interpreter display.
+
+A management dashboard runs at `http://localhost:8765` where you can add and configure MCP servers, install skill packs, manage API credentials, and browse the full tool catalog without touching a config file.
 
 ### 📱 Mobile Support
 
