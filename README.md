@@ -521,7 +521,7 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 - [@Mrw33554432](https://github.com/Mrw33554432) — Author & Lead Developer
 - [@Hahhha](https://github.com/Hahhha) — Project Supporter
-- [Name/Handle] — Project Supporter
+- [Atlantic8](https://github.com/Atlantic8) — Project Supporter
 
 With thanks to **Aider** for its code editing approach which was investigated and used in early development, and **Cursor** for helping build the early prototype.
 
