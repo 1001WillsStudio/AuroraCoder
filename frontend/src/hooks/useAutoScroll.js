@@ -1,22 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 
-/**
- * Manages chat auto-scroll behaviour.
- *
- * - Auto-scrolls when messages change (unless user has scrolled up).
- * - Forces scroll to bottom when streaming starts.
- * - Captures scroll intent via ``wheel`` to avoid races with content updates.
- */
 export function useAutoScroll(messages, isStreaming) {
   const chatContainerRef = useRef(null)
   const [isUserScrolledUp, setIsUserScrolledUp] = useState(false)
   const [showScrollButton, setShowScrollButton] = useState(false)
-  // Refs mirror the state so wheel/scroll handlers always read the latest
-  // values even though their effect closures are stable.
-  const scrollingRef = useRef(isStreaming)
-  scrollingRef.current = isStreaming
-  const scrolledUpRef = useRef(isUserScrolledUp)
-  scrolledUpRef.current = isUserScrolledUp
+  // Ref so the messages effect reads scroll intent *before* React re-renders
+  const scrolledUpRef = useRef(false)
 
   const scrollToBottom = useCallback((smooth = true) => {
     if (chatContainerRef.current) {
@@ -28,37 +17,24 @@ export function useAutoScroll(messages, isStreaming) {
   }, [])
 
   // ── wheel event: capture scroll intent *before* the browser moves ──
-  // This eliminates the race where a content update fires scrollToBottom()
-  // before the async 'scroll' handler has had a chance to set scrolledUp.
+  // Setting the ref synchronously eliminates the old race where a content
+  // update arrived between a scroll-up and the async 'scroll' handler.
   useEffect(() => {
     const container = chatContainerRef.current
     if (!container) return
 
-    const handleWheel = (e) => {
+    const onWheel = (e) => {
       if (e.deltaY < 0) {
-        // Scrolling UP — user wants to read history.  Set the ref
-        // *synchronously* so the messages effect sees it instantly.
-        if (!scrolledUpRef.current) {
-          scrolledUpRef.current = true
-          setIsUserScrolledUp(true)
-          if (scrollingRef.current) setShowScrollButton(true)
-        }
-      } else if (e.deltaY > 0) {
-        // Scrolling DOWN — if already at the very bottom, re-enable.
-        const dist = container.scrollHeight - container.scrollTop - container.clientHeight
-        if (dist <= 2) {
-          scrolledUpRef.current = false
-          setIsUserScrolledUp(false)
-          setShowScrollButton(false)
-        }
+        scrolledUpRef.current = true
+        setIsUserScrolledUp(true)
       }
     }
 
-    container.addEventListener('wheel', handleWheel, { passive: true })
-    return () => container.removeEventListener('wheel', handleWheel)
-  }, [])
+    container.addEventListener('wheel', onWheel, { passive: true })
+    return () => container.removeEventListener('wheel', onWheel)
+  }, [isStreaming])
 
-  // ── scroll event: final position check (handles scrollbar drag, keyboard, etc.) ──
+  // ── scroll event: normal position check ──
   useEffect(() => {
     const container = chatContainerRef.current
     if (!container) return
@@ -69,22 +45,26 @@ export function useAutoScroll(messages, isStreaming) {
       const scrolledUp = distanceFromBottom > threshold
       scrolledUpRef.current = scrolledUp
       setIsUserScrolledUp(scrolledUp)
-      setShowScrollButton(scrolledUp && scrollingRef.current)
+      if (isStreaming && scrolledUp) {
+        setShowScrollButton(true)
+      } else if (!scrolledUp) {
+        setShowScrollButton(false)
+      }
     }
 
     container.addEventListener('scroll', handleScroll, { passive: true })
     return () => container.removeEventListener('scroll', handleScroll)
-  }, [])
+  }, [isStreaming])
 
-  // Auto-scroll when messages update, but only if user hasn't scrolled up.
-  // Reads the ref (not state) so it never lags behind the wheel handler.
+  // Auto-scroll when messages update — reads the ref so the wheel handler
+  // takes effect instantly, avoiding the scroll-event race.
   useEffect(() => {
     if (!scrolledUpRef.current) {
       scrollToBottom()
     }
-  }, [messages, isUserScrolledUp, scrollToBottom])
+  }, [messages, scrollToBottom])
 
-  // When streaming state changes, force scroll to bottom and reset state
+  // When streaming state changes
   useEffect(() => {
     if (isStreaming) {
       scrolledUpRef.current = false

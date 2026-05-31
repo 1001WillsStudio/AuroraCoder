@@ -136,10 +136,13 @@ async def proxy_chat(request: Request):
 
     # Also fix the stored frontend messages so a page refresh displays
     # the "stopped" annotations rather than hanging tool calls.
-    fe_msgs = store.get_frontend_messages(conversation_id)
-    if fe_msgs and body.get("messages"):
-        fixed_fe = _fix_frontend_messages_on_cancel(fe_msgs, body["messages"])
-        store.save_frontend_messages(conversation_id, fixed_fe)
+    try:
+        fe_msgs = store.get_frontend_messages(conversation_id)
+        if fe_msgs and body.get("messages"):
+            fixed_fe = _fix_frontend_messages_on_cancel(fe_msgs, body["messages"])
+            store.save_frontend_messages(conversation_id, fixed_fe)
+    except KeyError:
+        pass  # New conversation — no stored frontend messages yet
     # ────────────────────────────────────────────────────────────────────
 
     # Extract conversation-server metadata (not forwarded to backend)
