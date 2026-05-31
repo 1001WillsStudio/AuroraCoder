@@ -68,6 +68,8 @@ func main() {
 	// ── Step 2: Extract ───────────────────────────────────────────
 
 	ps.setStep(2, "running")
+	ps.logLine("Cleaning stale files from previous version...")
+	cleanCacheDir(cacheDir)
 	ps.logLine("Extracting project files...")
 	if err := extractProject(cacheDir); err != nil {
 		ps.fail(fmt.Sprintf("Failed to extract project: %v", err))

@@ -160,16 +160,29 @@ func printDockerInstallGuide() {
 const baseImageDockerHub = "continuumio/miniconda3:latest"
 
 func buildBaseImage(cacheDir string, ps *progressServer) error {
-	// Check if base image already exists
-	cmd := exec.Command("docker", "inspect", "--type=image", baseImageName)
-	if err := cmd.Run(); err == nil {
-		ps.logLine("✅ Base image already cached, skipping build.")
-		return nil
+	// ── Hash-based cache check ──
+	// Only skip the base image build when both (a) the image exists AND
+	// (b) its content hash matches the current embedded dependencies.
+	// This prevents expensive rebuilds when only app code changes,
+	// while correctly forcing a rebuild when Dockerfile.base or
+	// requirements.txt have been modified in a new launcher version.
+
+	currentHash, hashErr := computeBaseHash()
+	if hashErr != nil {
+		ps.logLine(fmt.Sprintf("⚠️  Cannot compute base hash: %v", hashErr))
+		// Fall through to build — safer than skipping on hash failure
+	} else {
+		storedHash, _ := readBaseHash(cacheDir)
+		inspectCmd := exec.Command("docker", "inspect", "--type=image", baseImageName)
+		if inspectCmd.Run() == nil && storedHash == currentHash && storedHash != "" {
+			ps.logLine("✅ Base image up to date (dependencies unchanged), skipping build.")
+			return nil
+		}
 	}
 
-	ps.logLine("Building thinkwithtool-base (first time may take several minutes)...")
+	ps.logLine("Building thinkwithtool-base (may take several minutes)...")
 
-	cmd = exec.Command("docker", "build", "-t", baseImageName, "-f", "docker/Dockerfile.base", ".")
+	cmd := exec.Command("docker", "build", "-t", baseImageName, "-f", "docker/Dockerfile.base", ".")
 	cmd.Dir = cacheDir
 
 	err := streamCommand(cmd, ps)
@@ -195,6 +208,11 @@ func buildBaseImage(cacheDir string, ps *progressServer) error {
 		ps.logLine("      { \"registry-mirrors\": [\"https://registry.cn-hangzhou.aliyuncs.com\"] }")
 		ps.logLine("   2. Or use a VPN/proxy to access Docker Hub directly.")
 		ps.logLine("   3. Then re-run the launcher.")
+	} else if currentHash != "" {
+		// Store the hash only after a successful build
+		if storeErr := storeBaseHash(cacheDir, currentHash); storeErr != nil {
+			ps.logLine(fmt.Sprintf("⚠️  Could not store base hash: %v", storeErr))
+		}
 	}
 	return err
 }

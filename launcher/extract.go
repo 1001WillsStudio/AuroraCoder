@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"io/fs"
@@ -131,6 +133,84 @@ func ensureEnvFile(cacheDir string, ps *progressServer) bool {
 	}
 	ps.logLine("✅ Created minimal .env — set API keys via the Settings UI.")
 	return false
+}
+
+// ─── Cache cleaning ──────────────────────────────────────────────────────
+
+// cleanCacheDir removes all entries from the cache directory except .env.
+// This prevents stale files from a previous launcher version from persisting
+// and being COPY'd into the Docker image.
+func cleanCacheDir(cacheDir string) error {
+	entries, err := os.ReadDir(cacheDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	for _, entry := range entries {
+		if entry.Name() == ".env" {
+			continue
+		}
+		path := filepath.Join(cacheDir, entry.Name())
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("removing %s: %w", path, err)
+		}
+	}
+
+	return nil
+}
+
+// ─── Base-image hash (avoids expensive rebuild when deps haven't changed) ──
+
+// baseHashFiles lists the embedded files whose contents determine whether
+// the base Docker image needs rebuilding.  App-code changes should NOT
+// trigger a base rebuild; only changes to these specific files matter.
+var baseHashFiles = []string{
+	"embed/docker/Dockerfile.base",
+	"embed/requirements.txt",
+}
+
+// baseHashPath returns the path where the base-image content hash is stored.
+// Stored outside launcher-cache so it survives cache cleaning.
+func baseHashPath(cacheDir string) string {
+	return filepath.Join(filepath.Dir(cacheDir), "base-hash")
+}
+
+// computeBaseHash reads the embedded base-image dependencies and returns a
+// SHA-256 hex digest.  If any of those files change between launcher
+// versions, the hash will differ and the base image will be rebuilt.
+func computeBaseHash() (string, error) {
+	h := sha256.New()
+
+	for _, f := range baseHashFiles {
+		data, err := projectFS.ReadFile(f)
+		if err != nil {
+			return "", fmt.Errorf("read %s for hashing: %w", f, err)
+		}
+		h.Write(data)
+	}
+
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// readBaseHash returns the previously stored base-image hash, or an empty
+// string if no hash has been stored yet.
+func readBaseHash(cacheDir string) (string, error) {
+	data, err := os.ReadFile(baseHashPath(cacheDir))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
+// storeBaseHash writes a computed hash to disk so the next run can compare.
+func storeBaseHash(cacheDir string, hash string) error {
+	return os.WriteFile(baseHashPath(cacheDir), []byte(hash+"\n"), 0644)
 }
 
 // ─── Storage base ──────────────────────────────────────────────────────────
