@@ -52,6 +52,8 @@ from gateway.streaming import (
     _streams_lock,
     _cancel_active_stream,
     _has_active_main_stream,
+    _fix_orphan_tool_calls,
+    _fix_frontend_messages_on_cancel,
     _proxy_backend_stream,
     _subscriber_sse,
     _format_sse,
@@ -122,6 +124,23 @@ async def proxy_chat(request: Request):
     logger.info(f"[proxy] [{cid_tag}...] json_parse={t1-t0:.3f}s body_size={body_size}")
     conversation_id = body.get("conversation_id") or str(uuid.uuid4())
     body["conversation_id"] = conversation_id
+
+    # ── Fix orphan tool calls before forwarding to the backend ────────────
+    # If the previous stream was cancelled mid-tool-execution, the
+    # conversation history may contain assistant ``tool_calls`` with no
+    # matching ``tool`` responses.  The backend's LLM would choke on
+    # these, so we inject synthetic "stopped by user" results now.
+    if body.get("messages"):
+        body["messages"] = _fix_orphan_tool_calls(body["messages"])
+        store.save_messages(conversation_id, body["messages"])
+
+    # Also fix the stored frontend messages so a page refresh displays
+    # the "stopped" annotations rather than hanging tool calls.
+    fe_msgs = store.get_frontend_messages(conversation_id)
+    if fe_msgs and body.get("messages"):
+        fixed_fe = _fix_frontend_messages_on_cancel(fe_msgs, body["messages"])
+        store.save_frontend_messages(conversation_id, fixed_fe)
+    # ────────────────────────────────────────────────────────────────────
 
     # Extract conversation-server metadata (not forwarded to backend)
     conv_type = body.pop("conv_type", "user_chat")
@@ -264,10 +283,13 @@ async def resume_stream(conversation_id: str, request: Request):
 
 @app.post("/api/conversations/{conversation_id}/cancel")
 async def cancel_conversation_stream(conversation_id: str):
-    """Cancel an in-progress stream and persist the current state."""
+    """Cancel an in-progress stream.
+
+    No message fix-up happens here — orphan tool calls are healed
+    lazily the next time ``POST /api/chat`` is called."""
     stream = active_streams.get(conversation_id)
     if not stream or stream.finished:
-        raise HTTPException(status_code=404, detail="No active stream for this conversation")
+        return {"cancelled": conversation_id}
     await _cancel_active_stream(conversation_id)
     return {"cancelled": conversation_id}
 

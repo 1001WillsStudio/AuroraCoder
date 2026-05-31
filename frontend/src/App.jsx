@@ -9,8 +9,7 @@ import Sidebar from './components/Sidebar'
 import WelcomeScreen from './components/WelcomeScreen'
 import SettingsPanel from './components/SettingsPanel'
 import { streamChat, getProviders, cancelConversation, getConversation, getActiveStreams, resumeStream } from './services/api'
-import { isInterruptible, TASK_MARKER_START, TASK_MARKER_END, formatElapsedTime } from './utils/streamUtils'
-import { injectOrphanToolStops, injectToolStopActivity } from './utils/injectToolStop'
+import { isInterruptible, TASK_MARKER_START, TASK_MARKER_END } from './utils/streamUtils'
 import { checkAuth, isAuthRequired } from './utils/auth.js'
 import CodePanel from './components/CodePanel'
 import { createStreamCallbacks } from './hooks/createStreamCallbacks'
@@ -371,38 +370,10 @@ function App() {
   const handleStop = async () => {
     if (abortControllerRef.current) abortControllerRef.current.abort()
     if (conversationId) {
-      try {
-        await cancelConversation(conversationId)
-      } catch { /* ignore — best-effort cancel */ }
+      // Fire-and-forget — orphan tool calls are healed lazily the next
+      // time handleSend() calls the gateway (see proxy_chat in routes.py).
+      cancelConversation(conversationId).catch(() => {})
     }
-
-    // Inject synthetic tool responses for any orphan tool_calls so the
-    // local rawMessages stay valid for immediate continuation (the backend
-    // middleware does the same for persisted state in its finally block).
-    setRawMessages(prev => {
-      const respondedIds = new Set()
-      for (const m of prev) {
-        if (m.role === 'tool' && m.tool_call_id) respondedIds.add(m.tool_call_id)
-      }
-      let injected = false
-      const fixed = [...prev]
-      for (const m of prev) {
-        if (m.role !== 'assistant') continue
-        for (const tc of m.tool_calls || []) {
-          if (tc.id && !respondedIds.has(tc.id)) {
-            const toolName = tc.function?.name || tc.name || 'unknown'
-            fixed.push({
-              role: 'tool',
-              tool_call_id: tc.id,
-              name: toolName,
-              content: JSON.stringify({ status: 'stopped', message: `Tool "${toolName}" was stopped by the user.` }),
-            })
-            injected = true
-          }
-        }
-      }
-      return injected ? fixed : prev
-    })
 
     setIsStreaming(false)
     setPendingInterrupt(null)
@@ -411,20 +382,19 @@ function App() {
     setHistoryRefreshTrigger(prev => prev + 1)
   }
 
-  const handleStopTool = useCallback((toolInfo) => {
+  const handleStopTool = useCallback(() => {
     if (abortControllerRef.current) abortControllerRef.current.abort()
     const cid = conversationIdRef.current
-    if (cid) cancelConversation(cid)
-
-    const terminationMessage = `Tool terminated by user after ${formatElapsedTime(toolInfo.elapsedSeconds)}`
-    setRawMessages(prev => injectOrphanToolStops(prev, terminationMessage))
-    setMessages(prev => injectToolStopActivity(prev, toolInfo.toolCall.id, terminationMessage,
-      `\n\n---\n**${t('app.toolStopped')}** ${t('app.toolStoppedByUser', { tool: toolInfo.config?.label || toolInfo.toolName, time: formatElapsedTime(toolInfo.elapsedSeconds) })}`))
+    if (cid) {
+      // Fire-and-forget — orphan tool calls are healed lazily the next
+      // time handleSend() calls the gateway (see proxy_chat in routes.py).
+      cancelConversation(cid).catch(() => {})
+    }
 
     setIsStreaming(false)
     setPendingInterrupt(null)
     pendingInterruptRef.current = null
-  }, [t])
+  }, [])
 
   const handleRetry = useCallback(() => {
     if (!lastRequest || isStreaming) return

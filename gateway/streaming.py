@@ -68,15 +68,10 @@ _FILE_WRITE_TOOLS = {"write_file", "edit_file", "delete_file"}
 _snapshotted_tool_calls: Dict[str, set] = {}  # {conversation_id: {tool_call_id, ...}}
 
 
-def _fix_orphan_tool_calls(raw_messages: list) -> list:
-    """
-    Scan *raw_messages* for assistant ``tool_calls`` that have no matching
-    ``tool`` response and inject a synthetic "stopped by user" result.
-
-    Returns a new list (always copies) so the caller can decide whether to
-    replace the original.
-    """
-    # Collect all tool_call IDs that already have a response
+def _collect_orphan_tool_calls(raw_messages: list) -> list[dict]:
+    """Return every assistant ``tool_call`` that has no matching ``tool``
+    response.  Used by both the raw-message fixer and the frontend-message
+    annotator so they stay in sync."""
     responded_ids: set = set()
     for msg in raw_messages:
         if msg.get("role") == "tool":
@@ -84,7 +79,6 @@ def _fix_orphan_tool_calls(raw_messages: list) -> list:
             if tc_id:
                 responded_ids.add(tc_id)
 
-    # Find orphan tool_calls in assistant messages
     orphans: list[dict] = []
     for msg in raw_messages:
         if msg.get("role") != "assistant":
@@ -93,11 +87,18 @@ def _fix_orphan_tool_calls(raw_messages: list) -> list:
             tc_id = tc.get("id")
             if tc_id and tc_id not in responded_ids:
                 orphans.append(tc)
+    return orphans
 
+
+def _fix_orphan_tool_calls(raw_messages: list) -> list:
+    """
+    Scan *raw_messages* for assistant ``tool_calls`` that have no matching
+    ``tool`` response and inject a synthetic "stopped by user" result.
+    """
+    orphans = _collect_orphan_tool_calls(raw_messages)
     if not orphans:
         return list(raw_messages)
 
-    # Build a new list with synthetic tool responses appended
     fixed = list(raw_messages)
     for tc in orphans:
         tool_name = tc.get("function", {}).get("name", "unknown")
@@ -110,6 +111,40 @@ def _fix_orphan_tool_calls(raw_messages: list) -> list:
                 "message": f'Tool "{tool_name}" was stopped by the user.',
             }),
         })
+    return fixed
+
+
+_STOP_NOTE = "\n\n---\n**Tool stopped by user.**"
+
+
+def _fix_frontend_messages_on_cancel(frontend_messages: list, raw_messages: list) -> list:
+    """Annotate frontend messages so every orphan tool call shows a
+    'stopped by user' activity — the UI equivalent of what
+    ``_fix_orphan_tool_calls`` does for raw messages."""
+    orphans = _collect_orphan_tool_calls(raw_messages)
+    if not orphans:
+        return frontend_messages
+
+    orphan_ids = {tc.get("id") for tc in orphans if tc.get("id")}
+
+    fixed = list(frontend_messages)
+    # Walk backwards to find the last assistant message and annotate it
+    for i in range(len(fixed) - 1, -1, -1):
+        if fixed[i].get("role") != "assistant":
+            continue
+        msg = dict(fixed[i])
+        activities = list(msg.get("activities", []))
+        for tc_id in orphan_ids:
+            activities.append({
+                "type": "tool_result",
+                "tool_call_id": tc_id,
+                "content": "Tool stopped by user.",
+                "isTerminated": True,
+            })
+        msg["activities"] = activities
+        msg["content"] = (msg.get("content") or "") + _STOP_NOTE
+        fixed[i] = msg
+        break
     return fixed
 
 
@@ -509,11 +544,8 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
         if stream.latest_event_data:
             raw_messages = stream.latest_event_data.get("raw_messages", [])
 
-        # If the user cancelled mid-stream while tool calls were in flight,
-        # inject synthetic tool responses so the persisted conversation stays
-        # valid and can be resumed later.
-        if stream.cancel_event.is_set() and raw_messages:
-            raw_messages = _fix_orphan_tool_calls(raw_messages)
+        # Orphan tool calls are NOT fixed here — they are healed lazily
+        # the next time POST /api/chat is called (see proxy_chat in routes.py).
 
         try:
             # Don't overwrite "continued" status if the proxy already set it

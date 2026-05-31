@@ -213,13 +213,10 @@ export async function updateSettings(payload) {
  */
 export async function cancelConversation(conversationId) {
   try {
-    const response = await fetch(`${API_BASE}/conversations/${conversationId}/cancel`, {
+    await fetch(`${API_BASE}/conversations/${conversationId}/cancel`, {
       method: 'POST',
       headers: _headers(),
     })
-    if (!response.ok && response.status !== 404) {
-      console.warn('[cancelConversation] Failed:', response.status)
-    }
   } catch (error) {
     console.warn('[cancelConversation] Error:', error.message)
   }
