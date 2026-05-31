@@ -14,12 +14,14 @@ import os
 # Override:  set AURORACODER_DATA_DIR env var
 
 if os.environ.get("AURORACODER_DOCKER", "0") == "1":
-    DATA_DIR = "/app/data"  # Inside Docker (always at /app/data)
+    DATA_DIR = Path("/app/data")  # Inside Docker (always at /app/data)
 else:
-    DATA_DIR = os.environ.get(
-        "AURORACODER_DATA_DIR",
-        os.path.expanduser("~/.auroracoder/data"),
+    DATA_DIR = Path(
+        os.environ.get(
+            "AURORACODER_DATA_DIR",
+            os.path.expanduser("~/.auroracoder/data"),
         )
+    )
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 TRAINING_DATA_DIR = DATA_DIR / "training"

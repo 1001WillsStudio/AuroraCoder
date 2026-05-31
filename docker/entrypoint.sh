@@ -16,9 +16,6 @@ if [ -d /seed ] && [ "$(ls -A /seed 2>/dev/null)" ]; then
     echo "Seeded workspace from /seed ($(ls /seed | wc -l) items)"
 fi
 
-# Seed ToolStore index (MCP servers, skills, public registry)
-mkdir -p /app/data/toolstore
-toolstore update || echo "ToolStore: update skipped (no network or registry unreachable)"
 
 export DISPLAY=:99
 echo "Starting agent + VNC desktop (noVNC at http://localhost:6080) ..."
