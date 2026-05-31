@@ -518,11 +518,11 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ## 🙏 Acknowledgments
 
-- **Aider** — the gold standard for LLM-powered code editing (search-and-replace pattern)
-- **[OpenCode](https://github.com/anomalyco/opencode)** — open-source AI coding agent (160K+ stars); follows Pattern A (minimal edit response)
-- **Claude Code** — Anthropic's agent architecture and skills system
-- **OpenAI** — Function calling API design
-- **Model Context Protocol (MCP)** — Standardized tool server interface
+- [@Mrw33554432](https://github.com/Mrw33554432) — Author & Lead Developer
+- [@Hahhha](https://github.com/Hahhha) — Project Supporter
+- [Name/Handle] — Project Supporter
+
+With thanks to **Aider** for its code editing approach which was investigated and used in early development, and **Cursor** for helping build the early prototype.
 
 ---
 
