@@ -10,14 +10,6 @@ if [ -n "$GITHUB_TOKEN" ]; then
     echo "GitHub auth: GITHUB_TOKEN configured for all github.com repos."
 fi
 
-# ── ToolStore client — always pull latest at container start ────────────
-echo "ToolStore: updating client package..."
-if conda run -n agent pip install --no-cache-dir --force-reinstall \
-    git+https://github.com/Mrw33554432/AgentToolStore.git#subdirectory=client; then
-    echo "ToolStore: client package updated."
-else
-    echo "WARNING: ToolStore client install failed (repo unreachable or no network). Using cached version if available."
-fi
 # Seed workspace from bind mount if present
 if [ -d /seed ] && [ "$(ls -A /seed 2>/dev/null)" ]; then
     cp -r /seed/* /workspace/

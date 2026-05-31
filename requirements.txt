@@ -13,27 +13,4 @@ pydantic>=2.0.0
 httpx>=0.27.0
 requests>=2.31.0
 
-# AI/ML Dependencies for Semantic Search
-# torch>=2.0.0
-# sentence-transformers>=3.0.0
-# faiss-cpu>=1.7.4
-# faiss-gpu>=1.7.4  # Uncomment this and comment faiss-cpu for GPU acceleration
-# numpy>=1.24.0
-# huggingface-hub>=0.20.0
 
-# Optional: Better models for code understanding
-# accelerate>=0.25.0  # For faster model loading
-# einops>=0.7.0  # For some transformer models
-# sentence-transformers>=2.2.2
-# faiss-cpu>=1.7.4
-# torch>=2.0.0
-# transformers>=4.30.0
-
-# For more information about the format of this file, see:
-# https://pip.pypa.io/en/latest/reference/pip_install/#requirements-file-format
-
-# Example of a requirement:
-# numpy==1.19.4
-pylint==3.3.7
-jinja2
-pyright[nodejs]
