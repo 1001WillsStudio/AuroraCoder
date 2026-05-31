@@ -370,9 +370,9 @@ function App() {
   const handleStop = async () => {
     if (abortControllerRef.current) abortControllerRef.current.abort()
     if (conversationId) {
-      // Fire-and-forget — orphan tool calls are healed lazily the next
-      // time handleSend() calls the gateway (see proxy_chat in routes.py).
-      cancelConversation(conversationId).catch(() => {})
+      try {
+        await cancelConversation(conversationId)
+      } catch { /* ignore — best-effort cancel */ }
     }
 
     setIsStreaming(false)
@@ -382,13 +382,13 @@ function App() {
     setHistoryRefreshTrigger(prev => prev + 1)
   }
 
-  const handleStopTool = useCallback(() => {
+  const handleStopTool = useCallback(async () => {
     if (abortControllerRef.current) abortControllerRef.current.abort()
     const cid = conversationIdRef.current
     if (cid) {
-      // Fire-and-forget — orphan tool calls are healed lazily the next
-      // time handleSend() calls the gateway (see proxy_chat in routes.py).
-      cancelConversation(cid).catch(() => {})
+      try {
+        await cancelConversation(cid)
+      } catch { /* ignore — best-effort cancel */ }
     }
 
     setIsStreaming(false)

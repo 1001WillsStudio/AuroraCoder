@@ -114,38 +114,6 @@ def _fix_orphan_tool_calls(raw_messages: list) -> list:
     return fixed
 
 
-_STOP_NOTE = "\n\n---\n**Tool stopped by user.**"
-
-
-def _fix_frontend_messages_on_cancel(frontend_messages: list, raw_messages: list) -> list:
-    """Annotate frontend messages so every orphan tool call shows a
-    'stopped by user' activity — the UI equivalent of what
-    ``_fix_orphan_tool_calls`` does for raw messages."""
-    orphans = _collect_orphan_tool_calls(raw_messages)
-    if not orphans:
-        return frontend_messages
-
-    orphan_ids = {tc.get("id") for tc in orphans if tc.get("id")}
-
-    fixed = list(frontend_messages)
-    # Walk backwards to find the last assistant message and annotate it
-    for i in range(len(fixed) - 1, -1, -1):
-        if fixed[i].get("role") != "assistant":
-            continue
-        msg = dict(fixed[i])
-        activities = list(msg.get("activities", []))
-        for tc_id in orphan_ids:
-            activities.append({
-                "type": "tool_result",
-                "tool_call_id": tc_id,
-                "content": "Tool stopped by user.",
-                "isTerminated": True,
-            })
-        msg["activities"] = activities
-        msg["content"] = (msg.get("content") or "") + _STOP_NOTE
-        fixed[i] = msg
-        break
-    return fixed
 
 
 def _track_file_changes(conversation_id: str, raw_messages: list):

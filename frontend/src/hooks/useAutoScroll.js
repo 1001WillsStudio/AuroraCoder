@@ -15,6 +15,7 @@ export function useAutoScroll(messages, isStreaming) {
   const scrollToBottom = useCallback((smooth = true) => {
     const container = chatContainerRef.current
     if (!container) return
+    scrolledUpRef.current = false
     autoScrollingRef.current = true
     container.scrollTo({
       top: container.scrollHeight,
