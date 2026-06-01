@@ -63,6 +63,8 @@ docker build -t auroracoder-base -f docker/Dockerfile.base .
 docker compose -f docker/docker-compose.yml up --build
 ```
 
+> 💡 **Tip**: Once launched, open the web UI (`http://localhost:3000`) and click the ⚙️ **Settings** icon in the top-left corner to enter your API keys — required for the agent to work. You can also pre-set them via a `.env` file.
+
 ### Services
 
 | Service | URL | Purpose |
@@ -73,7 +75,6 @@ docker compose -f docker/docker-compose.yml up --build
 | 🖱️ **VNC Desktop** | `http://localhost:6080` | Live Linux desktop for GUI apps |
 | 🏪 **ToolStore** | `http://localhost:8765` | Manage MCP servers, skills, and tool packs |
 
-> 💡 **Tip**: After launching, you can also set or update your API keys directly through the web UI — just click the ⚙️ **Settings** icon in the top-left corner.
 
 ### Multi-Instance Mode
 
