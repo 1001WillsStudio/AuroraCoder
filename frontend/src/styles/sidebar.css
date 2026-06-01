@@ -41,6 +41,7 @@
   display: flex;
   align-items: center;
   gap: 4px;
+  flex-shrink: 0;
 }
 
 .sidebar.collapsed .sidebar-header-actions {
@@ -74,11 +75,14 @@
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
+  flex: 1;
 }
 
 .logo-image {
   width: 36px;
   height: 36px;
+  flex-shrink: 0;
   object-fit: contain;
   filter: drop-shadow(0 0 8px var(--accent-glow));
 }
@@ -99,6 +103,9 @@
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ── Theme Toggle ────────────────────────────────────────────── */
