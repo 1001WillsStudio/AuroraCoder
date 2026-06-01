@@ -73,6 +73,8 @@ docker compose -f docker/docker-compose.yml up --build
 | 🖱️ **VNC Desktop** | `http://localhost:6080` | Live Linux desktop for GUI apps |
 | 🏪 **ToolStore** | `http://localhost:8765` | Manage MCP servers, skills, and tool packs |
 
+> 💡 **Tip**: After launching, you can also set or update your API keys directly through the web UI — just click the ⚙️ **Settings** icon in the top-left corner.
+
 ### Multi-Instance Mode
 
 Run `dev-scripts/another-one.bat` (or `another-one.bat 5`) to spin up an additional isolated instance with auto-incremented ports — useful for running multiple agents side by side.
