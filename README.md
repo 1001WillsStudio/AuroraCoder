@@ -52,10 +52,9 @@ dev-scripts\start.bat      # Windows
 Or do it step-by-step:
 
 ```bash
-# Build base image, launch Docker, start frontend
-docker build -t auroracoder-base -f Dockerfile.base .
-docker compose up --build
-cd frontend && npm install && npm run dev
+# Build base image, launch Docker (frontend included)
+docker build -t auroracoder-base -f docker/Dockerfile.base .
+docker compose -f docker/docker-compose.yml up --build
 ```
 
 ### Services
