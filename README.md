@@ -18,6 +18,12 @@
 
 > **Think of it as giving a frontier reasoning model a terminal, a file editor, a web browser, and a sub-agent workforce — all in an isolated Linux container.**
 
+### 🖼️ Web UI Preview
+
+![AuroraCoder Web UI](docs/images/webui-screenshot.png)
+
+> *The AuroraCoder web interface: chat panel with streaming responses, collapsible file tree with diff viewer, thinking-token visualization, and live code interpreter display.*
+
 ---
 
 ## 🚀 Quick Start
