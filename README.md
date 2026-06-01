@@ -36,6 +36,8 @@ Download the pre-built binary from [GitHub Releases](https://github.com/1001Will
 
 **Requirements**: Docker Desktop only. No git clone, no terminal, no Node.js, no Python needed — the launcher binary embeds the entire project and builds the Docker image on first launch. Subsequent launches are near-instant (cached image).
 
+> 💡 **Tip**: Once launched, open the web UI (`http://localhost:3000`) and click the ⚙️ **Settings** icon in the top-left corner to enter your API keys — required for the agent to work.
+
 ### 🔧 Power User: Dev Scripts
 
 For developers who clone the repo and want full control:
