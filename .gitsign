@@ -1,0 +1,5 @@
+# Git identity for this project
+# When making commits: use this author, co-author AuroraCoderAgent
+git config user.name "Shaowen Wen"
+git config user.email "shaowen0219@outlook.com"
+# Always append: Co-authored-by: AuroraCoderAgent <aurorathesnowyfox@gmail.com>
