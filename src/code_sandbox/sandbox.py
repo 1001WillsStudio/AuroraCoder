@@ -275,17 +275,30 @@ class PersistentShell:
             f"conda activate {DEFAULT_BASE_ENV_NAME}"
         )
 
-    def _init_command(self, command: str) -> None:
-        """Run a state-changing command (e.g. conda activate) without capturing output."""
+    def _init_command(self, command: str, timeout: int = 30) -> None:
+        """Run a state-changing init command (e.g. conda activate).
+
+        Reads stdout line-by-line until the boundary marker appears or
+        *timeout* seconds elapse.  A hung init command no longer blocks
+        :meth:`start` indefinitely.
+        """
         if not self._proc or not command:
             return
         boundary = f"INIT_{uuid.uuid4().hex[:8]}"
         self._proc.stdin.write(f"{command}\necho {boundary}\n")
         self._proc.stdin.flush()
-        while True:
+
+        import time
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < timeout:
             line = self._proc.stdout.readline()
             if not line or boundary in line:
-                break
+                return
+
+        logger.warning(
+            "Init command did not produce boundary within %ds: %.60s...",
+            timeout, command,
+        )
 
     @staticmethod
     def _strip_background_syntax(command: str) -> str:

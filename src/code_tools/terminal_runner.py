@@ -121,4 +121,4 @@ def run_terminal_cmd_tool(
 ) -> str:
     """Run terminal command tool wrapper."""
     runner = TerminalRunner(workspace_root=workspace_root)
-    return runner.run_command(command, timeout=timeout, blocking=blocking)
+    return runner.run_command(command, timeout=timeout, blocking=blocking, new_terminal=new_terminal)
