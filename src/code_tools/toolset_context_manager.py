@@ -107,9 +107,20 @@ def generate_toolstore_display(messages: List[Dict]) -> str:
 
 
 def _format_tool_display(tool: Dict) -> str:
-    """Dispatch to the correct formatter based on tool type."""
-    ttype = tool.get("type", "")
+    """Dispatch to the correct formatter based on tool type.
 
+    First tries the polymorphic ``Tool.from_dict(tool).format_display()``
+    path.  Falls back to the old per-type formatters for backwards
+    compatibility when ``toolstore.tool`` is not available.
+    """
+    try:
+        from toolstore.tool import Tool
+        return Tool.from_dict(tool).format_display()
+    except (ValueError, ImportError, Exception):
+        pass
+
+    # ── fallback formatters (kept for backwards compatibility) ─────
+    ttype = tool.get("type", "")
     if ttype == "toolset":
         return _fmt_toolset(tool)
     elif ttype == "mcp":
@@ -117,7 +128,6 @@ def _format_tool_display(tool: Dict) -> str:
     elif ttype == "skill":
         return _fmt_skill(tool)
     else:
-        # Generic fallback — just show description
         return tool.get("description", "") or json.dumps(tool, indent=2)
 
 
