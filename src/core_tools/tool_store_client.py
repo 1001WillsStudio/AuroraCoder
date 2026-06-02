@@ -110,47 +110,43 @@ def tool_store_tool(**kwargs):
     return _raw_tool_store_tool(**kwargs)
 
 
-def get_primary_tools_prompt() -> str:
-    """Return the primary-tool block for the system message.
-
-    Primary tools are callable directly by the LLM — their schemas are
-    injected into the ``tools[]`` array as first‑class citizens so the
-    model can invoke them just like ``google_search`` or ``web_browser``.
-
-    Returns a formatted block listing each primary tool with its
-    description, or an empty string when no primary tools are configured.
-    """
-    raw = _primary_tool_listing()
-    if not raw:
-        return ""
-    return (
-        "\n\n**Primary Tools** (call these directly — no ``tool_store`` needed):\n"
-        + raw
-    )
-
-
 def get_toolstore_tools_prompt() -> str:
-    """Return a compact name‑only listing of *secondary* ToolStore tools.
+    """Return a unified listing of primary and secondary ToolStore tools.
 
-    These tools must be accessed through ``tool_store(action=…)``.
-    Primary tools are listed separately via :func:`get_primary_tools_prompt`.
+    Primary tools are listed first with descriptions (the LLM can call
+    them directly).  Secondary tools follow as names only (the LLM must
+    use ``tool_store`` to access them).
+
+    Returns an empty string when no tools are configured.
     """
+    parts: list[str] = []
+
+    # ── Primary tools (with descriptions) ────────────────────────────
+    primary = _primary_tool_listing()
+    if primary:
+        parts.append(
+            "\n\n**Tool Store — Primary Tools** (call these directly, "
+            "no ``tool_store`` needed):\n"
+            + primary
+        )
+
+    # ── Secondary tools (names only) ─────────────────────────────────
     try:
         from toolstore import get_secondary_tool_names
 
         secondary_names = sorted(get_secondary_tool_names())
-        if not secondary_names:
-            return ""
-
-        lines = [
-            "",
-            "Tool store includes but is not limited to the following tools:",
-        ]
-        for name in secondary_names:
-            lines.append(f"- {name}")
-        return "\n".join(lines)
+        if secondary_names:
+            lines = [
+                "",
+                "**Tool Store — Secondary Tools** (use ``tool_store`` to access):",
+            ]
+            for name in secondary_names:
+                lines.append(f"- {name}")
+            parts.append("\n".join(lines))
     except Exception:
-        return ""
+        pass
+
+    return "".join(parts)
 
 
 __all__ = [
@@ -158,7 +154,6 @@ __all__ = [
     "get_tool_store_tool",
     "get_config_path",
     "get_toolstore_tools_prompt",
-    "get_primary_tools_prompt",
     "get_primary_tool_schemas",
     "execute_tool_direct",
     "prefetch_primary_tools",

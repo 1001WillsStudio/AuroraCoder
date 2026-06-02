@@ -12,7 +12,7 @@ import logging
 from typing import Dict, List, Generator, Optional
 
 from .tool_definitions import get_tool_definitions
-from .core_tools.tool_store_client import get_toolstore_tools_prompt, get_primary_tools_prompt
+from .core_tools.tool_store_client import get_toolstore_tools_prompt
 from .config import (
     DEFAULT_PROVIDER,
     MAX_TOKENS, MAX_ITERATIONS,
@@ -132,8 +132,7 @@ def generate_chat_responses_stream_native(
         current_time=datetime.datetime.now().isoformat(),
         vnc_instructions=VNC_INSTRUCTIONS,
         terminal_env_note=TERMINAL_ENV_NOTE,
-        primary_tools_instructions=get_primary_tools_prompt(),
-        secondary_tools=get_toolstore_tools_prompt(),
+        toolstore_tools=get_toolstore_tools_prompt(),
     )
 
     # Eagerly load primary tool schemas once at startup so the LLM's
