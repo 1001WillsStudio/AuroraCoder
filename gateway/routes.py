@@ -165,6 +165,7 @@ async def proxy_chat(request: Request):
         tool_call_id=tool_call_id,
         provider=body.get("provider"),
     )
+    t4 = time.perf_counter()
 
     # Seed frontend_messages so loading the conversation before the first
     # backend event still shows something.  For existing conversations
