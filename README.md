@@ -32,7 +32,7 @@ There are two ways to launch AuroraCoder:
 
 ### 🟢 Easy: One-Click Launcher
 
-Download the pre-built binary from [GitHub Releases](https://github.com/1001WillsStudio/AuroraCoder/releases) (built automatically by `.github/workflows/release.yml`). Double-click and you're done.
+Download the pre-built binary from [GitHub Releases](https://github.com/1001WillsStudio/AuroraCoder/releases/latest) (built automatically by `.github/workflows/release.yml`). Double-click and you're done.
 
 **Requirements**: Docker Desktop only. No git clone, no terminal, no Node.js, no Python needed — the launcher binary embeds the entire project and builds the Docker image on first launch. Subsequent launches are near-instant (cached image).
 

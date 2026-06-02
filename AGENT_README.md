@@ -471,7 +471,7 @@ Two launch methods:
 
 ### Easy: One-Click Launcher
 
-Download the pre-built binary from the project's [GitHub Releases](https://github.com/1001WillsStudio/AuroraCoder/releases) page (built automatically by the CI workflow in `.github/workflows/release.yml`):
+Download the pre-built binary from the project's [GitHub Releases](https://github.com/1001WillsStudio/AuroraCoder/releases/latest) page (built automatically by the CI workflow in `.github/workflows/release.yml`):
 
 ```bash
 ./auroracoder       # handles Docker build, start, and opens browser
