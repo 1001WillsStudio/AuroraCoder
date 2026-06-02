@@ -123,6 +123,23 @@ async def proxy_chat(request: Request):
     conversation_id = body.get("conversation_id") or str(uuid.uuid4())
     body["conversation_id"] = conversation_id
 
+    # ── Extract conversation-server metadata (not forwarded to backend) ─
+    # Must be extracted (and the conversation created) BEFORE we try to
+    # save messages below — a forked conversation has a brand-new ID that
+    # does not exist in the index yet.
+    conv_type = body.pop("conv_type", "user_chat")
+    parent_id = body.pop("parent_id", None)
+    tool_call_id = body.pop("tool_call_id", None)
+
+    # Ensure the conversation record exists (idempotent) before any
+    # save_messages call, so forks don't raise KeyError.
+    store.create_conversation(
+        conversation_id=conversation_id,
+        provider_id=body.get("provider"),
+        conv_type=conv_type,
+        parent_id=parent_id,
+    )
+
     # ── Fix orphan tool calls before forwarding to the backend ────────────
     # If the previous stream was cancelled mid-tool-execution, the
     # conversation history may contain assistant ``tool_calls`` with no
@@ -133,11 +150,6 @@ async def proxy_chat(request: Request):
         store.save_messages(conversation_id, body["messages"])
 
     # ────────────────────────────────────────────────────────────────────
-
-    # Extract conversation-server metadata (not forwarded to backend)
-    conv_type = body.pop("conv_type", "user_chat")
-    parent_id = body.pop("parent_id", None)
-    tool_call_id = body.pop("tool_call_id", None)
 
 
     # Cancel any previous stream for the SAME conversation (re-send / continue)
@@ -153,14 +165,7 @@ async def proxy_chat(request: Request):
         tool_call_id=tool_call_id,
         provider=body.get("provider"),
     )
-
     t4 = time.perf_counter()
-    store.create_conversation(
-        conversation_id=conversation_id,
-        provider_id=body.get("provider"),
-        conv_type=conv_type,
-        parent_id=parent_id,
-    )
 
     # Seed frontend_messages so loading the conversation before the first
     # backend event still shows something.  For existing conversations

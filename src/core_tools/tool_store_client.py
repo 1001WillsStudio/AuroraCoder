@@ -22,15 +22,43 @@ To check where config is stored at runtime::
 """
 
 try:
-    from toolstore.native_tool import tool_store_tool as _raw_tool_store_tool
+    from toolstore.native_tool import (
+        tool_store_tool as _raw_tool_store_tool,
+    )
+    from toolstore.native_tool import (
+        get_primary_tool_schemas as _native_get_primary_schemas,
+        get_primary_tool_prompt as _native_get_primary_prompt,
+        execute_tool_direct as _native_execute_tool_direct,
+        prefetch_primary_tools as _native_prefetch_primary_tools,
+    )
     from toolstore.config_manager import ConfigManager
 except ImportError as e:
+    # ── ToolStore library is NOT installed ──────────────────────────
     def _raw_tool_store_tool(**kwargs):
-        return f"Error: Could not load ToolStore library. Is 'toolstore' installed? Details: {e}"
+        return (
+            f"Error: Could not load ToolStore library. "
+            f"Is 'toolstore' installed? Details: {e}"
+        )
 
     def get_config_path() -> str:
         return "toolstore not available"
+
+    def get_primary_tool_schemas() -> list:
+        return []
+
+    def _primary_tool_listing() -> str:
+        return ""
+
+    def execute_tool_direct(name: str, kwargs: dict) -> str:
+        return (
+            f"Error: ToolStore is not available — cannot execute '{name}'."
+        )
+
+    def prefetch_primary_tools() -> int:
+        return 0
+
 else:
+    # ── ToolStore IS installed — wire real implementations ──────────
     def get_config_path() -> str:
         """Return the active toolstore config directory.
 
@@ -38,6 +66,18 @@ else:
         ``/app/data/toolstore/``, then ``~/.toolstore/`` as fallback.
         """
         return str(ConfigManager().config_dir)
+
+    def get_primary_tool_schemas() -> list:
+        return _native_get_primary_schemas()
+
+    def _primary_tool_listing() -> str:
+        return _native_get_primary_prompt()
+
+    def execute_tool_direct(name: str, kwargs: dict) -> str:
+        return _native_execute_tool_direct(name, kwargs)
+
+    def prefetch_primary_tools() -> int:
+        return _native_prefetch_primary_tools()
 
 
 def get_tool_store_tool():
@@ -70,29 +110,51 @@ def tool_store_tool(**kwargs):
     return _raw_tool_store_tool(**kwargs)
 
 
-__all__ = ["tool_store_tool", "get_tool_store_tool", "get_config_path", "get_toolstore_tools_prompt"]
-
-
 def get_toolstore_tools_prompt() -> str:
-    """Return a compact name-only listing of *secondary* tools from the tool store.
+    """Return a unified listing of primary and secondary ToolStore tools.
 
-    Delegates to ``toolstore.get_secondary_tool_names()`` which is the
-    canonical source of truth for tool exposure.  Returns an empty string
-    when no secondary tools are configured.
+    Primary tools are listed first with descriptions (the LLM can call
+    them directly).  Secondary tools follow as names only (the LLM must
+    use ``tool_store`` to access them).
+
+    Returns an empty string when no tools are configured.
     """
+    parts: list[str] = []
+
+    # ── Primary tools (with descriptions) ────────────────────────────
+    primary = _primary_tool_listing()
+    if primary:
+        parts.append(
+            "\n\n**Tool Store — Primary Tools** (call these directly, "
+            "no ``tool_store`` needed):\n"
+            + primary
+        )
+
+    # ── Secondary tools (names only) ─────────────────────────────────
     try:
         from toolstore import get_secondary_tool_names
 
         secondary_names = sorted(get_secondary_tool_names())
-        if not secondary_names:
-            return ""
-
-        lines = [
-            "",
-            "Tool store includes but is not limited to the following tools:",
-        ]
-        for name in secondary_names:
-            lines.append(f"- {name}")
-        return "\n".join(lines)
+        if secondary_names:
+            lines = [
+                "",
+                "**Tool Store — Secondary Tools** (use ``tool_store`` to access):",
+            ]
+            for name in secondary_names:
+                lines.append(f"- {name}")
+            parts.append("\n".join(lines))
     except Exception:
-        return ""
+        pass
+
+    return "".join(parts)
+
+
+__all__ = [
+    "tool_store_tool",
+    "get_tool_store_tool",
+    "get_config_path",
+    "get_toolstore_tools_prompt",
+    "get_primary_tool_schemas",
+    "execute_tool_direct",
+    "prefetch_primary_tools",
+]

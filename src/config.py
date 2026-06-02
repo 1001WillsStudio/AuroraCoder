@@ -259,7 +259,7 @@ As an autonomous agent, proactively leverage your tools to fully resolve the use
 - **edit_file**: at most 3 edits per call per file. Split larger changes across multiple tool rounds.
 
 Current Time: {current_time}
-{secondary_tools}
+{toolstore_tools}
 """
 
 # =============================================================================
