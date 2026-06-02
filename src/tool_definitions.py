@@ -430,8 +430,20 @@ TOOL_FUNCTION_MAP = {
 
 
 def get_tool_definitions() -> List[Dict[str, Any]]:
-    """Returns the list of tool definitions for OpenAI function calling."""
-    return NATIVE_TOOL_DEFINITIONS
+    """Returns the list of tool definitions for OpenAI function calling.
+
+    Merges the hard‑coded native tool schemas with primary ToolStore tools
+    whose function schemas are injected directly so the LLM can call them
+    like any other native tool.
+    """
+    import copy
+    tools = copy.deepcopy(NATIVE_TOOL_DEFINITIONS)
+    try:
+        from .core_tools.tool_store_client import get_primary_tool_schemas
+        tools.extend(get_primary_tool_schemas())
+    except Exception:
+        pass
+    return tools
 
 
 def get_tool_function_map() -> Dict[str, Any]:
@@ -452,7 +464,15 @@ def execute_tool_call(tool_name: str, arguments: Dict[str, Any], tool_call_id: s
         String result from the tool execution
     """
     if tool_name not in TOOL_FUNCTION_MAP:
-        return f"Error: Unknown tool '{tool_name}'"
+        # Not a native tool — try the ToolStore (primary tools).
+        # Primary tool schemas are injected at startup so the LLM calls
+        # them directly; this catch‑all routes those calls to the right
+        # backend without needing per‑tool registration.
+        try:
+            from .core_tools.tool_store_client import execute_tool_direct
+            return execute_tool_direct(tool_name, arguments)
+        except Exception as e:
+            return f"Error: Unknown tool '{tool_name}' — {e}"
 
     try:
         function = TOOL_FUNCTION_MAP[tool_name]

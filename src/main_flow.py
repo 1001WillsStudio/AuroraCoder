@@ -12,7 +12,7 @@ import logging
 from typing import Dict, List, Generator, Optional
 
 from .tool_definitions import get_tool_definitions
-from .core_tools.tool_store_client import get_toolstore_tools_prompt
+from .core_tools.tool_store_client import get_toolstore_tools_prompt, get_primary_tools_prompt
 from .config import (
     DEFAULT_PROVIDER,
     MAX_TOKENS, MAX_ITERATIONS,
@@ -22,6 +22,7 @@ from .config import (
     _CONTINUATION_NOTICE_MARKER, CONTINUATION_NOTICE,
 )
 from .providers import provider_manager
+from .core_tools.tool_store_client import prefetch_primary_tools  # noqa: E402 — redefined in function body
 from .code_tools.context_tracker import get_all as get_context_trackers
 from .code_tools.context_tracker import register
 from .code_tools.context_manager import FileContextTracker
@@ -131,8 +132,13 @@ def generate_chat_responses_stream_native(
         current_time=datetime.datetime.now().isoformat(),
         vnc_instructions=VNC_INSTRUCTIONS,
         terminal_env_note=TERMINAL_ENV_NOTE,
+        primary_tools_instructions=get_primary_tools_prompt(),
         secondary_tools=get_toolstore_tools_prompt(),
     )
+
+    # Eagerly load primary tool schemas once at startup so the LLM's
+    # tools[] array includes them from the very first turn.
+    prefetch_primary_tools()
     
     # Add system message if not already present.
     if not messages or messages[0].get("role") != "system":
