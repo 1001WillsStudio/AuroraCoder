@@ -43,6 +43,8 @@ export default function SettingsPanel({ isOpen, onClose }) {
     { id: 'nvidia-glm5',       name: 'NVIDIA GLM-5.1',                   description: 'Z-AI GLM-5.1 on NVIDIA with deep thinking',       supports_thinking: true,  api_key_configured: false },
     { id: 'nvidia-glm5-fast',  name: 'NVIDIA GLM-5.1 (No Thinking)',    description: 'Z-AI GLM-5.1 on NVIDIA, no reasoning (faster)',    supports_thinking: false, api_key_configured: false },
     { id: 'gemini-3-pro-api',  name: 'Gemini 3.1 Pro (AI Studio)',      description: 'Google AI Studio API (Requires GEMINI_API_KEY)',    supports_thinking: true,  api_key_configured: false },
+    { id: 'opencode-ds-v4-pro',  name: 'OpenCode DeepSeek V4 Pro',      description: 'OpenCode-hosted DeepSeek V4 Pro with reasoning',    supports_thinking: true,  api_key_configured: false },
+    { id: 'opencode-ds-v4-flash', name: 'OpenCode DeepSeek V4 Flash',   description: 'OpenCode-hosted DeepSeek V4 Flash — fast with reasoning', supports_thinking: true, api_key_configured: false },
   ]
 
   // ── Load ────────────────────────────────────────────────────────────────
@@ -107,6 +109,11 @@ export default function SettingsPanel({ isOpen, onClose }) {
       if (providerId === 'deepseek' || providerId === 'deepseek-flash') {
         next['deepseek'] = value
         next['deepseek-flash'] = value
+      }
+      // All OpenCode-hosted providers share OPENCODE_API_KEY — keep in sync
+      if (providerId === 'opencode-ds-v4-pro' || providerId === 'opencode-ds-v4-flash') {
+        next['opencode-ds-v4-pro'] = value
+        next['opencode-ds-v4-flash'] = value
       }
       // All NVIDIA-hosted providers share NVIDIA_API_KEY — keep in sync
       if (['nvidia', 'nvidia-fast', 'nvidia-glm5', 'nvidia-glm5-fast'].includes(providerId)) {
@@ -302,6 +309,25 @@ export default function SettingsPanel({ isOpen, onClose }) {
                 </div>
               </section>
 
+              {/* ── OpenCode API Key ───────────────────────────────────── */}
+              <section className="settings-section settings-section-key">
+                <h3 className="settings-section-title">🔑 OpenCode API Key</h3>
+                <p className="settings-section-desc">
+                  One key for all OpenCode-hosted models — DeepSeek V4 Pro (reasoning) and DeepSeek V4 Flash (fast).
+                </p>
+                <div className="settings-field-row">
+                  <div className="settings-field-col settings-field-col-wide">
+                    <input className="settings-input settings-input-deepseek-key" type="text"
+                      value={apiKeys['opencode-ds-v4-pro'] || ''}
+                      onChange={e => setApiKey('opencode-ds-v4-pro', e.target.value)}
+                      placeholder={apiKeysConfigured['opencode-ds-v4-pro'] || apiKeysConfigured['opencode-ds-v4-flash']
+                        ? 'OpenCode API key has been set — enter a new key to override'
+                        : 'sk-…'}
+                    />
+                  </div>
+                </div>
+              </section>
+
               {/* ── Agent Behavior ──────────────────────────────────────── */}
               <section className="settings-section">
                 <h3 className="settings-section-title">{t('agent.title')}</h3>
@@ -379,6 +405,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
                     const needsOwnKey = pid !== 'deepseek' && pid !== 'deepseek-flash'
                       && pid !== 'nvidia' && pid !== 'nvidia-fast'
                       && pid !== 'nvidia-glm5' && pid !== 'nvidia-glm5-fast'
+                      && pid !== 'opencode-ds-v4-pro' && pid !== 'opencode-ds-v4-flash'
                     return (
                       <div key={pid} className="settings-provider-row-compact">
                         <span className="settings-provider-name" title={prov.description}>{prov.name}</span>

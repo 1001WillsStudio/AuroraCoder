@@ -115,6 +115,28 @@ MODEL_PROVIDERS = {
         "extra_body": None,
         "context_window": 1_048_576,
     },
+    "opencode-ds-v4-pro": {
+        "id": "opencode-ds-v4-pro",
+        "name": "OpenCode DeepSeek V4 Pro",
+        "description": "OpenCode-hosted DeepSeek V4 Pro with reasoning",
+        "base_url": "https://opencode.ai/zen/go/v1",
+        "api_key": os.environ.get("OPENCODE_API_KEY", ""),
+        "model": "deepseek-v4-pro",
+        "supports_thinking": True,
+        "extra_body": None,
+        "context_window": 1_048_576,
+    },
+    "opencode-ds-v4-flash": {
+        "id": "opencode-ds-v4-flash",
+        "name": "OpenCode DeepSeek V4 Flash",
+        "description": "OpenCode-hosted DeepSeek V4 Flash — fast with reasoning",
+        "base_url": "https://opencode.ai/zen/go/v1",
+        "api_key": os.environ.get("OPENCODE_API_KEY", ""),
+        "model": "deepseek-v4-flash",
+        "supports_thinking": True,
+        "extra_body": None,
+        "context_window": 1_048_576,
+    },
 }
 
 # Default provider to use
