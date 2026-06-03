@@ -614,13 +614,17 @@ function App() {
               setPendingInterrupt(null)
               pendingInterruptRef.current = null
             }}
-            onContinueInNewChat={() => handleSend(null,
-              'Please use the `continue_as_new_chat` tool to hand off this task to a new chat with fresh context. ' +
-              'In your prompt, provide a comprehensive summary of: (1) what has been accomplished so far, ' +
-              '(2) what remains to be done, (3) key files and decisions made, and ' +
-              '(4) any important context the next agent needs to continue effectively.',
-              { tools: 'force_continuation' }
-            )}
+            onContinueInNewChat={() => {
+              const userText = inputValue.trim()
+              const standardCommand = 'Please use the `continue_as_new_chat` tool to hand off this task to a new chat with fresh context. ' +
+                'In your prompt, provide a comprehensive summary of: (1) what has been accomplished so far, ' +
+                '(2) what remains to be done, (3) key files and decisions made, and ' +
+                '(4) any important context the next agent needs to continue effectively.'
+              const combinedMessage = userText
+                ? `${userText}\n\n---\n\n${standardCommand}`
+                : standardCommand
+              handleSend(null, combinedMessage, { tools: 'force_continuation' })
+            }}
           />
         )}
       </main>
