@@ -148,12 +148,18 @@ set /a "MAX=!TRY!+1000"
 :resolve_port_loop
 call :port_is_free !TRY!
 if errorlevel 1 (
-    endlocal & set "%~1=!TRY!"
+    for %%v in ("!TRY!") do (
+        endlocal
+        set "%~1=%%~v"
+    )
     exit /b
 )
 set /a "TRY+=1"
 if !TRY! lss !MAX! goto :resolve_port_loop
-endlocal & set "%~1=!TRY!"
+for %%v in ("!TRY!") do (
+    endlocal
+    set "%~1=%%~v"
+)
 exit /b
 
 :resolve_port_range
@@ -170,10 +176,16 @@ for /l %%p in (!BASE!,1,!END!) do (
     if errorlevel 1 set "ALL_FREE=0"
 )
 if "!ALL_FREE!"=="1" (
-    endlocal & set "%~1=!BASE!"
+    for %%v in ("!BASE!") do (
+        endlocal
+        set "%~1=%%~v"
+    )
     exit /b
 )
 set /a "BASE+=1"
 if !BASE! lss !MAX! goto :resolve_range_loop
-endlocal & set "%~1=!SAVE!"
+for %%v in ("!SAVE!") do (
+    endlocal
+    set "%~1=%%~v"
+)
 exit /b
