@@ -8,6 +8,7 @@
     <img src="https://img.shields.io/badge/docker-required-2496ED?style=flat-square&logo=docker&logoColor=white" />
     <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" />
   </p>
+  <p><sub>🇨🇳 <a href="README_CN.md">中文版</a></sub></p>
 </div>
 
 ---
