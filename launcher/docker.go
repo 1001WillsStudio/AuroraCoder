@@ -254,8 +254,14 @@ func startContainer(cacheDir string, ps *progressServer) (PortsConfig, error) {
 
 	envFile := filepath.Join(cacheDir, ".env")
 
-	args := []string{
-		"run", "--rm", "-d",
+	args := []string{"run", "--rm", "-d"}
+
+	// Insert --env-file only if .env exists
+	if _, err := os.Stat(envFile); err == nil {
+		args = append(args, "--env-file", envFile)
+	}
+
+	args = append(args,
 		"--name", containerName,
 		"-e", "AURORACODER_DOCKER=1",
 		"-e", "AURORACODER_VNC=1",
@@ -267,12 +273,7 @@ func startContainer(cacheDir string, ps *progressServer) (PortsConfig, error) {
 		"-p", fmt.Sprintf("%d:8765", ports.ToolStore),
 		"-p", fmt.Sprintf("%d-%d:8900-8902", ports.DevPortStart, ports.DevPortEnd),
 		appImageName,
-	}
-
-	// Insert --env-file only if .env exists
-	if _, err := os.Stat(envFile); err == nil {
-		args = append(args[:3], append([]string{"--env-file", envFile}, args[3:]...)...)
-	}
+	)
 
 	cmd := exec.Command("docker", args...)
 	cmd.Dir = cacheDir
