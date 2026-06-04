@@ -1,0 +1,70 @@
+{
+  "name": "aurora-coder",
+  "version": "1.0.4",
+  "description": "AuroraCoder — an autonomous AI coding agent. Install via npm and run directly on your machine (no Docker required).",
+  "license": "MIT",
+  "author": "Shaowen Wen <shaowen0219@outlook.com>",
+  "main": "npm-package/cli.js",
+  "bin": {
+    "aurora-coder": "./npm-package/cli.js"
+  },
+  "files": [
+    "src/code_sandbox/",
+    "src/code_tools/",
+    "src/core_tools/__init__.py",
+    "src/core_tools/continue_chat.py",
+    "src/core_tools/google_search.py",
+    "src/core_tools/jupyter_code_runner.py",
+    "src/core_tools/subagent.py",
+    "src/core_tools/tool_store_client.py",
+    "src/core_tools/web_browser.py",
+    "src/web_api/",
+    "src/__init__.py",
+    "src/config.py",
+    "src/main_flow.py",
+    "src/providers.py",
+    "src/tool_definitions.py",
+    "src/tool_executor.py",
+    "src/training_log.py",
+    "gateway/",
+    "frontend/dist/",
+    "frontend/src/",
+    "frontend/public/",
+    "frontend/index.html",
+    "frontend/vite.config.js",
+    "frontend/package.json",
+    "frontend/package-lock.json",
+    "frontend/server.py",
+    "npm-package/",
+    "requirements.txt",
+    "run_web.py",
+    "LICENSE",
+    "README.md",
+    "ports.conf",
+    ".env.example"
+  ],
+  "scripts": {
+    "start": "node npm-package/cli.js",
+    "postinstall": "node -e \"console.log('\\n🔧 AuroraCoder installed! Run: aurora-coder\\n')\""
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "aurora-coder",
+    "ai",
+    "coding-agent",
+    "deepseek",
+    "llm",
+    "autonomous-agent",
+    "code-assistant"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/1001WillsStudio/AuroraCoder.git"
+  },
+  "homepage": "https://github.com/1001WillsStudio/AuroraCoder#readme",
+  "bugs": {
+    "url": "https://github.com/1001WillsStudio/AuroraCoder/issues"
+  }
+}

@@ -1,0 +1,45 @@
+# Development / CI files
+.git
+.github
+.gitattributes
+.gitsign
+.editorconfig
+.dockerignore
+
+# Python cache & virtualenv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.venv
+venv
+env
+*.egg-info
+*.egg
+build
+.pytest_cache
+.ruff_cache
+
+# Frontend build dependencies (huge, user will install their own)
+node_modules
+
+# Logs, data, workspaces
+*.log
+data
+workspace
+
+# Docker & deployment
+docker
+dev-scripts
+mobile
+launcher
+
+# Tests
+tests
+
+# Documentation source
+docs
+
+# OS junk
+.DS_Store
+Thumbs.db
