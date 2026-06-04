@@ -20,9 +20,6 @@ echo "Stopping old container if any..."
 docker stop auroracoder-agent >/dev/null 2>&1 || true
 docker rm auroracoder-agent >/dev/null 2>&1 || true
 
-# Short delay to ensure ports are released before we start resolving them
-echo "Waiting for port cleanup..."
-sleep 2
 
 
 # ── Port configuration ──────────────────────────────────────────────────
@@ -133,8 +130,6 @@ else
 fi
 
 # ── Check if base image exists; build if missing ─────────────────────────
-# These Docker steps are slow — but because we stopped the old container
-# at the very beginning, ports have already been released by now.
 if docker inspect --type=image auroracoder-base >/dev/null 2>&1; then
     echo "[base] Base image found, skipping."
 else

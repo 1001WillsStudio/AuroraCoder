@@ -36,9 +36,6 @@ echo "Stopping old container \"$CONTAINER\" if any..."
 docker stop "$CONTAINER" >/dev/null 2>&1 || true
 docker rm   "$CONTAINER" >/dev/null 2>&1 || true
 
-# Short delay to ensure ports are released before we start resolving them
-echo "Waiting for port cleanup..."
-sleep 2
 
 # ── Base ports (from ports.conf or defaults) ────────────────────────────
 BASE_FRONTEND=3000
