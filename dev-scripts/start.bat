@@ -9,6 +9,9 @@ echo Stopping old container if any...
 docker stop auroracoder-agent >nul 2>&1
 docker rm auroracoder-agent >nul 2>&1
 
+:: Short delay to ensure ports are released before we start resolving them
+echo Waiting for port cleanup...
+timeout /t 2 /nobreak >nul
 
 
 :: ── Port configuration ──────────────────────────────────────────────────

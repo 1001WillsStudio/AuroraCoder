@@ -242,6 +242,8 @@ func stopOldContainer(ps *progressServer) {
 	rmCmd := exec.Command("docker", "rm", containerName)
 	rmCmd.Run()
 
+	// Short delay to ensure ports are released before we start resolving them
+	time.Sleep(2 * time.Second)
 	ps.logLine("Old container cleaned up.")
 }
 

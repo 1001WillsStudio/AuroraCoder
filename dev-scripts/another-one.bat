@@ -26,6 +26,9 @@ echo Stopping old container "%CONTAINER%" if any...
 docker stop %CONTAINER% >nul 2>&1
 docker rm   %CONTAINER% >nul 2>&1
 
+:: Short delay to ensure ports are released before we start resolving them
+echo Waiting for port cleanup...
+timeout /t 2 /nobreak >nul
 
 :: ── Base ports (from ports.conf or defaults) ────────────────────────────
 set "BASE_FRONTEND=3000"
