@@ -2,16 +2,16 @@
 cd /d "%~dp0\.."
 
 :: ── Stop existing container FIRST ───────────────────────────────────────
-:: Docker builds take time — by stopping the old container at the very
-:: beginning, ports have the entire build duration to be released.
-:: This avoids a wasteful "timeout 2" blocking the final launch.
-echo Stopping old container if any...
+echo [%time%] Stopping old container...
 docker stop auroracoder-agent >nul 2>&1
+echo [%time%] docker stop done
 docker rm auroracoder-agent >nul 2>&1
+echo [%time%] docker rm done
 
-:: Short delay to ensure ports are released before we start resolving them
-echo Waiting for port cleanup...
+:: Short delay for port cleanup
+echo [%time%] sleep 2...
 timeout /t 2 /nobreak >nul
+echo [%time%] sleep done
 
 
 :: ── Port configuration ──────────────────────────────────────────────────
@@ -35,16 +35,21 @@ if exist "ports.conf" (
 )
 
 :: ── Auto-find available ports ──────────────────────────────────────────
-:: Run netstat ONCE and cache — avoids spawning slow netstat per port
+echo [%time%] netstat -ano (caching)...
 netstat -ano > "%TEMP%\_ac_ports.tmp" 2>nul
+echo [%time%] netstat done, resolving ports...
 call :resolve_port BACKEND_PORT
+echo [%time%] BACKEND_PORT=%BACKEND_PORT%
 call :resolve_port FRONTEND_PORT
+echo [%time%] FRONTEND_PORT=%FRONTEND_PORT%
 call :resolve_port VNC_PORT
+echo [%time%] VNC_PORT=%VNC_PORT%
 call :resolve_port TOOLSTORE_PORT
+echo [%time%] TOOLSTORE_PORT=%TOOLSTORE_PORT%
 set /a "DEV_WIDTH=%DEV_PORT_END% - %DEV_PORT_START% + 1"
 if %DEV_WIDTH% lss 1 set "DEV_WIDTH=3"
 call :resolve_port_range DEV_PORT_START %DEV_WIDTH%
-set /a "DEV_PORT_END=%DEV_PORT_START% + %DEV_WIDTH% - 1"
+echo [%time%] DEV range=%DEV_PORT_START%-%DEV_PORT_END%
 del "%TEMP%\_ac_ports.tmp" 2>nul
 
 echo ========================================
