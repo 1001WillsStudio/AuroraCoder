@@ -30,7 +30,7 @@
 
 ## 🚀 Quick Start
 
-There are two ways to launch AuroraCoder:
+There are three ways to launch AuroraCoder:
 
 ### 🟢 Easy: One-Click Launcher
 
@@ -66,6 +66,21 @@ Or do it step-by-step:
 docker build -t auroracoder-base -f docker/Dockerfile.base .
 docker compose -f docker/docker-compose.yml up --build
 ```
+
+### 📦 Quick: npm Install
+
+For users who want to run directly on their machine without Docker:
+
+**Prerequisites**: Node.js 18+, Python 3.10+, and `DEEPSEEK_API_KEY` in your environment
+
+```bash
+npx aurora-coder
+```
+
+That's it — auto-installs Python deps, builds the frontend, and starts the agent.
+Custom ports: `npx aurora-coder --port 8082 --backend-port 8083`
+
+> ⚠️ **Use at your own risk**: The npm version runs **without Docker sandbox isolation**, meaning the agent has access to your host filesystem as your current user. It is strongly recommended to run inside a dedicated project directory. For sandboxed execution, use the Docker-based methods above.
 
 > 💡 **Tip**: Once launched, open the web UI (`http://localhost:3000`) and click the ⚙️ **Settings** icon in the top-left corner to enter your API keys — required for the agent to work. You can also pre-set them via a `.env` file.
 

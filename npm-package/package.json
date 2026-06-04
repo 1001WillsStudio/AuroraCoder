@@ -1,0 +1,41 @@
+{
+  "name": "aurora-coder",
+  "version": "1.0.1",
+  "description": "AuroraCoder — an autonomous AI coding agent. Install via npm and run directly on your machine (no Docker required).",
+  "license": "MIT",
+  "author": "Shaowen Wen <shaowen0219@outlook.com>",
+  "main": "cli.js",
+  "bin": {
+    "aurora-coder": "cli.js"
+  },
+  "files": [
+    "cli.js",
+    "run_native.py",
+    "package.json",
+    "README.md"
+  ],
+  "scripts": {
+    "start": "node cli.js",
+    "postinstall": "node -e \"console.log('\\n🔧 AuroraCoder installed! Run: npx aurora-coder\\n')\""
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "aurora-coder",
+    "ai",
+    "coding-agent",
+    "deepseek",
+    "llm",
+    "autonomous-agent",
+    "code-assistant"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/1001WillsStudio/AuroraCoder.git"
+  },
+  "homepage": "https://github.com/1001WillsStudio/AuroraCoder#readme",
+  "bugs": {
+    "url": "https://github.com/1001WillsStudio/AuroraCoder/issues"
+  }
+}

@@ -30,7 +30,7 @@
 
 ## 🚀 快速开始
 
-启动 AuroraCoder 有两种姿势：
+启动 AuroraCoder 有三种姿势：
 
 ### 🟢 小白友好：一键启动器
 
@@ -66,6 +66,21 @@ dev-scripts\start.bat      # Windows
 docker build -t auroracoder-base -f docker/Dockerfile.base .
 docker compose -f docker/docker-compose.yml up --build
 ```
+
+### 📦 极速：npm 安装
+
+想在裸机上直接跑，不装 Docker 的话：
+
+**前置条件**：Node.js 18+、Python 3.10+，环境变量里配好 `DEEPSEEK_API_KEY`
+
+```bash
+npx aurora-coder
+```
+
+就这一条命令——自动装 Python 依赖、构建前端、启动智能体。
+自定义端口：`npx aurora-coder --port 8082 --backend-port 8083`
+
+> ⚠️ **风险自担**：npm 版本**没有 Docker 沙箱隔离**，智能体能以你的用户身份访问宿主机文件系统。强烈建议在独立的项目目录下运行。需要沙箱隔离的话，请用上面的 Docker 方式。
 
 > 💡 **同样别忘了**：启动后打开 `http://localhost:3000`，点左上角 ⚙️ **设置** 填 API 密钥，顺便把语言切到中文。也可以提前在 `.env` 里配好。
 
