@@ -124,17 +124,13 @@ echo To stop: docker stop auroracoder-agent
 goto :eof
 
 :: ── Port utility subroutines ───────────────────────────────────────────
-:port_is_free
-findstr /c:":%~1 " "%TEMP%\_ac_ports.tmp" >nul 2>&1
-if errorlevel 1 exit /b 0
-exit /b 1
 
 :resolve_port
 setlocal enabledelayedexpansion
 set "TRY=!%~1!"
 set /a "MAX=!TRY!+1000"
 :resolve_port_loop
-call :port_is_free !TRY!
+findstr /c:":!TRY! " "%TEMP%\_ac_ports.tmp" >nul 2>&1
 if errorlevel 1 (
     for %%v in ("!TRY!") do (
         endlocal
@@ -160,8 +156,8 @@ set /a "MAX=!BASE!+10000"
 set /a "END=!BASE!+!COUNT!-1"
 set "ALL_FREE=1"
 for /l %%p in (!BASE!,1,!END!) do (
-    call :port_is_free %%p
-    if errorlevel 1 set "ALL_FREE=0"
+    findstr /c:":%%p " "%TEMP%\_ac_ports.tmp" >nul 2>&1
+    if not errorlevel 1 set "ALL_FREE=0"
 )
 if "!ALL_FREE!"=="1" (
     for %%v in ("!BASE!") do (
