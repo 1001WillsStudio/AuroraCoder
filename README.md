@@ -14,7 +14,7 @@
 
 ## ✨ Overview
 
-**AuroraCoder** is a state-of-the-art autonomous AI coding agent powered primarily by **DeepSeek V4 Pro** (GLM-5.1 and Gemini 3.1 Pro also supported) with **native OpenAI function calling**, executing real-world tasks in a Docker sandbox. It's not just a chat interface — it's an autonomous agent that reads your codebase, writes code, runs commands, searches the web, delegates to sub-agents, and even launches GUI applications visible through a built-in VNC desktop.
+**AuroraCoder** is a state-of-the-art autonomous AI coding agent powered primarily by **DeepSeek V4 Pro** (GLM-5.1 and OpenCode Go also supported) with **native OpenAI function calling**, executing real-world tasks in a Docker sandbox. It's not just a chat interface — it's an autonomous agent that reads your codebase, writes code, runs commands, searches the web, delegates to sub-agents, and even launches GUI applications visible through a built-in VNC desktop.
 
 > **Think of it as giving a frontier reasoning model a terminal, a file editor, a web browser, and a sub-agent workforce — all in an isolated Linux container.**
 
@@ -104,10 +104,10 @@ But beyond the append-only problem, there's a deeper design choice that divides 
 
 | Pattern | After Edit | Token Cost | Model Visibility | Examples |
 |---------|-----------|------------|------------------|----------|
-| **A: Minimal Response** | `"Edit applied successfully."` + diff | Low | Must mentally reconstruct file state from past actions | [OpenCode](https://github.com/anomalyco/opencode), Aider |
+| **A: Minimal Response** | `"Edit applied successfully."` + diff | Low | Must mentally reconstruct file state from past actions | [OpenCode Go](https://github.com/anomalyco/opencode), Aider |
 | **B: Full State Response** | Complete file content with line numbers | Higher | Perfect — sees exact disk state every turn | AuroraCoder |
 
-- **Pattern A** (used by [OpenCode](https://github.com/anomalyco/opencode) — 160K+ GitHub stars) returns only a status message and a unified diff. The model never sees the full updated file after an edit unless it explicitly calls `read` again. This saves context tokens but forces the model to mentally reconstruct file state across multiple edits — a fragile process prone to drift, phantom content, and cascading errors when the model's mental model diverges from what's actually on disk.
+- **Pattern A** (used by [OpenCode Go](https://github.com/anomalyco/opencode) — 160K+ GitHub stars) returns only a status message and a unified diff. The model never sees the full updated file after an edit unless it explicitly calls `read` again. This saves context tokens but forces the model to mentally reconstruct file state across multiple edits — a fragile process prone to drift, phantom content, and cascading errors when the model's mental model diverges from what's actually on disk.
 
 - **Pattern B** re-reads every affected file from disk after each code-changing operation and presents the authoritative state to the model. This costs extra tokens but eliminates state hallucination — the model always operates on ground truth.
 
@@ -228,7 +228,7 @@ Xvfb + fluxbox + noVNC on port 6080. The agent can launch matplotlib (TkAgg back
 
 ### 🔌 Pluggable Provider Architecture
 
-Seven model providers with reasoning mode toggled per provider. `ProviderManager` singleton initializes all clients at import time. Custom `VertexAIClient` wraps Google Cloud auth with automatic token refresh.
+Multiple model providers with reasoning mode toggled per provider. `ProviderManager` singleton initializes all clients at import time.
 
 ### 🏪 ToolStore Integration
 
@@ -268,7 +268,7 @@ A standalone vanilla JS mobile web app lives in `mobile/` — no build step, jus
 │  │  ┌── Agent Backend (:8080) ────────────────────────────┐  │  │
 │  │  │  main_flow.py — The Engine                           │  │  │
 │  │  │  ├─ System prompt injection (config.py)              │  │  │
-│  │  │  ├─ LLM streaming (7 providers)                      │  │  │
+│  │  │  ├─ LLM streaming (multiple providers)                │  │  │
 │  │  │  ├─ Tool execution (parallel read, sequential write) │  │  │
 │  │  │  ├─ ContextTracker — living file display             │  │  │
 │  │  │  ├─ ToolsetContextTracker — living toolset display   │  │  │
@@ -404,15 +404,14 @@ AuroraCoder gives the LLM **13 built-in tools** via native OpenAI function calli
 
 ### Supported Model Providers
 
-> DeepSeek V4 Pro is the primary and recommended model — all recent development of this project was done with it.
+> DeepSeek V4 Pro is the primary and recommended model — all recent development of this project was done with it. **OpenCode Go** is also highly recommended: affordable pricing with excellent coding performance.
 
 | Provider | Model | Reasoning | Context |
 |----------|-------|-----------|---------|
 | **DeepSeek** | `deepseek-v4-pro` | ✅ | 1M tokens |
 | **NVIDIA** | `deepseek-ai/deepseek-v4-pro` | ✅/❌ | 1M tokens |
 | **NVIDIA GLM** | `z-ai/glm-5.1` | ✅/❌ | 128K tokens |
-| **Gemini (Vertex AI)** | `gemini-3.1-pro-preview` | ✅ | 1M tokens |
-| **Gemini (AI Studio)** | `gemini-3.1-pro-preview` | ✅ | 1M tokens |
+| **OpenCode Go** 💰 | `opencode-go` | ✅ | 128K tokens |
 
 Set via `DEFAULT_PROVIDER` in `config.py` or select from the frontend.
 
@@ -435,10 +434,8 @@ Copy `.env.example` → `.env` and fill in:
 |----------|----------|-------------|
 | `DEEPSEEK_API_KEY` | **Yes** | DeepSeek API key |
 | `NVIDIA_API_KEY` | No | NVIDIA-hosted models |
-| `GEMINI_API_KEY` | No | Google AI Studio |
 | `GOOGLE_SEARCH_API_KEY` | No | Google Custom Search |
 | `GOOGLE_CSE_ID` | No | Custom Search Engine ID |
-| `VERTEX_AI_PROJECT_ID` | No | Google Cloud project for Vertex AI |
 
 ---
 

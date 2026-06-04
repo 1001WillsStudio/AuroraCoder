@@ -149,9 +149,6 @@ export default function Sidebar({
                     >
                       <div className="provider-option-name">{provider.name}</div>
                       <div className="provider-option-desc">{provider.description}</div>
-                      {provider.supports_thinking && (
-                        <span className="provider-badge">{t('sidebar.thinkingBadge')}</span>
-                      )}
                     </button>
                   ))
                 )}
