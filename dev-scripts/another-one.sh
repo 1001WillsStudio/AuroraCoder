@@ -72,15 +72,8 @@ TOOLSTORE_PORT=$((BASE_TOOLSTORE + INST - 1))
 # ── Port availability helpers ───────────────────────────────────────────
 port_is_free() {
     local port=$1
-    if command -v ss >/dev/null 2>&1; then
-        ! ss -tln "sport = :$port" 2>/dev/null | grep -q ":$port"
-    elif command -v lsof >/dev/null 2>&1; then
-        ! lsof -i ":$port" -sTCP:LISTEN >/dev/null 2>&1
-    elif command -v netstat >/dev/null 2>&1; then
-        ! netstat -tln 2>/dev/null | grep -q ":$port "
-    else
-        python3 -c "import socket; s=socket.socket(); s.bind(('',$port)); s.close()" 2>/dev/null
-    fi
+    # bash-native TCP connect — zero subprocess overhead
+    ! (: </dev/tcp/127.0.0.1/$port) 2>/dev/null
 }
 
 find_free_port() {
@@ -103,7 +96,7 @@ find_free_port_range() {
     while true; do
         local all_free=true
         local p
-        for p in $(seq "$base" $((base + count - 1))); do
+        for (( p=base; p<=base+count-1; p++ )); do
             if ! port_is_free "$p"; then
                 all_free=false
                 break
