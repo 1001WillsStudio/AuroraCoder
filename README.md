@@ -7,6 +7,7 @@
     <img src="https://img.shields.io/badge/node-18+-green?style=flat-square" />
     <img src="https://img.shields.io/badge/docker-required-2496ED?style=flat-square&logo=docker&logoColor=white" />
     <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" />
+    <a href="https://discord.gg/XUgn8DPPze"><img src="https://img.shields.io/badge/Discord-Join%20Server-5865F2?style=flat-square&logo=discord&logoColor=white" /></a>
   </p>
   <p><sub>🇨🇳 <a href="README_CN.md">中文版</a></sub></p>
 </div>
