@@ -58,8 +58,8 @@ set /a "FRONTEND_PORT=%BASE_FRONTEND%+%INST%-1"
 set /a "TOOLSTORE_PORT=%BASE_TOOLSTORE%+%INST%-1"
 
 :: ── Auto-find available ports ──────────────────────────────────────────
-:: Because we stopped the old container at the very beginning, these ports
-:: should already be free.
+:: Run netstat ONCE and cache — avoids spawning slow netstat per port
+netstat -ano > "%TEMP%\_ac_ports.tmp" 2>nul
 call :resolve_port BACKEND_PORT
 call :resolve_port FRONTEND_PORT
 call :resolve_port VNC_PORT
@@ -68,6 +68,7 @@ set /a "DEV_WIDTH=%DEV_PORT_END% - %DEV_PORT_START% + 1"
 if %DEV_WIDTH% lss 1 set "DEV_WIDTH=3"
 call :resolve_port_range DEV_PORT_START %DEV_WIDTH%
 set /a "DEV_PORT_END=%DEV_PORT_START% + %DEV_WIDTH% - 1"
+del "%TEMP%\_ac_ports.tmp" 2>nul
 
 set "STORAGE_BASE=%USERPROFILE%\Documents\AuroraCoder"
 set "DATA_DIR=%STORAGE_BASE%\data-%INST%"
@@ -138,7 +139,7 @@ goto :eof
 
 :: ── Port utility subroutines ───────────────────────────────────────────
 :port_is_free
-netstat -an | findstr /c:":%~1 " >nul 2>&1
+findstr /c:":%~1 " "%TEMP%\_ac_ports.tmp" >nul 2>&1
 if errorlevel 1 exit /b 0
 exit /b 1
 
