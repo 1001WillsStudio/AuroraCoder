@@ -12,36 +12,18 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
-# ── Read GITHUB_TOKEN from .env for ToolStore (used in base image build)
-GITHUB_TOKEN=$(grep '^GITHUB_TOKEN=' .env 2>/dev/null | cut -d= -f2- || true)
-
-# ── Check if base image exists; build if missing ─────────────────────────
-if docker inspect --type=image auroracoder-base >/dev/null 2>&1; then
-    echo "[base] Base image found, skipping."
-else
-    echo "[base] Building base image -- first time, this may take a few minutes..."
-    docker build -t auroracoder-base -f docker/Dockerfile.base --build-arg GITHUB_TOKEN="$GITHUB_TOKEN" . || {
-        echo "Base image build failed."
-        exit 1
-    }
-    echo "[base] Done."
-fi
-
-# ── Always rebuild app image (fast: just copies source code) ─────────────
-echo "[app] Building app image..."
-docker build -t auroracoder -f docker/Dockerfile . || {
-    echo "App image build failed."
-    exit 1
-}
-
-# ── Stop existing container if running ───────────────────────────────────
+# ── Stop existing container FIRST ─────────────────────────────────────────
+# Docker builds take time — by stopping the old container at the very
+# beginning, ports have the entire build duration to be released.
+# This avoids a wasteful "sleep 2" blocking the final launch.
 echo "Stopping old container if any..."
 docker stop auroracoder-agent >/dev/null 2>&1 || true
 docker rm auroracoder-agent >/dev/null 2>&1 || true
 
-# Short delay to ensure ports are fully released
+# Short delay to ensure ports are released before we start resolving them
 echo "Waiting for port cleanup..."
 sleep 2
+
 
 # ── Port configuration ──────────────────────────────────────────────────
 FRONTEND_PORT=3000
@@ -149,6 +131,27 @@ else
     # Fallback: just use home directory
     STORAGE_BASE="$HOME/AuroraCoder"
 fi
+
+# ── Check if base image exists; build if missing ─────────────────────────
+# These Docker steps are slow — but because we stopped the old container
+# at the very beginning, ports have already been released by now.
+if docker inspect --type=image auroracoder-base >/dev/null 2>&1; then
+    echo "[base] Base image found, skipping."
+else
+    echo "[base] Building base image -- first time, this may take a few minutes..."
+    docker build -t auroracoder-base -f docker/Dockerfile.base . || {
+        echo "Base image build failed."
+        exit 1
+    }
+    echo "[base] Done."
+fi
+
+# ── Always rebuild app image (fast: just copies source code) ─────────────
+echo "[app] Building app image..."
+docker build -t auroracoder -f docker/Dockerfile . || {
+    echo "App image build failed."
+    exit 1
+}
 
 # ── Check if .env exists; warn but don't abort (keys can be set via Settings UI)
 if [ -f ".env" ]; then

@@ -65,6 +65,12 @@ func main() {
 	ps.setStepMsg(1, "done", "Docker is installed and running")
 	ps.logLine("✅ Docker is running.")
 
+	// ── Stop old container NOW ──────────────────────────────────
+	// Docker builds (steps 4-5) are slow. By stopping the old
+	// container here, ports have the entire build duration to be
+	// released before we need to bind them in step 6.
+	stopOldContainer(ps)
+
 	// ── Step 2: Extract ───────────────────────────────────────────
 
 	ps.setStep(2, "running")

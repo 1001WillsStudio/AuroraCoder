@@ -1,47 +1,18 @@
 @echo off
 cd /d "%~dp0\.."
 
-:: Read GITHUB_TOKEN from .env for ToolStore (used in base image build)
-set "GITHUB_TOKEN="
-for /f "tokens=2 delims==" %%a in ('findstr /b /c:"GITHUB_TOKEN=" .env 2^>nul') do set "GITHUB_TOKEN=%%a"
-
-:: Check if base image exists; build if missing
-docker inspect --type=image auroracoder-base >nul 2>&1
-if errorlevel 1 goto :build_base
-echo [base] Base image found, skipping.
-goto :build_app
-
-:build_base
-echo [base] Building base image -- first time, this may take a few minutes...
-docker build -t auroracoder-base -f docker\Dockerfile.base --build-arg GITHUB_TOKEN=%GITHUB_TOKEN% .
-if errorlevel 1 (
-    echo Base image build failed.
-    pause
-    exit /b 1
-)
-echo [base] Done.
-
-:build_app
-
-:: Always rebuild app image (fast: just copies source code)
-:: Generate unique cache-bust key to force ToolStore reinstall every run
-for /f "tokens=2 delims==." %%I in ('wmic os get localdatetime /value ^| find "="') do set "CACHEBUST=%%I"
-echo [app] Building app image (cache-bust: %CACHEBUST%)...
-docker build -t auroracoder --build-arg GITHUB_TOKEN=%GITHUB_TOKEN% --build-arg CACHEBUST=%CACHEBUST% -f docker\Dockerfile .
-if errorlevel 1 (
-    echo App image build failed.
-    pause
-    exit /b 1
-)
-
-:: Stop existing container if running
+:: ── Stop existing container FIRST ───────────────────────────────────────
+:: Docker builds take time — by stopping the old container at the very
+:: beginning, ports have the entire build duration to be released.
+:: This avoids a wasteful "timeout 2" blocking the final launch.
 echo Stopping old container if any...
 docker stop auroracoder-agent >nul 2>&1
 docker rm auroracoder-agent >nul 2>&1
 
-:: Short delay to ensure ports are fully released
+:: Short delay to ensure ports are released before we start resolving them
 echo Waiting for port cleanup...
 timeout /t 2 /nobreak >nul
+
 
 :: ── Port configuration ──────────────────────────────────────────────────
 set "FRONTEND_PORT=3000"
@@ -87,7 +58,37 @@ echo.
 :: Storage base — all persistent data lives under Documents\AuroraCoder
 set "STORAGE_BASE=%USERPROFILE%\Documents\AuroraCoder"
 
-:: Start backend container (agent + conversation history server)
+:: ── Check if base image exists; build if missing ─────────────────────────
+:: These Docker steps are slow — but because we stopped the old container
+:: at the very beginning, ports have already been released by now.
+docker inspect --type=image auroracoder-base >nul 2>&1
+if errorlevel 1 goto :build_base
+echo [base] Base image found, skipping.
+goto :build_app
+
+:build_base
+echo [base] Building base image -- first time, this may take a few minutes...
+docker build -t auroracoder-base -f docker\Dockerfile.base .
+if errorlevel 1 (
+    echo Base image build failed.
+    pause
+    exit /b 1
+)
+echo [base] Done.
+
+:build_app
+:: Always rebuild app image (fast: just copies source code)
+:: Generate unique cache-bust key to force ToolStore reinstall every run
+for /f "tokens=2 delims==." %%I in ('wmic os get localdatetime /value ^| find "="') do set "CACHEBUST=%%I"
+echo [app] Building app image (cache-bust: %CACHEBUST%)...
+docker build -t auroracoder --build-arg CACHEBUST=%CACHEBUST% -f docker\Dockerfile .
+if errorlevel 1 (
+    echo App image build failed.
+    pause
+    exit /b 1
+)
+
+:: ── Start backend container ─────────────────────────────────────────────
 echo Starting backend in Docker (app + frontend)...
 :: Check if .env exists; warn but don't abort (keys can be set via Settings UI)
 set "ENV_FILE_ARG="

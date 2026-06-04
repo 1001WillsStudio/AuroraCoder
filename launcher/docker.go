@@ -229,19 +229,31 @@ func buildAppImage(cacheDir string, ps *progressServer) error {
 	return streamCommand(cmd, ps)
 }
 
-// ─── Container start ──────────────────────────────────────────────────────
+// ─── Stop old container ──────────────────────────────────────────────────
 
-func startContainer(cacheDir string, ps *progressServer) (PortsConfig, error) {
-	// Stop and remove any existing container
+// stopOldContainer stops and removes any existing container early in the
+// launch sequence.  Docker builds take time, so doing this at the very
+// beginning gives ports plenty of time to be released before we need them.
+func stopOldContainer(ps *progressServer) {
+	ps.logLine("Stopping old container if any...")
+
 	stopCmd := exec.Command("docker", "stop", containerName)
 	stopCmd.Run()
 	rmCmd := exec.Command("docker", "rm", containerName)
 	rmCmd.Run()
 
-	// Short delay to ensure ports are fully released
+	// Short delay to ensure ports are released before we start resolving them
 	time.Sleep(2 * time.Second)
+	ps.logLine("Old container cleaned up.")
+}
 
-	// Resolve ports AFTER the old container is gone
+// ─── Container start ──────────────────────────────────────────────────────
+
+// startContainer resolves ports, creates data directories, and runs the
+// container.  The old container should already have been stopped by calling
+// stopOldContainer() earlier in the launch sequence.
+func startContainer(cacheDir string, ps *progressServer) (PortsConfig, error) {
+	// Resolve ports (old container already stopped earlier, so ports are free)
 	ports := resolvePorts(cacheDir, ps)
 	ps.logLine(fmt.Sprintf("Resolved ports: frontend=%d backend=%d vnc=%d toolstore=%d dev=%d-%d",
 		ports.Frontend, ports.Backend, ports.VNC, ports.ToolStore, ports.DevPortStart, ports.DevPortEnd))
