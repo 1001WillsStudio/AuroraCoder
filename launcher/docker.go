@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // ─── Docker detection ─────────────────────────────────────────────────────
@@ -230,12 +231,20 @@ func buildAppImage(cacheDir string, ps *progressServer) error {
 
 // ─── Container start ──────────────────────────────────────────────────────
 
-func startContainer(cacheDir string, ps *progressServer) error {
+func startContainer(cacheDir string, ps *progressServer) (PortsConfig, error) {
 	// Stop and remove any existing container
 	stopCmd := exec.Command("docker", "stop", containerName)
 	stopCmd.Run()
 	rmCmd := exec.Command("docker", "rm", containerName)
 	rmCmd.Run()
+
+	// Short delay to ensure ports are fully released
+	time.Sleep(2 * time.Second)
+
+	// Resolve ports AFTER the old container is gone
+	ports := resolvePorts(cacheDir, ps)
+	ps.logLine(fmt.Sprintf("Resolved ports: frontend=%d backend=%d vnc=%d toolstore=%d dev=%d-%d",
+		ports.Frontend, ports.Backend, ports.VNC, ports.ToolStore, ports.DevPortStart, ports.DevPortEnd))
 
 	storageBase := getStorageBase()
 	dataDir := filepath.Join(storageBase, "data")
@@ -248,23 +257,27 @@ func startContainer(cacheDir string, ps *progressServer) error {
 	args := []string{
 		"run", "--rm", "-d",
 		"--name", containerName,
-		"--env-file", envFile,
 		"-e", "AURORACODER_DOCKER=1",
 		"-e", "AURORACODER_VNC=1",
 		"-v", fmt.Sprintf("%s:/app/data", dataDir),
 		"-v", fmt.Sprintf("%s:/workspace", workspaceDir),
-		"-p", fmt.Sprintf("%d:%d", apiPort, apiPort),
-		"-p", fmt.Sprintf("%d:%d", appPort, appPort),
-		"-p", fmt.Sprintf("%d:%d", vncPort, vncPort),
-		"-p", fmt.Sprintf("%d:%d", toolStorePort, toolStorePort),
-		"-p", fmt.Sprintf("%d-%d:%d-%d", devPortStart, devPortEnd, devPortStart, devPortEnd),
+		"-p", fmt.Sprintf("%d:8080", ports.Backend),
+		"-p", fmt.Sprintf("%d:3000", ports.Frontend),
+		"-p", fmt.Sprintf("%d:6080", ports.VNC),
+		"-p", fmt.Sprintf("%d:8765", ports.ToolStore),
+		"-p", fmt.Sprintf("%d-%d:8900-8902", ports.DevPortStart, ports.DevPortEnd),
 		appImageName,
+	}
+
+	// Insert --env-file only if .env exists
+	if _, err := os.Stat(envFile); err == nil {
+		args = append(args[:3], append([]string{"--env-file", envFile}, args[3:]...)...)
 	}
 
 	cmd := exec.Command("docker", args...)
 	cmd.Dir = cacheDir
 
-	return streamCommand(cmd, ps)
+	return ports, streamCommand(cmd, ps)
 }
 
 // ─── Stream command output ────────────────────────────────────────────────

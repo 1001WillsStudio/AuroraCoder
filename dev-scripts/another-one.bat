@@ -16,14 +16,42 @@ goto :find_next
 
 :inst_ready
 
+:: ── Base ports (from ports.conf or defaults) ────────────────────────────
+set "BASE_FRONTEND=3000"
+set "BASE_BACKEND=8080"
+set "BASE_VNC=6080"
+set "BASE_TOOLSTORE=8765"
+set "BASE_DEV_START=8900"
+
+:: Read ports.conf if it exists
+if exist "ports.conf" (
+    for /f "usebackq tokens=1,2 delims==" %%a in (`findstr /v "^#" ports.conf 2^>nul`) do (
+        if "%%a"=="FRONTEND_PORT" set "BASE_FRONTEND=%%b"
+        if "%%a"=="BACKEND_PORT" set "BASE_BACKEND=%%b"
+        if "%%a"=="VNC_PORT" set "BASE_VNC=%%b"
+        if "%%a"=="TOOLSTORE_PORT" set "BASE_TOOLSTORE=%%b"
+        if "%%a"=="DEV_PORT_START" set "BASE_DEV_START=%%b"
+    )
+)
+
 :: Port arithmetic — each instance offsets from the base by (INST-1)*2
 set /a "OFFSET=(%INST%-1)*2"
-set /a "BACKEND_PORT=8080+%OFFSET%"
-set /a "VNC_PORT=6080+%OFFSET%"
-set /a "DEV_PORT_START=8900+%OFFSET%*3/2"
+set /a "BACKEND_PORT=%BASE_BACKEND%+%OFFSET%"
+set /a "VNC_PORT=%BASE_VNC%+%OFFSET%"
+set /a "DEV_PORT_START=%BASE_DEV_START%+%OFFSET%*3/2"
 set /a "DEV_PORT_END=%DEV_PORT_START%+2"
-set /a "FRONTEND_PORT=3000+%INST%-1"
-set /a "TOOLSTORE_PORT=8765+%INST%-1"
+set /a "FRONTEND_PORT=%BASE_FRONTEND%+%INST%-1"
+set /a "TOOLSTORE_PORT=%BASE_TOOLSTORE%+%INST%-1"
+
+:: ── Auto-find available ports ──────────────────────────────────────────
+call :resolve_port BACKEND_PORT
+call :resolve_port FRONTEND_PORT
+call :resolve_port VNC_PORT
+call :resolve_port TOOLSTORE_PORT
+set /a "DEV_WIDTH=%DEV_PORT_END% - %DEV_PORT_START% + 1"
+if %DEV_WIDTH% lss 1 set "DEV_WIDTH=3"
+call :resolve_port_range DEV_PORT_START %DEV_WIDTH%
+set /a "DEV_PORT_END=%DEV_PORT_START% + %DEV_WIDTH% - 1"
 
 set "CONTAINER=auroracoder-agent-%INST%"
 set "STORAGE_BASE=%USERPROFILE%\Documents\AuroraCoder"
@@ -41,13 +69,7 @@ echo   ToolStore:      http://localhost:%TOOLSTORE_PORT%
 echo ========================================
 echo.
 
-:: ── Port-availability check ─────────────────────────────────────────────
-for %%P in (%FRONTEND_PORT% %BACKEND_PORT% %VNC_PORT%) do (
-    netstat -an | findstr /r ":%%P " >nul 2>&1
-    if not errorlevel 1 (
-        echo WARNING: Port %%P appears to be in use. The container may fail to start.
-    )
-)
+:: ── Port-availability: resolved by auto-find above ──────────────────────
 
 :: ── Pre-flight checks ───────────────────────────────────────────────────
 :: The base + app images must already exist (built by start.bat)
@@ -58,15 +80,20 @@ if errorlevel 1 (
     exit /b 1
 )
 
-if not exist ".env" (
-    echo ERROR: .env file not found. Create it with your API keys.
-    echo See .env.example for the required variables.
-    exit /b 1
+:: Check if .env exists; warn but don't abort (keys can be set via Settings UI)
+if exist ".env" (
+    :: ── Build a filtered .env without your personal tokens ─────────────────
+    set "GUEST_ENV=%cd%\.env.guest-%INST%"
+    findstr /v /i "GITHUB_TOKEN" .env > "%GUEST_ENV%"
+    set "ENV_FILE_ARG=--env-file "%GUEST_ENV%""
+) else (
+    set "ENV_FILE_ARG="
+    set "GUEST_ENV="
+    echo NOTE: .env file not found. Starting without it.
+    echo You can configure API keys via Settings UI at http://localhost:%FRONTEND_PORT%
+    echo Or copy .env.example to .env and fill in your keys.
+    echo.
 )
-
-:: ── Build a filtered .env without your personal tokens ─────────────────
-set "GUEST_ENV=%cd%\.env.guest-%INST%"
-findstr /v /i "GITHUB_TOKEN" .env > "%GUEST_ENV%"
 
 :: ── Data directory ──────────────────────────────────────────────────────
 if not exist "%DATA_DIR%" mkdir "%DATA_DIR%"
@@ -85,7 +112,7 @@ timeout /t 2 /nobreak >nul
 echo Starting backend in Docker (instance %INST%)...
 docker run --rm -d ^
     --name %CONTAINER% ^
-    --env-file "%GUEST_ENV%" ^
+    %ENV_FILE_ARG% ^
     -e AURORACODER_DOCKER=1 ^
     -e AURORACODER_VNC=1 ^
     -v "%DATA_DIR%:/app/data" ^
@@ -106,3 +133,47 @@ echo.
 echo AuroraCoder instance %INST% is running at http://localhost:%FRONTEND_PORT%
 echo To stop: docker stop %CONTAINER%
 pause
+goto :eof
+
+:: ── Port utility subroutines ───────────────────────────────────────────
+:port_is_free
+netstat -an | findstr /c:":%~1 " >nul 2>&1
+if errorlevel 1 exit /b 0
+exit /b 1
+
+:resolve_port
+setlocal enabledelayedexpansion
+set "TRY=!%~1!"
+set /a "MAX=!TRY!+1000"
+:resolve_port_loop
+call :port_is_free !TRY!
+if errorlevel 1 (
+    endlocal & set "%~1=!TRY!"
+    exit /b
+)
+set /a "TRY+=1"
+if !TRY! lss !MAX! goto :resolve_port_loop
+endlocal & set "%~1=!TRY!"
+exit /b
+
+:resolve_port_range
+setlocal enabledelayedexpansion
+set "BASE=!%~1!"
+set "COUNT=%~2"
+set /a "SAVE=!BASE!"
+set /a "MAX=!BASE!+10000"
+:resolve_range_loop
+set /a "END=!BASE!+!COUNT!-1"
+set "ALL_FREE=1"
+for /l %%p in (!BASE!,1,!END!) do (
+    call :port_is_free %%p
+    if errorlevel 1 set "ALL_FREE=0"
+)
+if "!ALL_FREE!"=="1" (
+    endlocal & set "%~1=!BASE!"
+    exit /b
+)
+set /a "BASE+=1"
+if !BASE! lss !MAX! goto :resolve_range_loop
+endlocal & set "%~1=!SAVE!"
+exit /b

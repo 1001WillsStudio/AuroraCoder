@@ -90,13 +90,16 @@ func main() {
 	}
 	ps.setStep(3, "done")
 
+	// Step 3b: Ensure ports.conf exists
+	ensurePortsConf(cacheDir, ps)
+
 	// Step 4: Build base Docker image
-	ps.setStep(4, "running")
-	if err := buildBaseImage(cacheDir, ps); err != nil {
-		ps.fail(fmt.Sprintf("Base image build failed: %v", err))
-		autoExit(1)
-	}
-	ps.setStep(4, "done")
+ 	ps.setStep(4, "running")
+ 	if err := buildBaseImage(cacheDir, ps); err != nil {
+ 		ps.fail(fmt.Sprintf("Base image build failed: %v", err))
+ 		autoExit(1)
+ 	}
+ 	ps.setStep(4, "done")
 
 	// Step 5: Build app Docker image
 	ps.setStep(5, "running")
@@ -109,30 +112,31 @@ func main() {
 	// Step 6: Start container
 	ps.setStep(6, "running")
 	ps.logLine("Starting container...")
-	if err := startContainer(cacheDir, ps); err != nil {
-		ps.fail(fmt.Sprintf("Container start failed: %v", err))
-		autoExit(1)
-	}
-	ps.logLine("Container started, waiting for services to be ready...")
-	appURL := fmt.Sprintf("http://localhost:%d", appPort)
-	if err := waitForApp(appURL, ps, 60*time.Second); err != nil {
-		ps.logLine(fmt.Sprintf("⚠️  Health check warning: %v", err))
-		ps.logLine("The app may still be starting — please refresh if needed.")
-	}
-	ps.setStep(6, "done")
+ 	ports, err := startContainer(cacheDir, ps)
+ 	if err != nil {
+ 		ps.fail(fmt.Sprintf("Container start failed: %v", err))
+ 		autoExit(1)
+ 	}
+ 	ps.logLine("Container started, waiting for services to be ready...")
+ 	appURL := fmt.Sprintf("http://localhost:%d", ports.Frontend)
+ 	if err := waitForApp(appURL, ps, 60*time.Second); err != nil {
+ 		ps.logLine(fmt.Sprintf("⚠️  Health check warning: %v", err))
+ 		ps.logLine("The app may still be starting — please refresh if needed.")
+ 	}
+ 	ps.setStep(6, "done")
 
-	// ── Done ──────────────────────────────────────────────────────
-	ps.done(appURL)
+ 	// ── Done ──────────────────────────────────────────────────────
+ 	ps.done(appURL)
 
-	fmt.Println()
-	fmt.Println("════════════════════════════════════════")
-	fmt.Println("  AuroraCoder is running!")
-	fmt.Printf("  →  http://localhost:%d\n", appPort)
-	fmt.Println("════════════════════════════════════════")
-	fmt.Println()
-	fmt.Println("  API Docs:      http://localhost:8080/docs")
-	fmt.Println("  VNC Desktop:   http://localhost:6080")
-	fmt.Printf("  ToolStore:     http://localhost:%d\n", toolStorePort)
+ 	fmt.Println()
+ 	fmt.Println("════════════════════════════════════════")
+ 	fmt.Println("  AuroraCoder is running!")
+ 	fmt.Printf("  →  http://localhost:%d\n", ports.Frontend)
+ 	fmt.Println("════════════════════════════════════════")
+ 	fmt.Println()
+ 	fmt.Printf("  API Docs:      http://localhost:%d/docs\n", ports.Backend)
+ 	fmt.Printf("  VNC Desktop:   http://localhost:%d\n", ports.VNC)
+ 	fmt.Printf("  ToolStore:     http://localhost:%d\n", ports.ToolStore)
 	fmt.Println()
 	fmt.Println("  To stop:  docker stop auroracoder-agent")
 	fmt.Println()

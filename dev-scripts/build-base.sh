@@ -9,7 +9,7 @@ echo "========================================"
 echo ""
 
 # Read GITHUB_TOKEN from .env for ToolStore
-GITHUB_TOKEN=$(grep '^GITHUB_TOKEN=' .env 2>/dev/null | cut -d= -f2-)
+GITHUB_TOKEN=$(grep '^GITHUB_TOKEN=' .env 2>/dev/null | cut -d= -f2- || true)
 if [ -z "$GITHUB_TOKEN" ]; then
     echo "WARNING: GITHUB_TOKEN not found in .env — ToolStore install may be skipped."
 fi

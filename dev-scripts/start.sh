@@ -12,19 +12,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
-echo "========================================"
-echo "  AuroraCoder"
-echo "========================================"
-echo "  Frontend:       http://localhost:3000"
-echo "  Backend API:    http://localhost:8080"
-echo "  API Docs:       http://localhost:8080/docs"
-echo "  VNC Desktop:    http://localhost:6080"
-echo "  ToolStore:      http://localhost:8765"
-echo "========================================"
-echo ""
-
 # ── Read GITHUB_TOKEN from .env for ToolStore (used in base image build)
-GITHUB_TOKEN=$(grep '^GITHUB_TOKEN=' .env 2>/dev/null | cut -d= -f2-)
+GITHUB_TOKEN=$(grep '^GITHUB_TOKEN=' .env 2>/dev/null | cut -d= -f2- || true)
 
 # ── Check if base image exists; build if missing ─────────────────────────
 if docker inspect --type=image auroracoder-base >/dev/null 2>&1; then
@@ -54,6 +43,101 @@ docker rm auroracoder-agent >/dev/null 2>&1 || true
 echo "Waiting for port cleanup..."
 sleep 2
 
+# ── Port configuration ──────────────────────────────────────────────────
+FRONTEND_PORT=3000
+BACKEND_PORT=8080
+VNC_PORT=6080
+TOOLSTORE_PORT=8765
+DEV_PORT_START=8900
+DEV_PORT_END=8902
+
+# Read ports.conf if it exists
+if [ -f "ports.conf" ]; then
+    while IFS='=' read -r key val; do
+        case "$key" in
+            FRONTEND_PORT) FRONTEND_PORT="$val" ;;
+            BACKEND_PORT) BACKEND_PORT="$val" ;;
+            VNC_PORT) VNC_PORT="$val" ;;
+            TOOLSTORE_PORT) TOOLSTORE_PORT="$val" ;;
+            DEV_PORT_START) DEV_PORT_START="$val" ;;
+            DEV_PORT_END) DEV_PORT_END="$val" ;;
+        esac
+    done < <(grep -v '^#' ports.conf 2>/dev/null | grep -v '^$')
+fi
+
+# ── Port availability helpers ───────────────────────────────────────────
+port_is_free() {
+    local port=$1
+    if command -v ss >/dev/null 2>&1; then
+        ! ss -tln "sport = :$port" 2>/dev/null | grep -q ":$port"
+    elif command -v lsof >/dev/null 2>&1; then
+        ! lsof -i ":$port" -sTCP:LISTEN >/dev/null 2>&1
+    elif command -v netstat >/dev/null 2>&1; then
+        ! netstat -tln 2>/dev/null | grep -q ":$port "
+    else
+        python3 -c "import socket; s=socket.socket(); s.bind(('',$port)); s.close()" 2>/dev/null
+    fi
+}
+
+find_free_port() {
+    local start=$1
+    local port=$start
+    while ! port_is_free "$port"; do
+        port=$((port + 1))
+        if [ "$port" -gt $((start + 1000)) ]; then
+            echo "$start"
+            return
+        fi
+    done
+    echo "$port"
+}
+
+find_free_port_range() {
+    local start=$1
+    local count=$2
+    local base=$start
+    while true; do
+        local all_free=true
+        local p
+        for p in $(seq "$base" $((base + count - 1))); do
+            if ! port_is_free "$p"; then
+                all_free=false
+                break
+            fi
+        done
+        if $all_free; then
+            echo "$base"
+            return
+        fi
+        base=$((base + 1))
+        if [ "$base" -gt $((start + 10000)) ]; then
+            echo "$start"
+            return
+        fi
+    done
+}
+
+# ── Resolve ports: auto-find available ──────────────────────────────────
+BACKEND_PORT=$(find_free_port "$BACKEND_PORT")
+FRONTEND_PORT=$(find_free_port "$FRONTEND_PORT")
+VNC_PORT=$(find_free_port "$VNC_PORT")
+TOOLSTORE_PORT=$(find_free_port "$TOOLSTORE_PORT")
+DEV_WIDTH=$((DEV_PORT_END - DEV_PORT_START + 1))
+[ "$DEV_WIDTH" -lt 1 ] && DEV_WIDTH=3
+DEV_PORT_START=$(find_free_port_range "$DEV_PORT_START" "$DEV_WIDTH")
+DEV_PORT_END=$((DEV_PORT_START + DEV_WIDTH - 1))
+
+echo "========================================"
+echo "  AuroraCoder"
+echo "========================================"
+echo "  Frontend:       http://localhost:$FRONTEND_PORT"
+echo "  Backend API:    http://localhost:$BACKEND_PORT"
+echo "  API Docs:       http://localhost:$BACKEND_PORT/docs"
+echo "  VNC Desktop:    http://localhost:$VNC_PORT"
+echo "  ToolStore:      http://localhost:$TOOLSTORE_PORT"
+echo "========================================"
+echo ""
+
 # ── Storage base — all persistent data lives under Documents/AuroraCoder ────
 # Uses platform-appropriate Documents path
 if [ -d "$HOME/Documents" ]; then
@@ -66,11 +150,15 @@ else
     STORAGE_BASE="$HOME/AuroraCoder"
 fi
 
-# ── Verify .env file exists ──────────────────────────────────────────────
-if [ ! -f ".env" ]; then
-    echo "ERROR: .env file not found. Create it with your API keys."
-    echo "See .env.example for the required variables."
-    exit 1
+# ── Check if .env exists; warn but don't abort (keys can be set via Settings UI)
+if [ -f ".env" ]; then
+    ENV_FILE_ARG="--env-file .env"
+else
+    ENV_FILE_ARG=""
+    echo "NOTE: .env file not found. Starting without it."
+    echo "You can configure API keys via Settings UI at http://localhost:$FRONTEND_PORT"
+    echo "Or copy .env.example to .env and fill in your keys."
+    echo ""
 fi
 
 # ── Start backend container ──────────────────────────────────────────────
@@ -78,21 +166,21 @@ echo "Starting backend in Docker (app + frontend)..."
 mkdir -p "$STORAGE_BASE/data" "$STORAGE_BASE/workspace"
 docker run --rm -d \
     --name auroracoder-agent \
-    --env-file .env \
+    $ENV_FILE_ARG \
     -e AURORACODER_DOCKER=1 \
     -e AURORACODER_VNC=1 \
     -v "$STORAGE_BASE/data:/app/data" \
     -v "$STORAGE_BASE/workspace:/workspace" \
-    -p 8080:8080 \
-    -p 3000:3000 \
-    -p 6080:6080 \
-    -p 8765:8765 \
-    -p 8900-8902:8900-8902 \
+    -p $BACKEND_PORT:8080 \
+    -p $FRONTEND_PORT:3000 \
+    -p $VNC_PORT:6080 \
+    -p $TOOLSTORE_PORT:8765 \
+    -p $DEV_PORT_START-$DEV_PORT_END:8900-8902 \
     auroracoder || {
     echo "Failed to start container."
     exit 1
 }
 echo "Container started."
 echo ""
-echo "AuroraCoder is running at http://localhost:3000"
+echo "AuroraCoder is running at http://localhost:$FRONTEND_PORT"
 echo "To stop: docker stop auroracoder-agent"

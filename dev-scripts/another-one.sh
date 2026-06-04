@@ -26,14 +26,96 @@ else
     done
 fi
 
+# ── Base ports (from ports.conf or defaults) ────────────────────────────
+BASE_FRONTEND=3000
+BASE_BACKEND=8080
+BASE_VNC=6080
+BASE_TOOLSTORE=8765
+BASE_DEV_START=8900
+
+# Read ports.conf if it exists
+if [ -f "ports.conf" ]; then
+    while IFS='=' read -r key val; do
+        case "$key" in
+            FRONTEND_PORT) BASE_FRONTEND="$val" ;;
+            BACKEND_PORT) BASE_BACKEND="$val" ;;
+            VNC_PORT) BASE_VNC="$val" ;;
+            TOOLSTORE_PORT) BASE_TOOLSTORE="$val" ;;
+            DEV_PORT_START) BASE_DEV_START="$val" ;;
+        esac
+    done < <(grep -v '^#' ports.conf 2>/dev/null | grep -v '^$')
+fi
+
 # Port arithmetic — each instance offsets from the base by (INST-1)*2
 OFFSET=$(( (INST - 1) * 2 ))
-BACKEND_PORT=$((8080 + OFFSET))
-VNC_PORT=$((6080 + OFFSET))
-DEV_PORT_START=$((8900 + OFFSET * 3 / 2))
+BACKEND_PORT=$((BASE_BACKEND + OFFSET))
+VNC_PORT=$((BASE_VNC + OFFSET))
+DEV_PORT_START=$((BASE_DEV_START + OFFSET * 3 / 2))
 DEV_PORT_END=$((DEV_PORT_START + 2))
-FRONTEND_PORT=$((3000 + INST - 1))
-TOOLSTORE_PORT=$((8765 + INST - 1))
+FRONTEND_PORT=$((BASE_FRONTEND + INST - 1))
+TOOLSTORE_PORT=$((BASE_TOOLSTORE + INST - 1))
+
+# ── Port availability helpers ───────────────────────────────────────────
+port_is_free() {
+    local port=$1
+    if command -v ss >/dev/null 2>&1; then
+        ! ss -tln "sport = :$port" 2>/dev/null | grep -q ":$port"
+    elif command -v lsof >/dev/null 2>&1; then
+        ! lsof -i ":$port" -sTCP:LISTEN >/dev/null 2>&1
+    elif command -v netstat >/dev/null 2>&1; then
+        ! netstat -tln 2>/dev/null | grep -q ":$port "
+    else
+        python3 -c "import socket; s=socket.socket(); s.bind(('',$port)); s.close()" 2>/dev/null
+    fi
+}
+
+find_free_port() {
+    local start=$1
+    local port=$start
+    while ! port_is_free "$port"; do
+        port=$((port + 1))
+        if [ "$port" -gt $((start + 1000)) ]; then
+            echo "$start"
+            return
+        fi
+    done
+    echo "$port"
+}
+
+find_free_port_range() {
+    local start=$1
+    local count=$2
+    local base=$start
+    while true; do
+        local all_free=true
+        local p
+        for p in $(seq "$base" $((base + count - 1))); do
+            if ! port_is_free "$p"; then
+                all_free=false
+                break
+            fi
+        done
+        if $all_free; then
+            echo "$base"
+            return
+        fi
+        base=$((base + 1))
+        if [ "$base" -gt $((start + 10000)) ]; then
+            echo "$start"
+            return
+        fi
+    done
+}
+
+# ── Resolve ports: auto-find available ──────────────────────────────────
+BACKEND_PORT=$(find_free_port "$BACKEND_PORT")
+FRONTEND_PORT=$(find_free_port "$FRONTEND_PORT")
+VNC_PORT=$(find_free_port "$VNC_PORT")
+TOOLSTORE_PORT=$(find_free_port "$TOOLSTORE_PORT")
+DEV_WIDTH=$((DEV_PORT_END - DEV_PORT_START + 1))
+[ "$DEV_WIDTH" -lt 1 ] && DEV_WIDTH=3
+DEV_PORT_START=$(find_free_port_range "$DEV_PORT_START" "$DEV_WIDTH")
+DEV_PORT_END=$((DEV_PORT_START + DEV_WIDTH - 1))
 
 CONTAINER="auroracoder-agent-$INST"
 
@@ -67,18 +149,18 @@ if ! docker inspect --type=image auroracoder >/dev/null 2>&1; then
     exit 1
 fi
 
-if [ ! -f ".env" ]; then
-    echo "ERROR: .env file not found. Create it with your API keys."
-    echo "See .env.example for the required variables."
-    exit 1
+# ── Check if .env exists; warn but don't abort (keys can be set via Settings UI)
+if [ -f ".env" ]; then
+    ENV_FILE_ARG="--env-file .env"
+else
+    ENV_FILE_ARG=""
+    echo "NOTE: .env file not found. Starting without it."
+    echo "You can configure API keys via Settings UI at http://localhost:$FRONTEND_PORT"
+    echo "Or copy .env.example to .env and fill in your keys."
+    echo ""
 fi
 
-# ── Port-availability check ─────────────────────────────────────────────
-for port in "$FRONTEND_PORT" "$BACKEND_PORT" "$VNC_PORT"; do
-    if lsof -i ":$port" -sTCP:LISTEN >/dev/null 2>&1 || ss -tlnp "sport = :$port" 2>/dev/null | grep -q ":$port"; then
-        echo "WARNING: Port $port appears to be in use. The container may fail to start."
-    fi
-done
+# ── Port-availability: resolved by auto-find above ──────────────────────
 
 
 # ── Data directories ────────────────────────────────────────────────────
@@ -97,7 +179,7 @@ sleep 2
 echo "Starting backend in Docker (instance $INST)..."
 docker run --rm -d \
     --name "$CONTAINER" \
---env-file .env \
+    $ENV_FILE_ARG \
     -e AURORACODER_DOCKER=1 \
     -e AURORACODER_VNC=1 \
     -v "$DATA_DIR:/app/data" \
