@@ -93,7 +93,7 @@ MODEL_PROVIDERS = {
     },
     "nvidia-fast": {
         "id": "nvidia-fast",
-        "name": "NVIDIA V4 Pro (Fast)",
+        "name": "NVIDIA V4 Pro (No Reasoning)",
         "description": "NVIDIA hosted, no reasoning",
         "base_url": "https://integrate.api.nvidia.com/v1",
         "api_key": os.environ.get("NVIDIA_API_KEY", ""),
@@ -117,7 +117,7 @@ MODEL_PROVIDERS = {
     },
     "nvidia-glm5-fast": {
         "id": "nvidia-glm5-fast",
-        "name": "NVIDIA GLM-5.1 (Fast)",
+        "name": "NVIDIA GLM-5.1 (No Reasoning)",
         "description": "NVIDIA hosted, no reasoning",
         "base_url": "https://integrate.api.nvidia.com/v1",
         "api_key": os.environ.get("NVIDIA_API_KEY", ""),
