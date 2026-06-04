@@ -67,7 +67,10 @@ docker build -t auroracoder-base -f docker/Dockerfile.base .
 docker compose -f docker/docker-compose.yml up --build
 ```
 
-### 📦 Quick: npm Install
+### 📦 Quick: npm Install 🧪 EXPERIMENTAL
+
+> ⚠️ **This feature is experimental.** The npm launcher is under active development
+> and may have rough edges. Docker-based methods are the recommended, stable path.
 
 For users who want to run directly on their machine without Docker:
 
