@@ -30,6 +30,10 @@ export function useAutoScroll(messages, isStreaming) {
   // fires when the user intentionally scrolls down (not content shrink).
   const lastScrollDirRef = useRef(null) // 'up' | 'down' | null
 
+  // Flag: set true by the messages effect, consumed once per frame by the
+  // rAF loop below.  Collapses N scrolls/second into at most 60 fps.
+  const needsScrollRef = useRef(false)
+
 
   // ── helpers ──────────────────────────────────────────────────────────
 
@@ -127,12 +131,26 @@ export function useAutoScroll(messages, isStreaming) {
     return () => container.removeEventListener('scroll', handleScroll)
   })
 
-  // ── 4. Auto-scroll when messages update and user is FOLLOWING ──────
+  // ── 4. Flag that a scroll is needed (messages changed in FOLLOWING) ──
   useEffect(() => {
     if (modeRef.current === FOLLOWING) {
-      scrollToBottom(false) // instant — smooth scroll fights rapid streaming
+      needsScrollRef.current = true
     }
-  }, [messages, scrollToBottom])
+  }, [messages])
+
+  // ── 5. rAF loop — consume the flag once per frame ───────────────────
+  useEffect(() => {
+    let raf
+    const tick = () => {
+      if (needsScrollRef.current && modeRef.current === FOLLOWING) {
+        scrollToBottom(false)
+        needsScrollRef.current = false
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [scrollToBottom])
 
   return {
     chatContainerRef,
