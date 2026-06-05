@@ -26,6 +26,10 @@ export function useAutoScroll(messages, isStreaming) {
   // Ref mirror so event handlers (stable across renders) read latest mode
   const modeRef = useRef(FOLLOWING)
 
+  // Track last explicit user scroll direction — BROWSING → FOLLOWING only
+  // fires when the user intentionally scrolls down (not content shrink).
+  const lastScrollDirRef = useRef(null) // 'up' | 'down' | null
+
 
   // ── helpers ──────────────────────────────────────────────────────────
 
@@ -45,10 +49,11 @@ export function useAutoScroll(messages, isStreaming) {
    * Public API – called from App when user sends a message or clicks the ↓ button.
    */
   const resetToFollowing = useCallback(() => {
+    lastScrollDirRef.current = null // explicit, not user-driven
     modeRef.current = FOLLOWING
     setMode(FOLLOWING)
     setShowScrollButton(false)
-    scrollToBottom(false) // instant scroll – user just sent a message
+    scrollToBottom(false)
   }, [scrollToBottom])
 
   // ── update showScrollButton whenever mode changes ──
@@ -62,122 +67,38 @@ export function useAutoScroll(messages, isStreaming) {
   }, [mode, isAtBottom])
 
   // ── 1. wheel event – detect scroll-up intent ────────────────────────
+  //    No deps array so it retries after every render, because the first
+  //    render may be a loading spinner where chatContainerRef is null.
 
   useEffect(() => {
     const container = chatContainerRef.current
     if (!container) return
 
     const onWheel = (e) => {
-      // User input is always authoritative — never suppress.
       if (e.deltaY < 0) {
-        // User scrolled up → BROWSING.
-        // Show button immediately (don't wait for the mode effect — the
-        // browser may not have processed the scroll yet, so isAtBottom()
-        // could still be true at that point).
+        // User scrolled up → BROWSING
+        lastScrollDirRef.current = 'up'
         modeRef.current = BROWSING
         setMode(BROWSING)
         setShowScrollButton(true)
+      } else if (e.deltaY > 0) {
+        // User scrolled down — record direction for BROWSING→FOLLOWING gate
+        lastScrollDirRef.current = 'down'
       }
-      // deltaY > 0 (scrolling down): let the scroll handler decide
-      // when user actually reaches bottom
     }
 
     container.addEventListener('wheel', onWheel, { passive: true })
     return () => container.removeEventListener('wheel', onWheel)
-  }, []) // stable – never needs re-binding
+  })
 
-  // ── 2. keydown event – catch keyboard navigation ────────────────────
-  // NOTE: Redundant — wheel + scroll handler already cover mouse/trackpad.
-  // Can be removed upon request.
+  // ── 2. keydown / touch – redundant fallbacks ────────────────────────
+  //    Can be removed upon request.
 
-  useEffect(() => {
-    const container = chatContainerRef.current
-    if (!container) return
-
-    const onKeyDown = (e) => {
-      // Only handle keys when the chat container has focus (or is the active area)
-      // ArrowUp / PageUp / Home → user scrolled up → BROWSING
-      if (e.key === 'ArrowUp' || e.key === 'PageUp' || e.key === 'Home') {
-        // Small delay so the browser's native scroll happens first,
-        // then we check if user actually moved up
-        requestAnimationFrame(() => {
-          if (!isAtBottom()) {
-            modeRef.current = BROWSING
-            setMode(BROWSING)
-          }
-        })
-        return
-      }
-
-      // ArrowDown / PageDown / End → if reaching bottom → FOLLOWING
-      if (e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === 'End') {
-        requestAnimationFrame(() => {
-          if (isAtBottom()) {
-            modeRef.current = FOLLOWING
-            setMode(FOLLOWING)
-          }
-        })
-      }
-    }
-
-    // Listen on the document so it works even when an inner element has focus
-    // within the chat container. We filter with a target check.
-    const onKeyDownFiltered = (e) => {
-      if (!chatContainerRef.current) return
-      // Only process if the event target is inside the chat container
-      // (not in an input, textarea, or settings panel)
-      const target = e.target
-      if (!target) return
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return
-      if (!chatContainerRef.current.contains(target)) return
-      onKeyDown(e)
-    }
-
-    document.addEventListener('keydown', onKeyDownFiltered)
-    return () => document.removeEventListener('keydown', onKeyDownFiltered)
-  }, [isAtBottom])
-
-  // ── 3. touch events – mobile scroll detection ───────────────────────
-  // NOTE: Redundant — wheel + scroll handler already cover most devices.
-  // Can be removed upon request.
-
-  useEffect(() => {
-    const container = chatContainerRef.current
-    if (!container) return
-
-    let touchStartY = 0
-
-    const onTouchStart = (e) => {
-      if (e.touches.length === 1) {
-        touchStartY = e.touches[0].clientY
-      }
-    }
-
-    const onTouchMove = (e) => {
-      // User input is always authoritative — never suppress.
-      if (e.touches.length !== 1) return
-      const deltaY = touchStartY - e.touches[0].clientY
-      if (deltaY < -5) {
-        // User swiped up → BROWSING (show button immediately).
-        modeRef.current = BROWSING
-        setMode(BROWSING)
-        setShowScrollButton(true)
-      }
-      // deltaY > 5: swiping down — let scroll handler decide
-    }
-
-    container.addEventListener('touchstart', onTouchStart, { passive: true })
-    container.addEventListener('touchmove', onTouchMove, { passive: true })
-    return () => {
-      container.removeEventListener('touchstart', onTouchStart)
-      container.removeEventListener('touchmove', onTouchMove)
-    }
-  }, [])
-
-  // ── 4. scroll event – button visibility + reach-bottom detection ───
-  //    State transitions TO BROWSING happen ONLY via user input events
-  //    (wheel, keydown, touch) — NO dist comparison, which is unreliable
-  //    during streaming when content height changes constantly.
+  // ── 3. scroll event – button visibility + reach-bottom detection ───
+  //    No deps so it retries after every render (same reason as wheel).
+  //    State transitions TO FOLLOWING are gated on lastScrollDirRef === 'down'
+  //    so the user must explicitly scroll down — not just land at bottom from
+  //    content shrinking or a programmatic scroll.
 
   useEffect(() => {
     const container = chatContainerRef.current
@@ -189,8 +110,13 @@ export function useAutoScroll(messages, isStreaming) {
       // Update button visibility
       setShowScrollButton(dist > BOTTOM_THRESHOLD)
 
-      // Transition TO FOLLOWING: user scrolled all the way down
-      if (modeRef.current === BROWSING && dist <= BOTTOM_THRESHOLD) {
+      // Transition TO FOLLOWING: only when user explicitly scrolled down
+      if (
+        modeRef.current === BROWSING &&
+        dist <= BOTTOM_THRESHOLD &&
+        lastScrollDirRef.current === 'down'
+      ) {
+        lastScrollDirRef.current = null
         modeRef.current = FOLLOWING
         setMode(FOLLOWING)
         setShowScrollButton(false)
@@ -199,27 +125,14 @@ export function useAutoScroll(messages, isStreaming) {
 
     container.addEventListener('scroll', handleScroll, { passive: true })
     return () => container.removeEventListener('scroll', handleScroll)
-  }, []) // stable
+  })
 
-  // ── 5. Auto-scroll when messages update and user is FOLLOWING ──────
-  //    Replaces the old effect on [messages]; two-state model means we only
-  //    scroll when the user hasn't scrolled up (FOLLOWING).
+  // ── 4. Auto-scroll when messages update and user is FOLLOWING ──────
   useEffect(() => {
     if (modeRef.current === FOLLOWING) {
       scrollToBottom(false) // instant — smooth scroll fights rapid streaming
     }
   }, [messages, scrollToBottom])
-
-  // ── 6. Show/hide scroll button based on position ────────────────────
-
-  // When streaming starts, if we're already FOLLOWING, ensure we're at bottom
-  useEffect(() => {
-    if (isStreaming && modeRef.current === FOLLOWING) {
-      scrollToBottom(false) // instant
-    }
-    // NOTE: we do NOT reset to FOLLOWING when streaming starts if user is BROWSING
-    // The user may be reading older messages while a new stream runs.
-  }, [isStreaming, scrollToBottom])
 
   return {
     chatContainerRef,
