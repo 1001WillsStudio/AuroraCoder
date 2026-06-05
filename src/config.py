@@ -168,7 +168,7 @@ CONTINUATION_NOTICE = (
 # =============================================================================
 # Docker Mode
 # =============================================================================
-# Auto-detected via AURORACODER_DOCKER env var (set in Dockerfile / docker-compose).
+# Auto-detected via AURORACODER_DOCKER env var (set in Dockerfile).
 DOCKER_MODE = os.environ.get("AURORACODER_DOCKER", "0") == "1"
 DOCKER_VNC = os.environ.get("AURORACODER_VNC", "0") == "1"
 WORKSPACE_DIR = "/workspace" if DOCKER_MODE else None

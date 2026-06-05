@@ -59,13 +59,6 @@ cp .env.example .env
 dev-scripts\start.bat      # Windows
 ```
 
-或者一步步来：
-
-```bash
-# 构建基础镜像，启动所有服务（前端已包含）
-docker build -t auroracoder-base -f docker/Dockerfile.base .
-docker compose -f docker/docker-compose.yml up --build
-```
 
 ### 📦 极速：npm 安装
 
@@ -371,7 +364,6 @@ Aurora Coder/
 ├── docker/                       # Docker 配置
 │   ├── Dockerfile                # 应用镜像
 │   ├── Dockerfile.base           # 含 conda 环境的基础镜像
-│   ├── docker-compose.yml        # 多服务编排
 │   ├── entrypoint.sh             # 容器入口
 │   └── supervisord.conf          # 进程监管
 ├── dev-scripts/                  # 开发者脚本

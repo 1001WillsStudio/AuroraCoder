@@ -157,7 +157,6 @@ Aurora Coder/
 ├── docker/
 │   ├── Dockerfile              ← App image
 │   ├── Dockerfile.base         ← Base image with conda environment
-│   ├── docker-compose.yml      ← Multi-service orchestration
 │   ├── entrypoint.sh           ← Container entrypoint
 │   └── supervisord.conf        ← Process supervision config
 ├── dev-scripts/                ← Power-user launch scripts (repo-clone workflow)
@@ -489,14 +488,6 @@ For developers who clone the repo and want full control:
 # Clone, set up .env, then run the dev script:
 ./dev-scripts/start.sh     # Linux/macOS (handles build + launch + frontend)
 dev-scripts\start.bat      # Windows
-```
-
-Or manually step-by-step:
-
-```bash
-docker build -t auroracoder-base -f Dockerfile.base .
-docker compose up --build
-cd frontend && npm install && npm run dev
 ```
 
 Services started:

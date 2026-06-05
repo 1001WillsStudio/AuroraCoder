@@ -49,6 +49,7 @@ echo [%time%] TOOLSTORE_PORT=%TOOLSTORE_PORT%
 set /a "DEV_WIDTH=%DEV_PORT_END% - %DEV_PORT_START% + 1"
 if %DEV_WIDTH% lss 1 set "DEV_WIDTH=3"
 call :resolve_port_range DEV_PORT_START %DEV_WIDTH%
+set /a "DEV_PORT_END=%DEV_PORT_START%+%DEV_WIDTH%-1"
 echo [%time%] DEV range=%DEV_PORT_START%-%DEV_PORT_END%
 del "%TEMP%\_ac_ports.tmp" 2>nul
 
@@ -120,6 +121,9 @@ echo Container started.
 echo.
 echo AuroraCoder is running at http://localhost:%FRONTEND_PORT%
 echo To stop: docker stop auroracoder-agent
+echo.
+echo Opening browser...
+start "" "http://localhost:%FRONTEND_PORT%"
 
 goto :eof
 

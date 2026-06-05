@@ -59,13 +59,6 @@ cp .env.example .env
 dev-scripts\start.bat      # Windows
 ```
 
-Or do it step-by-step:
-
-```bash
-# Build base image, launch Docker (frontend included)
-docker build -t auroracoder-base -f docker/Dockerfile.base .
-docker compose -f docker/docker-compose.yml up --build
-```
 
 ### 📦 Quick: npm Install 🧪 EXPERIMENTAL
 
@@ -374,7 +367,6 @@ Aurora Coder/
 ├── docker/                       # Docker configuration
 │   ├── Dockerfile                # App image
 │   ├── Dockerfile.base           # Base image with conda environment
-│   ├── docker-compose.yml        # Multi-service orchestration
 │   ├── entrypoint.sh             # Container entrypoint
 │   └── supervisord.conf          # Process supervision
 ├── dev-scripts/                  # Developer convenience scripts

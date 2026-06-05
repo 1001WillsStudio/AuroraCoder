@@ -8,6 +8,26 @@
 #   ./another-one.sh        # auto-picks next free instance number
 #   ./another-one.sh 5      # explicit instance number
 # ──────────────────────────────────────────────────────────────────────────────
+# ─── Helper: auto-open browser ───────────────────────────────────────────
+open_browser() {
+    local url="$1"
+    case "$(uname -s)" in
+        Darwin) open "$url" ;;
+        Linux)
+            if command -v xdg-open >/dev/null 2>&1; then
+                xdg-open "$url"
+            elif command -v sensible-browser >/dev/null 2>&1; then
+                sensible-browser "$url"
+            else
+                echo "Please open $url in your browser."
+            fi
+            ;;
+        MINGW*|MSYS*|CYGWIN*) start "" "$url" ;;
+        *) echo "Please open $url in your browser." ;;
+    esac 2>/dev/null
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -194,3 +214,6 @@ echo "Container \"$CONTAINER\" started."
 echo ""
 echo "AuroraCoder instance $INST is running at http://localhost:$FRONTEND_PORT"
 echo "To stop: docker stop $CONTAINER"
+echo ""
+echo "Opening browser..."
+open_browser "http://localhost:$FRONTEND_PORT" &
