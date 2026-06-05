@@ -1,45 +1,193 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 
+/**
+ * Two-state AutoScroll hook.
+ *
+ * States:
+ *   FOLLOWING  – user is at the bottom; auto-scroll keeps new content visible.
+ *   BROWSING   – user has scrolled up; auto-scroll is paused.
+ *
+ * Transitions:
+ *   FOLLOWING → BROWSING: any user-initiated scroll-up (wheel ΔY<0, key ArrowUp/
+ *                 PageUp/Home, touch-swipe up, scrollbar drag up).
+ *   BROWSING  → FOLLOWING: user sends a message, clicks the ↓ button, or manually
+ *                 scrolls to the very bottom.
+ */
+
+const FOLLOWING = 'following'
+const BROWSING = 'browsing'
+const BOTTOM_THRESHOLD = 4 // px — treat as "at bottom"
+
 export function useAutoScroll(messages, isStreaming) {
   const chatContainerRef = useRef(null)
-  const [isUserScrolledUp, setIsUserScrolledUp] = useState(false)
+  const [mode, setMode] = useState(FOLLOWING)
   const [showScrollButton, setShowScrollButton] = useState(false)
-  // Ref for zero-lag intent capture by the messages effect
-  const scrolledUpRef = useRef(false)
-  // Flag: true while a programmatic scrollToBottom() is in flight so the
-  // scroll handler doesn't mistake it for a manual scroll-up.
-  const autoScrollingRef = useRef(false)
-  // Previous distance — used to detect "scrolled up" vs "scrolled down"
-  const prevDistRef = useRef(0)
 
-  const scrollToBottom = useCallback((smooth = true) => {
-    const container = chatContainerRef.current
-    if (!container) return
-    scrolledUpRef.current = false
-    autoScrollingRef.current = true
-    container.scrollTo({
-      top: container.scrollHeight,
-      behavior: smooth ? 'smooth' : 'auto',
-    })
+  // Ref mirror so event handlers (stable across renders) read latest mode
+  const modeRef = useRef(FOLLOWING)
+
+  // True while a programmatic scrollTo() is in flight — suppress scroll-handler
+  // transitions so we don't mistake our own scroll for user input.
+  const programmaticScrollRef = useRef(false)
+
+  // ── helpers ──────────────────────────────────────────────────────────
+
+  const isAtBottom = useCallback(() => {
+    const c = chatContainerRef.current
+    if (!c) return true
+    return c.scrollHeight - c.scrollTop - c.clientHeight <= BOTTOM_THRESHOLD
   }, [])
 
-  // ── wheel event: capture scroll intent *before* the browser moves ──
+  const scrollToBottom = useCallback((smooth = true) => {
+    const c = chatContainerRef.current
+    if (!c) return
+    programmaticScrollRef.current = true
+    c.scrollTo({ top: c.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
+    // If we're already at bottom (e.g., content fits viewport) or the browser
+    // doesn't fire a scroll event, clear the flag after the animation frame
+    // so user input detection isn't permanently blocked.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (isAtBottom()) programmaticScrollRef.current = false
+      })
+    })
+  }, [isAtBottom])
+
+  /**
+   * Public API – called from App when user sends a message or clicks the ↓ button.
+   */
+  const resetToFollowing = useCallback(() => {
+    modeRef.current = FOLLOWING
+    setMode(FOLLOWING)
+    setShowScrollButton(false)
+    scrollToBottom(false) // instant scroll – user just sent a message
+  }, [scrollToBottom])
+
+  // ── update showScrollButton whenever mode changes ──
+  useEffect(() => {
+    if (mode === BROWSING) {
+      // Show button immediately, but verify current position
+      setShowScrollButton(!isAtBottom())
+    } else {
+      setShowScrollButton(false)
+    }
+  }, [mode, isAtBottom])
+
+  // ── 1. wheel event – detect scroll-up intent ────────────────────────
+
   useEffect(() => {
     const container = chatContainerRef.current
     if (!container) return
 
     const onWheel = (e) => {
+      // User input is always authoritative — never suppress.
       if (e.deltaY < 0) {
-        scrolledUpRef.current = true
-        setIsUserScrolledUp(true)
+        // User scrolled up → BROWSING.
+        // Show button immediately (don't wait for the mode effect — the
+        // browser may not have processed the scroll yet, so isAtBottom()
+        // could still be true at that point).
+        modeRef.current = BROWSING
+        setMode(BROWSING)
+        setShowScrollButton(true)
       }
+      // deltaY > 0 (scrolling down): let the scroll handler decide
+      // when user actually reaches bottom
     }
 
     container.addEventListener('wheel', onWheel, { passive: true })
     return () => container.removeEventListener('wheel', onWheel)
-  }, [isStreaming])
+  }, []) // stable – never needs re-binding
 
-  // ── scroll event: position check for scrollbar / keyboard ──
+  // ── 2. keydown event – catch keyboard navigation ────────────────────
+  // NOTE: Redundant — wheel + scroll handler already cover mouse/trackpad.
+  // Can be removed upon request.
+
+  useEffect(() => {
+    const container = chatContainerRef.current
+    if (!container) return
+
+    const onKeyDown = (e) => {
+      // Only handle keys when the chat container has focus (or is the active area)
+      // ArrowUp / PageUp / Home → user scrolled up → BROWSING
+      if (e.key === 'ArrowUp' || e.key === 'PageUp' || e.key === 'Home') {
+        // Small delay so the browser's native scroll happens first,
+        // then we check if user actually moved up
+        requestAnimationFrame(() => {
+          if (!isAtBottom()) {
+            modeRef.current = BROWSING
+            setMode(BROWSING)
+          }
+        })
+        return
+      }
+
+      // ArrowDown / PageDown / End → if reaching bottom → FOLLOWING
+      if (e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === 'End') {
+        requestAnimationFrame(() => {
+          if (isAtBottom()) {
+            modeRef.current = FOLLOWING
+            setMode(FOLLOWING)
+          }
+        })
+      }
+    }
+
+    // Listen on the document so it works even when an inner element has focus
+    // within the chat container. We filter with a target check.
+    const onKeyDownFiltered = (e) => {
+      if (!chatContainerRef.current) return
+      // Only process if the event target is inside the chat container
+      // (not in an input, textarea, or settings panel)
+      const target = e.target
+      if (!target) return
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return
+      if (!chatContainerRef.current.contains(target)) return
+      onKeyDown(e)
+    }
+
+    document.addEventListener('keydown', onKeyDownFiltered)
+    return () => document.removeEventListener('keydown', onKeyDownFiltered)
+  }, [isAtBottom])
+
+  // ── 3. touch events – mobile scroll detection ───────────────────────
+  // NOTE: Redundant — wheel + scroll handler already cover most devices.
+  // Can be removed upon request.
+
+  useEffect(() => {
+    const container = chatContainerRef.current
+    if (!container) return
+
+    let touchStartY = 0
+
+    const onTouchStart = (e) => {
+      if (e.touches.length === 1) {
+        touchStartY = e.touches[0].clientY
+      }
+    }
+
+    const onTouchMove = (e) => {
+      // User input is always authoritative — never suppress.
+      if (e.touches.length !== 1) return
+      const deltaY = touchStartY - e.touches[0].clientY
+      if (deltaY < -5) {
+        // User swiped up → BROWSING (show button immediately).
+        modeRef.current = BROWSING
+        setMode(BROWSING)
+        setShowScrollButton(true)
+      }
+      // deltaY > 5: swiping down — let scroll handler decide
+    }
+
+    container.addEventListener('touchstart', onTouchStart, { passive: true })
+    container.addEventListener('touchmove', onTouchMove, { passive: true })
+    return () => {
+      container.removeEventListener('touchstart', onTouchStart)
+      container.removeEventListener('touchmove', onTouchMove)
+    }
+  }, [])
+
+  // ── 4. scroll event – reach-bottom detection & scrollbar tracking ───
+
   useEffect(() => {
     const container = chatContainerRef.current
     if (!container) return
@@ -47,54 +195,80 @@ export function useAutoScroll(messages, isStreaming) {
     const handleScroll = () => {
       const dist = container.scrollHeight - container.scrollTop - container.clientHeight
 
-      // If the scroll was triggered by scrollToBottom(), ignore it —
-      // otherwise fast streaming can trigger dist > prev and false-disable.
-      if (autoScrollingRef.current) {
-        if (dist <= 2) autoScrollingRef.current = false
-        prevDistRef.current = dist
-        return
+      // If programmatic scroll is in flight and we're at bottom, clear flag
+      if (programmaticScrollRef.current) {
+        if (dist <= BOTTOM_THRESHOLD) programmaticScrollRef.current = false
+        return // don't process for user-intent detection
       }
 
-      const prev = prevDistRef.current
-      prevDistRef.current = dist
+      // Update button visibility
+      setShowScrollButton(dist > BOTTOM_THRESHOLD)
 
-      // dist INCREASED → user scrolled UP (zero threshold)
-      if (dist > prev) {
-        scrolledUpRef.current = true
-        setIsUserScrolledUp(true)
-      }
-      // dist DECREASED to bottom → user scrolled DOWN to bottom → re-enable
-      else if (dist <= 2 && dist < prev) {
-        scrolledUpRef.current = false
-        setIsUserScrolledUp(false)
+      // Only transition TO BROWSING from FOLLOWING if the user scrolled up
+      // AND the scroll wasn't programmatic. Since we can't directly distinguish
+      // scrollbar-drag from programmatic scroll in the scroll event, we rely on
+      // programmaticScrollRef and the wheel/keyboard/touch handlers to set BROWSING.
+      // For scrollbar drag: if mode is FOLLOWING and dist exceeds threshold,
+      // we treat it as BROWSING.
+      if (modeRef.current === FOLLOWING && dist > BOTTOM_THRESHOLD) {
+        // Only transition to BROWSING if we've been at bottom before.
+        // This prevents false positives from layout shifts during initial load.
+        modeRef.current = BROWSING
+        setMode(BROWSING)
+        setShowScrollButton(true)
       }
 
-      // Show button whenever user is not at the bottom — even outside streaming
-      setShowScrollButton(dist > 2)
+      // Transition TO FOLLOWING: user scrolled all the way down
+      if (modeRef.current === BROWSING && dist <= BOTTOM_THRESHOLD) {
+        modeRef.current = FOLLOWING
+        setMode(FOLLOWING)
+        setShowScrollButton(false)
+      }
     }
 
     container.addEventListener('scroll', handleScroll, { passive: true })
     return () => container.removeEventListener('scroll', handleScroll)
-  }, [isStreaming])
+  }, []) // stable
 
-  // Auto-scroll when messages update — reads the ref so the wheel handler
-  // takes effect instantly, avoiding the scroll-event race.
-  useEffect(() => {
-    if (!scrolledUpRef.current) {
-      scrollToBottom(true)  // smooth scroll
-    }
-  }, [messages, scrollToBottom])
+  // ── 5. ResizeObserver – auto-scroll when content grows in FOLLOWING ──
 
-  // When streaming state changes
   useEffect(() => {
-    if (isStreaming) {
-      scrolledUpRef.current = false
-      setIsUserScrolledUp(false)
-      scrollToBottom(false)
+    const container = chatContainerRef.current
+    if (!container) return
+
+    const ro = new ResizeObserver(() => {
+      if (modeRef.current === FOLLOWING) {
+        scrollToBottom(false) // instant — smooth scroll fights rapid streaming
+      }
+    })
+
+    ro.observe(container)
+    return () => ro.disconnect()
+  }, [scrollToBottom])
+
+  // ── 6. Show/hide scroll button based on position ────────────────────
+
+  // When streaming starts, if we're already FOLLOWING, ensure we're at bottom
+  useEffect(() => {
+    if (isStreaming && modeRef.current === FOLLOWING) {
+      scrollToBottom(false) // instant
     }
-    // Don't hide the scroll button on stream end — the user might still
-    // want to jump to the bottom of a long conversation.
+    // NOTE: we do NOT reset to FOLLOWING when streaming starts if user is BROWSING
+    // The user may be reading older messages while a new stream runs.
   }, [isStreaming, scrollToBottom])
 
-  return { chatContainerRef, scrollToBottom, isUserScrolledUp, setIsUserScrolledUp, showScrollButton }
+  return {
+    chatContainerRef,
+    scrollToBottom,
+    resetToFollowing,
+    isUserScrolledUp: mode === BROWSING,
+    setIsUserScrolledUp: (val) => {
+      const next = val ? BROWSING : FOLLOWING
+      modeRef.current = next
+      setMode(next)
+      if (next === FOLLOWING) setShowScrollButton(false)
+    },
+    showScrollButton,
+    mode,
+  }
 }

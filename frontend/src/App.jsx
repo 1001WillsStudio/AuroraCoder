@@ -174,7 +174,7 @@ function App() {
     }
   }, [showTaskInstructions])
 
-  const { chatContainerRef, scrollToBottom, isUserScrolledUp, setIsUserScrolledUp, showScrollButton } = useAutoScroll(messages, isStreaming)
+  const { chatContainerRef, resetToFollowing, showScrollButton } = useAutoScroll(messages, isStreaming)
 
   // ── Handlers ────────────────────────────────────────────────────────────
 
@@ -223,6 +223,7 @@ function App() {
     setSseReceived(false)
     setCanContinue(false)
     setHistoryRefreshTrigger(prev => prev + 1)
+    resetToFollowing()
 
     let messagesToSend = null
     if (isInterrupt) {
@@ -412,9 +413,10 @@ function App() {
       abortControllerRef.current.abort()
       abortControllerRef.current = null
     }
+    let isSubagent = false // declared here so the finally block can read it
     try {
       const conv = await getConversation(targetConversationId)
-      const isSubagent = conv.type === 'subagent'
+      isSubagent = conv.type === 'subagent'
       setConversationId(targetConversationId)
       setRawMessages(conv.messages || [])
       setMessages(conv.frontend_messages || [])
@@ -460,8 +462,14 @@ function App() {
       }
     } catch (e) {
       console.error('[handleLoadConversation] Failed:', e)
+    } finally {
+      // Scroll to bottom after loading a non-subagent conversation
+      if (!isSubagent) {
+        // Schedule after DOM commit so the container has the new content
+        requestAnimationFrame(() => resetToFollowing())
+      }
     }
-  }, [conversationId])
+  }, [conversationId, resetToFollowing])
 
   // ── Render ──────────────────────────────────────────────────────────────
 
@@ -566,7 +574,7 @@ function App() {
         </div>
 
         {showScrollButton && (
-          <button className="scroll-to-bottom-btn" onClick={() => { scrollToBottom(true); setIsUserScrolledUp(false) }}>
+          <button className="scroll-to-bottom-btn" onClick={resetToFollowing}>
             <ArrowDown size={18} />
           </button>
         )}
