@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // ─── Docker detection ─────────────────────────────────────────────────────
@@ -228,14 +229,34 @@ func buildAppImage(cacheDir string, ps *progressServer) error {
 	return streamCommand(cmd, ps)
 }
 
-// ─── Container start ──────────────────────────────────────────────────────
+// ─── Stop old container ──────────────────────────────────────────────────
 
-func startContainer(cacheDir string, ps *progressServer) error {
-	// Stop and remove any existing container
+// stopOldContainer stops and removes any existing container early in the
+// launch sequence.  Docker builds take time, so doing this at the very
+// beginning gives ports plenty of time to be released before we need them.
+func stopOldContainer(ps *progressServer) {
+	ps.logLine("Stopping old container if any...")
+
 	stopCmd := exec.Command("docker", "stop", containerName)
 	stopCmd.Run()
 	rmCmd := exec.Command("docker", "rm", containerName)
 	rmCmd.Run()
+
+	// Short delay to ensure ports are released before we start resolving them
+	time.Sleep(2 * time.Second)
+	ps.logLine("Old container cleaned up.")
+}
+
+// ─── Container start ──────────────────────────────────────────────────────
+
+// startContainer resolves ports, creates data directories, and runs the
+// container.  The old container should already have been stopped by calling
+// stopOldContainer() earlier in the launch sequence.
+func startContainer(cacheDir string, ps *progressServer) (PortsConfig, error) {
+	// Resolve ports (old container already stopped earlier, so ports are free)
+	ports := resolvePorts(cacheDir, ps)
+	ps.logLine(fmt.Sprintf("Resolved ports: frontend=%d backend=%d vnc=%d toolstore=%d dev=%d-%d",
+		ports.Frontend, ports.Backend, ports.VNC, ports.ToolStore, ports.DevPortStart, ports.DevPortEnd))
 
 	storageBase := getStorageBase()
 	dataDir := filepath.Join(storageBase, "data")
@@ -245,26 +266,31 @@ func startContainer(cacheDir string, ps *progressServer) error {
 
 	envFile := filepath.Join(cacheDir, ".env")
 
-	args := []string{
-		"run", "--rm", "-d",
+	args := []string{"run", "--rm", "-d"}
+
+	// Insert --env-file only if .env exists
+	if _, err := os.Stat(envFile); err == nil {
+		args = append(args, "--env-file", envFile)
+	}
+
+	args = append(args,
 		"--name", containerName,
-		"--env-file", envFile,
 		"-e", "AURORACODER_DOCKER=1",
 		"-e", "AURORACODER_VNC=1",
 		"-v", fmt.Sprintf("%s:/app/data", dataDir),
 		"-v", fmt.Sprintf("%s:/workspace", workspaceDir),
-		"-p", fmt.Sprintf("%d:%d", apiPort, apiPort),
-		"-p", fmt.Sprintf("%d:%d", appPort, appPort),
-		"-p", fmt.Sprintf("%d:%d", vncPort, vncPort),
-		"-p", fmt.Sprintf("%d:%d", toolStorePort, toolStorePort),
-		"-p", fmt.Sprintf("%d-%d:%d-%d", devPortStart, devPortEnd, devPortStart, devPortEnd),
+		"-p", fmt.Sprintf("%d:8080", ports.Backend),
+		"-p", fmt.Sprintf("%d:3000", ports.Frontend),
+		"-p", fmt.Sprintf("%d:6080", ports.VNC),
+		"-p", fmt.Sprintf("%d:8765", ports.ToolStore),
+		"-p", fmt.Sprintf("%d-%d:8900-8902", ports.DevPortStart, ports.DevPortEnd),
 		appImageName,
-	}
+	)
 
 	cmd := exec.Command("docker", args...)
 	cmd.Dir = cacheDir
 
-	return streamCommand(cmd, ps)
+	return ports, streamCommand(cmd, ps)
 }
 
 // ─── Stream command output ────────────────────────────────────────────────

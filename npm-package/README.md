@@ -1,4 +1,7 @@
-# AuroraCoder — Native npm Launcher
+# AuroraCoder — Native npm Launcher 🧪 EXPERIMENTAL
+
+> ⚠️ **This feature is experimental.** The npm launcher is under active development
+> and may have rough edges. Docker-based methods are the recommended, stable path.
 
 **`npm install -g aurora-coder`** — one command to run AuroraCoder directly on your machine, **no Docker required**.
 
@@ -113,23 +116,18 @@ The original `src/config.py` is never touched.
 
 ## Publishing to npm
 
-To publish this as a real npm package, add a **root-level `package.json`** to the AuroraCoder repo:
+A **root-level `package.json`** already exists in the repository. To publish a new version:
 
-```json
-{
-  "name": "aurora-coder",
-  "version": "1.0.0",
-  "bin": { "aurora-coder": "./npm-package/cli.js" },
-  "files": [
-    "src/", "gateway/", "frontend/",
-    "requirements.txt", "run_web.py",
-    "npm-package/cli.js", "npm-package/run_native.py",
-    "npm-package/package.json"
-  ]
-}
+1. Update the `version` field in **both** `package.json` (root) and `npm-package/package.json`
+2. Run from the **repo root** (not `npm-package/`):
+
+```bash
+npm publish
 ```
 
-Then `npm publish` from the repo root.
+The root `package.json` includes all project files (100 files, ~6.8 MB) and
+automatically excludes `node_modules`, `__pycache__`, `.git`, tests, and docs
+via `.npmignore`.
 
 ---
 

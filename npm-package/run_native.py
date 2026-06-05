@@ -67,6 +67,13 @@ Current Time: {current_time}
 # Apply the patch — replaces the module-level constant with our native version.
 _cfg.SYSTEM_MESSAGE_TEMPLATE = _NATIVE_SYSTEM_MESSAGE
 
+# Also patch TERMINAL_ENV_NOTE — config.py's default mentions Conda which
+# may not exist on the user's native install.
+_cfg.TERMINAL_ENV_NOTE = (
+    "Environment Note: The terminal runs commands in a Bash shell within"
+    " your host OS environment.\n"
+)
+
 # ---------------------------------------------------------------------------
 # Now delegate to the actual server.
 # ---------------------------------------------------------------------------

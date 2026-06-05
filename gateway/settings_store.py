@@ -7,7 +7,7 @@ because the data directory is a host bind-mount.
 
 Priority (highest wins):
     1. settings.json (persistent, editable via the frontend Settings panel)
-    2. Environment variables (set via .env / docker-compose)
+    2. Environment variables (set via .env)
     3. Hard-coded defaults in config.py
 """
 
