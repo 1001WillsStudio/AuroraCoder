@@ -52,10 +52,11 @@ def clone_and_squash(
 
     logger.info("Cloning %s @ %s → %s", repo, base_commit[:8], target_dir)
 
-    # --depth 1 for fast clone, then fetch the specific commit
-    _run(["git", "clone", "--depth", "1", url, str(target_dir)])
+    # Init empty repo, fetch only the specific commit (no branch assumptions)
+    _run(["git", "-C", str(target_dir), "init"])
+    _run(["git", "-C", str(target_dir), "remote", "add", "origin", url])
     _run(["git", "-C", str(target_dir), "fetch", "--depth", "1", "origin", base_commit])
-    _run(["git", "-C", str(target_dir), "checkout", base_commit])
+    _run(["git", "-C", str(target_dir), "checkout", "FETCH_HEAD"])
 
     # Remove git history — keep only the checkout state
     git_dir = target_dir / ".git"
@@ -74,9 +75,8 @@ def clone_and_squash(
                  },
     )
 
-    logger.info("Prepared %s (%d files)",
-                target_dir,
-                len(list(target_dir.rglob("*"))))
+    file_count = sum(1 for _ in target_dir.rglob("*"))
+    logger.info("Prepared %s (%d files)", target_dir, file_count)
     return target_dir
 
 

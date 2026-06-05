@@ -157,20 +157,23 @@ class GatewayClient:
         Returns the DoneEvent.
         Raises asyncio.TimeoutError if timeout exceeded.
         """
-        last_event: Optional[SSEEvent] = None
 
-        async def _consume():
-            nonlocal last_event
+        async def _consume() -> Optional[DoneEvent]:
             async for event in self.chat(conversation_id, message, provider):
-                last_event = event
                 if event.event == "done":
                     return DoneEvent(event="done", data=event.data)
                 if event.event == "error":
                     logger.error("Agent error: %s", event.data)
                     return DoneEvent(event="done", data={"status": "error", **event.data})
+            # Stream ended without a terminal event
+            logger.warning("SSE stream ended without 'done' event")
+            return DoneEvent(event="done", data={"status": "stream_ended"})
 
         try:
-            return await asyncio.wait_for(_consume(), timeout=timeout)
+            result = await asyncio.wait_for(_consume(), timeout=timeout)
+            if result is None:
+                return DoneEvent(event="done", data={"status": "stream_ended"})
+            return result
         except asyncio.TimeoutError:
             logger.warning("Instance %s timed out after %.0fs — cancelling", conversation_id, timeout)
             await self.cancel(conversation_id)

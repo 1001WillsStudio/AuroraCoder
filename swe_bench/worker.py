@@ -35,8 +35,6 @@ def _docker(*args: str, check: bool = True, timeout: int = 60) -> subprocess.Com
     return subprocess.run(cmd, check=check, capture_output=True, text=True, timeout=timeout)
 
 
-
-
 # ── Worker ────────────────────────────────────────────────────────────
 
 class Worker:
@@ -101,16 +99,15 @@ class Worker:
                 "-p", f"{self.frontend_host_port}:{self.config.frontend_port}",
             ])
 
-        # Environment
-        env = os.environ.copy()
+        # Environment — only pass what the container needs
         env_vars = {
             "WORKSPACE_DIR": "/workspace",
             "AURORACODER_DATA_DIR": "/swe_data",
             "BACKEND_PORT": str(self.config.backend_port),
             "GATEWAY_PORT": str(self.config.gateway_port),
         }
-        if "ACCESS_PASSWORD" in env:
-            env_vars["ACCESS_PASSWORD"] = env["ACCESS_PASSWORD"]
+        if "ACCESS_PASSWORD" in os.environ:
+            env_vars["ACCESS_PASSWORD"] = os.environ["ACCESS_PASSWORD"]
 
         env_args: list[str] = []
         for k, v in env_vars.items():
@@ -128,7 +125,7 @@ class Worker:
             self.config.docker_image,
         ]
         logger.debug("$ %s", " ".join(cmd))
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         if result.returncode != 0:
             raise RuntimeError(f"docker run failed: {result.stderr.strip()}")
 
@@ -155,10 +152,10 @@ class Worker:
     async def _cleanup(self) -> None:
         """Force-remove container + volumes (best-effort)."""
         for args in (
-            (f"docker", "stop", self.name),
-            (f"docker", "rm", "-f", self.name),
-            (f"docker", "volume", "rm", "-f", self._ws_volume),
-            (f"docker", "volume", "rm", "-f", self._data_volume),
+            ("docker", "stop", self.name),
+            ("docker", "rm", "-f", self.name),
+            ("docker", "volume", "rm", "-f", self._ws_volume),
+            ("docker", "volume", "rm", "-f", self._data_volume),
         ):
             try:
                 logger.debug("$ %s", " ".join(args))
@@ -223,14 +220,14 @@ class Worker:
             )
             result["status"] = done.status
 
-            # 3. Extract patch
+            # 4. Extract patch
             patch = extract_patch(self.name)
             result["patch_len"] = len(patch)
 
-            # 4. Fetch conversation
+            # 5. Fetch conversation
             conv_json = await client.get_conversation(instance_id)
 
-            # 5. Save
+            # 6. Save
             run_dir = self.config.runs_path / instance_id
             run_dir.mkdir(parents=True, exist_ok=True)
 

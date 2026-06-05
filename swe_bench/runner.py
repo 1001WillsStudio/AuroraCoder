@@ -109,20 +109,10 @@ def ensure_network(name: str) -> None:
     )
 
 
-def remove_network(name: str) -> None:
-    """Remove the Docker network (best-effort)."""
-    try:
-        subprocess.run(
-            ["docker", "network", "rm", name],
-            capture_output=True, timeout=10,
-        )
-    except Exception:
-        pass
-
 
 # ── Port conflict check ────────────────────────────────────────────────
 
-def check_ports_free(base: int, count: int, frontend: bool = False) -> list[int]:
+def check_ports_free(base: int, count: int) -> list[int]:
     """
     Check that gateway ports base..base+count-1 are free.
     If frontend, also check frontend_port_base..frontend_port_base+count-1.

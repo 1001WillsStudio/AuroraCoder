@@ -4,7 +4,7 @@ SWE-Bench Runner configuration.
 All defaults can be overridden via swe_bench_config.yaml or CLI flags.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
