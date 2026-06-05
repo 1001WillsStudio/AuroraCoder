@@ -26,9 +26,6 @@ export function useAutoScroll(messages, isStreaming) {
   // Ref mirror so event handlers (stable across renders) read latest mode
   const modeRef = useRef(FOLLOWING)
 
-  // True while a programmatic scrollTo() is in flight — suppress scroll-handler
-  // transitions so we don't mistake our own scroll for user input.
-  const programmaticScrollRef = useRef(false)
 
   // ── helpers ──────────────────────────────────────────────────────────
 
@@ -41,17 +38,8 @@ export function useAutoScroll(messages, isStreaming) {
   const scrollToBottom = useCallback((smooth = true) => {
     const c = chatContainerRef.current
     if (!c) return
-    programmaticScrollRef.current = true
     c.scrollTo({ top: c.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
-    // If we're already at bottom (e.g., content fits viewport) or the browser
-    // doesn't fire a scroll event, clear the flag after the animation frame
-    // so user input detection isn't permanently blocked.
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        if (isAtBottom()) programmaticScrollRef.current = false
-      })
-    })
-  }, [isAtBottom])
+  }, [])
 
   /**
    * Public API – called from App when user sends a message or clicks the ↓ button.
@@ -186,7 +174,10 @@ export function useAutoScroll(messages, isStreaming) {
     }
   }, [])
 
-  // ── 4. scroll event – reach-bottom detection & scrollbar tracking ───
+  // ── 4. scroll event – button visibility + reach-bottom detection ───
+  //    State transitions TO BROWSING happen ONLY via user input events
+  //    (wheel, keydown, touch) — NO dist comparison, which is unreliable
+  //    during streaming when content height changes constantly.
 
   useEffect(() => {
     const container = chatContainerRef.current
@@ -195,28 +186,8 @@ export function useAutoScroll(messages, isStreaming) {
     const handleScroll = () => {
       const dist = container.scrollHeight - container.scrollTop - container.clientHeight
 
-      // If programmatic scroll is in flight and we're at bottom, clear flag
-      if (programmaticScrollRef.current) {
-        if (dist <= BOTTOM_THRESHOLD) programmaticScrollRef.current = false
-        return // don't process for user-intent detection
-      }
-
       // Update button visibility
       setShowScrollButton(dist > BOTTOM_THRESHOLD)
-
-      // Only transition TO BROWSING from FOLLOWING if the user scrolled up
-      // AND the scroll wasn't programmatic. Since we can't directly distinguish
-      // scrollbar-drag from programmatic scroll in the scroll event, we rely on
-      // programmaticScrollRef and the wheel/keyboard/touch handlers to set BROWSING.
-      // For scrollbar drag: if mode is FOLLOWING and dist exceeds threshold,
-      // we treat it as BROWSING.
-      if (modeRef.current === FOLLOWING && dist > BOTTOM_THRESHOLD) {
-        // Only transition to BROWSING if we've been at bottom before.
-        // This prevents false positives from layout shifts during initial load.
-        modeRef.current = BROWSING
-        setMode(BROWSING)
-        setShowScrollButton(true)
-      }
 
       // Transition TO FOLLOWING: user scrolled all the way down
       if (modeRef.current === BROWSING && dist <= BOTTOM_THRESHOLD) {
