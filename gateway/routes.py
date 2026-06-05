@@ -49,7 +49,8 @@ from gateway.provider_registry import (
 from gateway.workspace import (
     clear_conversation_snapshots,
     get_file_diffs_for_conversation,
-    build_file_tree,
+    get_cached_file_tree,
+    invalidate_tree_cache,
     count_workspace_files,
 )
 from gateway.streaming import (
@@ -528,13 +529,18 @@ async def create_snapshot(conversation_id: str):
 
 @app.get("/api/files/tree")
 async def get_file_tree(max_depth: int = 5):
-    """Get the folder structure of the agent's working space."""
+    """Get the folder structure of the agent's working space.
+
+    Uses a server-side cache (invalidated on file writes + short TTL)
+    so that repeated calls during the same streaming session don't
+    re-scan the entire workspace.
+    """
     work_dir = _get_workspace()
     if not work_dir or not work_dir.exists():
         return {"tree": [], "root": None, "error": "No active session"}
 
-    tree = build_file_tree(work_dir, work_dir, max_depth=max_depth)
-    return {"tree": tree, "root": str(work_dir), "error": None}
+    tree, root, _version = get_cached_file_tree(work_dir, work_dir, max_depth=max_depth)
+    return {"tree": tree, "root": root, "error": None}
 
 
 @app.get("/api/files/read")
@@ -601,6 +607,7 @@ async def upload_workspace(
             dest.write_bytes(zf.read(info))
             count += 1
 
+    invalidate_tree_cache()
     return {
         "status": "success",
         "files_uploaded": count,
@@ -631,6 +638,7 @@ async def delete_workspace_item(req: DeleteRequest):
             shutil.rmtree(full_path)
         else:
             full_path.unlink()
+        invalidate_tree_cache()
         return {"status": "deleted", "path": req.path}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete: {str(e)}")
