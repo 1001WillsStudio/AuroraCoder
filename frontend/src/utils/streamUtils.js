@@ -6,14 +6,15 @@ export const TASK_MARKER_END = "[/TASK INSTRUCTION]"
 // Code-related tool names that trigger the code panel (only create/edit, not read)
 export const CODE_TOOLS = ['write_file', 'edit_file']
 
-// Tools that directly modify the file system and should trigger a file tree refresh.
-// NOTE: run_terminal_command is intentionally NOT included — most terminal commands
-// are read-only and the post-stream refresh catches any file changes from the few
-// that do modify files (pip install, git clone, etc.).
+// Tools whose completion can change the file tree (files or folders appear/disappear).
+// ── edit_file is purposely NOT included ── it only modifies file content, not the tree.
+// ── run_terminal_command IS included because commands like git clone, mkdir, pip install
+//    (and many others) can create or delete files.  The debounce in FileTree.jsx prevents
+//    the storm of refreshes that used to happen when every shell command fired a tree fetch.
 export const FILE_SYSTEM_TOOLS = [
-  'write_file',           // Creates or overwrites files
-  'edit_file',            // Edits existing files
+  'write_file',           // Creates (or overwrites) files
   'delete_file',          // Deletes files
+  'run_terminal_command', // Shell commands that may create / delete files
 ]
 
 /**
