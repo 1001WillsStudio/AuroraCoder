@@ -210,11 +210,14 @@ class Worker:
                     import shutil
                     shutil.rmtree(host_clone_dir, ignore_errors=True)
 
-            # 2. Send to agent
+            # 2. Build message (task instruction + problem statement)
+            full_message = self.config.task_instruction + problem
+
+            # 3. Send to agent
             client = GatewayClient(self.gateway_url, timeout=self.config.instance_timeout)
             done = await client.wait_for_done(
                 conversation_id=instance_id,
-                message=problem,
+                message=full_message,
                 provider=self.config.provider,
                 timeout=self.config.instance_timeout,
             )
