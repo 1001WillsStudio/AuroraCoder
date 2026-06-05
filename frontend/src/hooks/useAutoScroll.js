@@ -230,21 +230,14 @@ export function useAutoScroll(messages, isStreaming) {
     return () => container.removeEventListener('scroll', handleScroll)
   }, []) // stable
 
-  // ── 5. ResizeObserver – auto-scroll when content grows in FOLLOWING ──
-
+  // ── 5. Auto-scroll when messages update and user is FOLLOWING ──────
+  //    Replaces the old effect on [messages]; two-state model means we only
+  //    scroll when the user hasn't scrolled up (FOLLOWING).
   useEffect(() => {
-    const container = chatContainerRef.current
-    if (!container) return
-
-    const ro = new ResizeObserver(() => {
-      if (modeRef.current === FOLLOWING) {
-        scrollToBottom(false) // instant — smooth scroll fights rapid streaming
-      }
-    })
-
-    ro.observe(container)
-    return () => ro.disconnect()
-  }, [scrollToBottom])
+    if (modeRef.current === FOLLOWING) {
+      scrollToBottom(false) // instant — smooth scroll fights rapid streaming
+    }
+  }, [messages, scrollToBottom])
 
   // ── 6. Show/hide scroll button based on position ────────────────────
 
