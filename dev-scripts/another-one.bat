@@ -140,7 +140,8 @@ echo.
 echo AuroraCoder instance %INST% is running at http://localhost:%FRONTEND_PORT%
 echo To stop: docker stop %CONTAINER%
 echo.
-echo Opening browser...
+echo Opening browser in 3 seconds...
+timeout /t 3 /nobreak >nul
 start "" "http://localhost:%FRONTEND_PORT%"
 pause
 goto :eof

@@ -122,7 +122,8 @@ echo.
 echo AuroraCoder is running at http://localhost:%FRONTEND_PORT%
 echo To stop: docker stop auroracoder-agent
 echo.
-echo Opening browser...
+echo Opening browser in 3 seconds...
+timeout /t 3 /nobreak >nul
 start "" "http://localhost:%FRONTEND_PORT%"
 
 goto :eof

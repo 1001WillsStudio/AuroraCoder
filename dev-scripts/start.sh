@@ -202,4 +202,4 @@ echo "AuroraCoder is running at http://localhost:$FRONTEND_PORT"
 echo "To stop: docker stop auroracoder-agent"
 echo ""
 echo "Opening browser..."
-open_browser "http://localhost:$FRONTEND_PORT" &
+(sleep 3 && open_browser "http://localhost:$FRONTEND_PORT") &
