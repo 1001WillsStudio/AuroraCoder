@@ -6,12 +6,14 @@ export const TASK_MARKER_END = "[/TASK INSTRUCTION]"
 // Code-related tool names that trigger the code panel (only create/edit, not read)
 export const CODE_TOOLS = ['write_file', 'edit_file']
 
-// Tools that modify the file system and should trigger a file tree refresh
+// Tools that directly modify the file system and should trigger a file tree refresh.
+// NOTE: run_terminal_command is intentionally NOT included — most terminal commands
+// are read-only and the post-stream refresh catches any file changes from the few
+// that do modify files (pip install, git clone, etc.).
 export const FILE_SYSTEM_TOOLS = [
   'write_file',           // Creates or overwrites files
-  'edit_file',            // Edits existing files  
+  'edit_file',            // Edits existing files
   'delete_file',          // Deletes files
-  'run_terminal_command'  // Terminal commands may create/modify files
 ]
 
 /**

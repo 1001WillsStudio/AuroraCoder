@@ -51,8 +51,10 @@ const getFileIcon = (extension) => {
   }
 }
 
-// Single tree node component
-const TreeNode = ({ node, level = 0, onFileClick, expandedFolders, toggleFolder, onContextMenu }) => {
+// Single tree node component — memoised to avoid O(n) re-renders when
+// only one folder's expansion state changes or the loading flag toggles.
+const TreeNode = React.memo(
+  ({ node, level = 0, onFileClick, expandedFolders, toggleFolder, onContextMenu }) => {
   const isFolder = node.type === 'folder'
   const isExpanded = expandedFolders.has(node.path)
   const hasChildren = isFolder && node.children && node.children.length > 0
@@ -120,7 +122,20 @@ const TreeNode = ({ node, level = 0, onFileClick, expandedFolders, toggleFolder,
       )}
     </div>
   )
-}
+  },
+  (prevProps, nextProps) => {
+    // Only re-render if something meaningful changed
+    return (
+      prevProps.node === nextProps.node &&
+      prevProps.node?.path === nextProps.node?.path &&
+      prevProps.level === nextProps.level &&
+      prevProps.onFileClick === nextProps.onFileClick &&
+      prevProps.expandedFolders?.has(prevProps.node?.path) ===
+        nextProps.expandedFolders?.has(nextProps.node?.path) &&
+      prevProps.onContextMenu === nextProps.onContextMenu
+    )
+  }
+)
 
 // Context menu component
 const ContextMenu = ({ x, y, node, onClose, onDelete, onDownload, onExport, t }) => {
@@ -195,14 +210,17 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0 }) => {
   const [contextMenu, setContextMenu] = useState(null)
   const [confirmDelete, setConfirmDelete] = useState(null)
   
+  const debounceTimerRef = useRef(null)
+  const lastFetchTimeRef = useRef(0)
+
   const fetchTree = useCallback(async () => {
     setLoading(true)
     setError(null)
-    
+
     try {
       const response = await fetch('/api/files/tree?max_depth=5')
       const data = await response.json()
-      
+
       if (data.error) {
         setError(data.error)
         setTree([])
@@ -217,30 +235,59 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0 }) => {
       setLoading(false)
     }
   }, [])
-  
-  // Initial load
+
+  // Debounced wrapper — collapses rapid consecutive triggers (e.g. multiple
+  // write_file calls in one batch) into a single fetch, preventing a storm of
+  // HTTP requests and re-renders during active streaming.
+  const debouncedFetchTree = useCallback(() => {
+    const now = Date.now()
+    const MIN_INTERVAL = 500   // minimum ms between *actual* fetches
+    const DEBOUNCE_DELAY = 300 // wait ms after last trigger before fetching
+
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current)
+      debounceTimerRef.current = null
+    }
+
+    const timeSinceLastFetch = now - lastFetchTimeRef.current
+    const delay = timeSinceLastFetch < MIN_INTERVAL
+      ? MIN_INTERVAL - timeSinceLastFetch + DEBOUNCE_DELAY
+      : DEBOUNCE_DELAY
+
+    debounceTimerRef.current = setTimeout(() => {
+      lastFetchTimeRef.current = Date.now()
+      fetchTree()
+      debounceTimerRef.current = null
+    }, delay)
+  }, [fetchTree])
+
+  // Initial load — always immediate (no debounce needed)
   useEffect(() => {
     fetchTree()
   }, [fetchTree])
-  
-  // Refresh when file system operations are detected (via refreshTrigger)
+
+  // Refresh when file system operations are detected (via refreshTrigger).
+  // Uses the debounced variant so a burst of tool results only issues one fetch.
   useEffect(() => {
     if (refreshTrigger > 0) {
-      fetchTree()
+      debouncedFetchTree()
     }
-  }, [refreshTrigger, fetchTree])
-  
-  // Also refresh once when streaming stops (catch files written in the final tool batch)
+  }, [refreshTrigger, debouncedFetchTree])
+
+  // Also refresh once when streaming stops — catches files created by
+  // terminal commands (pip install, git clone, …) that don't go through
+  // write_file / edit_file / delete_file.  Also uses the debounced path so
+  // it won't fire if a tool-result refresh already happened moments ago.
   const wasStreamingRef = useRef(false)
   useEffect(() => {
     if (isStreaming) {
       wasStreamingRef.current = true
     } else if (wasStreamingRef.current) {
       wasStreamingRef.current = false
-      const timer = setTimeout(fetchTree, 500)
+      const timer = setTimeout(debouncedFetchTree, 500)
       return () => clearTimeout(timer)
     }
-  }, [isStreaming, fetchTree])
+  }, [isStreaming, debouncedFetchTree])
   
   const toggleFolder = useCallback((path) => {
     setExpandedFolders(prev => {
