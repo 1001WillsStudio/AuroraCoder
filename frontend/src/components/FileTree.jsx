@@ -236,13 +236,15 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0 }) => {
     }
   }, [])
 
-  // Debounced wrapper — collapses rapid consecutive triggers (e.g. multiple
-  // write_file calls in one batch) into a single fetch, preventing a storm of
-  // HTTP requests and re-renders during active streaming.
+  // Debounced wrapper — collapses rapid consecutive triggers into a single
+  // fetch so the agent can fire dozens of tool calls without causing a storm
+  // of HTTP requests and re-renders.  Because the tree is always refreshed
+  // when streaming stops (plus the manual button), a multi-second delay is
+  // perfectly acceptable for a secondary UI panel.
   const debouncedFetchTree = useCallback(() => {
     const now = Date.now()
-    const MIN_INTERVAL = 500   // minimum ms between *actual* fetches
-    const DEBOUNCE_DELAY = 300 // wait ms after last trigger before fetching
+    const MIN_INTERVAL = 8000   // minimum ms between *actual* fetches  (8 s)
+    const DEBOUNCE_DELAY = 5000 // silence required after last trigger (5 s)
 
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current)
@@ -250,9 +252,12 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0 }) => {
     }
 
     const timeSinceLastFetch = now - lastFetchTimeRef.current
-    const delay = timeSinceLastFetch < MIN_INTERVAL
-      ? MIN_INTERVAL - timeSinceLastFetch + DEBOUNCE_DELAY
-      : DEBOUNCE_DELAY
+    // Whichever is longer: the cooldown since the last real fetch, or the
+    // silence window after the most recent trigger.
+    const delay = Math.max(
+      MIN_INTERVAL - timeSinceLastFetch,   // cooldown
+      DEBOUNCE_DELAY,                       // silence
+    )
 
     debounceTimerRef.current = setTimeout(() => {
       lastFetchTimeRef.current = Date.now()
