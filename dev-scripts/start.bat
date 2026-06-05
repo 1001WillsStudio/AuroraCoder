@@ -1,47 +1,18 @@
 @echo off
 cd /d "%~dp0\.."
 
-:: Read GITHUB_TOKEN from .env for ToolStore (used in base image build)
-set "GITHUB_TOKEN="
-for /f "tokens=2 delims==" %%a in ('findstr /b /c:"GITHUB_TOKEN=" .env 2^>nul') do set "GITHUB_TOKEN=%%a"
-
-:: Check if base image exists; build if missing
-docker inspect --type=image auroracoder-base >nul 2>&1
-if errorlevel 1 goto :build_base
-echo [base] Base image found, skipping.
-goto :build_app
-
-:build_base
-echo [base] Building base image -- first time, this may take a few minutes...
-docker build -t auroracoder-base -f docker\Dockerfile.base --build-arg GITHUB_TOKEN=%GITHUB_TOKEN% .
-if errorlevel 1 (
-    echo Base image build failed.
-    pause
-    exit /b 1
-)
-echo [base] Done.
-
-:build_app
-
-:: Always rebuild app image (fast: just copies source code)
-:: Generate unique cache-bust key to force ToolStore reinstall every run
-for /f "tokens=2 delims==." %%I in ('wmic os get localdatetime /value ^| find "="') do set "CACHEBUST=%%I"
-echo [app] Building app image (cache-bust: %CACHEBUST%)...
-docker build -t auroracoder --build-arg GITHUB_TOKEN=%GITHUB_TOKEN% --build-arg CACHEBUST=%CACHEBUST% -f docker\Dockerfile .
-if errorlevel 1 (
-    echo App image build failed.
-    pause
-    exit /b 1
-)
-
-:: Stop existing container if running
-echo Stopping old container if any...
+:: ── Stop existing container FIRST ───────────────────────────────────────
+echo [%time%] Stopping old container...
 docker stop auroracoder-agent >nul 2>&1
+echo [%time%] docker stop done
 docker rm auroracoder-agent >nul 2>&1
+echo [%time%] docker rm done
 
-:: Short delay to ensure ports are fully released
-echo Waiting for port cleanup...
+:: Short delay for port cleanup
+echo [%time%] sleep 2...
 timeout /t 2 /nobreak >nul
+echo [%time%] sleep done
+
 
 :: ── Port configuration ──────────────────────────────────────────────────
 set "FRONTEND_PORT=3000"
@@ -64,14 +35,23 @@ if exist "ports.conf" (
 )
 
 :: ── Auto-find available ports ──────────────────────────────────────────
+echo [%time%] netstat -ano (caching)...
+netstat -ano > "%TEMP%\_ac_ports.tmp" 2>nul
+echo [%time%] netstat done, resolving ports...
 call :resolve_port BACKEND_PORT
+echo [%time%] BACKEND_PORT=%BACKEND_PORT%
 call :resolve_port FRONTEND_PORT
+echo [%time%] FRONTEND_PORT=%FRONTEND_PORT%
 call :resolve_port VNC_PORT
+echo [%time%] VNC_PORT=%VNC_PORT%
 call :resolve_port TOOLSTORE_PORT
+echo [%time%] TOOLSTORE_PORT=%TOOLSTORE_PORT%
 set /a "DEV_WIDTH=%DEV_PORT_END% - %DEV_PORT_START% + 1"
 if %DEV_WIDTH% lss 1 set "DEV_WIDTH=3"
 call :resolve_port_range DEV_PORT_START %DEV_WIDTH%
-set /a "DEV_PORT_END=%DEV_PORT_START% + %DEV_WIDTH% - 1"
+set /a "DEV_PORT_END=%DEV_PORT_START%+%DEV_WIDTH%-1"
+echo [%time%] DEV range=%DEV_PORT_START%-%DEV_PORT_END%
+del "%TEMP%\_ac_ports.tmp" 2>nul
 
 echo ========================================
 echo   AuroraCoder
@@ -87,7 +67,37 @@ echo.
 :: Storage base — all persistent data lives under Documents\AuroraCoder
 set "STORAGE_BASE=%USERPROFILE%\Documents\AuroraCoder"
 
-:: Start backend container (agent + conversation history server)
+:: ── Check if base image exists; build if missing ─────────────────────────
+:: These Docker steps are slow — but because we stopped the old container
+:: at the very beginning, ports have already been released by now.
+docker inspect --type=image auroracoder-base >nul 2>&1
+if errorlevel 1 goto :build_base
+echo [base] Base image found, skipping.
+goto :build_app
+
+:build_base
+echo [base] Building base image -- first time, this may take a few minutes...
+docker build -t auroracoder-base -f docker\Dockerfile.base .
+if errorlevel 1 (
+    echo Base image build failed.
+    pause
+    exit /b 1
+)
+echo [base] Done.
+
+:build_app
+:: Always rebuild app image (fast: just copies source code)
+:: Generate unique cache-bust key to force ToolStore reinstall every run
+for /f "tokens=2 delims==." %%I in ('wmic os get localdatetime /value ^| find "="') do set "CACHEBUST=%%I"
+echo [app] Building app image (cache-bust: %CACHEBUST%)...
+docker build -t auroracoder --build-arg CACHEBUST=%CACHEBUST% -f docker\Dockerfile .
+if errorlevel 1 (
+    echo App image build failed.
+    pause
+    exit /b 1
+)
+
+:: ── Start backend container ─────────────────────────────────────────────
 echo Starting backend in Docker (app + frontend)...
 :: Check if .env exists; warn but don't abort (keys can be set via Settings UI)
 set "ENV_FILE_ARG="
@@ -111,21 +121,21 @@ echo Container started.
 echo.
 echo AuroraCoder is running at http://localhost:%FRONTEND_PORT%
 echo To stop: docker stop auroracoder-agent
+echo.
+echo Opening browser in 3 seconds...
+timeout /t 3 /nobreak >nul
+start "" "http://localhost:%FRONTEND_PORT%"
 
 goto :eof
 
 :: ── Port utility subroutines ───────────────────────────────────────────
-:port_is_free
-netstat -an | findstr /c:":%~1 " >nul 2>&1
-if errorlevel 1 exit /b 0
-exit /b 1
 
 :resolve_port
 setlocal enabledelayedexpansion
 set "TRY=!%~1!"
 set /a "MAX=!TRY!+1000"
 :resolve_port_loop
-call :port_is_free !TRY!
+findstr /c:":!TRY! " "%TEMP%\_ac_ports.tmp" >nul 2>&1
 if errorlevel 1 (
     for %%v in ("!TRY!") do (
         endlocal
@@ -151,8 +161,8 @@ set /a "MAX=!BASE!+10000"
 set /a "END=!BASE!+!COUNT!-1"
 set "ALL_FREE=1"
 for /l %%p in (!BASE!,1,!END!) do (
-    call :port_is_free %%p
-    if errorlevel 1 set "ALL_FREE=0"
+    findstr /c:":%%p " "%TEMP%\_ac_ports.tmp" >nul 2>&1
+    if not errorlevel 1 set "ALL_FREE=0"
 )
 if "!ALL_FREE!"=="1" (
     for %%v in ("!BASE!") do (

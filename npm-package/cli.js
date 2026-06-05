@@ -132,7 +132,10 @@ function openBrowser(url) {
     platform === "darwin" ? "open" :
     platform === "win32" ? "start" : "xdg-open";
   try {
-    spawn(cmd, [url], { detached: true, stdio: "ignore" }).unref();
+    const child = spawn(cmd, [url], { detached: true, stdio: "ignore" });
+    // Suppress async errors (e.g. xdg-open not found on headless systems)
+    child.on("error", () => {});
+    child.unref();
     return true;
   } catch {
     return false;
@@ -276,16 +279,6 @@ const frontendDir = path.join(PROJECT_ROOT, "frontend");
 const distDir = path.join(frontendDir, "dist");
 const nodeModulesDir = path.join(frontendDir, "node_modules");
 
-if (!fs.existsSync(nodeModulesDir)) {
-  log("Installing frontend npm dependencies…");
-  try {
-    run("npm install --prefer-offline --no-audit --no-fund", { cwd: frontendDir, stdio: "inherit" });
-    ok("Frontend npm dependencies installed");
-  } catch {
-    warn("npm install had issues — will retry on next start");
-  }
-}
-
 // Only rebuild if dist is stale or missing
 let needBuild = !fs.existsSync(distDir);
 if (!needBuild) {
@@ -298,6 +291,19 @@ if (!needBuild) {
       if (newestSrc && newestSrc > distStat.mtimeMs) needBuild = true;
     }
   } catch { needBuild = true; }
+}
+
+// Install frontend npm deps ONLY if we need to build and they're missing.
+// When dist/ is pre-built and up-to-date this step is skipped entirely,
+// giving the user an instant first launch.
+if (needBuild && !fs.existsSync(nodeModulesDir)) {
+  log("Installing frontend npm dependencies…");
+  try {
+    run("npm install --prefer-offline --no-audit --no-fund", { cwd: frontendDir, stdio: "inherit" });
+    ok("Frontend npm dependencies installed");
+  } catch {
+    warn("npm install had issues — will retry on next start");
+  }
 }
 
 if (needBuild) {

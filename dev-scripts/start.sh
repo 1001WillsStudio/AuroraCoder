@@ -7,41 +7,43 @@
 #   chmod +x start.sh
 #   ./start.sh
 # ──────────────────────────────────────────────────────────────────────────────
+# ─── Helper: auto-open browser ───────────────────────────────────────────
+open_browser() {
+    local url="$1"
+    case "$(uname -s)" in
+        Darwin) open "$url" ;;
+        Linux)
+            if command -v xdg-open >/dev/null 2>&1; then
+                xdg-open "$url"
+            elif command -v sensible-browser >/dev/null 2>&1; then
+                sensible-browser "$url"
+            else
+                echo "Please open $url in your browser."
+            fi
+            ;;
+        MINGW*|MSYS*|CYGWIN*) start "" "$url" ;;
+        *) echo "Please open $url in your browser." ;;
+    esac 2>/dev/null
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
-# ── Read GITHUB_TOKEN from .env for ToolStore (used in base image build)
-GITHUB_TOKEN=$(grep '^GITHUB_TOKEN=' .env 2>/dev/null | cut -d= -f2- || true)
-
-# ── Check if base image exists; build if missing ─────────────────────────
-if docker inspect --type=image auroracoder-base >/dev/null 2>&1; then
-    echo "[base] Base image found, skipping."
-else
-    echo "[base] Building base image -- first time, this may take a few minutes..."
-    docker build -t auroracoder-base -f docker/Dockerfile.base --build-arg GITHUB_TOKEN="$GITHUB_TOKEN" . || {
-        echo "Base image build failed."
-        exit 1
-    }
-    echo "[base] Done."
-fi
-
-# ── Always rebuild app image (fast: just copies source code) ─────────────
-echo "[app] Building app image..."
-docker build -t auroracoder -f docker/Dockerfile . || {
-    echo "App image build failed."
-    exit 1
-}
-
-# ── Stop existing container if running ───────────────────────────────────
+# ── Stop existing container FIRST ─────────────────────────────────────────
+# Docker builds take time — by stopping the old container at the very
+# beginning, ports have the entire build duration to be released.
+# This avoids a wasteful "sleep 2" blocking the final launch.
 echo "Stopping old container if any..."
 docker stop auroracoder-agent >/dev/null 2>&1 || true
 docker rm auroracoder-agent >/dev/null 2>&1 || true
 
-# Short delay to ensure ports are fully released
+# Short delay to ensure ports are released before we start resolving them
 echo "Waiting for port cleanup..."
 sleep 2
+
 
 # ── Port configuration ──────────────────────────────────────────────────
 FRONTEND_PORT=3000
@@ -68,15 +70,8 @@ fi
 # ── Port availability helpers ───────────────────────────────────────────
 port_is_free() {
     local port=$1
-    if command -v ss >/dev/null 2>&1; then
-        ! ss -tln "sport = :$port" 2>/dev/null | grep -q ":$port"
-    elif command -v lsof >/dev/null 2>&1; then
-        ! lsof -i ":$port" -sTCP:LISTEN >/dev/null 2>&1
-    elif command -v netstat >/dev/null 2>&1; then
-        ! netstat -tln 2>/dev/null | grep -q ":$port "
-    else
-        python3 -c "import socket; s=socket.socket(); s.bind(('',$port)); s.close()" 2>/dev/null
-    fi
+    # bash-native TCP connect — zero subprocess overhead
+    ! (: </dev/tcp/127.0.0.1/$port) 2>/dev/null
 }
 
 find_free_port() {
@@ -99,7 +94,7 @@ find_free_port_range() {
     while true; do
         local all_free=true
         local p
-        for p in $(seq "$base" $((base + count - 1))); do
+        for (( p=base; p<=base+count-1; p++ )); do
             if ! port_is_free "$p"; then
                 all_free=false
                 break
@@ -150,6 +145,27 @@ else
     STORAGE_BASE="$HOME/AuroraCoder"
 fi
 
+# ── Check if base image exists; build if missing ─────────────────────────
+# These Docker steps are slow — but because we stopped the old container
+# at the very beginning, ports have already been released by now.
+if docker inspect --type=image auroracoder-base >/dev/null 2>&1; then
+    echo "[base] Base image found, skipping."
+else
+    echo "[base] Building base image -- first time, this may take a few minutes..."
+    docker build -t auroracoder-base -f docker/Dockerfile.base . || {
+        echo "Base image build failed."
+        exit 1
+    }
+    echo "[base] Done."
+fi
+
+# ── Always rebuild app image (fast: just copies source code) ─────────────
+echo "[app] Building app image..."
+docker build -t auroracoder -f docker/Dockerfile . || {
+    echo "App image build failed."
+    exit 1
+}
+
 # ── Check if .env exists; warn but don't abort (keys can be set via Settings UI)
 if [ -f ".env" ]; then
     ENV_FILE_ARG="--env-file .env"
@@ -184,3 +200,6 @@ echo "Container started."
 echo ""
 echo "AuroraCoder is running at http://localhost:$FRONTEND_PORT"
 echo "To stop: docker stop auroracoder-agent"
+echo ""
+echo "Opening browser..."
+(sleep 3 && open_browser "http://localhost:$FRONTEND_PORT") &

@@ -60,7 +60,7 @@ MODEL_PROVIDERS = {
     },
     "opencode-ds-v4-pro": {
         "id": "opencode-ds-v4-pro",
-        "name": "OpenCode V4 Pro",
+        "name": "OpenCode DS V4 Pro",
         "description": "OpenCode Go hosted",
         "base_url": "https://opencode.ai/zen/go/v1",
         "api_key": os.environ.get("OPENCODE_API_KEY", ""),
@@ -71,7 +71,7 @@ MODEL_PROVIDERS = {
     },
     "opencode-ds-v4-flash": {
         "id": "opencode-ds-v4-flash",
-        "name": "OpenCode V4 Flash",
+        "name": "OpenCode DS V4 Flash",
         "description": "OpenCode Go hosted",
         "base_url": "https://opencode.ai/zen/go/v1",
         "api_key": os.environ.get("OPENCODE_API_KEY", ""),
@@ -82,7 +82,7 @@ MODEL_PROVIDERS = {
     },
     "nvidia": {
         "id": "nvidia",
-        "name": "NVIDIA V4 Pro",
+        "name": "NVIDIA DS V4 Pro",
         "description": "NVIDIA hosted",
         "base_url": "https://integrate.api.nvidia.com/v1",
         "api_key": os.environ.get("NVIDIA_API_KEY", ""),
@@ -93,7 +93,7 @@ MODEL_PROVIDERS = {
     },
     "nvidia-fast": {
         "id": "nvidia-fast",
-        "name": "NVIDIA V4 Pro (No Reasoning)",
+        "name": "NVIDIA DS V4 Pro (No Reasoning)",
         "description": "NVIDIA hosted, no reasoning",
         "base_url": "https://integrate.api.nvidia.com/v1",
         "api_key": os.environ.get("NVIDIA_API_KEY", ""),
@@ -168,7 +168,7 @@ CONTINUATION_NOTICE = (
 # =============================================================================
 # Docker Mode
 # =============================================================================
-# Auto-detected via AURORACODER_DOCKER env var (set in Dockerfile / docker-compose).
+# Auto-detected via AURORACODER_DOCKER env var (set in Dockerfile).
 DOCKER_MODE = os.environ.get("AURORACODER_DOCKER", "0") == "1"
 DOCKER_VNC = os.environ.get("AURORACODER_VNC", "0") == "1"
 WORKSPACE_DIR = "/workspace" if DOCKER_MODE else None

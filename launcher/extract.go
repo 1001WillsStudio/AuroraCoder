@@ -57,11 +57,14 @@ func defaultPorts() PortsConfig {
 func readPortsConfig(cacheDir string) PortsConfig {
 	cfg := defaultPorts()
 
-	dirs := []string{cacheDir}
+	// Search parent first — user-owned custom config takes priority over
+	// the embedded default that extractProject places in cacheDir.
+	dirs := []string{}
 	parent := filepath.Dir(cacheDir)
 	if parent != cacheDir {
 		dirs = append(dirs, parent)
 	}
+	dirs = append(dirs, cacheDir)
 
 	for _, dir := range dirs {
 		path := filepath.Join(dir, "ports.conf")
@@ -127,9 +130,21 @@ func findAvailablePort(start int) int {
 // findAvailablePortRange finds a contiguous block of width free ports
 // starting at or above start. Returns the first port of the block.
 func findAvailablePortRange(start, width int) int {
-	for base := start; base < start+10000; base++ {
+	// Clamp to valid TCP port range
+	if start < 1 {
+		start = 1
+	}
+	maxBase := 65535 - width + 1
+	if maxBase < 1 {
+		maxBase = 1
+	}
+	limit := start + 10000
+	if limit > maxBase {
+		limit = maxBase
+	}
+	for base := start; base <= limit; base++ {
 		allFree := true
-		for p := base; p < base+width; p++ {
+		for p := base; p < base+width && p <= 65535; p++ {
 			if !isPortAvailable(p) {
 				allFree = false
 				break
@@ -205,6 +220,11 @@ func extractProject(destDir string) error {
 
 		relPath := strings.TrimPrefix(path, "embed/")
 		if relPath == "" {
+			return nil
+		}
+
+		// Never overwrite user-owned files that may have been customised
+		if relPath == ".env" || relPath == "ports.conf" {
 			return nil
 		}
 

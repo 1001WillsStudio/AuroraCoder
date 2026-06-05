@@ -8,6 +8,26 @@
 #   ./another-one.sh        # auto-picks next free instance number
 #   ./another-one.sh 5      # explicit instance number
 # ──────────────────────────────────────────────────────────────────────────────
+# ─── Helper: auto-open browser ───────────────────────────────────────────
+open_browser() {
+    local url="$1"
+    case "$(uname -s)" in
+        Darwin) open "$url" ;;
+        Linux)
+            if command -v xdg-open >/dev/null 2>&1; then
+                xdg-open "$url"
+            elif command -v sensible-browser >/dev/null 2>&1; then
+                sensible-browser "$url"
+            else
+                echo "Please open $url in your browser."
+            fi
+            ;;
+        MINGW*|MSYS*|CYGWIN*) start "" "$url" ;;
+        *) echo "Please open $url in your browser." ;;
+    esac 2>/dev/null
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -25,6 +45,20 @@ else
         INST=$((INST + 1))
     done
 fi
+
+CONTAINER="auroracoder-agent-$INST"
+
+# ── Stop old container FIRST ───────────────────────────────────────────
+# By stopping the old container at the very beginning, ports have plenty
+# of time to be released while we do all the other work below.
+# This avoids a wasteful "sleep 2" right before the docker run.
+echo "Stopping old container \"$CONTAINER\" if any..."
+docker stop "$CONTAINER" >/dev/null 2>&1 || true
+docker rm   "$CONTAINER" >/dev/null 2>&1 || true
+
+# Short delay to ensure ports are released before we start resolving them
+echo "Waiting for port cleanup..."
+sleep 2
 
 # ── Base ports (from ports.conf or defaults) ────────────────────────────
 BASE_FRONTEND=3000
@@ -58,15 +92,8 @@ TOOLSTORE_PORT=$((BASE_TOOLSTORE + INST - 1))
 # ── Port availability helpers ───────────────────────────────────────────
 port_is_free() {
     local port=$1
-    if command -v ss >/dev/null 2>&1; then
-        ! ss -tln "sport = :$port" 2>/dev/null | grep -q ":$port"
-    elif command -v lsof >/dev/null 2>&1; then
-        ! lsof -i ":$port" -sTCP:LISTEN >/dev/null 2>&1
-    elif command -v netstat >/dev/null 2>&1; then
-        ! netstat -tln 2>/dev/null | grep -q ":$port "
-    else
-        python3 -c "import socket; s=socket.socket(); s.bind(('',$port)); s.close()" 2>/dev/null
-    fi
+    # bash-native TCP connect — zero subprocess overhead
+    ! (: </dev/tcp/127.0.0.1/$port) 2>/dev/null
 }
 
 find_free_port() {
@@ -89,7 +116,7 @@ find_free_port_range() {
     while true; do
         local all_free=true
         local p
-        for p in $(seq "$base" $((base + count - 1))); do
+        for (( p=base; p<=base+count-1; p++ )); do
             if ! port_is_free "$p"; then
                 all_free=false
                 break
@@ -108,6 +135,8 @@ find_free_port_range() {
 }
 
 # ── Resolve ports: auto-find available ──────────────────────────────────
+# Because we stopped the old container at the very beginning, these ports
+# should already be free (or they'll auto-bump if occupied by something else).
 BACKEND_PORT=$(find_free_port "$BACKEND_PORT")
 FRONTEND_PORT=$(find_free_port "$FRONTEND_PORT")
 VNC_PORT=$(find_free_port "$VNC_PORT")
@@ -116,8 +145,6 @@ DEV_WIDTH=$((DEV_PORT_END - DEV_PORT_START + 1))
 [ "$DEV_WIDTH" -lt 1 ] && DEV_WIDTH=3
 DEV_PORT_START=$(find_free_port_range "$DEV_PORT_START" "$DEV_WIDTH")
 DEV_PORT_END=$((DEV_PORT_START + DEV_WIDTH - 1))
-
-CONTAINER="auroracoder-agent-$INST"
 
 # ── Storage base ────────────────────────────────────────────────────────
 if [ -d "$HOME/Documents" ]; then
@@ -160,22 +187,12 @@ else
     echo ""
 fi
 
-# ── Port-availability: resolved by auto-find above ──────────────────────
-
-
 # ── Data directories ────────────────────────────────────────────────────
 mkdir -p "$DATA_DIR" "$WORKSPACE_DIR"
 
-# ── Stop old container if any ───────────────────────────────────────────
-echo "Stopping old container \"$CONTAINER\" if any..."
-docker stop "$CONTAINER" >/dev/null 2>&1 || true
-docker rm   "$CONTAINER" >/dev/null 2>&1 || true
-
-# Short delay to ensure ports are fully released
-echo "Waiting for port cleanup..."
-sleep 2
-
 # ── Start backend container ─────────────────────────────────────────────
+# No need for "sleep 2" here — the old container was stopped at the very
+# beginning of the script, so ports have long been released.
 echo "Starting backend in Docker (instance $INST)..."
 docker run --rm -d \
     --name "$CONTAINER" \
@@ -197,3 +214,6 @@ echo "Container \"$CONTAINER\" started."
 echo ""
 echo "AuroraCoder instance $INST is running at http://localhost:$FRONTEND_PORT"
 echo "To stop: docker stop $CONTAINER"
+echo ""
+echo "Opening browser..."
+(sleep 3 && open_browser "http://localhost:$FRONTEND_PORT") &

@@ -1,6 +1,6 @@
 {
   "name": "aurora-coder",
-  "version": "1.0.1",
+  "version": "1.0.4",
   "description": "AuroraCoder — an autonomous AI coding agent. Install via npm and run directly on your machine (no Docker required).",
   "license": "MIT",
   "author": "Shaowen Wen <shaowen0219@outlook.com>",
