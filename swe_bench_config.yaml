@@ -1,0 +1,28 @@
+# SWE-Bench Runner — default configuration
+# Override via CLI:  python -m swe_bench.runner --workers 8 --provider openai
+
+# ── Dataset ──────────────────────────────────────────────
+dataset_path: data/swe-bench.jsonl
+max_instances: 0            # 0 = run all
+
+# ── Parallelism ──────────────────────────────────────────
+workers: 4                  # concurrent AuroraCoder containers
+
+# ── Docker ───────────────────────────────────────────────
+docker_image: auroracoder:latest
+container_prefix: auroracoder-swe
+network: swe-net            # --internal bridge (no internet)
+volume_prefix: swe          # → swe_ws_0, swe_data_0
+gateway_port_base: 8081     # host port for worker 0 gateway
+backend_port: 8080          # inside-container backend port
+gateway_port: 8081          # inside-container gateway port
+frontend_port: 3000         # inside-container frontend port
+frontend_enabled: false     # set true to watch agent live
+frontend_port_base: 3001    # host port for worker 0 frontend
+
+# ── Agent ────────────────────────────────────────────────
+provider: deepseek          # LLM provider passed to gateway
+instance_timeout: 1800.0    # seconds (30 min)
+
+# ── Output ───────────────────────────────────────────────
+runs_dir: swe_runs          # per-instance results saved here

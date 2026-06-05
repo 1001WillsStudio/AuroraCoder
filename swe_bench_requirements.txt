@@ -1,0 +1,6 @@
+# SWE-Bench Runner dependencies
+# Install: pip install -r swe_bench_requirements.txt
+
+httpx>=0.24.0
+pyyaml>=6.0
+docker>=7.0
