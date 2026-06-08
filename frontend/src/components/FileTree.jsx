@@ -162,7 +162,7 @@ function ContextMenu({ x, y, node, onClose, onDelete, onDownload, onExport, t })
 // (re)fetched on real change events — initial mount, project upload, delete, and
 // agent file operations.  Expanding / collapsing / selecting is pure local UI
 // state and never hits the network.
-const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, immediateRefreshTrigger = 0 }) => {
+const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0 }) => {
   const { t } = useLanguage()
   const [tree, setTree] = useState([])
   const [, setRootPath] = useState(null)
@@ -206,15 +206,11 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, immediateRefre
   // Initial load.
   useEffect(() => { fetchTree() }, [fetchTree])
 
-  // Re-fetch on detected file-system changes (agent write/delete/terminal).
+  // Re-fetch on detected file-system changes: agent write/delete/terminal,
+  // and project upload (both bump refreshTrigger).
   useEffect(() => {
     if (refreshTrigger > 0) fetchTree()
   }, [refreshTrigger, fetchTree])
-
-  // Re-fetch on explicit user actions (project upload).
-  useEffect(() => {
-    if (immediateRefreshTrigger > 0) fetchTree()
-  }, [immediateRefreshTrigger, fetchTree])
 
   // Re-fetch once when streaming ends (catches terminal-created files).
   const wasStreamingRef = useRef(false)

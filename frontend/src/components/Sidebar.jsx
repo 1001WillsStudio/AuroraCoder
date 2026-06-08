@@ -20,7 +20,6 @@ export default function Sidebar({
   onToggleTaskInstructions,
   systemPrompt,
   fileTreeRefreshTrigger,
-  fileTreeImmediateRefreshTrigger,
   isStreaming,
   onFileClick,
   conversationId,
@@ -109,7 +108,6 @@ export default function Sidebar({
           onFileClick={onFileClick}
           isStreaming={isStreaming}
           refreshTrigger={fileTreeRefreshTrigger}
-          immediateRefreshTrigger={fileTreeImmediateRefreshTrigger}
         />
       </div>
 
