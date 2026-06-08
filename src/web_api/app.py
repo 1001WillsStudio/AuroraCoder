@@ -25,7 +25,7 @@ from ..main_flow import generate_chat_responses_stream_native
 from ..code_sandbox import shell, get_workspace, WORKSPACE
 from ..code_tools.file_operations import set_file_tracking_callbacks, set_current_conversation
 from ..core_tools.subagent import cancel_active_subagents
-from ..config import DEFAULT_PROVIDER
+from ..config import DEFAULT_PROVIDER, MAX_ITERATIONS
 
 from ..providers import provider_manager
 
@@ -156,7 +156,7 @@ def format_sse_event(event_type: str, data: Any) -> str:
 
 async def stream_chat_response(
     messages: list, conversation_id: str, request: Request,
-    max_iterations: int = 30, provider: Optional[str] = None,
+    max_iterations: int = MAX_ITERATIONS, provider: Optional[str] = None,
     tools_override: Optional[list] = None, restart_shell: bool = False,
 ) -> AsyncGenerator[str, None]:
     cancel_event = threading.Event()

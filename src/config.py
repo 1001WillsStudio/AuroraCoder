@@ -143,7 +143,10 @@ MAX_TOKENS = 32768
 MAX_TOOL_CALLS = 10  # Increased since native tool calling is more efficient
 
 # Iteration Limits
-MAX_ITERATIONS = 30  # Maximum iterations per turn before requiring user to continue
+# Maximum iterations per turn before requiring user to continue.
+# Env-overridable so batch/headless runs (e.g. SWE-bench) can raise the cap —
+# there is no human to click "Continue" in those contexts.
+MAX_ITERATIONS = int(os.environ.get("MAX_ITERATIONS", "30"))
 MAX_STREAMING_RETRIES = 10  # Consecutive streaming failures before giving up
 
 # Tool Concurrency

@@ -27,6 +27,33 @@ from swe_bench.worker import Worker
 
 logger = logging.getLogger("swe_bench.runner")
 
+
+# ── .env loading ───────────────────────────────────────────────────────
+
+def load_dotenv(path: str = ".env") -> None:
+    """Best-effort load of a project ``.env`` into ``os.environ``.
+
+    Minimal parser (no external dependency). Existing environment variables
+    take priority and are never overwritten. Forwarded to worker containers
+    so the agent can authenticate to LLM providers (see swe_bench.worker).
+    """
+    env_path = Path(path)
+    if not env_path.exists():
+        return
+    try:
+        for raw in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+    except Exception as e:  # pragma: no cover - best effort
+        logger.debug("Could not load %s: %s", path, e)
+
+
 # ── CLI ────────────────────────────────────────────────────────────────
 
 def parse_args() -> argparse.Namespace:
@@ -42,6 +69,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--network", default=None, help="Docker network name")
     p.add_argument("--frontend-enabled", action="store_true", default=None, help="Expose frontend ports")
     p.add_argument("--timeout", dest="instance_timeout", type=float, default=None, help="Per-instance timeout (seconds)")
+    p.add_argument("--max-iterations", dest="agent_max_iterations", type=int, default=None, help="Per-turn agent iteration cap inside the container")
+    p.add_argument("--no-provision", dest="gold_standard_env", action="store_false", default=None, help="Disable gold-standard per-instance env provisioning")
     p.add_argument("--runs-dir", default=None, help="Output directory")
     p.add_argument("--gateway-port-base", type=int, default=None, help="First host port for gateways")
     p.add_argument("--verbose", "-v", action="store_true", default=False, help="Debug logging")
@@ -54,7 +83,7 @@ def args_to_overrides(args: argparse.Namespace) -> dict:
     for key in (
         "dataset_path", "max_instances", "workers", "provider",
         "docker_image", "network", "instance_timeout", "runs_dir",
-        "gateway_port_base",
+        "gateway_port_base", "agent_max_iterations",
     ):
         cli_val = getattr(args, key, None)
         if cli_val is not None:
@@ -65,6 +94,9 @@ def args_to_overrides(args: argparse.Namespace) -> dict:
     # frontend-enabled (only override if explicitly passed)
     if args.frontend_enabled is not None:
         overrides["frontend_enabled"] = True
+    # gold-standard env provisioning (only override when --no-provision passed)
+    if args.gold_standard_env is False:
+        overrides["gold_standard_env"] = False
     # timeout
     if args.instance_timeout is not None:
         overrides["instance_timeout"] = args.instance_timeout
@@ -117,15 +149,21 @@ def check_ports_free(base: int, count: int) -> list[int]:
     Check that gateway ports base..base+count-1 are free.
     If frontend, also check frontend_port_base..frontend_port_base+count-1.
     Returns list of occupied ports (empty = all free).
+
+    Uses a cross-platform socket bind probe (works on Windows, macOS, Linux)
+    rather than shelling out to ``ss`` (Linux-only).
     """
+    import socket
+
     occupied = []
     for i in range(count):
         port = base + i
-        result = subprocess.run(
-            ["ss", "-tlnp"], capture_output=True, text=True,
-        )
-        if f":{port} " in result.stdout:
-            occupied.append(port)
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind(("127.0.0.1", port))
+            except OSError:
+                occupied.append(port)
     return occupied
 
 
@@ -260,6 +298,9 @@ def main() -> None:
         datefmt="%H:%M:%S",
     )
 
+    # Load .env so provider API keys are available to forward to workers
+    load_dotenv()
+
     # Load config (YAML + CLI overrides)
     config = load_config(args.config, args_to_overrides(args))
 
@@ -278,8 +319,17 @@ def main() -> None:
         for task in asyncio.all_tasks(loop):
             task.cancel()
 
-    loop.add_signal_handler(signal.SIGINT, _signal_handler)
-    loop.add_signal_handler(signal.SIGTERM, _signal_handler)
+    # add_signal_handler is not implemented on Windows asyncio loops, and some
+    # signals (e.g. SIGTERM) may be absent on certain platforms. Register
+    # best-effort and fall back to the default KeyboardInterrupt handling.
+    for sig_name in ("SIGINT", "SIGTERM"):
+        sig = getattr(signal, sig_name, None)
+        if sig is None:
+            continue
+        try:
+            loop.add_signal_handler(sig, _signal_handler)
+        except (NotImplementedError, RuntimeError, ValueError):
+            logger.debug("Signal handler for %s not supported on this platform", sig_name)
 
     try:
         loop.run_until_complete(main_async(config))

@@ -34,6 +34,10 @@ workspace/
 workspace-*/
 .search_cache/
 
+# SWE-bench run outputs / temp clones
+swe_runs/
+swe_clone_*/
+
 # OS
 .DS_Store
 Thumbs.db

@@ -11,3 +11,5 @@ workspace/
 .pytest_cache
 .env
 .env.*
+swe_runs/
+swe_clone_*

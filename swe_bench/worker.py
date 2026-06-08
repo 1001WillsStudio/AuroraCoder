@@ -22,9 +22,24 @@ from swe_bench.workspace import (
     prepare_instance_workspace,
     extract_patch,
     clear_workspace,
+    _force_rmtree,
 )
+from swe_bench import provisioning
 
 logger = logging.getLogger(__name__)
+
+# Host env vars forwarded into each worker container so the agent can
+# authenticate to LLM providers and tools. Only forwarded when set on the host.
+_FORWARDED_ENV_VARS = (
+    "ACCESS_PASSWORD",
+    "DEEPSEEK_API_KEY",
+    "NVIDIA_API_KEY",
+    "OPENCODE_API_KEY",
+    "WEB_SECONDARY_MODEL_API_KEY",
+    "GOOGLE_SEARCH_API_KEY",
+    "GOOGLE_CSE_ID",
+    "GITHUB_TOKEN",
+)
 
 # ── Docker subprocess helpers ─────────────────────────────────────────
 
@@ -105,9 +120,23 @@ class Worker:
             "AURORACODER_DATA_DIR": "/swe_data",
             "BACKEND_PORT": str(self.config.backend_port),
             "GATEWAY_PORT": str(self.config.gateway_port),
+            # Headless run: raise the per-turn cap so the agent isn't stopped
+            # with "max_iterations_reached" (no human to click Continue).
+            "MAX_ITERATIONS": str(self.config.agent_max_iterations),
         }
-        if "ACCESS_PASSWORD" in os.environ:
-            env_vars["ACCESS_PASSWORD"] = os.environ["ACCESS_PASSWORD"]
+        # Gold-standard: make the sandbox terminal auto-activate the per-instance
+        # env (correct Python) instead of the default 3.12 `agent` env. The env
+        # is created during provisioning; the shell is restarted when the chat
+        # begins (after provisioning), so the activation succeeds.
+        if self.config.gold_standard_env:
+            env_vars["DEFAULT_BASE_ENV_NAME"] = self.config.test_env_name
+        # Forward provider API keys / credentials from the host environment so
+        # the agent inside the (no-internet-settings) container can authenticate.
+        # The fresh per-worker swe_data volume has no settings.json, so the
+        # gateway falls back to these env vars (see gateway.settings_store).
+        for key in _FORWARDED_ENV_VARS:
+            if os.environ.get(key):
+                env_vars[key] = os.environ[key]
 
         env_args: list[str] = []
         for k, v in env_vars.items():
@@ -202,12 +231,19 @@ class Worker:
                     instance, self.name,
                 )
             finally:
-                # Clean up host-side clone directory
+                # Clean up host-side clone directory (handles read-only .git files)
                 if host_clone_dir and host_clone_dir.exists():
-                    import shutil
-                    shutil.rmtree(host_clone_dir, ignore_errors=True)
+                    _force_rmtree(host_clone_dir)
 
-            # 2. Build message (task instruction + problem statement)
+            # 1b. Gold-standard: provision per-instance conda env (correct
+            #     Python + deps) as a *silent* side-effect. The env becomes the
+            #     sandbox's default conda env (DEFAULT_BASE_ENV_NAME), so the
+            #     agent's terminal auto-activates it — nothing is added to the
+            #     prompt. Runs in a thread so other workers keep streaming.
+            await asyncio.to_thread(self._provision_environment, instance)
+
+            # 2. Build message — ONLY the task instruction (no-net + 1-submit)
+            #    and the problem statement. Never inject anything else.
             full_message = self.config.task_instruction + problem
 
             # 3. Send to agent
@@ -292,6 +328,39 @@ class Worker:
                 pass
 
         return result
+
+    # ── Environment provisioning ─────────────────────────────────────
+
+    def _provision_environment(self, instance: dict) -> None:
+        """Provision the per-instance test env (correct Python + deps).
+
+        Pure side-effect: the env (``test_env_name``) becomes the sandbox's
+        default conda env (via ``DEFAULT_BASE_ENV_NAME``), so the agent's
+        terminal auto-activates it. Nothing is ever injected into the prompt.
+        """
+        if not self.config.gold_standard_env:
+            return
+
+        env_name = self.config.test_env_name
+        try:
+            script = provisioning.build_setup_script(instance, env_name=env_name)
+        except Exception as e:
+            logger.warning("[w%d] Could not build provision script for %s: %s",
+                           self.worker_id, instance.get("instance_id"), e)
+            return
+
+        if not script:
+            logger.info("[w%d] No spec for %s — running without provisioned env",
+                        self.worker_id, instance.get("instance_id"))
+            return
+
+        ok, output = provisioning.provision_container(
+            self.name, script, timeout=self.config.provision_timeout,
+        )
+        if not ok:
+            logger.error("[w%d] Provisioning failed for %s:\n%s",
+                         self.worker_id, instance.get("instance_id"), output)
+            # Don't abort the instance — the agent can still attempt a static fix.
 
     # ── Properties ───────────────────────────────────────────────────
 

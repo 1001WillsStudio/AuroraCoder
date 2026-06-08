@@ -23,8 +23,14 @@ class RunnerConfig:
     """Number of concurrent AuroraCoder containers."""
 
     # ── Docker ───────────────────────────────────────────────────
-    docker_image: str = "auroracoder:latest"
-    """Docker image for each worker container."""
+    docker_image: str = "auroracoder-swe:latest"
+    """Docker image for each worker container.
+
+    Build it from current source with:
+        docker build -f docker/Dockerfile -t auroracoder-swe:latest .
+    Kept separate from the user-facing ``auroracoder:latest`` so SWE-bench
+    always runs the latest code (the regular image's source is frozen at its
+    own build time)."""
 
     container_prefix: str = "auroracoder-swe"
     """Prefix for worker container names → auroracoder-swe-0, …"""
@@ -60,11 +66,30 @@ class RunnerConfig:
     instance_timeout: float = 1800.0
     """Seconds before cancelling a stuck instance (30 min default)."""
 
+    agent_max_iterations: int = 200
+    """Per-turn agent iteration cap inside the container (MAX_ITERATIONS env).
+
+    SWE-bench is headless — there is no human to click "Continue" when the
+    agent hits ``max_iterations_reached`` — so this defaults much higher than
+    the interactive default (30). Raise further for very long tasks."""
+
+    # ── Gold-standard environment provisioning ───────────────────
+    gold_standard_env: bool = True
+    """Provision a per-instance conda env (correct Python + deps) before the
+    agent runs, mirroring the official SWE-bench harness. Requires the
+    ``swebench`` package on the host and internet inside the container during
+    provisioning. Falls back to no provisioning if a spec is unavailable."""
+
+    test_env_name: str = "testbed"
+    """Name of the per-instance conda env created inside the container."""
+
+    provision_timeout: int = 1800
+    """Seconds allowed for per-instance env provisioning (conda + pip)."""
+
     task_instruction: str = (
-        "You have NO internet access. Do NOT attempt any network operations.\n"
-        "You have EXACTLY ONE response — do not ask questions or request "
-        "clarification. Work through the problem completely using your tools, "
-        "then submit your final answer.\n\n"
+        "You have no network access — do not run network operations or tests that "
+        "require the internet.\n"
+        "Fix the issue, then submit your final answer in one go.\n\n"
         "Here is the task:\n\n"
     )
     """Instruction prepended to every problem statement."""

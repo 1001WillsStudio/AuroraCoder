@@ -7,13 +7,46 @@ Patches are extracted from containers via ``docker exec``.
 """
 
 import logging
+import os
 import shutil
+import stat
 import subprocess
 import tempfile
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# Force LF line endings on every host git op. Without this, a Windows host with
+# the usual global ``core.autocrlf=true`` checks out CRLF working-tree files
+# while storing LF blobs. The whole repo (working tree + .git) is then docker
+# cp'd into the Linux container, so ``git diff`` flags every line as changed —
+# producing a whole-file patch instead of the agent's real change.
+_GIT_LF = ["-c", "core.autocrlf=false", "-c", "core.eol=lf"]
+
+
+def _force_rmtree(path: Path) -> None:
+    """Recursively delete *path*, clearing read-only bits as needed.
+
+    On Windows, Git marks pack files (``.idx``/``.pack``) read-only, which makes
+    a plain ``shutil.rmtree`` fail with ``PermissionError`` (WinError 5). This
+    helper retries each failed removal after making the entry writable. Works on
+    both the modern ``onexc`` (Python 3.12+) and legacy ``onerror`` callbacks.
+    """
+    if not path.exists():
+        return
+
+    def _handle(func, target, _exc):
+        try:
+            os.chmod(target, stat.S_IWRITE)
+            func(target)
+        except Exception:
+            pass
+
+    try:
+        shutil.rmtree(path, onexc=_handle)
+    except TypeError:
+        shutil.rmtree(path, onerror=lambda f, t, e: _handle(f, t, e))
 
 
 # ── Git operations on host ────────────────────────────────────────────
@@ -47,27 +80,29 @@ def clone_and_squash(
     else:
         target_dir = Path(target_dir)
         if target_dir.exists():
-            shutil.rmtree(target_dir)
+            _force_rmtree(target_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info("Cloning %s @ %s → %s", repo, base_commit[:8], target_dir)
 
-    # Init empty repo, fetch only the specific commit (no branch assumptions)
-    _run(["git", "-C", str(target_dir), "init"])
-    _run(["git", "-C", str(target_dir), "remote", "add", "origin", url])
-    _run(["git", "-C", str(target_dir), "fetch", "--depth", "1", "origin", base_commit])
-    _run(["git", "-C", str(target_dir), "checkout", "FETCH_HEAD"])
+    # Init empty repo, fetch only the specific commit (no branch assumptions).
+    # _GIT_LF forces LF endings so the working tree matches the LF blobs the
+    # agent edits inside the Linux container (avoids spurious whole-file diffs).
+    _run(["git", "-C", str(target_dir), *_GIT_LF, "init"])
+    _run(["git", "-C", str(target_dir), *_GIT_LF, "remote", "add", "origin", url])
+    _run(["git", "-C", str(target_dir), *_GIT_LF, "fetch", "--depth", "1", "origin", base_commit])
+    _run(["git", "-C", str(target_dir), *_GIT_LF, "checkout", "FETCH_HEAD"])
 
     # Remove git history — keep only the checkout state
     git_dir = target_dir / ".git"
     if git_dir.exists():
-        shutil.rmtree(git_dir)
+        _force_rmtree(git_dir)
 
     # Re-init with a single commit
-    _run(["git", "-C", str(target_dir), "init"])
-    _run(["git", "-C", str(target_dir), "add", "-A"])
+    _run(["git", "-C", str(target_dir), *_GIT_LF, "init"])
+    _run(["git", "-C", str(target_dir), *_GIT_LF, "add", "-A"])
     _run(
-        ["git", "-C", str(target_dir), "commit", "--no-verify", "-m", "base"],
+        ["git", "-C", str(target_dir), *_GIT_LF, "commit", "--no-verify", "-m", "base"],
         env_add={"GIT_AUTHOR_NAME": "SWE-bench",
                  "GIT_AUTHOR_EMAIL": "swe@bench.local",
                  "GIT_COMMITTER_NAME": "SWE-bench",

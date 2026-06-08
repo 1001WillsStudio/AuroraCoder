@@ -9,7 +9,7 @@ max_instances: 0            # 0 = run all
 workers: 4                  # concurrent AuroraCoder containers
 
 # ── Docker ───────────────────────────────────────────────
-docker_image: auroracoder:latest
+docker_image: auroracoder-swe:latest   # build: docker build -f docker/Dockerfile -t auroracoder-swe:latest .
 container_prefix: auroracoder-swe
 network: swe-net            # --internal bridge (no internet)
 volume_prefix: swe          # → swe_ws_0, swe_data_0
@@ -23,6 +23,7 @@ frontend_port_base: 3001    # host port for worker 0 frontend
 # ── Agent ────────────────────────────────────────────────
 provider: deepseek          # LLM provider passed to gateway
 instance_timeout: 1800.0    # seconds (30 min)
+agent_max_iterations: 200   # per-turn cap inside container (headless: no "Continue")
 
 # ── Output ───────────────────────────────────────────────
 runs_dir: swe_runs          # per-instance results saved here
