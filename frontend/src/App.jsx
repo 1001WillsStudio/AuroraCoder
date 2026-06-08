@@ -72,7 +72,6 @@ function App() {
     showCodePanel, setShowCodePanel,
     isLoadingFiles,
     fileTreeRefreshTrigger, setFileTreeRefreshTrigger,
-    fileTreeImmediateRefreshTrigger,
     isUploading, uploadInputRef,
     handleFileClose, handleCloseCodePanel,
     handleRefreshFiles, handleFileTreeClick, handleUploadProject,
@@ -515,7 +514,6 @@ function App() {
         }}
         systemPrompt={systemPrompt}
         fileTreeRefreshTrigger={fileTreeRefreshTrigger}
-        fileTreeImmediateRefreshTrigger={fileTreeImmediateRefreshTrigger}
         isStreaming={isStreaming}
         onFileClick={handleFileTreeClick}
         conversationId={conversationId}
