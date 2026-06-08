@@ -1,15 +1,14 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { 
-  Folder, FolderOpen, File, ChevronRight, ChevronDown, 
+import {
+  Folder, FolderOpen, File, ChevronRight, ChevronDown,
   RefreshCw, FileCode, FileText, Image, Database, Settings,
-  FileJson, FileType, Coffee, Braces, Download, Trash2, FolderArchive
+  FileJson, Braces, Download, Trash2, FolderArchive
 } from 'lucide-react'
 import useLanguage from '../hooks/useLanguage'
 
-// Get icon based on file extension
+// ── File-type icon ──────────────────────────────────────────────────────────
 const getFileIcon = (extension) => {
   const iconProps = { size: 14 }
-  
   switch (extension) {
     case '.js':
     case '.jsx':
@@ -51,44 +50,34 @@ const getFileIcon = (extension) => {
   }
 }
 
-// Single tree node component — memoised to avoid O(n) re-renders when
-// only one folder's expansion state changes or the loading flag toggles.
-const TreeNode = React.memo(
-  ({ node, level = 0, onFileClick, expandedFolders, toggleFolder, onContextMenu }) => {
+// ── Single tree row ─────────────────────────────────────────────────────────
+// Deliberately NOT memoised on expansion: the whole *visible* subtree must
+// re-render whenever the expanded set changes so nested folders open instantly.
+// Collapsed folders render no children, so the visible node count stays small.
+function TreeNode({ node, level, onFileClick, expandedFolders, toggleFolder, onContextMenu }) {
   const isFolder = node.type === 'folder'
-  const isExpanded = expandedFolders.has(node.path)
-  const hasChildren = isFolder && node.children && node.children.length > 0
-  
+  const isExpanded = isFolder && expandedFolders.has(node.path)
+  const hasChildren = isFolder && Array.isArray(node.children) && node.children.length > 0
+
   const handleClick = () => {
-    if (isFolder) {
-      toggleFolder(node.path)
-    } else {
-      onFileClick?.(node.path)
-    }
+    if (isFolder) toggleFolder(node.path)
+    else onFileClick?.(node.path)
   }
 
-  const handleContextMenu = (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    onContextMenu?.(e, node)
-  }
-  
   return (
     <div className="tree-node">
-      <div 
+      <div
         className={`tree-item ${isFolder ? 'folder' : 'file'}`}
         style={{ paddingLeft: `${level * 16 + 8}px` }}
         onClick={handleClick}
-        onContextMenu={handleContextMenu}
+        onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContextMenu?.(e, node) }}
       >
         {isFolder ? (
           <>
             <span className="tree-chevron">
-              {hasChildren ? (
-                isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />
-              ) : (
-                <span style={{ width: 14 }} />
-              )}
+              {hasChildren
+                ? (isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />)
+                : <span style={{ width: 14 }} />}
             </span>
             <span className="tree-icon folder-icon">
               {isExpanded ? <FolderOpen size={14} /> : <Folder size={14} />}
@@ -97,19 +86,17 @@ const TreeNode = React.memo(
         ) : (
           <>
             <span className="tree-chevron" style={{ width: 14 }} />
-            <span className="tree-icon file-icon">
-              {getFileIcon(node.extension)}
-            </span>
+            <span className="tree-icon file-icon">{getFileIcon(node.extension)}</span>
           </>
         )}
         <span className="tree-name">{node.name}</span>
       </div>
-      
-      {isFolder && isExpanded && hasChildren && (
+
+      {isExpanded && hasChildren && (
         <div className="tree-children">
-          {node.children.map((child, idx) => (
+          {node.children.map((child) => (
             <TreeNode
-              key={child.path || idx}
+              key={child.path}
               node={child}
               level={level + 1}
               onFileClick={onFileClick}
@@ -122,35 +109,18 @@ const TreeNode = React.memo(
       )}
     </div>
   )
-  },
-  (prevProps, nextProps) => {
-    // Only re-render if something meaningful changed
-    return (
-      prevProps.node === nextProps.node &&
-      prevProps.node?.path === nextProps.node?.path &&
-      prevProps.level === nextProps.level &&
-      prevProps.onFileClick === nextProps.onFileClick &&
-      prevProps.expandedFolders?.has(prevProps.node?.path) ===
-        nextProps.expandedFolders?.has(nextProps.node?.path) &&
-      prevProps.onContextMenu === nextProps.onContextMenu
-    )
-  }
-)
+}
 
-// Context menu component
-const ContextMenu = ({ x, y, node, onClose, onDelete, onDownload, onExport, t }) => {
+// ── Right-click context menu ────────────────────────────────────────────────
+function ContextMenu({ x, y, node, onClose, onDelete, onDownload, onExport, t }) {
   const menuRef = useRef(null)
   const isFolder = node.type === 'folder'
 
   useEffect(() => {
     const handleClickOutside = (e) => {
-      if (menuRef.current && !menuRef.current.contains(e.target)) {
-        onClose()
-      }
+      if (menuRef.current && !menuRef.current.contains(e.target)) onClose()
     }
-    const handleEscape = (e) => {
-      if (e.key === 'Escape') onClose()
-    }
+    const handleEscape = (e) => { if (e.key === 'Escape') onClose() }
     document.addEventListener('mousedown', handleClickOutside)
     document.addEventListener('keydown', handleEscape)
     return () => {
@@ -160,23 +130,14 @@ const ContextMenu = ({ x, y, node, onClose, onDelete, onDownload, onExport, t })
   }, [onClose])
 
   useEffect(() => {
-    if (menuRef.current) {
-      const rect = menuRef.current.getBoundingClientRect()
-      if (rect.right > window.innerWidth) {
-        menuRef.current.style.left = `${x - rect.width}px`
-      }
-      if (rect.bottom > window.innerHeight) {
-        menuRef.current.style.top = `${y - rect.height}px`
-      }
-    }
+    if (!menuRef.current) return
+    const rect = menuRef.current.getBoundingClientRect()
+    if (rect.right > window.innerWidth) menuRef.current.style.left = `${x - rect.width}px`
+    if (rect.bottom > window.innerHeight) menuRef.current.style.top = `${y - rect.height}px`
   }, [x, y])
 
   return (
-    <div
-      ref={menuRef}
-      className="tree-context-menu"
-      style={{ left: x, top: y }}
-    >
+    <div ref={menuRef} className="tree-context-menu" style={{ left: x, top: y }}>
       {isFolder ? (
         <button className="context-menu-item" onClick={() => { onExport(node); onClose() }}>
           <FolderArchive size={14} />
@@ -188,10 +149,7 @@ const ContextMenu = ({ x, y, node, onClose, onDelete, onDownload, onExport, t })
           <span>{t('fileTree.download')}</span>
         </button>
       )}
-      <button
-        className="context-menu-item danger"
-        onClick={() => { onDelete(node); onClose() }}
-      >
+      <button className="context-menu-item danger" onClick={() => { onDelete(node); onClose() }}>
         <Trash2 size={14} />
         <span>{t('fileTree.delete')}</span>
       </button>
@@ -199,33 +157,42 @@ const ContextMenu = ({ x, y, node, onClose, onDelete, onDownload, onExport, t })
   )
 }
 
-// Main FileTree component
-const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0 }) => {
+// ── Main component ──────────────────────────────────────────────────────────
+// The tree DATA is treated as a constant snapshot of the workspace.  It is only
+// (re)fetched on real change events — initial mount, project upload, delete, and
+// agent file operations.  Expanding / collapsing / selecting is pure local UI
+// state and never hits the network.
+const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, immediateRefreshTrigger = 0 }) => {
   const { t } = useLanguage()
   const [tree, setTree] = useState([])
-  const [rootPath, setRootPath] = useState(null)
+  const [, setRootPath] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const [expandedFolders, setExpandedFolders] = useState(new Set())
+  const [expandedFolders, setExpandedFolders] = useState(() => new Set())
   const [contextMenu, setContextMenu] = useState(null)
   const [confirmDelete, setConfirmDelete] = useState(null)
-  
-  const debounceTimerRef = useRef(null)
-  const lastFetchTimeRef = useRef(0)
+
+  // Last structure we rendered — skip setState when a refetch is identical so
+  // an in-progress expansion never flickers or collapses.
+  const lastTreeJsonRef = useRef('')
 
   const fetchTree = useCallback(async () => {
     setLoading(true)
     setError(null)
-
     try {
       const response = await fetch('/api/files/tree?max_depth=5')
       const data = await response.json()
-
       if (data.error) {
         setError(data.error)
         setTree([])
+        lastTreeJsonRef.current = ''
       } else {
-        setTree(data.tree || [])
+        const nextTree = data.tree || []
+        const nextJson = JSON.stringify(nextTree)
+        if (nextJson !== lastTreeJsonRef.current) {
+          lastTreeJsonRef.current = nextJson
+          setTree(nextTree)
+        }
         setRootPath(data.root)
       }
     } catch (err) {
@@ -236,72 +203,36 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0 }) => {
     }
   }, [])
 
-  // Debounced wrapper — collapses rapid consecutive triggers into a single
-  // fetch so the agent can fire dozens of tool calls without causing a storm
-  // of HTTP requests and re-renders.  Because the tree is always refreshed
-  // when streaming stops (plus the manual button), a multi-second delay is
-  // perfectly acceptable for a secondary UI panel.
-  const debouncedFetchTree = useCallback(() => {
-    const now = Date.now()
-    const MIN_INTERVAL = 8000   // minimum ms between *actual* fetches  (8 s)
-    const DEBOUNCE_DELAY = 5000 // silence required after last trigger (5 s)
+  // Initial load.
+  useEffect(() => { fetchTree() }, [fetchTree])
 
-    if (debounceTimerRef.current) {
-      clearTimeout(debounceTimerRef.current)
-      debounceTimerRef.current = null
-    }
-
-    const timeSinceLastFetch = now - lastFetchTimeRef.current
-    // Whichever is longer: the cooldown since the last real fetch, or the
-    // silence window after the most recent trigger.
-    const delay = Math.max(
-      MIN_INTERVAL - timeSinceLastFetch,   // cooldown
-      DEBOUNCE_DELAY,                       // silence
-    )
-
-    debounceTimerRef.current = setTimeout(() => {
-      lastFetchTimeRef.current = Date.now()
-      fetchTree()
-      debounceTimerRef.current = null
-    }, delay)
-  }, [fetchTree])
-
-  // Initial load — always immediate (no debounce needed)
+  // Re-fetch on detected file-system changes (agent write/delete/terminal).
   useEffect(() => {
-    fetchTree()
-  }, [fetchTree])
+    if (refreshTrigger > 0) fetchTree()
+  }, [refreshTrigger, fetchTree])
 
-  // Refresh when file system operations are detected (via refreshTrigger).
-  // Uses the debounced variant so a burst of tool results only issues one fetch.
+  // Re-fetch on explicit user actions (project upload).
   useEffect(() => {
-    if (refreshTrigger > 0) {
-      debouncedFetchTree()
-    }
-  }, [refreshTrigger, debouncedFetchTree])
+    if (immediateRefreshTrigger > 0) fetchTree()
+  }, [immediateRefreshTrigger, fetchTree])
 
-  // Also refresh once when streaming stops — catches files created by
-  // terminal commands (pip install, git clone, …) that don't go through
-  // write_file / edit_file / delete_file.  Also uses the debounced path so
-  // it won't fire if a tool-result refresh already happened moments ago.
+  // Re-fetch once when streaming ends (catches terminal-created files).
   const wasStreamingRef = useRef(false)
   useEffect(() => {
     if (isStreaming) {
       wasStreamingRef.current = true
     } else if (wasStreamingRef.current) {
       wasStreamingRef.current = false
-      const timer = setTimeout(debouncedFetchTree, 500)
-      return () => clearTimeout(timer)
+      fetchTree()
     }
-  }, [isStreaming, debouncedFetchTree])
-  
+  }, [isStreaming, fetchTree])
+
+  // ── Pure-local interactions (no network) ──────────────────────────────────
   const toggleFolder = useCallback((path) => {
-    setExpandedFolders(prev => {
+    setExpandedFolders((prev) => {
       const next = new Set(prev)
-      if (next.has(path)) {
-        next.delete(path)
-      } else {
-        next.add(path)
-      }
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
       return next
     })
   }, [])
@@ -328,9 +259,7 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0 }) => {
     a.remove()
   }, [])
 
-  const handleDeleteRequest = useCallback((node) => {
-    setConfirmDelete(node)
-  }, [])
+  const handleDeleteRequest = useCallback((node) => setConfirmDelete(node), [])
 
   const handleDeleteConfirm = useCallback(async () => {
     if (!confirmDelete) return
@@ -338,13 +267,13 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0 }) => {
       const res = await fetch('/api/files/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: confirmDelete.path })
+        body: JSON.stringify({ path: confirmDelete.path }),
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
         alert(err.detail || 'Failed to delete')
       }
-      fetchTree()
+      await fetchTree()
     } catch (err) {
       console.error('Delete failed:', err)
       alert('Delete failed: ' + err.message)
@@ -352,12 +281,12 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0 }) => {
       setConfirmDelete(null)
     }
   }, [confirmDelete, fetchTree])
-  
+
   return (
     <div className="file-tree">
       <div className="file-tree-header">
         <span className="file-tree-title">{t('fileTree.workspace')}</span>
-        <button 
+        <button
           className="file-tree-refresh"
           onClick={fetchTree}
           disabled={loading}
@@ -366,7 +295,7 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0 }) => {
           <RefreshCw size={14} className={loading ? 'spin' : ''} />
         </button>
       </div>
-      
+
       <div className="file-tree-content">
         {loading && tree.length === 0 ? (
           <div className="file-tree-loading">
@@ -386,9 +315,9 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0 }) => {
           </div>
         ) : (
           <div className="file-tree-nodes">
-            {tree.map((node, idx) => (
+            {tree.map((node) => (
               <TreeNode
-                key={node.path || idx}
+                key={node.path}
                 node={node}
                 level={0}
                 onFileClick={onFileClick}
@@ -401,7 +330,6 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0 }) => {
         )}
       </div>
 
-      {/* Context menu */}
       {contextMenu && (
         <ContextMenu
           x={contextMenu.x}
@@ -415,7 +343,6 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0 }) => {
         />
       )}
 
-      {/* Delete confirmation dialog */}
       {confirmDelete && (
         <div className="tree-confirm-overlay" onClick={() => setConfirmDelete(null)}>
           <div className="tree-confirm-dialog" onClick={(e) => e.stopPropagation()}>
