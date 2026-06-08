@@ -37,6 +37,7 @@ export function useFileTracking(conversationId, messages, isStreaming) {
   const [isLoadingFiles, setIsLoadingFiles] = useState(false)
   const [showCodePanel, setShowCodePanel] = useState(false)
   const [fileTreeRefreshTrigger, setFileTreeRefreshTrigger] = useState(0)
+  const [fileTreeImmediateRefreshTrigger, setFileTreeImmediateRefreshTrigger] = useState(0)
   const [isUploading, setIsUploading] = useState(false)
   const uploadInputRef = useRef(null)
   const diffAbortRef = useRef(null)
@@ -205,7 +206,9 @@ export function useFileTracking(conversationId, messages, isStreaming) {
     setIsUploading(true)
     try {
       await uploadWorkspace(fileList)
-      setFileTreeRefreshTrigger(prev => prev + 1)
+      // User-initiated open/upload — refresh the tree right away instead of
+      // waiting on the agent-burst debounce.
+      setFileTreeImmediateRefreshTrigger(prev => prev + 1)
     } catch (err) {
       console.error('Upload failed:', err)
       alert('Upload failed: ' + err.message)
@@ -223,6 +226,7 @@ export function useFileTracking(conversationId, messages, isStreaming) {
     setShowCodePanel,
     isLoadingFiles,
     fileTreeRefreshTrigger,
+    fileTreeImmediateRefreshTrigger,
     isUploading,
     uploadInputRef,
     handleFileClose,
@@ -233,5 +237,6 @@ export function useFileTracking(conversationId, messages, isStreaming) {
     setEditedFiles,
     setClosedFiles,
     setFileTreeRefreshTrigger,
+    setFileTreeImmediateRefreshTrigger,
   }
 }
