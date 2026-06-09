@@ -1,7 +1,7 @@
 """
 Toolset context management — code-interpreter pattern for ToolStore tools.
 
-Mirrors ``context_manager.py``.  Scans message history for ``tool_store``
+Mirrors ``code_interpreter_panel.py``.  Scans message history for ``tool_store``
 calls, discovers which toolsets / MCP servers / skills the agent has
 referenced, and generates a consolidated display block appended to
 tool responses.
@@ -15,7 +15,7 @@ import json
 import re
 from typing import Dict, List, Set
 
-from .context_tracker import Panel
+from .panel_manager import Panel
 from ..config import CONTEXT_DISPLAY_WARN_CHARS, CONTEXT_DISPLAY_MAX_ITEMS
 
 # The panel lives in its own system message now; the heading doubles as the lookup key.
@@ -230,7 +230,7 @@ def _format_signature(name: str, params: Dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Block stripping — mirror context_manager.py
+# Block stripping — mirror code_interpreter_panel.py
 # ---------------------------------------------------------------------------
 
 def strip_toolstore_blocks(content: str) -> str:
@@ -261,7 +261,7 @@ def should_trigger_toolstore_interpreter(tool_name: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# ContextTracker implementation
+# Panel implementation
 # ---------------------------------------------------------------------------
 
 class ToolStorePanel(Panel):

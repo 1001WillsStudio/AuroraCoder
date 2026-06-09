@@ -3,7 +3,7 @@ Native main flow using OpenAI chat completions API with native tool calling.
 
 This is the primary agent loop: messages in → streamed responses out.
 Tool execution is delegated to tool_executor.py; code-interpreter display
-management is delegated to code_tools/context_manager.py.
+management is delegated to code_tools/code_interpreter_panel.py.
 """
 
 import time
@@ -23,10 +23,10 @@ from .config import (
 )
 from .providers import provider_manager
 from .core_tools.tool_store_client import prefetch_primary_tools  # noqa: E402 — redefined in function body
-from .code_tools.context_tracker import get_all as get_context_trackers
-from .code_tools.context_tracker import register
-from .code_tools.context_manager import CodeInterpreterPanel
-from .code_tools.toolset_context_manager import ToolStorePanel
+from .code_tools.panel_manager import get_all
+from .code_tools.panel_manager import register
+from .code_tools.code_interpreter_panel import CodeInterpreterPanel
+from .code_tools.tool_store_panel import ToolStorePanel
 
 # ── Register all Living Tool State trackers ──────────────────────────
 register(CodeInterpreterPanel())
@@ -115,11 +115,9 @@ def generate_chat_responses_stream_native(
     model_name = config["model"]
     extra_body = config.get("extra_body")
     
-    # Strip old context blocks, then rebuild them on tool messages
-    # so the LLM sees current state (open files, toolsets, etc.) before generating
-    for tracker in get_context_trackers():
+    # Strip old context blocks — panels are rebuilt on tool messages
+    for tracker in get_all():
         tracker.clean_previous_blocks(messages)
-        tracker.refresh(messages)
     
     # Get tool definitions (or use override for subagents / force_continuation)
     tools = tools_override if tools_override is not None else get_tool_definitions()
@@ -327,10 +325,11 @@ def generate_chat_responses_stream_native(
             return
 
         # Refresh trackers — append display to the triggering tool's message
-        for tracker in get_context_trackers():
-            idx = triggered_trackers.get(tracker.name)
-            if idx is not None:
-                tracker.refresh(messages, at_index=idx)
+        for tracker in get_all():
+            entry = triggered_trackers.get(tracker.name)
+            if entry is not None:
+                idx, trigger_tool = entry
+                tracker.refresh(messages, at_index=idx, trigger_tool=trigger_tool)
 
         yield {
             "messages": messages,

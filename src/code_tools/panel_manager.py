@@ -48,11 +48,6 @@ class Panel(ABC):
     @abstractmethod
     def trigger_tools(self) -> Set[str]: ...
 
-    @property
-    def block_end(self) -> str:
-        """Closing marker — always empty for panels (the message boundary
-        is the scope).  Kept for compatibility with older tooling."""
-        return ""
 
     @abstractmethod
     def discover(self, messages: List[Dict]) -> object:
@@ -104,21 +99,15 @@ class Panel(ABC):
     # -- block helpers (rarely overridden) ---------------------------------
 
     def strip_blocks(self, content: str) -> str:
-        """Remove all instances of this panel's block from *content*."""
+        """Remove all instances of this panel's heading block from *content*."""
         import re
 
         if not content:
             return content
-        if self.block_end:
-            pattern = re.compile(
-                re.escape(self.heading) + r'.*?' + re.escape(self.block_end),
-                re.DOTALL,
-            )
-        else:
-            pattern = re.compile(
-                re.escape(self.heading) + r'.*$',
-                re.DOTALL,
-            )
+        pattern = re.compile(
+            re.escape(self.heading) + r'.*$',
+            re.DOTALL,
+        )
         cleaned = pattern.sub('', content)
         cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
         return cleaned.strip()
@@ -149,7 +138,7 @@ class Panel(ABC):
 
     # -- full refresh cycle ------------------------------------------------
 
-    def refresh(self, messages: List[Dict], at_index: int | None = None) -> None:
+    def refresh(self, messages: List[Dict], at_index: int | None = None, trigger_tool: str | None = None) -> None:
         """Full refresh: regenerate the panel as a system message.
 
         Discovers current state, renders it, then calls :meth:`update`
@@ -158,6 +147,7 @@ class Panel(ABC):
 
         *at_index* is kept for API compatibility but is no longer used.
         """
+        self._trigger_tool = trigger_tool
         state = self.discover(messages)
         display = self.render(state)
         self.update(messages, display)
