@@ -52,6 +52,7 @@ class ChatRequest(BaseModel):
     messages: Optional[list] = Field(None)
     provider: Optional[str] = Field(None)
     tools: Optional[str] = Field(None)
+    max_iterations: Optional[int] = Field(None)
 
 
 # ============================================================================
@@ -156,7 +157,7 @@ def format_sse_event(event_type: str, data: Any) -> str:
 
 async def stream_chat_response(
     messages: list, conversation_id: str, request: Request,
-    max_iterations: int = 30, provider: Optional[str] = None,
+    max_iterations: int, provider: Optional[str] = None,
     tools_override: Optional[list] = None, restart_shell: bool = False,
 ) -> AsyncGenerator[str, None]:
     cancel_event = threading.Event()
@@ -307,9 +308,11 @@ async def chat(chat_request: ChatRequest, request: Request):
 
     provider = chat_request.provider or DEFAULT_PROVIDER
     tools_override = get_filtered_tools(chat_request.tools) if chat_request.tools else None
+    max_iterations = chat_request.max_iterations or 30
 
     return StreamingResponse(
-        stream_chat_response(messages, conversation_id, request, provider=provider, tools_override=tools_override, restart_shell=is_new),
+        stream_chat_response(messages, conversation_id, request, provider=provider,
+                             max_iterations=max_iterations, tools_override=tools_override, restart_shell=is_new),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache", "Connection": "keep-alive",

@@ -38,6 +38,7 @@ from gateway.settings_store import (
 from gateway.provider_registry import (
     get_available_providers,
     get_default_provider,
+    get_max_iterations,
     sync_tool_env_vars,
 )
 from gateway.workspace import (
@@ -120,6 +121,10 @@ async def proxy_chat(request: Request):
     body_size = len(json.dumps(body)) if body else 0
     cid_tag = (body.get('conversation_id') or 'new')[:8]
     logger.info(f"[proxy] [{cid_tag}...] json_parse={t1-t0:.3f}s body_size={body_size}")
+
+    # ── Inject max_iterations from settings if not already set ───
+    if "max_iterations" not in body:
+        body["max_iterations"] = get_max_iterations()
     conversation_id = body.get("conversation_id") or str(uuid.uuid4())
     body["conversation_id"] = conversation_id
 
