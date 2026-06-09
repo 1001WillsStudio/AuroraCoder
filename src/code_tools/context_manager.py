@@ -47,13 +47,24 @@ def discover_open_files(messages: List[Dict]) -> Set[str]:
                     continue
                     
                 tool_name = tc["function"].get("name", "")
-                args_str = tc["function"].get("arguments", "{}")
-                
-                try:
-                    args = json.loads(args_str)
-                except json.JSONDecodeError:
+                args_raw = tc["function"].get("arguments", "{}")
+
+                # Normalise: arguments may already be a dict or a JSON string
+                if isinstance(args_raw, dict):
+                    args = args_raw
+                elif isinstance(args_raw, str):
+                    try:
+                        args = json.loads(args_raw)
+                    except json.JSONDecodeError:
+                        continue
+                else:
                     continue
-                
+
+                # After normalisation args may still be a plain string
+                # (e.g. when the JSON payload is a bare string literal)
+                if not isinstance(args, dict):
+                    continue
+
                 target_file = args.get("target_file")
                 if not target_file:
                     continue
