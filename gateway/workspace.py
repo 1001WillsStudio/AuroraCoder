@@ -9,6 +9,7 @@ The gateway resolves the workspace directory via ``src.config.WORKSPACE_DIR``.
 import logging
 import shutil
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 from typing import Dict, Any, Optional, List
@@ -45,10 +46,14 @@ def snapshot_file(conversation_id: str, file_path: str, content: str):
 
 
 def mark_file_touched(conversation_id: str, file_path: str):
-    """Mark a file as touched (read or written) in this conversation."""
+    """Mark a file as touched (read or written) in this conversation.
+
+    Also invalidates the file-tree cache so the frontend picks up the change.
+    """
     if conversation_id not in files_touched:
         files_touched[conversation_id] = set()
     files_touched[conversation_id].add(file_path)
+    invalidate_tree_cache()
 
 
 def clear_conversation_snapshots(conversation_id: str):
@@ -172,8 +177,61 @@ def get_file_diffs_for_conversation(
 
 
 # ============================================================================
-# File Tree
+# File Tree — with caching to avoid rebuilding on every request
 # ============================================================================
+
+# In-memory cache: rebuilt lazily, invalidated by file writes + a short TTL
+# (the TTL catches file changes made by terminal commands that bypass
+# mark_file_touched).
+_tree_cache: Dict[str, Any] = {
+    "tree": [],          # cached tree list
+    "root": "",          # root path string (cache key)
+    "timestamp": 0.0,    # time.time() when built
+    "version": 0,        # monotonic counter (useful for ETag)
+}
+_tree_cache_ttl = 5.0     # seconds — safety net for terminal-created files
+_files_changed = True      # start True to force initial build
+
+
+def invalidate_tree_cache():
+    """Invalidate the file-tree cache (called whenever a file write is detected)."""
+    global _files_changed
+    _files_changed = True
+
+
+def get_cached_file_tree(
+    directory: Path,
+    base_path: Path,
+    max_depth: int = 5,
+) -> tuple:
+    """Return (tree, root_str, version) — with caching.
+
+    Rebuilds the tree only when *directory* has changed (cached root
+    differs) OR the cache was explicitly invalidated OR the TTL expired.
+    """
+    global _tree_cache, _files_changed
+
+    now = time.time()
+    root_str = str(directory)
+    cache_hit = (
+        not _files_changed
+        and _tree_cache["tree"]
+        and _tree_cache["root"] == root_str
+        and (now - _tree_cache["timestamp"]) < _tree_cache_ttl
+    )
+
+    if cache_hit:
+        return _tree_cache["tree"], _tree_cache["root"], _tree_cache["version"]
+
+    # Rebuild
+    tree = build_file_tree(directory, base_path, max_depth)
+    _tree_cache["tree"] = tree
+    _tree_cache["root"] = root_str
+    _tree_cache["timestamp"] = now
+    _tree_cache["version"] += 1
+    _files_changed = False
+
+    return tree, root_str, _tree_cache["version"]
 
 def build_file_tree(
     directory: Path,
