@@ -2,7 +2,7 @@ import re
 import httplib2
 from googleapiclient.discovery import build
 from urllib.parse import urlparse
-from typing import Any, List, Dict
+from typing import Any, List, Dict, Tuple
 
 from ..config import proxy_host, proxy_port, DOCKER_MODE
 
@@ -70,22 +70,23 @@ def _get_google_config():
     return api_key, cse_id
 
 
-def search_for_llm(search_term: str) -> str:
+def search_for_llm(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    search_term = arguments["search_term"]
     my_api_key, my_cse_id = _get_google_config()
     if not my_api_key or not my_cse_id:
         return (
             "Google Search is not configured. "
             "Set GOOGLE_SEARCH_API_KEY and GOOGLE_CSE_ID in Settings "
             "or via environment variables."
-        )
+        ), arguments
     results: List[Dict[str, Any]] = google_search(search_term, my_api_key, my_cse_id, num=10)
 
     if not results:
-        return f"Google search for \"{search_term}\" did not find any results."
+        return f"Google search for \"{search_term}\" did not find any results.", arguments
 
     # Format results for LLM
     formatted_output: str = format_for_llm(results, search_term)
-    return formatted_output
+    return formatted_output, arguments
 
 
 # Example usage
