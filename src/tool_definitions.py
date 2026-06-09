@@ -18,6 +18,7 @@ from .code_tools.file_operations import (
     list_dir_tool,
     file_search_tool,
     close_file_tool,
+    execute_edit_file,
 )
 # from .code_tools.grep_search import grep_search_tool  # COMMENTED OUT — agent can use terminal grep
 from .code_tools.terminal_runner import run_terminal_cmd_tool
@@ -451,9 +452,17 @@ def get_tool_function_map() -> Dict[str, Any]:
     return TOOL_FUNCTION_MAP
 
 
-def execute_tool_call(tool_name: str, arguments: Dict[str, Any], tool_call_id: str | None = None) -> str:
+def execute_tool_call(tool_name: str, arguments: Dict[str, Any], tool_call_id: str | None = None):
     """
     Executes a tool call with the given arguments.
+
+    Every tool execution returns a (canonical_arguments, result) pair:
+      * ``canonical_arguments`` is the argument dict that should be recorded
+        for this tool call. For most tools it is the input ``arguments``
+        unchanged. For ``edit_file`` it is the exact applied form (line numbers
+        resolved, ``[TO]`` normalised, indent fixed) so conversation history
+        reflects what actually ran.
+      * ``result`` is the string result from the tool execution.
 
     Args:
         tool_name: Name of the tool to execute
@@ -461,24 +470,25 @@ def execute_tool_call(tool_name: str, arguments: Dict[str, Any], tool_call_id: s
         tool_call_id: Optional id of the tool call (used by subagent to link events)
 
     Returns:
-        String result from the tool execution
+        Tuple of (canonical_arguments: Dict, result: str)
     """
-    if tool_name not in TOOL_FUNCTION_MAP:
-        # Not a native tool — try the ToolStore (primary tools).
-        # Primary tool schemas are injected at startup so the LLM calls
-        # them directly; this catch‑all routes those calls to the right
-        # backend without needing per‑tool registration.
-        try:
-            from .core_tools.tool_store_client import execute_tool_direct
-            return execute_tool_direct(tool_name, arguments)
-        except Exception as e:
-            return f"Error: Unknown tool '{tool_name}' — {e}"
+    # edit_file reconstructs (auto-corrects) its own tool call from the applied
+    # edit form; this is the canonical example of the per-tool correction the
+    # contract supports.
+    if tool_name == "edit_file":
+        result, applied_arguments = execute_edit_file(arguments)
+        return applied_arguments, result
 
-    try:
-        function = TOOL_FUNCTION_MAP[tool_name]
-        if tool_name == "subagent" and tool_call_id:
-            arguments = {**arguments, "tool_call_id": tool_call_id}
-        result = function(**arguments)
-        return str(result)
-    except Exception as e:
-        return f"Error executing tool '{tool_name}': {str(e)}"
+    if tool_name not in TOOL_FUNCTION_MAP:
+        # Not a native tool — route to the ToolStore (primary tools). Their
+        # schemas are injected at startup so the LLM calls them like any other.
+        from .core_tools.tool_store_client import execute_tool_direct
+        return arguments, execute_tool_direct(tool_name, arguments)
+
+    function = TOOL_FUNCTION_MAP[tool_name]
+    call_args = arguments
+    if tool_name == "subagent" and tool_call_id:
+        # Inject the id for execution only; never record it on the call.
+        call_args = {**arguments, "tool_call_id": tool_call_id}
+    result = function(**call_args)
+    return arguments, str(result)
