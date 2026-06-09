@@ -5,9 +5,8 @@ from typing import Optional, List
 
 from ..code_sandbox import WORKSPACE
 
-# Constants for code interpreter markers
-CODE_INTERPRETER_START = "<====CODE_INTERPRETER_START====>"
-CODE_INTERPRETER_END   = "<====CODE_INTERPRETER_END====>"
+# The panel lives in its own system message now; the heading doubles as the lookup key.
+CODE_INTERPRETER_START = "# Panel - Code Interpreter"
 
 
 class CodeInterpreter:
@@ -50,7 +49,7 @@ class CodeInterpreter:
             file_sections.append(self.display_single_file(filepath))
 
         combined = "\n\n".join(file_sections)
-        return f"{CODE_INTERPRETER_START}\n{combined}\n{CODE_INTERPRETER_END}"
+        return f"{CODE_INTERPRETER_START}\n{combined}"
 
     def _format_code(self, code: str) -> str:
         """Format code with line numbers."""

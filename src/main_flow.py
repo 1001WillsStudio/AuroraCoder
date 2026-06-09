@@ -25,12 +25,12 @@ from .providers import provider_manager
 from .core_tools.tool_store_client import prefetch_primary_tools  # noqa: E402 — redefined in function body
 from .code_tools.context_tracker import get_all as get_context_trackers
 from .code_tools.context_tracker import register
-from .code_tools.context_manager import FileContextTracker
-from .code_tools.toolset_context_manager import ToolsetContextTracker
+from .code_tools.context_manager import CodeInterpreterPanel
+from .code_tools.toolset_context_manager import ToolStorePanel
 
 # ── Register all Living Tool State trackers ──────────────────────────
-register(FileContextTracker())
-register(ToolsetContextTracker())
+register(CodeInterpreterPanel())
+register(ToolStorePanel())
 from .tool_executor import execute_tool_calls
 from .training_log import record_api_call, load_save_training_flag
 

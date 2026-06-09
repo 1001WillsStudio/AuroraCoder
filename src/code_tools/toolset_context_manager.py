@@ -15,11 +15,11 @@ import json
 import re
 from typing import Dict, List, Set
 
-from .context_tracker import ContextTracker
+from .context_tracker import Panel
 from ..config import CONTEXT_DISPLAY_WARN_CHARS, CONTEXT_DISPLAY_MAX_ITEMS
 
-TOOLSTORE_START = "<====TOOLSTORE_START====>"
-TOOLSTORE_END   = "<====TOOLSTORE_END====>"
+# The panel lives in its own system message now; the heading doubles as the lookup key.
+TOOLSTORE_START = "# Panel - Tool Store"
 
 # Actions that signal the agent is "looking at" a tool (opens it in context)
 _TOOL_OPEN_ACTIONS = {"info", "execute"}
@@ -264,13 +264,12 @@ def should_trigger_toolstore_interpreter(tool_name: str) -> bool:
 # ContextTracker implementation
 # ---------------------------------------------------------------------------
 
-class ToolsetContextTracker(ContextTracker):
-    """Living Tool State tracker for open ToolStore tools."""
+class ToolStorePanel(Panel):
+    """Living Tool State panel for open ToolStore tools."""
 
     name = "toolsets"
     trigger_tools = {"tool_store"}
-    block_start = TOOLSTORE_START
-    block_end = TOOLSTORE_END
+    heading = TOOLSTORE_START
 
     def discover(self, messages):
         return discover_open_tools(messages)
@@ -305,6 +304,6 @@ class ToolsetContextTracker(ContextTracker):
                 f"toolsets you no longer need by calling "
                 f"tool_store(action='close', tool_name='X')."
             )
-        return f"{self.block_start}\n{combined}{hint}\n{self.block_end}"
+        return f"{self.heading}\n{combined}{hint}"
 
 
