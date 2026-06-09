@@ -21,6 +21,8 @@ To check where config is stored at runtime::
     /app/data/toolstore
 """
 
+from typing import Dict, Any, Tuple
+
 try:
     from toolstore.native_tool import (
         tool_store_tool as _raw_tool_store_tool,
