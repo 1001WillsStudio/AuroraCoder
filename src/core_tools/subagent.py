@@ -10,6 +10,7 @@ stoppable — cancelling the parent stream cascades to all active subagents.
 """
 
 import json
+from typing import Dict, Any, Tuple
 import logging
 import os
 import threading
@@ -63,21 +64,23 @@ def cancel_active_subagents(parent_conversation_id: str | None = None) -> None:
         logger.info(f"[subagent] Cancelled child {child_id[:8]}")
 
 
-def run_subagent(
-    task: str,
-    provider_id: str | None = None,
-    tool_call_id: str | None = None,
-) -> str:
+def run_subagent(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     """
     Spawn a subagent that executes *task* autonomously and returns a summary.
 
-    Args:
+    Args are passed as a dict:
         task:  Detailed description of what the subagent should accomplish.
                The subagent has NO knowledge of the parent conversation.
         provider_id: Model provider; defaults to the parent's current provider.
         tool_call_id: The parent's tool_call id for this call, so the frontend
                       can correlate subagent events with the originating tool.
     """
+    task = arguments["task"]
+    provider_id = arguments.get("provider_id")
+    tool_call_id = arguments.get("tool_call_id")
+    # Strip execution-only tool_call_id from the returned arguments
+    arguments = {k: v for k, v in arguments.items() if k != "tool_call_id"}
+
     from ..code_tools.file_operations import _current_conversation_id as parent_cid
 
     tools = "read_only"
@@ -114,7 +117,7 @@ def run_subagent(
                 _active_subagents[child_id] = (cancel_event, resp, parent_cid)
 
         if resp.status_code != 200:
-            return f"Subagent error: conversation server returned {resp.status_code}: {resp.text[:500]}"
+            return f"Subagent error: conversation server returned {resp.status_code}: {resp.text[:500]}", arguments
 
         final_text = ""
         final_status = "unknown"
@@ -144,7 +147,7 @@ def run_subagent(
             logger.info(f"[subagent] Connection closed by cancellation for {child_id[:8]}")
         else:
             logger.exception(f"Subagent HTTP error for {child_id[:8]}")
-            return f"Subagent error: {type(e).__name__}: {e}"
+            return f"Subagent error: {type(e).__name__}: {e}", arguments
 
     finally:
         # Unregister this subagent run
@@ -152,7 +155,7 @@ def run_subagent(
             _active_subagents.pop(child_id, None)
 
     if cancel_event.is_set() and not final_text:
-        return "[Subagent was stopped by user.]"
+        return "[Subagent was stopped by user.]", arguments
 
     if not final_text:
         final_text = f"[Subagent finished with status '{final_status}' but produced no text summary.]"
@@ -163,4 +166,4 @@ def run_subagent(
             + f"\n... [truncated — {len(final_text)} chars total]"
         )
 
-    return final_text
+    return final_text, arguments

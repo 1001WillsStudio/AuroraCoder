@@ -5,7 +5,7 @@ import tempfile
 import json
 import logging
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Callable
+from typing import List, Dict, Any, Optional, Callable, Tuple
 from ..code_sandbox import WORKSPACE
 from . import edit_file as am
 
@@ -595,11 +595,13 @@ class FileOperations:
 
 # --- Public Tool Wrappers ---
 
-def read_file_tool(target_file: str) -> str:
-    return FileOperations().read_file(target_file)
+def read_file_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    return FileOperations().read_file(arguments["target_file"]), arguments
 
-def range_replace_edit_tool(target_file: str, edits: List[Dict[str, Any]]) -> str:
-    return FileOperations().range_replace_edit(target_file, edits)
+def range_replace_edit_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    ops = FileOperations()
+    result = ops.range_replace_edit(arguments["target_file"], arguments["edits"])
+    return result, ops.applied_arguments
 
 
 def execute_edit_file(arguments: Dict[str, Any]):
@@ -618,17 +620,18 @@ def execute_edit_file(arguments: Dict[str, Any]):
     )
     return result, ops.applied_arguments
 
-def full_file_write_tool(target_file: str, code_edit: str) -> str:
-    return FileOperations().full_file_write(target_file, code_edit)
+def full_file_write_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    return FileOperations().full_file_write(arguments["target_file"], arguments["code_edit"]), arguments
 
-def delete_file_tool(target_file: str) -> str:
-    return FileOperations().delete_file(target_file)
+def delete_file_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    return FileOperations().delete_file(arguments["target_file"]), arguments
 
-def list_dir_tool(relative_workspace_path: str = "") -> str:
-    return FileOperations().list_dir(relative_workspace_path)
+def list_dir_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    return FileOperations().list_dir(arguments.get("relative_workspace_path", "")), arguments
 
-def file_search_tool(query: str) -> str:
-    return FileOperations().file_search(query)
+def file_search_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    return FileOperations().file_search(arguments["query"]), arguments
 
-def close_file_tool(target_file: str) -> str:
-    return f"Closed '{target_file}' from code interpreter view."
+def close_file_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    target_file = arguments["target_file"]
+    return f"Closed '{target_file}' from code interpreter view.", arguments

@@ -6,6 +6,7 @@ to replace the previous custom XML-based tool system.
 """
 
 from typing import Dict, List, Any
+import logging
 
 # Import all the tool functions
 from .core_tools.google_search import search_for_llm
@@ -13,7 +14,6 @@ from .core_tools.web_browser import web_fetch
 from .code_tools.file_operations import (
     read_file_tool,
     full_file_write_tool,
-    range_replace_edit_tool,
     delete_file_tool,
     list_dir_tool,
     file_search_tool,
@@ -417,7 +417,7 @@ TOOL_FUNCTION_MAP = {
     "web_browser": web_fetch,
     "read_file": read_file_tool,
     "write_file": full_file_write_tool,
-    "edit_file": range_replace_edit_tool,
+    "edit_file": execute_edit_file,
     "delete_file": delete_file_tool,
     "close_file": close_file_tool,
     "list_directory": list_dir_tool,
@@ -456,13 +456,13 @@ def execute_tool_call(tool_name: str, arguments: Dict[str, Any], tool_call_id: s
     """
     Executes a tool call with the given arguments.
 
-    Every tool execution returns a (canonical_arguments, result) pair:
-      * ``canonical_arguments`` is the argument dict that should be recorded
-        for this tool call. For most tools it is the input ``arguments``
-        unchanged. For ``edit_file`` it is the exact applied form (line numbers
-        resolved, ``[TO]`` normalised, indent fixed) so conversation history
-        reflects what actually ran.
+    Every tool returns a (result, arguments) pair:
+      * ``arguments`` is the argument dict as-applied (hallucinated
+        args dropped, line numbers resolved for edit_file, etc.)
       * ``result`` is the string result from the tool execution.
+
+    All tools share the same uniform interface:
+      function(arguments: Dict) -> (result: str, arguments: Dict)
 
     Args:
         tool_name: Name of the tool to execute
@@ -470,25 +470,36 @@ def execute_tool_call(tool_name: str, arguments: Dict[str, Any], tool_call_id: s
         tool_call_id: Optional id of the tool call (used by subagent to link events)
 
     Returns:
-        Tuple of (canonical_arguments: Dict, result: str)
+        Tuple of (arguments: Dict, result: str)
     """
-    # edit_file reconstructs (auto-corrects) its own tool call from the applied
-    # edit form; this is the canonical example of the per-tool correction the
-    # contract supports.
-    if tool_name == "edit_file":
-        result, applied_arguments = execute_edit_file(arguments)
-        return applied_arguments, result
+    # ── Schema-based argument filtering ──────────────────────────────
+    # Drop any LLM-hallucinated extra arguments that are not declared in
+    # the tool's JSON schema.  This guard runs BEFORE any tool logic.
+    valid_params = _TOOL_VALID_PARAMS.get(tool_name)
+    if valid_params is not None:
+        extra = set(arguments) - valid_params
+        if extra:
+            logging.getLogger(__name__).warning(
+                "Dropping unknown arguments for %s: %s", tool_name, extra,
+            )
+            arguments = {k: v for k, v in arguments.items() if k in valid_params}
 
+    # ── ToolStore routing ────────────────────────────────────────────
     if tool_name not in TOOL_FUNCTION_MAP:
         # Not a native tool — route to the ToolStore (primary tools). Their
         # schemas are injected at startup so the LLM calls them like any other.
         from .core_tools.tool_store_client import execute_tool_direct
         return arguments, execute_tool_direct(tool_name, arguments)
 
+    # ── Uniform native-tool execution ────────────────────────────────
+    # All tools in TOOL_FUNCTION_MAP have signature:
+    #   (arguments: Dict[str, Any]) -> (result: str, arguments: Dict[str, Any])
     function = TOOL_FUNCTION_MAP[tool_name]
-    call_args = arguments
+
+    # Subagent: inject tool_call_id for execution (function strips it from
+    # applied args it returns).
     if tool_name == "subagent" and tool_call_id:
-        # Inject the id for execution only; never record it on the call.
-        call_args = {**arguments, "tool_call_id": tool_call_id}
-    result = function(**call_args)
-    return arguments, str(result)
+        arguments = {**arguments, "tool_call_id": tool_call_id}
+
+    result, arguments = function(arguments)
+    return arguments, result

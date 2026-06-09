@@ -52,18 +52,30 @@ def partition_tool_calls(tool_calls: List[Dict]) -> List[Tuple[bool, List[Dict]]
 def _execute_single_tool(tool_call: Dict) -> Tuple[Dict, str, str]:
     """Execute one tool call and return (tool_call, tool_name, result).
 
-    Every tool execution yields a canonical argument dict (what should be
-    recorded for the call) plus the result string. The tool call is rebuilt
-    from those canonical arguments so conversation history always reflects the
-    parameters that actually ran (notably edit_file's resolved line numbers).
+    Every tool execution yields the applied argument dict plus the result
+    string. The tool call is rebuilt from those arguments so conversation
+    history always reflects the parameters that actually ran (notably
+    edit_file's resolved line numbers).
+
+    Any exception during tool execution is caught and returned as an error
+    result string, so a single misbehaving tool call cannot crash the entire
+    agent workflow.
     """
     tool_name = tool_call["function"]["name"]
-    arguments = json.loads(tool_call["function"]["arguments"])
-    canonical_arguments, result = execute_tool_call(
-        tool_name, arguments, tool_call_id=tool_call.get("id"))
-    tool_call["function"]["arguments"] = json.dumps(
-        canonical_arguments, ensure_ascii=False)
-    return (tool_call, tool_name, result)
+    try:
+        arguments = json.loads(tool_call["function"]["arguments"])
+    except (json.JSONDecodeError, TypeError) as e:
+        return (tool_call, tool_name,
+                f"Error: failed to parse tool call arguments: {str(e)}")
+    try:
+        arguments, result = execute_tool_call(
+            tool_name, arguments, tool_call_id=tool_call.get("id"))
+        tool_call["function"]["arguments"] = json.dumps(
+            arguments, ensure_ascii=False)
+        return (tool_call, tool_name, result)
+    except Exception as e:
+        return (tool_call, tool_name,
+                f"Error executing tool '{tool_name}': {str(e)}")
 
 
 def _check_same_file_edit_guard(
