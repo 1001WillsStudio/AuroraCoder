@@ -452,6 +452,18 @@ def get_tool_function_map() -> Dict[str, Any]:
     return TOOL_FUNCTION_MAP
 
 
+# ── Build the set of valid parameters per tool from NATIVE_TOOL_DEFINITIONS ──
+# This guards against LLM-hallucinated extra arguments.
+def _build_valid_params() -> Dict[str, set]:
+    valid = {}
+    for tdef in NATIVE_TOOL_DEFINITIONS:
+        props = tdef["function"]["parameters"].get("properties", {})
+        valid[tdef["function"]["name"]] = set(props.keys())
+    return valid
+
+_TOOL_VALID_PARAMS: Dict[str, set] = _build_valid_params()
+
+
 def execute_tool_call(tool_name: str, arguments: Dict[str, Any], tool_call_id: str | None = None):
     """
     Executes a tool call with the given arguments.
