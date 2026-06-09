@@ -19,10 +19,13 @@ Usage::
     shell.restart()
 """
 
+import json
 import logging
 import os
+import re
 import subprocess
 import sys
+import time
 import tempfile
 import threading
 import uuid
@@ -73,7 +76,6 @@ def get_python_path() -> Optional[Path]:
         if result.returncode != 0:
             return Path(sys.executable)
 
-        import json
         info = json.loads(result.stdout)
         for env_dir in info.get("envs_dirs", []):
             candidate = Path(env_dir) / DEFAULT_BASE_ENV_NAME / "bin" / "python"
@@ -96,7 +98,6 @@ def get_conda_env_path() -> Optional[Path]:
         )
         if result.returncode != 0:
             return None
-        import json
         info = json.loads(result.stdout)
         for env_dir in info.get("envs_dirs", []):
             p = Path(env_dir) / DEFAULT_BASE_ENV_NAME
@@ -288,7 +289,6 @@ class PersistentShell:
         self._proc.stdin.write(f"{command}\necho {boundary}\n")
         self._proc.stdin.flush()
 
-        import time
         t0 = time.monotonic()
         while time.monotonic() - t0 < timeout:
             line = self._proc.stdout.readline()
@@ -302,7 +302,6 @@ class PersistentShell:
 
     @staticmethod
     def _strip_background_syntax(command: str) -> str:
-        import re
         cmd = command.strip()
         cmd = re.sub(r"^nohup\s+", "", cmd)
         cmd = re.sub(r"(?<!&)&\s*$", "", cmd)
