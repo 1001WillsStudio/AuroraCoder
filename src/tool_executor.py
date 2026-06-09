@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .tool_definitions import execute_tool_call, PARALLEL_SAFE_TOOLS
-from .code_tools.file_operations import maybe_truncate_edits, apply_self_correction
+from .code_tools.file_operations import maybe_truncate_edits
 from .code_tools.context_tracker import triggered_by
 from .config import MAX_TOOL_CONCURRENCY
 
@@ -50,16 +50,19 @@ def partition_tool_calls(tool_calls: List[Dict]) -> List[Tuple[bool, List[Dict]]
 
 
 def _execute_single_tool(tool_call: Dict) -> Tuple[Dict, str, str]:
-    """Execute one tool call and return (tool_call, tool_name, result)."""
+    """Execute one tool call and return (tool_call, tool_name, result).
+
+    Every tool execution yields a canonical argument dict (what should be
+    recorded for the call) plus the result string. The tool call is rebuilt
+    from those canonical arguments so conversation history always reflects the
+    parameters that actually ran (notably edit_file's resolved line numbers).
+    """
     tool_name = tool_call["function"]["name"]
-    try:
-        arguments = json.loads(tool_call["function"]["arguments"])
-    except json.JSONDecodeError as e:
-        return (tool_call, tool_name, f"Error: could not parse tool arguments — {e}")
-    try:
-        result = execute_tool_call(tool_name, arguments, tool_call_id=tool_call.get("id"))
-    except Exception as e:
-        result = f"Error executing tool '{tool_name}': {type(e).__name__}: {e}"
+    arguments = json.loads(tool_call["function"]["arguments"])
+    canonical_arguments, result = execute_tool_call(
+        tool_name, arguments, tool_call_id=tool_call.get("id"))
+    tool_call["function"]["arguments"] = json.dumps(
+        canonical_arguments, ensure_ascii=False)
     return (tool_call, tool_name, result)
 
 
@@ -78,10 +81,7 @@ def _check_same_file_edit_guard(
     tool_name = tool_call["function"]["name"]
     if tool_name != "edit_file":
         return None
-    try:
-        args = json.loads(tool_call["function"]["arguments"])
-    except (json.JSONDecodeError, TypeError):
-        return None
+    args = json.loads(tool_call["function"]["arguments"])
     target = args.get("target_file")
     if not target:
         return None
@@ -131,7 +131,6 @@ def execute_tool_calls(
             # Append in original batch order
             for tc in batch:
                 tc_out, tool_name, result = results_by_id[tc["id"]]
-                result = apply_self_correction(tc_out, result)
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc_out["id"],
@@ -152,7 +151,6 @@ def execute_tool_calls(
                     continue
                 maybe_truncate_edits(tc)
                 tc_out, tool_name, result = _execute_single_tool(tc)
-                result = apply_self_correction(tc_out, result)
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc_out["id"],

@@ -3,7 +3,6 @@ import os
 import shutil
 import tempfile
 import json
-import re
 import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable
@@ -50,34 +49,18 @@ def _notify_file_write(file_path: str):
 
 # --- Edit-file pre/post-processing ---
 
-_EDIT_SELF_CORRECT_RE = re.compile(r'\n?\n?<!--SELF_CORRECT:(.*?)-->', re.DOTALL)
 MAX_EDITS_PER_CALL = 3
 
 
 def maybe_truncate_edits(tc: Dict) -> None:
     if tc["function"]["name"] != "edit_file":
         return
-    try:
-        args = json.loads(tc["function"]["arguments"])
-    except (json.JSONDecodeError, TypeError):
-        return
+    args = json.loads(tc["function"]["arguments"])
     edits = args.get("edits")
-    if not isinstance(edits, list) or len(edits) <= MAX_EDITS_PER_CALL:
+    if len(edits) <= MAX_EDITS_PER_CALL:
         return
     args["edits"] = edits[:MAX_EDITS_PER_CALL]
     tc["function"]["arguments"] = json.dumps(args, ensure_ascii=False)
-
-
-def apply_self_correction(tc: Dict, result: str) -> str:
-    match = _EDIT_SELF_CORRECT_RE.search(result)
-    if not match:
-        return result
-    try:
-        correction = json.loads(match.group(1))
-    except json.JSONDecodeError:
-        return _EDIT_SELF_CORRECT_RE.sub('', result)
-    tc["function"]["arguments"] = json.dumps(correction, ensure_ascii=False)
-    return _EDIT_SELF_CORRECT_RE.sub('', result)
 
 
 # --- Internal anchor-error exception ---
@@ -119,6 +102,14 @@ class FileOperations:
     # -------------------------------------------------------------------
 
     def range_replace_edit(self, target_file: str, edits: List[Dict[str, Any]]) -> str:
+        # Canonical applied arguments exposed for the caller to rebuild the
+        # originating tool call. It starts as the call as-sent and is replaced
+        # with the exact applied form (line numbers resolved, [TO] normalised,
+        # indent fixed) once edits are applied — no result-text marker.
+        self.applied_arguments = {"target_file": target_file, "edits": edits}
+
+        # edit_file deliberately catches its own errors and returns a useful,
+        # model-facing message so the agent can recover on the next turn.
         try:
             file_path = self._resolve_path(target_file)
             if not file_path.exists() or not file_path.is_file():
@@ -131,7 +122,7 @@ class FileOperations:
 
             # ---- Phase 1: validate & resolve each edit ----
             validated = []          # (start_idx, end_idx, replace_content, edit_num)
-            markers = []            # per-edit self-correction marker dicts
+            applied_edits = []      # canonical applied arg form, in original order
             any_corrected = False
             any_indent_fixed = False
 
@@ -139,9 +130,9 @@ class FileOperations:
                 outcome = self._validate_one_edit(i, edit, original_lines, total_lines)
                 if isinstance(outcome, str):          # error message
                     return outcome
-                (s, e, repl, corrected, indent_fixed, marker) = outcome
+                (s, e, repl, corrected, indent_fixed, applied_edit) = outcome
                 validated.append((s, e, repl, i))
-                markers.append(marker)
+                applied_edits.append(applied_edit)
                 any_corrected |= corrected
                 any_indent_fixed |= indent_fixed
 
@@ -193,7 +184,13 @@ class FileOperations:
             os.replace(temp_path, file_path)
             _notify_file_write(target_file)
 
-            return self._build_result(target_file, validated, markers, total_lines,
+            # Replace with the exact applied form (resolved/normalised edits).
+            self.applied_arguments = {
+                "target_file": target_file,
+                "edits": applied_edits,
+            }
+
+            return self._build_result(target_file, validated, total_lines,
                                       new_content, any_indent_fixed, any_corrected,
                                       summaries)
 
@@ -341,10 +338,13 @@ class FileOperations:
     def _validate_one_edit(self, n: int, edit: dict,
                            original_lines, total_lines):
         """Fully validate & resolve a single edit: parse params, resolve
-        start + end anchors (with tolerance + indent auto-fix), build marker.
+        start + end anchors (with tolerance + indent auto-fix), and build the
+        auto-corrected argument form for this edit.
 
-        Returns (start_idx, end_idx, replace_content, corrected, indent_fixed, marker)
-        or an error string.
+        Returns (start_idx, end_idx, replace_content, corrected, indent_fixed,
+        corrected_edit) or an error string. ``corrected_edit`` is the
+        normalised {remove_line_number, content_to_remove, replace_content}
+        dict that should replace the agent's original edit args.
         """
         NO = am._NO_CHANGES
 
@@ -425,7 +425,7 @@ class FileOperations:
 
         corrected = corrected or start_is_multi or end_is_multi
 
-        # ---- 5. Build self-correction marker ----
+        # ---- 5. Build the auto-corrected argument form for this edit ----
         removed = original_lines[start_idx:end_idx + 1]
         sp = removed[0].rstrip('\n')
         ep = removed[-1].rstrip('\n')
@@ -433,16 +433,17 @@ class FileOperations:
             ctr = sp
         else:
             ctr = sp + '\n[TO]\n' + ep
-        marker = {
+        corrected_edit = {
             "remove_line_number": f"{start_idx + 1}-{end_idx + 1}",
             "content_to_remove": ctr,
             "replace_content": replace_content,
         }
 
-        return (start_idx, end_idx, replace_content, corrected, indent_fixed, marker)
+        return (start_idx, end_idx, replace_content, corrected, indent_fixed,
+                corrected_edit)
 
     @staticmethod
-    def _build_result(target_file, validated, markers, total_lines, new_content,
+    def _build_result(target_file, validated, total_lines, new_content,
                       any_indent_fixed, any_corrected, summaries):
         """Format the final human-readable result message."""
         new_total = len(new_content.splitlines())
@@ -462,10 +463,8 @@ class FileOperations:
                       + result)
 
         if any_corrected:
-            correction = {"target_file": target_file, "edits": markers}
             result = ("\u26a0\ufe0f  Original parameters were auto-corrected. "
                       "No action needed from you.\n\n" + result)
-            result += "\n\n<!--SELF_CORRECT:" + json.dumps(correction) + "-->"
 
         return result
 
@@ -601,6 +600,23 @@ def read_file_tool(target_file: str) -> str:
 
 def range_replace_edit_tool(target_file: str, edits: List[Dict[str, Any]]) -> str:
     return FileOperations().range_replace_edit(target_file, edits)
+
+
+def execute_edit_file(arguments: Dict[str, Any]):
+    """Execute an ``edit_file`` call and return ``(result, applied_arguments)``.
+
+    ``applied_arguments`` is the full argument dict in the exact form that was
+    applied to the file (line numbers resolved, ``[TO]`` normalised, indent
+    fixed), or ``None`` if the edit did not complete (e.g. an error). The
+    caller rebuilds the originating tool call from it. This is the structured
+    replacement for the old ``<!--SELF_CORRECT:...-->`` result-text marker.
+    """
+    ops = FileOperations()
+    result = ops.range_replace_edit(
+        arguments.get("target_file"),
+        arguments.get("edits"),
+    )
+    return result, ops.applied_arguments
 
 def full_file_write_tool(target_file: str, code_edit: str) -> str:
     return FileOperations().full_file_write(target_file, code_edit)
