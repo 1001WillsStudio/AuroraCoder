@@ -42,7 +42,7 @@ function ToolActivity({ toolCalls, toolResults, onStopTool, onLoadConversation, 
 
 function ToolActivityItem({ toolCall, result, onStop, onLoadConversation, childConversationId }) {
   const { t } = useLanguage()
-  const [expanded, setExpanded] = useState(true)  // Open by default
+  const [expanded, setExpanded] = useState(false)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const startTimeRef = useRef(Date.now())
   const isComplete = !!result
@@ -51,20 +51,15 @@ function ToolActivityItem({ toolCall, result, onStop, onLoadConversation, childC
   // Track elapsed time for running tools
   useEffect(() => {
     if (isComplete) return
-    
-    // Reset start time when tool starts
     startTimeRef.current = Date.now()
     setElapsedSeconds(0)
-    
     const interval = setInterval(() => {
-      const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000)
-      setElapsedSeconds(elapsed)
+      setElapsedSeconds(Math.floor((Date.now() - startTimeRef.current) / 1000))
     }, 1000)
-    
     return () => clearInterval(interval)
   }, [isComplete, toolCall.id])
   
-  // Parse arguments safely — LLM sometimes produces malformed JSON
+  // Parse arguments safely
   let args = {}
   try {
     const rawArgs = toolCall.arguments
@@ -74,36 +69,24 @@ function ToolActivityItem({ toolCall, result, onStop, onLoadConversation, childC
       args = rawArgs || {}
     }
   } catch (e) {
-    // Downgraded to debug: LLM-generated JSON is occasionally malformed.
-    // This is handled gracefully by falling back to empty args.
     console.debug('[ToolActivityItem] Failed to parse arguments:', e.message)
     args = {}
   }
 
   const config = getToolConfig(toolCall.name, args, result, t)
   
-  // Format elapsed time
   const formatElapsed = (seconds) => {
     if (seconds < 60) return `${seconds}s`
-    const mins = Math.floor(seconds / 60)
-    const secs = seconds % 60
-    return `${mins}m ${secs}s`
+    return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
   }
   
-  // Handle stop click
   const handleStopClick = (e) => {
     e.stopPropagation()
-    if (onStop) {
-      onStop({
-        toolCall,
-        toolName: toolCall.name,
-        elapsedSeconds,
-        config
-      })
-    }
+    if (onStop) onStop({ toolCall, toolName: toolCall.name, elapsedSeconds, config })
   }
   
   const handleHeaderClick = () => {
+    // Subagent header navigates; all other tools toggle result visibility
     if (config.isSubagent && childConversationId && onLoadConversation) {
       onLoadConversation(childConversationId)
     } else if (config.hasExpandedView) {
@@ -111,11 +94,15 @@ function ToolActivityItem({ toolCall, result, onStop, onLoadConversation, childC
     }
   }
 
+  const isClickable = (config.isSubagent && childConversationId) || config.hasExpandedView
+
   return (
     <div className={`tool-activity-item ${isComplete ? (isTerminated ? 'terminated' : 'complete') : 'running'}`}>
       <div
-        className={`tool-activity-header${config.isSubagent && childConversationId ? ' clickable-subagent' : ''}`}
-        onClick={handleHeaderClick}
+        className={`tool-activity-header${isClickable ? ' clickable' : ''}${(config.isSubagent && childConversationId) ? ' clickable-subagent' : ''}`}
+        onClick={isClickable ? handleHeaderClick : undefined}
+        style={isClickable ? undefined : { cursor: 'default' }}
+        title={config.hasExpandedView ? (expanded ? t('tool.hideOutput') : t('tool.showOutput')) : undefined}
       >
         <span className="tool-activity-icon">{config.icon}</span>
         <span className="tool-activity-label">{config.label}</span>
@@ -125,9 +112,14 @@ function ToolActivityItem({ toolCall, result, onStop, onLoadConversation, childC
           <span className="subagent-view-link">{t('tool.viewSubagent')}</span>
         )}
         
-        {/* Elapsed time for running tools */}
         {!isComplete && (
           <span className="tool-activity-elapsed">{formatElapsed(elapsedSeconds)}</span>
+        )}
+        
+        {config.hasExpandedView && (
+          <span className="tool-activity-expand">
+            {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+          </span>
         )}
         
         <span className="tool-activity-status">
@@ -142,7 +134,6 @@ function ToolActivityItem({ toolCall, result, onStop, onLoadConversation, childC
           )}
         </span>
         
-        {/* Stop button for running tools */}
         {!isComplete && onStop && (
           <button 
             className="tool-stop-btn"
@@ -153,15 +144,9 @@ function ToolActivityItem({ toolCall, result, onStop, onLoadConversation, childC
             <span>{t('tool.stop')}</span>
           </button>
         )}
-        
-        {config.hasExpandedView && (
-          <span className="tool-activity-expand">
-            {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-          </span>
-        )}
       </div>
       
-      {expanded && config.hasExpandedView && (
+      {config.hasExpandedView && expanded && (
         <div className="tool-activity-content">
           {config.expandedContent}
         </div>
@@ -182,7 +167,8 @@ function getToolConfig(toolName, args, result, t) {
         icon: <Search size={16} />,
         label: t('tool.searching'),
         detail: `"${args.search_term || 'the web'}"`,
-        hasExpandedView: false
+        hasExpandedView: true,
+        expandedContent: <ResultPreview content={resultContent} />
       }
     
     case 'web_browser':
@@ -190,16 +176,20 @@ function getToolConfig(toolName, args, result, t) {
         icon: <Globe size={16} />,
         label: t('tool.reading'),
         detail: truncateUrl(args.target_url || 'webpage'),
-        hasExpandedView: false
+        hasExpandedView: true,
+        expandedContent: <ResultPreview content={resultContent} />
       }
     
-    case 'read_file':
+    case 'read_file': {
+      const readFiles = normalizeFileList(args.target_file)
       return {
         icon: <Eye size={16} />,
         label: t('tool.readingFile'),
-        detail: args.target_file || 'file',
-        hasExpandedView: false
+        detail: formatFileDetail(readFiles),
+        hasExpandedView: true,
+        expandedContent: <ResultPreview content={resultContent} maxLines={100} />
       }
+    }
     
     case 'write_file':
       return {
@@ -240,20 +230,41 @@ function getToolConfig(toolName, args, result, t) {
         hasExpandedView: false
       }
     
-    case 'close_file':
+    case 'close_file': {
+      // Handle "close all except" (keep) mode
+      if (args.keep != null) {
+        const keepList = normalizeFileList(args.keep)
+        if (keepList.length > 0) {
+          return {
+            icon: <FileText size={16} />,
+            label: t('tool.closingAllExcept'),
+            detail: keepList.join(', '),
+            hasExpandedView: false
+          }
+        }
+        return {
+          icon: <FileText size={16} />,
+          label: t('tool.closingAll'),
+          detail: '',
+          hasExpandedView: false
+        }
+      }
+      const closeFiles = normalizeFileList(args.target_file)
       return {
         icon: <FileText size={16} />,
         label: t('tool.closingFile'),
-        detail: args.target_file || 'file',
+        detail: formatFileDetail(closeFiles),
         hasExpandedView: false
       }
+    }
     
     case 'list_directory':
       return {
         icon: <FolderOpen size={16} />,
         label: t('tool.listingDirectory'),
         detail: args.relative_workspace_path || '/',
-        hasExpandedView: false
+        hasExpandedView: true,
+        expandedContent: <ResultPreview content={resultContent} />
       }
     
     case 'search_files':
@@ -261,7 +272,8 @@ function getToolConfig(toolName, args, result, t) {
         icon: <Search size={16} />,
         label: t('tool.searchingFiles'),
         detail: `"${args.query || ''}"`,
-        hasExpandedView: false
+        hasExpandedView: true,
+        expandedContent: <ResultPreview content={resultContent} />
       }
     
     case 'grep_search':
@@ -269,7 +281,8 @@ function getToolConfig(toolName, args, result, t) {
         icon: <Search size={16} />,
         label: t('tool.searchingInFiles'),
         detail: `"${args.query || ''}"`,
-        hasExpandedView: false
+        hasExpandedView: true,
+        expandedContent: <ResultPreview content={resultContent} />
       }
     
     case 'run_terminal_command':
@@ -295,14 +308,15 @@ function getToolConfig(toolName, args, result, t) {
         icon: <Package size={16} />,
         label: args.action === 'search' ? t('tool.searchingTools') : t('tool.usingTool'),
         detail: args.query || args.tool_name || '',
-        hasExpandedView: false
+        hasExpandedView: true,
+        expandedContent: <ResultPreview content={resultContent} maxLines={80} />
       }
     
     default:
       return {
         icon: <Package size={16} />,
         label: toolName?.replace(/_/g, ' ') || 'Tool',
-        detail: '',
+        detail: defaultToolDetail(args),
         hasExpandedView: false
       }
   }
@@ -452,9 +466,6 @@ function FilePreview({ content, isNew }) {
  * Terminal command preview with output
  */
 function CommandPreview({ command, output }) {
-  const { t } = useLanguage()
-  const [showOutput, setShowOutput] = useState(false)
-  
   return (
     <div className="command-preview">
       <div className="command-line">
@@ -462,17 +473,32 @@ function CommandPreview({ command, output }) {
         <code>{command}</code>
       </div>
       {output && (
-        <>
-          <button 
-            className="command-output-toggle"
-            onClick={() => setShowOutput(!showOutput)}
-          >
-            {showOutput ? t('tool.hideOutput') : t('tool.showOutput')}
-          </button>
-          {showOutput && (
-            <pre className="command-output">{output.slice(0, 2000)}</pre>
-          )}
-        </>
+        <pre className="command-output">{output.slice(0, 2000)}</pre>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Generic result preview — displays tool output content in a scrollable block.
+ */
+function ResultPreview({ content, maxLines }) {
+  const { t } = useLanguage()
+  if (!content) {
+    return <div className="result-preview-empty">{t('tool.noOutput')}</div>
+  }
+  const lines = String(content).split('\n')
+  const truncated = maxLines && lines.length > maxLines
+  const displayLines = truncated ? lines.slice(0, maxLines) : lines
+  return (
+    <div className="result-preview">
+      <pre className="result-preview-content">{
+        displayLines.map((line, i) => (
+          <div key={i} className="result-line">{line || ' '}</div>
+        ))
+      }</pre>
+      {truncated && (
+        <div className="result-preview-more">{t('tool.moreLines', { n: lines.length - maxLines })}</div>
       )}
     </div>
   )
@@ -494,6 +520,42 @@ function truncateUrl(url) {
 function truncateCommand(cmd) {
   if (!cmd) return ''
   return cmd.length > 50 ? cmd.slice(0, 50) + '...' : cmd
+}
+
+/**
+ * Normalize a file argument (string or list) into an array of strings.
+ */
+function normalizeFileList(value) {
+  if (!value) return []
+  if (typeof value === 'string') return [value]
+  if (Array.isArray(value)) return value.filter(v => typeof v === 'string')
+  return []
+}
+
+/**
+ * Format a file list for display in the tool detail line.
+ * Shows all filenames comma-separated so users can see exactly what was read/closed.
+ */
+function formatFileDetail(files) {
+  if (!files || files.length === 0) return 'file'
+  return files.join(', ')
+}
+
+/**
+ * Generate a meaningful detail string for unknown tool args.
+ */
+function defaultToolDetail(args) {
+  if (!args || Object.keys(args).length === 0) return ''
+  // Pick the first string-like arg value as detail
+  for (const [key, value] of Object.entries(args)) {
+    if (typeof value === 'string' && value.length < 80 && value.length > 0) {
+      return value
+    }
+    if (Array.isArray(value) && value.length > 0 && typeof value[0] === 'string') {
+      return value.join(', ')
+    }
+  }
+  return ''
 }
 
 export default ToolActivity

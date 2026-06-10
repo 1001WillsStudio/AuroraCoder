@@ -338,3 +338,42 @@
   max-height: 200px;
   overflow-y: auto;
 }
+
+/* ── Result Preview (generic tool output) ─────────────────── */
+.result-preview {
+  max-height: 350px;
+  overflow-y: auto;
+}
+
+.result-preview-content {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.result-line {
+  padding: 1px 14px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.result-line:nth-child(even) {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.result-preview-more {
+  padding: 8px 14px;
+  color: var(--text-tertiary);
+  font-size: 0.8rem;
+  font-style: italic;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.result-preview-empty {
+  padding: 14px;
+  color: var(--text-tertiary);
+  font-style: italic;
+  font-size: 0.85rem;
+}
