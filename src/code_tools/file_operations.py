@@ -198,7 +198,7 @@ def execute_edit_file(arguments: Dict[str, Any]):
         arguments.get("target_file"),
         arguments.get("edits"),
     )
-    return result, applied
+    return result, applied if applied is not None else arguments
 
 def full_file_write_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     return FileOperations().full_file_write(arguments["target_file"], arguments["code_edit"]), arguments
