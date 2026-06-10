@@ -42,7 +42,7 @@ function ToolActivity({ toolCalls, toolResults, onStopTool, onLoadConversation, 
 
 function ToolActivityItem({ toolCall, result, onStop, onLoadConversation, childConversationId }) {
   const { t } = useLanguage()
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(true)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const startTimeRef = useRef(Date.now())
   const isComplete = !!result
