@@ -209,23 +209,21 @@ def _file_metadata(filepath: str) -> tuple:
 
 
 def manage_visible_files_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
-    """Set exactly which files are visible in the code interpreter.
+    """Manage which files are visible in the code interpreter.
 
-    Declares the FULL set of files the agent wants to see —
-    all other files are closed.  An empty list closes everything.
-    When ``additive=true``, adds to the existing set instead.
-    Returns a summary with line counts for each file.
+    By default ADDS files to whatever is already visible (like read_file).
+    Use close_others=true to close everything else and show only these files.
+    An empty list always closes everything.
+    Returns a summary with line counts.
     """
     files = arguments.get("visible_files", [])
-    additive = arguments.get("additive", False)
+    close_others = arguments.get("close_others", False)
     if isinstance(files, str):
         files = [files]
     if not isinstance(files, list):
         files = []
 
     if not files:
-        if additive:
-            return "No files specified — nothing changed.", arguments
         return "All files closed. No files open.", arguments
 
     lines = []
@@ -240,13 +238,13 @@ def manage_visible_files_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str,
         else:
             lines.append(f"  {f:40s}  {err}")
 
-    if additive:
-        label = f"Added to open files ({len(files)}):"
+    if close_others:
+        label = f"Files now visible ({len(files)}):"
     else:
-        label = f"Files open ({len(files)}):"
+        label = f"Added to visible files ({len(files)}):"
 
     summary = label + "\n" + "\n".join(lines)
-    if not additive and total_lc:
+    if close_others and total_lc:
         summary += f"\nTotal: {total_lc} lines"
 
     return summary, arguments

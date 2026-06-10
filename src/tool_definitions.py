@@ -181,18 +181,18 @@ NATIVE_TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "manage_visible_files",
-            "description": "Sets which files are visible in the code interpreter — these will be the ONLY files you see. Any file not in the list is closed, regardless of what was open before.\n\nExamples:\n- manage_visible_files(visible_files=[\"foo.py\", \"bar.py\"]) → only foo.py and bar.py visible, everything else closed\n- manage_visible_files(visible_files=[\"foo.py\"]) → only foo.py visible, everything else closed\n- manage_visible_files(visible_files=[\"foo.py\"], additive=true) → adds foo.py on top of whatever was already visible\n- manage_visible_files(visible_files=[]) → close everything\n\nThe code interpreter panel shows which files are currently visible with their line counts. To change your working set, copy the ones you still need, drop the rest, and pass the result. Returns a summary with line counts.",
+            "description": "Manages which files are visible in the code interpreter.\n\nBy default ADDS the listed files to whatever is already visible — you can call this multiple times with different files and they accumulate. Use close_others=true when you want to close everything else and show ONLY the listed files (useful for context-switching).\n\nExamples:\n- manage_visible_files(visible_files=[\"foo.py\"]) → adds foo.py on top of what is already visible\n- manage_visible_files(visible_files=[\"foo.py\", \"bar.py\"]) → adds both\n- manage_visible_files(visible_files=[\"foo.py\"], close_others=true) → ONLY foo.py visible, everything else closed\n- manage_visible_files(visible_files=[]) → close everything\n\nThe code interpreter panel shows which files are currently visible with their line counts. Returns a summary with line counts.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "visible_files": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "The complete list of file paths you want visible. All other files are closed. Use an empty array [] to close everything."
+                        "description": "File paths to make visible. By default these are ADDED to whatever is already visible. Use an empty array [] to close everything."
                     },
-                    "additive": {
+                    "close_others": {
                         "type": "boolean",
-                        "description": "If true, ADD these files to what is already visible instead of replacing everything. Use this sparingly — the default (false, full replacement) is clearer and more predictable. Default is false."
+                        "description": "If true, close all other files first, then show ONLY the listed files. Use this to focus on specific files or switch context. Default is false (additive)."
                     }
                 },
                 "required": ["visible_files"]
