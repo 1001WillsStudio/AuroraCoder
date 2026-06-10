@@ -1,16 +1,15 @@
 """
-Context Tracker — the general form of the "Living Tool State" pattern.
+Panel — the general form of the "Living Tool State" display pattern.
 
-Each ContextTracker:
+Each Panel:
   1. Scans message history to discover current state ("what's open?")
   2. Generates a display block with unique start/end markers
   3. Strips stale blocks from previous messages to save context
   4. Registers trigger tools that activate it
 
-This replaces the hardcoded ``code_tool_called`` / ``toolstore_tool_called``
-booleans with a generic registry.  Adding a new living-state context
-(browser tabs, API connections, etc.) means implementing a ContextTracker
-and registering it — zero changes to ``tool_executor.py``.
+Adding a new living-state display (browser tabs, API connections, etc.)
+means implementing a Panel subclass and registering it — zero changes
+to ``tool_executor.py``.
 
 See ``README.md`` §1 "Living Tool State" for the design philosophy.
 """
@@ -25,12 +24,12 @@ from typing import Dict, List, Set
 # ---------------------------------------------------------------------------
 
 
-class ContextTracker(ABC):
-    """One kind of "living state" that the agent manages.
+class Panel(ABC):
+    """One kind of "living state" panel that the agent manages.
 
     Subclasses must provide:
 
-    * ``name`` — unique identifier for this tracker
+    * ``name`` — unique identifier for this panel
     * ``trigger_tools`` — set of tool names that activate it
     * ``block_start`` / ``block_end`` — unique markers for the display block
     * ``discover(messages)`` — scan history, return current state
@@ -59,7 +58,7 @@ class ContextTracker(ABC):
     def discover(self, messages: List[Dict]) -> object:
         """Scan *messages* and return the current state.
 
-        The return type is tracker-specific (e.g. ``Set[str]`` of open
+        The return type is panel-specific (e.g. ``Set[str]`` of open
         files).  It only needs to be understood by ``render()``.
         """
         ...
@@ -76,7 +75,7 @@ class ContextTracker(ABC):
     # -- helpers (rarely overridden) ---------------------------------------
 
     def strip_blocks(self, content: str) -> str:
-        """Remove all instances of this tracker's block from *content*."""
+        """Remove all instances of this panel's block from *content*."""
         import re
 
         if not content:
@@ -109,7 +108,7 @@ class ContextTracker(ABC):
         """Full refresh: clean old blocks, regenerate, append.
 
         If *at_index* is given, the display is appended to that specific
-        tool message (the one that triggered this tracker).  Otherwise
+        tool message (the one that triggered this panel).  Otherwise
         it falls back to the last tool message.
         """
         self.clean_previous_blocks(messages)
@@ -130,22 +129,22 @@ class ContextTracker(ABC):
 # Global registry
 # ---------------------------------------------------------------------------
 
-_registry: Dict[str, ContextTracker] = {}
+_registry: Dict[str, Panel] = {}
 
 
-def register(tracker: ContextTracker) -> None:
-    """Register *tracker* so it participates in the refresh cycle."""
-    _registry[tracker.name] = tracker
+def register(panel: Panel) -> None:
+    """Register *panel* so it participates in the refresh cycle."""
+    _registry[panel.name] = panel
 
 
-def get_all() -> List[ContextTracker]:
-    """Return all registered trackers in insertion order."""
+def get_all() -> List[Panel]:
+    """Return all registered panels in insertion order."""
     return list(_registry.values())
 
 
 def triggered_by(tool_name: str) -> Set[str]:
-    """Return the names of trackers triggered by *tool_name*."""
+    """Return the names of panels triggered by *tool_name*."""
     return {
-        t.name for t in _registry.values()
-        if tool_name in t.trigger_tools
+        p.name for p in _registry.values()
+        if tool_name in p.trigger_tools
     }

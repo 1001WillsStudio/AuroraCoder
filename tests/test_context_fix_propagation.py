@@ -481,12 +481,12 @@ def test_empty_content_to_remove_unchanged():
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Test 12: context_manager discovers files from corrected messages
+# Test 12: code_interpreter_panel discovers files from corrected messages
 # ═══════════════════════════════════════════════════════════════════════
 
-def test_context_manager_sees_corrected_args():
-    """discover_open_files() parses the corrected assistant message args."""
-    from src.code_tools.context_manager import discover_open_files
+def test_code_interpreter_panel_sees_corrected_args():
+    """After edit_file with auto-correction, open files still show the file."""
+    from src.code_tools.code_interpreter_panel import discover_open_files
 
     make_file("_t12.py", "X\nY\nZ\n")
 
@@ -504,7 +504,7 @@ def test_context_manager_sees_corrected_args():
     # discover_open_files must still find the file
     open_files = discover_open_files(messages)
     assert_contains(open_files, "_t12.py",
-                    "context_manager discovers file from corrected message")
+                    "code_interpreter_panel discovers file from corrected message")
 
     # The args in the message are parseable JSON with [TO]
     args = find_assistant_args(messages, "call_1")
@@ -545,8 +545,8 @@ def test_tool_result_no_self_correct_marker():
 # ═══════════════════════════════════════════════════════════════════════
 
 def test_delete_file_removed_from_context():
-    """After delete_file, context_manager does not list the file."""
-    from src.code_tools.context_manager import discover_open_files
+    """After delete_file, code_interpreter_panel does not list the file."""
+    from src.code_tools.code_interpreter_panel import discover_open_files
 
     make_file("_t14.py", "data\n")
 
@@ -651,7 +651,7 @@ if __name__ == "__main__":
         ("multiple tool calls all corrected", test_multiple_tool_calls_all_corrected),
         ("non-edit-file args unchanged", test_read_file_args_unchanged),
         ("empty content_to_remove unchanged", test_empty_content_to_remove_unchanged),
-        ("context_manager sees corrected args", test_context_manager_sees_corrected_args),
+        ("code_interpreter_panel sees corrected args", test_code_interpreter_panel_sees_corrected_args),
         ("tool result has no SELF_CORRECT marker", test_tool_result_no_self_correct_marker),
         ("delete_file removes from context", test_delete_file_removed_from_context),
         ("write_file args unchanged", test_write_file_args_unchanged),

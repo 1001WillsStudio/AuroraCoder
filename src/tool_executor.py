@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .tool_definitions import execute_tool_call, PARALLEL_SAFE_TOOLS
 from .code_tools.file_operations import maybe_truncate_edits
-from .code_tools.context_tracker import triggered_by
+from .code_tools.panel_manager import triggered_by
 from .config import MAX_TOOL_CONCURRENCY
 
 
@@ -118,16 +118,16 @@ def execute_tool_calls(
     Appends tool response messages to `messages` in place.
 
     Returns:
-        Dict mapping ContextTracker name → message index of the
-        tool response that triggered it (last one wins if multiple).
+        Dict mapping Panel name → message index of the tool response
+        that triggered it (last one wins if multiple).
     """
     triggered: Dict[str, int] = {}
     files_edited_this_turn: set = set()
 
     def _mark(tool_name: str):
         nonlocal triggered
-        for tracker_name in triggered_by(tool_name):
-            triggered[tracker_name] = len(messages) - 1  # index just appended
+        for panel_name in triggered_by(tool_name):
+            triggered[panel_name] = len(messages) - 1  # index just appended
 
     for is_safe, batch in partition_tool_calls(current_tool_calls):
         if is_safe and len(batch) > 1:

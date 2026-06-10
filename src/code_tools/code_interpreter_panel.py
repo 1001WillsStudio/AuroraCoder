@@ -11,7 +11,7 @@ import re
 from typing import Dict, List, Set
 
 from .code_interpreter import code_interpreter, CODE_INTERPRETER_START, CODE_INTERPRETER_END
-from .context_tracker import ContextTracker
+from .panel_manager import Panel
 from ..code_sandbox import WORKSPACE
 from ..config import CONTEXT_DISPLAY_WARN_CHARS, CONTEXT_DISPLAY_MAX_ITEMS
 
@@ -174,11 +174,11 @@ def generate_consolidated_interpreter_display(messages: List[Dict]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# ContextTracker implementation
+# Panel implementation
 # ---------------------------------------------------------------------------
 
-class FileContextTracker(ContextTracker):
-    """Living Tool State tracker for workspace files."""
+class CodeInterpreterPanel(Panel):
+    """Living Tool State panel for workspace files."""
 
     name = "files"
     trigger_tools = CODE_RELATED_TOOLS | FILE_REMOVAL_TOOLS

@@ -1,8 +1,8 @@
 """
-Toolset context management — code-interpreter pattern for ToolStore tools.
+Tool Store panel — code-interpreter pattern for ToolStore tools.
 
-Mirrors ``context_manager.py``.  Scans message history for ``tool_store``
-calls, discovers which toolsets / MCP servers / skills the agent has
+Mirrors ``code_interpreter_panel.py``.  Scans message history for ``tool_store``
+calls, discovers which tools / MCP servers / skills the agent has
 referenced, and generates a consolidated display block appended to
 tool responses.
 
@@ -15,7 +15,7 @@ import json
 import re
 from typing import Dict, List, Set
 
-from .context_tracker import ContextTracker
+from .panel_manager import Panel
 
 try:
     from toolstore.native_tool import tool_store_tool as _raw_ts
@@ -239,7 +239,7 @@ def _format_signature(name: str, params: Dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Block stripping — mirror context_manager.py
+# Block stripping — mirror code_interpreter_panel.py
 # ---------------------------------------------------------------------------
 
 def strip_toolstore_blocks(content: str) -> str:
@@ -270,11 +270,11 @@ def should_trigger_toolstore_interpreter(tool_name: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# ContextTracker implementation
+# Panel implementation
 # ---------------------------------------------------------------------------
 
-class ToolsetContextTracker(ContextTracker):
-    """Living Tool State tracker for open ToolStore tools."""
+class ToolStorePanel(Panel):
+    """Living Tool State panel for open ToolStore tools."""
 
     name = "toolsets"
     trigger_tools = {"tool_store"}
