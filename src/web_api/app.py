@@ -7,6 +7,7 @@ have been moved to ``gateway/api.py`` (port 8081, internal).
 """
 
 import json
+import uuid
 import asyncio
 import logging
 import threading
