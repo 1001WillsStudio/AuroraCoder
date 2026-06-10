@@ -117,7 +117,7 @@ NATIVE_TOOL_DEFINITIONS = [
                     "focus": {
                         "type": "boolean",
                         "description": "If true, close ALL other open files and keep only the specified file(s) open. Use to reset your workspace view to specific files. Default is false (additive open).",
-                        "default": false
+                        "default": False
                     }
                 },
                 "required": ["target_file"]
