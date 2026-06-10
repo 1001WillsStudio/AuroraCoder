@@ -10,6 +10,7 @@ circular import works safely at import time.
 import asyncio
 import io
 import json
+import logging
 import subprocess
 import os
 import shutil
