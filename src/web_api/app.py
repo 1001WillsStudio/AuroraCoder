@@ -16,6 +16,7 @@ from typing import Optional, Dict, Any, AsyncGenerator, List
 from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
 
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,11 +24,10 @@ from pydantic import BaseModel, Field
 
 from ..main_flow import generate_chat_responses_stream_native
 from ..code_sandbox import shell, get_workspace, WORKSPACE
-from ..code_tools.file_operations import set_file_tracking_callbacks, set_current_conversation
 from ..core_tools.subagent import cancel_active_subagents
 from ..config import DEFAULT_PROVIDER
-
 from ..providers import provider_manager
+from ..tool_definitions import NATIVE_TOOL_DEFINITIONS, SUBAGENT_READ_ONLY_TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,7 @@ class ChatRequest(BaseModel):
     messages: Optional[list] = Field(None)
     provider: Optional[str] = Field(None)
     tools: Optional[str] = Field(None)
+    max_iterations: Optional[int] = Field(None)
 
 
 # ============================================================================
@@ -89,7 +90,6 @@ def unregister_stream(conversation_id: str, cancel_event: threading.Event):
 # ============================================================================
 
 def get_filtered_tools(mode: str):
-    from ..tool_definitions import NATIVE_TOOL_DEFINITIONS, SUBAGENT_READ_ONLY_TOOLS
     defs = []
     for td in NATIVE_TOOL_DEFINITIONS:
         name = td["function"]["name"]
@@ -156,7 +156,7 @@ def format_sse_event(event_type: str, data: Any) -> str:
 
 async def stream_chat_response(
     messages: list, conversation_id: str, request: Request,
-    max_iterations: int = 30, provider: Optional[str] = None,
+    max_iterations: int, provider: Optional[str] = None,
     tools_override: Optional[list] = None, restart_shell: bool = False,
 ) -> AsyncGenerator[str, None]:
     cancel_event = threading.Event()
@@ -182,6 +182,7 @@ async def stream_chat_response(
                 for response in generate_chat_responses_stream_native(
                     messages=messages, max_iterations=max_iterations,
                     provider_id=provider, tools_override=tools_override,
+                    conversation_id=conversation_id,
                 ):
                     if cancel_event.is_set():
                         break
@@ -296,7 +297,6 @@ async def reload_providers():
 @app.post("/api/chat")
 async def chat(chat_request: ChatRequest, request: Request):
     conversation_id = chat_request.conversation_id or str(uuid.uuid4())
-    set_current_conversation(conversation_id)
     is_new = not chat_request.conversation_id
     if is_new:
         pass  # File tracking is now handled by gateway/_track_file_changes (SSE scanning)
@@ -307,9 +307,11 @@ async def chat(chat_request: ChatRequest, request: Request):
 
     provider = chat_request.provider or DEFAULT_PROVIDER
     tools_override = get_filtered_tools(chat_request.tools) if chat_request.tools else None
+    max_iterations = chat_request.max_iterations or 30
 
     return StreamingResponse(
-        stream_chat_response(messages, conversation_id, request, provider=provider, tools_override=tools_override, restart_shell=is_new),
+        stream_chat_response(messages, conversation_id, request, provider=provider,
+                             max_iterations=max_iterations, tools_override=tools_override, restart_shell=is_new),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache", "Connection": "keep-alive",

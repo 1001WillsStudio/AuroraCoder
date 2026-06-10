@@ -5,6 +5,8 @@ This module defines all available tools in the standard OpenAI function calling 
 to replace the previous custom XML-based tool system.
 """
 
+import copy
+import logging
 from typing import Dict, List, Any
 
 # Import all the tool functions
@@ -13,15 +15,19 @@ from .core_tools.web_browser import web_fetch
 from .code_tools.file_operations import (
     read_file_tool,
     full_file_write_tool,
-    range_replace_edit_tool,
     delete_file_tool,
     list_dir_tool,
     file_search_tool,
     close_file_tool,
+    execute_edit_file,
 )
 # from .code_tools.grep_search import grep_search_tool  # COMMENTED OUT — agent can use terminal grep
 from .code_tools.terminal_runner import run_terminal_cmd_tool
-from .core_tools.tool_store_client import tool_store_tool
+from .core_tools.tool_store_client import (
+    tool_store_tool,
+    get_primary_tool_schemas,
+    execute_tool_direct,
+)
 from .core_tools.subagent import run_subagent
 from .core_tools.continue_chat import continue_as_new_chat
 
@@ -416,7 +422,7 @@ TOOL_FUNCTION_MAP = {
     "web_browser": web_fetch,
     "read_file": read_file_tool,
     "write_file": full_file_write_tool,
-    "edit_file": range_replace_edit_tool,
+    "edit_file": execute_edit_file,
     "delete_file": delete_file_tool,
     "close_file": close_file_tool,
     "list_directory": list_dir_tool,
@@ -436,10 +442,8 @@ def get_tool_definitions() -> List[Dict[str, Any]]:
     whose function schemas are injected directly so the LLM can call them
     like any other native tool.
     """
-    import copy
     tools = copy.deepcopy(NATIVE_TOOL_DEFINITIONS)
     try:
-        from .core_tools.tool_store_client import get_primary_tool_schemas
         tools.extend(get_primary_tool_schemas())
     except Exception:
         pass
@@ -451,9 +455,29 @@ def get_tool_function_map() -> Dict[str, Any]:
     return TOOL_FUNCTION_MAP
 
 
-def execute_tool_call(tool_name: str, arguments: Dict[str, Any], tool_call_id: str | None = None) -> str:
+# ── Build the set of valid parameters per tool from NATIVE_TOOL_DEFINITIONS ──
+# This guards against LLM-hallucinated extra arguments.
+def _build_valid_params() -> Dict[str, set]:
+    valid = {}
+    for tdef in NATIVE_TOOL_DEFINITIONS:
+        props = tdef["function"]["parameters"].get("properties", {})
+        valid[tdef["function"]["name"]] = set(props.keys())
+    return valid
+
+_TOOL_VALID_PARAMS: Dict[str, set] = _build_valid_params()
+
+
+def execute_tool_call(tool_name: str, arguments: Dict[str, Any], tool_call_id: str | None = None, conversation_id: str | None = None):
     """
     Executes a tool call with the given arguments.
+
+    Every tool returns a (result, arguments) pair:
+      * ``arguments`` is the argument dict as-applied (hallucinated
+        args dropped, line numbers resolved for edit_file, etc.)
+      * ``result`` is the string result from the tool execution.
+
+    All tools share the same uniform interface:
+      function(arguments: Dict) -> (result: str, arguments: Dict)
 
     Args:
         tool_name: Name of the tool to execute
@@ -461,24 +485,39 @@ def execute_tool_call(tool_name: str, arguments: Dict[str, Any], tool_call_id: s
         tool_call_id: Optional id of the tool call (used by subagent to link events)
 
     Returns:
-        String result from the tool execution
+        Tuple of (arguments: Dict, result: str)
     """
-    if tool_name not in TOOL_FUNCTION_MAP:
-        # Not a native tool — try the ToolStore (primary tools).
-        # Primary tool schemas are injected at startup so the LLM calls
-        # them directly; this catch‑all routes those calls to the right
-        # backend without needing per‑tool registration.
-        try:
-            from .core_tools.tool_store_client import execute_tool_direct
-            return execute_tool_direct(tool_name, arguments)
-        except Exception as e:
-            return f"Error: Unknown tool '{tool_name}' — {e}"
+    # ── Schema-based argument filtering ──────────────────────────────
+    # Drop any LLM-hallucinated extra arguments that are not declared in
+    # the tool's JSON schema.  This guard runs BEFORE any tool logic.
+    valid_params = _TOOL_VALID_PARAMS.get(tool_name)
+    if valid_params is not None:
+        extra = set(arguments) - valid_params
+        if extra:
+            logging.getLogger(__name__).warning(
+                "Dropping unknown arguments for %s: %s", tool_name, extra,
+            )
+            arguments = {k: v for k, v in arguments.items() if k in valid_params}
 
-    try:
-        function = TOOL_FUNCTION_MAP[tool_name]
-        if tool_name == "subagent" and tool_call_id:
+    # ── ToolStore routing ────────────────────────────────────────────
+    if tool_name not in TOOL_FUNCTION_MAP:
+        # Not a native tool — route to the ToolStore (primary tools). Their
+        # schemas are injected at startup so the LLM calls them like any other.
+        return arguments, execute_tool_direct(tool_name, arguments)
+
+    # ── Uniform native-tool execution ────────────────────────────────
+    # All tools in TOOL_FUNCTION_MAP have signature:
+    #   (arguments: Dict[str, Any]) -> (result: str, arguments: Dict[str, Any])
+    function = TOOL_FUNCTION_MAP[tool_name]
+
+    # Subagent: inject execution-only metadata.  The subagent function strips
+    # tool_call_id and conversation_id from the returned applied args so the
+    # LLM never sees them.
+    if tool_name == "subagent":
+        if tool_call_id:
             arguments = {**arguments, "tool_call_id": tool_call_id}
-        result = function(**arguments)
-        return str(result)
-    except Exception as e:
-        return f"Error executing tool '{tool_name}': {str(e)}"
+        if conversation_id:
+            arguments = {**arguments, "conversation_id": conversation_id}
+
+    result, arguments = function(arguments)
+    return arguments, result

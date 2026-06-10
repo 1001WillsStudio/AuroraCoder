@@ -1,8 +1,8 @@
 """
-Toolset context management — code-interpreter pattern for ToolStore tools.
+Tool Store panel — code-interpreter pattern for ToolStore tools.
 
-Mirrors ``context_manager.py``.  Scans message history for ``tool_store``
-calls, discovers which toolsets / MCP servers / skills the agent has
+Mirrors ``code_interpreter_panel.py``.  Scans message history for ``tool_store``
+calls, discovers which tools / MCP servers / skills the agent has
 referenced, and generates a consolidated display block appended to
 tool responses.
 
@@ -12,11 +12,21 @@ State lives in message history — no separate session objects.
 from __future__ import annotations
 
 import json
-import re
 from typing import Dict, List, Set
 
-from .context_tracker import ContextTracker
+from .panel_manager import Panel
+
+try:
+    from toolstore.native_tool import tool_store_tool as _raw_ts
+except ImportError:
+    _raw_ts = None
+
+try:
+    from toolstore.tool import Tool
+except ImportError:
+    Tool = None
 from ..config import CONTEXT_DISPLAY_WARN_CHARS, CONTEXT_DISPLAY_MAX_ITEMS
+from ..core_tools.tool_store_client import tool_store_tool
 
 TOOLSTORE_START = "<====TOOLSTORE_START====>"
 TOOLSTORE_END   = "<====TOOLSTORE_END====>"
@@ -74,38 +84,6 @@ def discover_open_tools(messages: List[Dict]) -> Set[str]:
 # Display generation
 # ---------------------------------------------------------------------------
 
-def generate_toolstore_display(messages: List[Dict]) -> str:
-    """For every open tool, call ``tool_store(action="info")`` to get raw
-    JSON, format it, and return a consolidated display block.
-
-    Returns an empty string when no tools are open.
-    """
-    open_tools = discover_open_tools(messages)
-    if not open_tools:
-        return ""
-
-    # Use raw tool directly — the wrapper returns short messages for skills
-    from toolstore.native_tool import tool_store_tool as _raw_ts
-
-    sections: List[str] = []
-    for name in sorted(open_tools):
-        raw = _raw_ts(action="info", tool_name=name)
-        try:
-            tool = json.loads(raw) if isinstance(raw, str) else raw
-        except (json.JSONDecodeError, TypeError):
-            continue
-
-        display = _format_tool_display(tool)
-        if display:
-            sections.append(f"### {name}\n{display}")
-
-    if not sections:
-        return ""
-
-    combined = "\n\n".join(sections)
-    return f"{TOOLSTORE_START}\n{combined}\n{TOOLSTORE_END}"
-
-
 def _format_tool_display(tool: Dict) -> str:
     """Dispatch to the correct formatter based on tool type.
 
@@ -113,11 +91,11 @@ def _format_tool_display(tool: Dict) -> str:
     path.  Falls back to the old per-type formatters for backwards
     compatibility when ``toolstore.tool`` is not available.
     """
-    try:
-        from toolstore.tool import Tool
-        return Tool.from_dict(tool).format_display()
-    except (ValueError, ImportError, Exception):
-        pass
+    if Tool is not None:
+        try:
+            return Tool.from_dict(tool).format_display()
+        except (ValueError, Exception):
+            pass
 
     # ── fallback formatters (kept for backwards compatibility) ─────
     ttype = tool.get("type", "")
@@ -170,7 +148,6 @@ def _fmt_mcp(tool: Dict) -> str:
     # We need to call tool_store(search) or access the index directly.
     # For now, show just the tool itself — the full grouping requires
     # the tool_store index which we access via tool_store_tool.
-    from ..core_tools.tool_store_client import tool_store_tool
 
     # Search for tools from this server
     try:
@@ -230,42 +207,11 @@ def _format_signature(name: str, params: Dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Block stripping — mirror context_manager.py
+# Panel implementation
 # ---------------------------------------------------------------------------
 
-def strip_toolstore_blocks(content: str) -> str:
-    """Remove all ``TOOLSTORE_START … TOOLSTORE_END`` blocks from *content*."""
-    if not content:
-        return content
-
-    pattern = re.compile(
-        re.escape(TOOLSTORE_START) + r'.*?' + re.escape(TOOLSTORE_END),
-        re.DOTALL,
-    )
-    cleaned = pattern.sub('', content)
-    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
-    return cleaned.strip()
-
-
-def clean_previous_toolstore_blocks(messages: List[Dict]) -> List[Dict]:
-    """Strip old toolstore blocks from all tool response messages (in-place)."""
-    for msg in messages:
-        if msg.get("role") == "tool" and TOOLSTORE_START in msg.get("content", ""):
-            msg["content"] = strip_toolstore_blocks(msg["content"])
-    return messages
-
-
-def should_trigger_toolstore_interpreter(tool_name: str) -> bool:
-    """Return ``True`` when *tool_name* could change the toolset display."""
-    return tool_name == "tool_store"
-
-
-# ---------------------------------------------------------------------------
-# ContextTracker implementation
-# ---------------------------------------------------------------------------
-
-class ToolsetContextTracker(ContextTracker):
-    """Living Tool State tracker for open ToolStore tools."""
+class ToolStorePanel(Panel):
+    """Living Tool State panel for open ToolStore tools."""
 
     name = "toolsets"
     trigger_tools = {"tool_store"}
@@ -279,7 +225,6 @@ class ToolsetContextTracker(ContextTracker):
         if not state:
             return ""
 
-        from toolstore.native_tool import tool_store_tool as _raw_ts
 
         sections: List[str] = []
         for name in sorted(state):

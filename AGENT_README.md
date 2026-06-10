@@ -274,7 +274,7 @@ continue_as_new_chat() → str
 - Same-file edit guard: cannot edit the same file twice in one turn (line numbers are stale until code interpreter refreshes)
 - All edits in batch are validated before ANY are applied — if any fail, zero edits touch the file
 - Anchor matching uses ±3 line tolerance with two-pass matching (strict then relaxed whitespace)
-- When line numbers are auto-corrected, a `<!--SELF_CORRECT:{...}-->` marker patches the LLM's original tool call in-place so the model only sees successful patterns
+- `edit_file` execution returns the canonical applied arguments via a structured return; the executor rebuilds the LLM's original tool call in-place from them so the model only sees successful patterns (no result-text markers)
 - **SUPER IMPORTANT**: Always get line numbers from the code interpreter display — never use memorised or assumed line numbers
 
 **Example — single-line replacement:**

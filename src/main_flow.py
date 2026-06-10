@@ -3,7 +3,7 @@ Native main flow using OpenAI chat completions API with native tool calling.
 
 This is the primary agent loop: messages in → streamed responses out.
 Tool execution is delegated to tool_executor.py; code-interpreter display
-management is delegated to code_tools/context_manager.py.
+management is delegated to code_tools/code_interpreter_panel.py.
 """
 
 import time
@@ -23,14 +23,14 @@ from .config import (
 )
 from .providers import provider_manager
 from .core_tools.tool_store_client import prefetch_primary_tools  # noqa: E402 — redefined in function body
-from .code_tools.context_tracker import get_all as get_context_trackers
-from .code_tools.context_tracker import register
-from .code_tools.context_manager import FileContextTracker
-from .code_tools.toolset_context_manager import ToolsetContextTracker
+from .code_tools.panel_manager import get_all as get_panels
+from .code_tools.panel_manager import register
+from .code_tools.code_interpreter_panel import CodeInterpreterPanel
+from .code_tools.tool_store_panel import ToolStorePanel
 
-# ── Register all Living Tool State trackers ──────────────────────────
-register(FileContextTracker())
-register(ToolsetContextTracker())
+# ── Register all Living Tool State panels ──────────────────────────
+register(CodeInterpreterPanel())
+register(ToolStorePanel())
 from .tool_executor import execute_tool_calls
 from .training_log import record_api_call, load_save_training_flag
 
@@ -91,6 +91,7 @@ def generate_chat_responses_stream_native(
     max_iterations: int = MAX_ITERATIONS,
     provider_id: Optional[str] = None,
     tools_override: Optional[List[Dict]] = None,
+    conversation_id: str | None = None,
 ) -> Generator[dict, None, None]:
     """
     Handles chat interaction using native OpenAI tool calling with thinking/reasoning support.
@@ -117,9 +118,9 @@ def generate_chat_responses_stream_native(
     
     # Strip old context blocks, then rebuild them on tool messages
     # so the LLM sees current state (open files, toolsets, etc.) before generating
-    for tracker in get_context_trackers():
-        tracker.clean_previous_blocks(messages)
-        tracker.refresh(messages)
+    for panel in get_panels():
+        panel.clean_previous_blocks(messages)
+        panel.refresh(messages)
     
     # Get tool definitions (or use override for subagents / force_continuation)
     tools = tools_override if tools_override is not None else get_tool_definitions()
@@ -307,7 +308,7 @@ def generate_chat_responses_stream_native(
         messages.append(assistant_message)
         
         # Delegate to the tool execution engine
-        triggered_trackers = execute_tool_calls(current_tool_calls, messages)
+        triggered_trackers = execute_tool_calls(current_tool_calls, messages, conversation_id=conversation_id)
 
         # Warn once when estimated context nears the model's window.
         if context_window and current_usage and not _has_continuation_notice_been_shown(messages):
@@ -326,11 +327,11 @@ def generate_chat_responses_stream_native(
             }
             return
 
-        # Refresh trackers — append display to the triggering tool's message
-        for tracker in get_context_trackers():
-            idx = triggered_trackers.get(tracker.name)
+        # Refresh panels — append display to the triggering tool's message
+        for panel in get_panels():
+            idx = triggered_trackers.get(panel.name)
             if idx is not None:
-                tracker.refresh(messages, at_index=idx)
+                panel.refresh(messages, at_index=idx)
 
         yield {
             "messages": messages,

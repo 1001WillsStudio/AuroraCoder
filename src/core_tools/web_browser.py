@@ -8,9 +8,10 @@ Like Claude Code, uses a small/cheap model to process raw page content so only
 a concise summary enters the main agent's context window.
 """
 
+import os
 import time
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 from urllib.parse import urlparse, urljoin
 from collections import OrderedDict
 
@@ -23,6 +24,7 @@ from ..config import (
     DOCKER_MODE, proxy_host, proxy_port,
     WEB_MAX_MARKDOWN_LENGTH, WEB_FETCH_TIMEOUT_S,
     WEB_CACHE_MAX_ENTRIES, WEB_CACHE_TTL_S,
+    MODEL_PROVIDERS, DEFAULT_PROVIDER,
 )
 
 
@@ -31,8 +33,6 @@ def _get_web_secondary_config():
 
     Falls back to the default provider config when env vars are not set.
     """
-    import os
-    from ..config import MODEL_PROVIDERS, DEFAULT_PROVIDER
     default_prov = MODEL_PROVIDERS.get(DEFAULT_PROVIDER, {})
     return {
         "base_url": os.environ.get("WEB_SECONDARY_BASE_URL")
@@ -237,7 +237,9 @@ def _summarize_with_secondary_model(markdown_content: str, prompt: str) -> str:
         return truncated
 
 
-def web_fetch(target_url: str, prompt: str = "") -> str:
+def web_fetch(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    target_url = arguments["target_url"]
+    prompt = arguments.get("prompt", "")
     """
     Fetch a URL, convert HTML to Markdown, and optionally summarize via
     a secondary model.
@@ -255,7 +257,7 @@ def web_fetch(target_url: str, prompt: str = "") -> str:
     try:
         url = _validate_url(target_url)
     except ValueError as exc:
-        return f"Error: {exc}"
+        return f"Error: {exc}", arguments
 
     cache_key = f"{url}||{prompt}"
     cached = _url_cache.get(cache_key)
@@ -266,7 +268,7 @@ def web_fetch(target_url: str, prompt: str = "") -> str:
     try:
         resp = _fetch_with_redirects(url)
     except Exception as exc:
-        return f"Error fetching URL: {exc}"
+        return f"Error fetching URL: {exc}", arguments
 
     redirect_url = resp.headers.get("X-Redirect-Url")
     if redirect_url and resp.status_code in (301, 302, 307, 308):
@@ -276,16 +278,16 @@ def web_fetch(target_url: str, prompt: str = "") -> str:
             f"Redirect: {redirect_url}\n"
             f"Status: {resp.status_code}\n\n"
             f"Please call web_browser again with target_url=\"{redirect_url}\""
-        )
+        ), arguments
 
     if resp.status_code >= 400:
-        return f"HTTP {resp.status_code} — could not fetch {url}"
+        return f"HTTP {resp.status_code} — could not fetch {url}", arguments
 
     content_type = resp.headers.get("Content-Type", "")
     raw_bytes = len(resp.content)
 
     if raw_bytes > MAX_HTTP_CONTENT_LENGTH:
-        return f"Error: Response too large ({raw_bytes:,} bytes, limit is {MAX_HTTP_CONTENT_LENGTH:,})"
+        return f"Error: Response too large ({raw_bytes:,} bytes, limit is {MAX_HTTP_CONTENT_LENGTH:,})", arguments
 
     if "text/html" in content_type:
         markdown_content = _html_to_markdown(resp.text)
@@ -313,4 +315,4 @@ def web_fetch(target_url: str, prompt: str = "") -> str:
     result = header + result_body
     _url_cache.set(cache_key, {"content": result})
 
-    return result
+    return result, arguments

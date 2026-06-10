@@ -194,8 +194,8 @@ The error message is precise: expected vs actual content, surrounding file conte
 
 This is the trick that breaks the cascade:
 
-1. When auto-correcting line numbers, the tool emits a `<!--SELF_CORRECT:{...}-->` marker
-2. The executor strips this marker and **patches the LLM's original tool call in-place** in the conversation history
+1. `edit_file` execution returns the **canonical applied arguments** alongside the result (line numbers resolved, `[TO]` normalised, indent fixed) via a structured return — no markers in the result text
+2. The executor **rebuilds the LLM's original tool call in-place** from those applied arguments in the conversation history
 3. The LLM **never sees the correction** — on the next turn, it reads back its own message and sees the corrected version
 
 > 🎯 **Key insight**: The model only ever sees successful patterns, never its own mistakes. It naturally reinforces correct behavior without explicit training.

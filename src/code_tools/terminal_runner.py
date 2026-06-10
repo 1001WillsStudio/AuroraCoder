@@ -4,7 +4,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 import json
 
 from ..code_sandbox import shell, WORKSPACE
@@ -123,9 +123,12 @@ class TerminalRunner:
             return f"Error executing command: {str(e)}"
 
 
-def run_terminal_cmd_tool(
-    command: str, timeout: int = 30, blocking: bool = True, workspace_root: str = None, new_terminal: bool = False
-) -> str:
+def run_terminal_cmd_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     """Run terminal command tool wrapper."""
-    runner = TerminalRunner(workspace_root=workspace_root)
-    return runner.run_command(command, timeout=timeout, blocking=blocking, new_terminal=new_terminal)
+    runner = TerminalRunner(workspace_root=arguments.get("workspace_root"))
+    return runner.run_command(
+        command=arguments["command"],
+        timeout=arguments.get("timeout", 30),
+        blocking=arguments.get("blocking", True),
+        new_terminal=arguments.get("new_terminal", False),
+    ), arguments

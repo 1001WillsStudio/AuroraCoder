@@ -11,8 +11,8 @@ from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .tool_definitions import execute_tool_call, PARALLEL_SAFE_TOOLS
-from .code_tools.file_operations import maybe_truncate_edits, apply_self_correction
-from .code_tools.context_tracker import triggered_by
+from .code_tools.file_operations import maybe_truncate_edits
+from .code_tools.panel_manager import triggered_by
 from .config import MAX_TOOL_CONCURRENCY
 
 
@@ -49,18 +49,34 @@ def partition_tool_calls(tool_calls: List[Dict]) -> List[Tuple[bool, List[Dict]]
     return batches
 
 
-def _execute_single_tool(tool_call: Dict) -> Tuple[Dict, str, str]:
-    """Execute one tool call and return (tool_call, tool_name, result)."""
+def _execute_single_tool(tool_call: Dict, conversation_id: str | None = None) -> Tuple[Dict, str, str]:
+    """Execute one tool call and return (tool_call, tool_name, result).
+
+    Every tool execution yields the applied argument dict plus the result
+    string. The tool call is rebuilt from those arguments so conversation
+    history always reflects the parameters that actually ran (notably
+    edit_file's resolved line numbers).
+
+    Any exception during tool execution is caught and returned as an error
+    result string, so a single misbehaving tool call cannot crash the entire
+    agent workflow.
+    """
     tool_name = tool_call["function"]["name"]
     try:
         arguments = json.loads(tool_call["function"]["arguments"])
-    except json.JSONDecodeError as e:
-        return (tool_call, tool_name, f"Error: could not parse tool arguments — {e}")
+    except (json.JSONDecodeError, TypeError) as e:
+        return (tool_call, tool_name,
+                f"Error: failed to parse tool call arguments: {str(e)}")
     try:
-        result = execute_tool_call(tool_name, arguments, tool_call_id=tool_call.get("id"))
+        arguments, result = execute_tool_call(
+            tool_name, arguments, tool_call_id=tool_call.get("id"),
+            conversation_id=conversation_id)
+        tool_call["function"]["arguments"] = json.dumps(
+            arguments, ensure_ascii=False)
+        return (tool_call, tool_name, result)
     except Exception as e:
-        result = f"Error executing tool '{tool_name}': {type(e).__name__}: {e}"
-    return (tool_call, tool_name, result)
+        return (tool_call, tool_name,
+                f"Error executing tool '{tool_name}': {str(e)}")
 
 
 def _check_same_file_edit_guard(
@@ -78,10 +94,7 @@ def _check_same_file_edit_guard(
     tool_name = tool_call["function"]["name"]
     if tool_name != "edit_file":
         return None
-    try:
-        args = json.loads(tool_call["function"]["arguments"])
-    except (json.JSONDecodeError, TypeError):
-        return None
+    args = json.loads(tool_call["function"]["arguments"])
     target = args.get("target_file")
     if not target:
         return None
@@ -98,29 +111,30 @@ def _check_same_file_edit_guard(
 def execute_tool_calls(
     current_tool_calls: List[Dict],
     messages: List[Dict],
+    conversation_id: str | None = None,
 ) -> Dict[str, int]:
     """
     Execute tool calls, running concurrent-safe tools in parallel.
     Appends tool response messages to `messages` in place.
 
     Returns:
-        Dict mapping ContextTracker name → message index of the
-        tool response that triggered it (last one wins if multiple).
+        Dict mapping Panel name → message index of the tool response
+        that triggered it (last one wins if multiple).
     """
     triggered: Dict[str, int] = {}
     files_edited_this_turn: set = set()
 
     def _mark(tool_name: str):
         nonlocal triggered
-        for tracker_name in triggered_by(tool_name):
-            triggered[tracker_name] = len(messages) - 1  # index just appended
+        for panel_name in triggered_by(tool_name):
+            triggered[panel_name] = len(messages) - 1  # index just appended
 
     for is_safe, batch in partition_tool_calls(current_tool_calls):
         if is_safe and len(batch) > 1:
             for tc in batch:
                 maybe_truncate_edits(tc)
             futures = {
-                _tool_executor.submit(_execute_single_tool, tc): tc
+                _tool_executor.submit(_execute_single_tool, tc, conversation_id): tc
                 for tc in batch
             }
             # Collect results keyed by tool_call id to preserve original order
@@ -131,7 +145,6 @@ def execute_tool_calls(
             # Append in original batch order
             for tc in batch:
                 tc_out, tool_name, result = results_by_id[tc["id"]]
-                result = apply_self_correction(tc_out, result)
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc_out["id"],
@@ -151,8 +164,7 @@ def execute_tool_calls(
                     _mark(tool_name)
                     continue
                 maybe_truncate_edits(tc)
-                tc_out, tool_name, result = _execute_single_tool(tc)
-                result = apply_self_correction(tc_out, result)
+                tc_out, tool_name, result = _execute_single_tool(tc, conversation_id)
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc_out["id"],

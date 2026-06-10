@@ -1,17 +1,19 @@
 """
-Tests that self-corrections (content_to_remove [TO] normalisation,
-edit truncation, and indent fixes) are propagated back into the
-assistant message stored in conversation history.
+Tests that edit_file self-corrections (content_to_remove [TO] normalisation,
+anchor/line-number shifts, edit truncation, and indent fixes) are propagated
+back into the assistant message stored in conversation history.
 
-The bug: formatted_tool_calls (a shallow copy) was appended to messages
-BEFORE execute_tool_calls ran. apply_self_correction mutated
-current_tool_calls dicts but NOT the copies inside messages.
-
-Fix: main_flow.py now does ``assistant_message["tool_calls"] = current_tool_calls``
-so the shared dicts see every correction automatically.
+By design, the agent must only ever see the *successful*, auto-corrected
+form of its own tool calls. The propagation now happens through a STRUCTURED
+channel: every tool execution returns ``(canonical_arguments, result)``, and
+for ``edit_file`` the canonical arguments are the exact applied form, which the
+executor writes back onto the originating tool call. This replaces the old
+fragile ``<!--SELF_CORRECT:{...}-->`` result-text marker that was re-parsed
+back into the arguments (and could be triggered by unrelated tool output,
+occasionally corrupting the stored arguments).
 
 Run with:
-    cd /workspace/ThinkWithTool && python tests/test_context_fix_propagation.py
+    python tests/test_context_fix_propagation.py
 """
 
 import json
@@ -22,7 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.code_tools.file_operations import apply_self_correction, maybe_truncate_edits
+from src.code_tools.file_operations import maybe_truncate_edits
 from src.tool_executor import execute_tool_calls
 from src.code_sandbox import WORKSPACE
 
@@ -244,7 +246,9 @@ def test_truncate_to_three_edits():
 
     assert_equals(len(args["edits"]), 3,
                   "edits truncated to 3")
-    assert_equals(args["edits"][2]["remove_line_number"], "3",
+    # Tool call is always rebuilt from the canonical applied form, which
+    # normalises single-line ranges to "start-end".
+    assert_equals(args["edits"][2]["remove_line_number"], "3-3",
                   "third edit is the original third (1-indexed)")
 
     os.remove(os.path.join(WORKSPACE, "_t4.py"))
@@ -477,12 +481,12 @@ def test_empty_content_to_remove_unchanged():
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Test 12: context_manager discovers files from corrected messages
+# Test 12: code_interpreter_panel discovers files from corrected messages
 # ═══════════════════════════════════════════════════════════════════════
 
-def test_context_manager_sees_corrected_args():
-    """discover_open_files() parses the corrected assistant message args."""
-    from src.code_tools.context_manager import discover_open_files
+def test_code_interpreter_panel_sees_corrected_args():
+    """After edit_file with auto-correction, open files still show the file."""
+    from src.code_tools.code_interpreter_panel import discover_open_files
 
     make_file("_t12.py", "X\nY\nZ\n")
 
@@ -500,7 +504,7 @@ def test_context_manager_sees_corrected_args():
     # discover_open_files must still find the file
     open_files = discover_open_files(messages)
     assert_contains(open_files, "_t12.py",
-                    "context_manager discovers file from corrected message")
+                    "code_interpreter_panel discovers file from corrected message")
 
     # The args in the message are parseable JSON with [TO]
     args = find_assistant_args(messages, "call_1")
@@ -541,8 +545,8 @@ def test_tool_result_no_self_correct_marker():
 # ═══════════════════════════════════════════════════════════════════════
 
 def test_delete_file_removed_from_context():
-    """After delete_file, context_manager does not list the file."""
-    from src.code_tools.context_manager import discover_open_files
+    """After delete_file, code_interpreter_panel does not list the file."""
+    from src.code_tools.code_interpreter_panel import discover_open_files
 
     make_file("_t14.py", "data\n")
 
@@ -647,7 +651,7 @@ if __name__ == "__main__":
         ("multiple tool calls all corrected", test_multiple_tool_calls_all_corrected),
         ("non-edit-file args unchanged", test_read_file_args_unchanged),
         ("empty content_to_remove unchanged", test_empty_content_to_remove_unchanged),
-        ("context_manager sees corrected args", test_context_manager_sees_corrected_args),
+        ("code_interpreter_panel sees corrected args", test_code_interpreter_panel_sees_corrected_args),
         ("tool result has no SELF_CORRECT marker", test_tool_result_no_self_correct_marker),
         ("delete_file removes from context", test_delete_file_removed_from_context),
         ("write_file args unchanged", test_write_file_args_unchanged),

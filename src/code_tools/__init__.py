@@ -2,7 +2,7 @@
 
 from .file_operations import (
     read_file_tool,
-    range_replace_edit_tool,
+    execute_edit_file,
     full_file_write_tool,
     delete_file_tool,
     list_dir_tool,
@@ -14,7 +14,7 @@ from .terminal_runner import run_terminal_cmd_tool
 
 __all__ = [
     'read_file_tool',
-    'range_replace_edit_tool',
+    'execute_edit_file',
     'full_file_write_tool',
     'delete_file_tool',
     'list_dir_tool',

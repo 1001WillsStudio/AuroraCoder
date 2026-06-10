@@ -8,7 +8,7 @@ Run with:  cd /workspace && python test_edit_file_edge_cases.py
 import sys, os, tempfile, textwrap, traceback
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from src.code_tools.file_operations import range_replace_edit_tool, FileOperations
+from src.code_tools.file_operations import execute_edit_file, FileOperations
 from src.code_tools import edit_file as am
 
 _passed = 0
@@ -76,7 +76,7 @@ def check(name: str, *, ok: bool, file_path: str = None,
 def edit(*, path: str, edits: list, expected_content: str,
          result_contains: str = None, result_not_contains: str = None):
     """Run an edit, verify file content and result message."""
-    result = range_replace_edit_tool(target_file=path, edits=edits)
+    result, _ = execute_edit_file({"target_file": path, "edits": edits})
 
     # Check content
     actual = _read(path)
@@ -306,11 +306,11 @@ def test_tolerance_not_found():
     content = "a\nb\nc\n"
     f = _make_file(content)
     try:
-        result = range_replace_edit_tool(target_file=f, edits=[{
+        result, _ = execute_edit_file({"target_file": f, "edits": [{
             "remove_line_number": "1",
             "content_to_remove": "xyz_NOT_IN_FILE",
             "replace_content": "x",
-        }])
+        }]})
         assert result.startswith("Error"), f"Expected error, got: {result}"
         print("  ✅ tolerance: not found → error")
     finally:
@@ -359,11 +359,11 @@ def test_unmatched_content_error():
     content = "lineA\nlineB\n"
     f = _make_file(content)
     try:
-        result = range_replace_edit_tool(target_file=f, edits=[{
+        result, _ = execute_edit_file({"target_file": f, "edits": [{
             "remove_line_number": "1",
             "content_to_remove": "non_existent",
             "replace_content": "x",
-        }])
+        }]})
         assert result.startswith("Error"), f"Expected error: {result}"
         assert "Not found anywhere" in result, f"Expected 'Not found anywhere' hint: {result}"
         print("  ✅ unmatched content → error with diagnostic hint")
@@ -467,10 +467,10 @@ def test_overlapping_edits_error():
     content = "a\nb\nc\nd\n"
     f = _make_file(content)
     try:
-        result = range_replace_edit_tool(target_file=f, edits=[
+        result, _ = execute_edit_file({"target_file": f, "edits": [
             {"remove_line_number": "2-3", "content_to_remove": "b\nc", "replace_content": "X"},
             {"remove_line_number": "3-4", "content_to_remove": "c\nd", "replace_content": "Y"},
-        ])
+        ]})
         assert "overlaps" in result, f"Expected overlap error: {result}"
         print("  ✅ overlapping edits → error")
     finally:
@@ -559,9 +559,9 @@ def test_no_trailing_newline_preserved():
 # 14. ERROR CASES
 # ===================================================================
 def test_nonexistent_file():
-    result = range_replace_edit_tool(target_file="nonexistent_xyz.txt", edits=[{
+    result, _ = execute_edit_file({"target_file": "nonexistent_xyz.txt", "edits": [{
         "remove_line_number": "1", "content_to_remove": "x", "replace_content": "y",
-    }])
+    }]})
     assert result.startswith("Error"), f"Expected error: {result}"
     print("  ✅ nonexistent file → error")
 
@@ -570,11 +570,11 @@ def test_invalid_line_format():
     content = "a\nb\n"
     f = _make_file(content)
     try:
-        result = range_replace_edit_tool(target_file=f, edits=[{
+        result, _ = execute_edit_file({"target_file": f, "edits": [{
             "remove_line_number": "abc",
             "content_to_remove": "a",
             "replace_content": "x",
-        }])
+        }]})
         assert "must be like '13-15' or '42'" in result, f"Unexpected: {result}"
         print("  ✅ invalid remove_line_number format → error")
     finally:
@@ -585,11 +585,11 @@ def test_start_greater_than_end():
     content = "a\nb\nc\n"
     f = _make_file(content)
     try:
-        result = range_replace_edit_tool(target_file=f, edits=[{
+        result, _ = execute_edit_file({"target_file": f, "edits": [{
             "remove_line_number": "3-1",
             "content_to_remove": "c\na",
             "replace_content": "x",
-        }])
+        }]})
         assert "start_line" in result and "end_line" in result, f"Unexpected: {result}"
         print("  ✅ start_line > end_line → error")
     finally:
@@ -724,11 +724,11 @@ def test_noop_edit():
     content = "same\n"
     f = _make_file(content)
     try:
-        result = range_replace_edit_tool(target_file=f, edits=[{
+        result, _ = execute_edit_file({"target_file": f, "edits": [{
             "remove_line_number": "1",
             "content_to_remove": "same",
             "replace_content": "same",
-        }])
+        }]})
         assert "no change" in result, f"Expected no-change message: {result}"
         print("  ✅ no-op edit → 'no change' message")
     finally:
@@ -829,11 +829,11 @@ def test_indent_auto_fix_deletion():
     content = "    delete_me\n    keep\n"
     f = _make_file(content)
     try:
-        result = range_replace_edit_tool(target_file=f, edits=[{
+        result, _ = execute_edit_file({"target_file": f, "edits": [{
             "remove_line_number": "1",
             "content_to_remove": "  delete_me",   # wrong indent
             "replace_content": "",                 # deletion
-        }])
+        }]})
         # Should still work (delete) but no indent warning since replace is empty
         assert _read(f) == "    keep\n"
         print("  ✅ indent auto-fix: deletion with indent mismatch (no crash)")
@@ -846,11 +846,11 @@ def test_indent_correct_no_warning():
     content = "    hello\n"
     f = _make_file(content)
     try:
-        result = range_replace_edit_tool(target_file=f, edits=[{
+        result, _ = execute_edit_file({"target_file": f, "edits": [{
             "remove_line_number": "1",
             "content_to_remove": "    hello",
             "replace_content": "    world",
-        }])
+        }]})
         assert "Indentation mismatch" not in result
         print("  ✅ indent: correct indent → no warning")
     finally:
