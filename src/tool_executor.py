@@ -49,7 +49,7 @@ def partition_tool_calls(tool_calls: List[Dict]) -> List[Tuple[bool, List[Dict]]
     return batches
 
 
-def _execute_single_tool(tool_call: Dict) -> Tuple[Dict, str, str]:
+def _execute_single_tool(tool_call: Dict, conversation_id: str | None = None) -> Tuple[Dict, str, str]:
     """Execute one tool call and return (tool_call, tool_name, result).
 
     Every tool execution yields the applied argument dict plus the result
@@ -69,7 +69,8 @@ def _execute_single_tool(tool_call: Dict) -> Tuple[Dict, str, str]:
                 f"Error: failed to parse tool call arguments: {str(e)}")
     try:
         arguments, result = execute_tool_call(
-            tool_name, arguments, tool_call_id=tool_call.get("id"))
+            tool_name, arguments, tool_call_id=tool_call.get("id"),
+            conversation_id=conversation_id)
         tool_call["function"]["arguments"] = json.dumps(
             arguments, ensure_ascii=False)
         return (tool_call, tool_name, result)
@@ -110,6 +111,7 @@ def _check_same_file_edit_guard(
 def execute_tool_calls(
     current_tool_calls: List[Dict],
     messages: List[Dict],
+    conversation_id: str | None = None,
 ) -> Dict[str, int]:
     """
     Execute tool calls, running concurrent-safe tools in parallel.
@@ -132,7 +134,7 @@ def execute_tool_calls(
             for tc in batch:
                 maybe_truncate_edits(tc)
             futures = {
-                _tool_executor.submit(_execute_single_tool, tc): tc
+                _tool_executor.submit(_execute_single_tool, tc, conversation_id): tc
                 for tc in batch
             }
             # Collect results keyed by tool_call id to preserve original order
@@ -162,7 +164,7 @@ def execute_tool_calls(
                     _mark(tool_name)
                     continue
                 maybe_truncate_edits(tc)
-                tc_out, tool_name, result = _execute_single_tool(tc)
+                tc_out, tool_name, result = _execute_single_tool(tc, conversation_id)
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc_out["id"],

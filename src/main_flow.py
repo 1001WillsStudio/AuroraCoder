@@ -91,6 +91,7 @@ def generate_chat_responses_stream_native(
     max_iterations: int = MAX_ITERATIONS,
     provider_id: Optional[str] = None,
     tools_override: Optional[List[Dict]] = None,
+    conversation_id: str | None = None,
 ) -> Generator[dict, None, None]:
     """
     Handles chat interaction using native OpenAI tool calling with thinking/reasoning support.
@@ -307,7 +308,7 @@ def generate_chat_responses_stream_native(
         messages.append(assistant_message)
         
         # Delegate to the tool execution engine
-        triggered_trackers = execute_tool_calls(current_tool_calls, messages)
+        triggered_trackers = execute_tool_calls(current_tool_calls, messages, conversation_id=conversation_id)
 
         # Warn once when estimated context nears the model's window.
         if context_window and current_usage and not _has_continuation_notice_been_shown(messages):

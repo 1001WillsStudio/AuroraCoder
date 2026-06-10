@@ -24,7 +24,6 @@ from pydantic import BaseModel, Field
 
 from ..main_flow import generate_chat_responses_stream_native
 from ..code_sandbox import shell, get_workspace, WORKSPACE
-from ..code_tools.file_operations import set_current_conversation
 from ..core_tools.subagent import cancel_active_subagents
 from ..config import DEFAULT_PROVIDER
 from ..providers import provider_manager
@@ -183,6 +182,7 @@ async def stream_chat_response(
                 for response in generate_chat_responses_stream_native(
                     messages=messages, max_iterations=max_iterations,
                     provider_id=provider, tools_override=tools_override,
+                    conversation_id=conversation_id,
                 ):
                     if cancel_event.is_set():
                         break
@@ -297,7 +297,6 @@ async def reload_providers():
 @app.post("/api/chat")
 async def chat(chat_request: ChatRequest, request: Request):
     conversation_id = chat_request.conversation_id or str(uuid.uuid4())
-    set_current_conversation(conversation_id)
     is_new = not chat_request.conversation_id
     if is_new:
         pass  # File tracking is now handled by gateway/_track_file_changes (SSE scanning)

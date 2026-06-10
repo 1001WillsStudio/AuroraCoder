@@ -467,7 +467,7 @@ def _build_valid_params() -> Dict[str, set]:
 _TOOL_VALID_PARAMS: Dict[str, set] = _build_valid_params()
 
 
-def execute_tool_call(tool_name: str, arguments: Dict[str, Any], tool_call_id: str | None = None):
+def execute_tool_call(tool_name: str, arguments: Dict[str, Any], tool_call_id: str | None = None, conversation_id: str | None = None):
     """
     Executes a tool call with the given arguments.
 
@@ -510,10 +510,14 @@ def execute_tool_call(tool_name: str, arguments: Dict[str, Any], tool_call_id: s
     #   (arguments: Dict[str, Any]) -> (result: str, arguments: Dict[str, Any])
     function = TOOL_FUNCTION_MAP[tool_name]
 
-    # Subagent: inject tool_call_id for execution (function strips it from
-    # applied args it returns).
-    if tool_name == "subagent" and tool_call_id:
-        arguments = {**arguments, "tool_call_id": tool_call_id}
+    # Subagent: inject execution-only metadata.  The subagent function strips
+    # tool_call_id and conversation_id from the returned applied args so the
+    # LLM never sees them.
+    if tool_name == "subagent":
+        if tool_call_id:
+            arguments = {**arguments, "tool_call_id": tool_call_id}
+        if conversation_id:
+            arguments = {**arguments, "conversation_id": conversation_id}
 
     result, arguments = function(arguments)
     return arguments, result

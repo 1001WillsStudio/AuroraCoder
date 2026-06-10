@@ -19,7 +19,6 @@ import uuid
 import requests
 
 from ..config import SUBAGENT_MAX_RESULT_CHARS
-from ..code_tools.file_operations import _current_conversation_id as parent_cid
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +78,10 @@ def run_subagent(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     task = arguments["task"]
     provider_id = arguments.get("provider_id")
     tool_call_id = arguments.get("tool_call_id")
-    # Strip execution-only tool_call_id from the returned arguments
-    arguments = {k: v for k, v in arguments.items() if k != "tool_call_id"}
+    parent_conversation_id = arguments.get("conversation_id")
+    # Strip execution-only args from the returned arguments (the LLM never sees these)
+    arguments = {k: v for k, v in arguments.items() if k not in ("tool_call_id", "conversation_id")}
+
 
 
     tools = "read_only"
@@ -90,14 +91,14 @@ def run_subagent(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
 
     # Register this subagent run for external cancellation
     with _active_lock:
-        _active_subagents[child_id] = (cancel_event, None, parent_cid)
+        _active_subagents[child_id] = (cancel_event, None, parent_conversation_id or "")
 
     body: dict = {
         "message": task,
         "conversation_id": child_id,
         "tools": tools,
         "conv_type": "subagent",
-        "parent_id": parent_cid,
+        "parent_id": parent_conversation_id or "",
         "tool_call_id": tool_call_id,
     }
     if provider_id:
@@ -114,7 +115,7 @@ def run_subagent(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
         # Store the response so cancel_active_subagents() can close it
         with _active_lock:
             if child_id in _active_subagents:
-                _active_subagents[child_id] = (cancel_event, resp, parent_cid)
+                _active_subagents[child_id] = (cancel_event, resp, parent_conversation_id or "")
 
         if resp.status_code != 200:
             return f"Subagent error: conversation server returned {resp.status_code}: {resp.text[:500]}", arguments

@@ -12,13 +12,10 @@ from .edit_file import RangeReplaceEditor, maybe_truncate_edits as _maybe_trunca
 
 logger = logging.getLogger(__name__)
 
-# --- File Access Callbacks ---
-_current_conversation_id: Optional[str] = None
-
-
-def set_current_conversation(conversation_id: Optional[str]):
-    global _current_conversation_id
-    _current_conversation_id = conversation_id
+# --- Conversation tracking ---
+# conversation_id is now threaded as a parameter through main_flow →
+# tool_executor → execute_tool_call → subagent.  No module-level
+# global is needed.
 
 
 # --- Edit-file pre/post-processing ---
