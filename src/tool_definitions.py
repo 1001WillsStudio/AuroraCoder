@@ -17,7 +17,7 @@ from .code_tools.file_operations import (
     delete_file_tool,
     list_dir_tool,
     file_search_tool,
-    manage_open_files_tool,
+    manage_visible_files_tool,
     execute_edit_file,
 )
 # from .code_tools.grep_search import grep_search_tool  # COMMENTED OUT — agent can use terminal grep
@@ -180,23 +180,24 @@ NATIVE_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
-            "name": "manage_open_files",
-            "description": "Sets which files are visible in the code interpreter — these will be the ONLY files you see. Any file not in the list is closed, regardless of what was open before.\n\nExamples:\n- manage_open_files(files=[\"foo.py\", \"bar.py\"]) → only foo.py and bar.py visible, everything else closed\n- manage_open_files(files=[\"foo.py\"]) → only foo.py visible, everything else closed\n- manage_open_files(files=[\"foo.py\"], additive=true) → adds foo.py on top of whatever was already open\n- manage_open_files(files=[]) → close everything\n\nThe code interpreter panel shows which files are currently open with their line counts. To change your working set, copy the ones you still need, drop the rest, and pass the result. Returns a summary with line counts.",
+            "name": "manage_visible_files",
+            "description": "Sets which files are visible in the code interpreter — these will be the ONLY files you see. Any file not in the list is closed, regardless of what was open before.\n\nExamples:\n- manage_visible_files(visible_files=[\"foo.py\", \"bar.py\"]) → only foo.py and bar.py visible, everything else closed\n- manage_visible_files(visible_files=[\"foo.py\"]) → only foo.py visible, everything else closed\n- manage_visible_files(visible_files=[\"foo.py\"], additive=true) → adds foo.py on top of whatever was already visible\n- manage_visible_files(visible_files=[]) → close everything\n\nThe code interpreter panel shows which files are currently visible with their line counts. To change your working set, copy the ones you still need, drop the rest, and pass the result. Returns a summary with line counts.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "files": {
+                    "visible_files": {
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "The complete list of file paths you want visible. All other files are closed. Use an empty array [] to close everything."
                     },
                     "additive": {
                         "type": "boolean",
-                        "description": "If true, ADD these files to what is already open instead of replacing everything. Use this sparingly — the default (false, full replacement) is clearer and more predictable. Default is false."
+                        "description": "If true, ADD these files to what is already visible instead of replacing everything. Use this sparingly — the default (false, full replacement) is clearer and more predictable. Default is false."
                     }
                 },
-                "required": ["files"]
+                "required": ["visible_files"]
             }
+        }
     },
     {
         "type": "function",
@@ -384,7 +385,7 @@ NATIVE_TOOL_DEFINITIONS = [
 PARALLEL_SAFE_TOOLS = {
     "list_directory", "search_files",  # "grep_search",  # COMMENTED OUT
     "google_search", "web_browser", "tool_store",
-    "subagent", "manage_open_files",
+    "subagent", "manage_visible_files",
 }
 
 # Tools available to subagents in "read_only" mode.
@@ -393,7 +394,7 @@ PARALLEL_SAFE_TOOLS = {
 # "subagent" itself is excluded by get_filtered_tools() to prevent nesting.
 SUBAGENT_READ_ONLY_TOOLS = {
     "list_directory", "search_files",  # "grep_search",  # COMMENTED OUT
-    "google_search", "web_browser", "manage_open_files",
+    "google_search", "web_browser", "manage_visible_files",
     # "tool_store",  # TODO: candidate — needs review.  Many external APIs
     #                 # are write-capable, so this can bypass subagent safety.
 }
@@ -409,7 +410,7 @@ TOOL_FUNCTION_MAP = {
     "write_file": full_file_write_tool,
     "edit_file": execute_edit_file,
     "delete_file": delete_file_tool,
-    "manage_open_files": manage_open_files_tool,
+    "manage_visible_files": manage_visible_files_tool,
     "list_directory": list_dir_tool,
     "search_files": file_search_tool,
     # "grep_search": grep_search_tool,  # COMMENTED OUT — agent can use terminal grep

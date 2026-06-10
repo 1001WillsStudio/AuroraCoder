@@ -1,7 +1,7 @@
 """
 Code interpreter panel — consolidated, line-numbered file display.
 
-Scans message history for file-touching tool calls (manage_open_files,
+Scans message history for file-touching tool calls (manage_visible_files,
 write, edit, delete), discovers which files the agent is working with,
 and renders a consolidated display block appended to tool responses.
 
@@ -34,7 +34,7 @@ def discover_open_files(messages: List[Dict]) -> Set[str]:
     """
     Scan message history to discover all files that should be displayed.
 
-    ``manage_open_files`` replaces the entire set; ``write_file`` /
+    ``manage_visible_files`` replaces the entire set; ``write_file`` /
     ``edit_file`` auto-add; ``delete_file`` auto-removes.
     Order of tool calls in history matters — later calls override earlier ones.
     """
@@ -62,9 +62,9 @@ def discover_open_files(messages: List[Dict]) -> Set[str]:
                 if not isinstance(args, dict):
                     continue
 
-                # ── ``manage_open_files`` — full set or additive ────
-                if tool_name == "manage_open_files":
-                    files = args.get("files", [])
+                # ── ``manage_visible_files`` — full set or additive ──
+                if tool_name == "manage_visible_files":
+                    files = args.get("visible_files", [])
                     if isinstance(files, str):
                         files = [files]
                     if not isinstance(files, list):
@@ -125,7 +125,7 @@ class CodeInterpreterPanel(Panel):
     """Living Tool State panel for workspace files."""
 
     name = "files"
-    trigger_tools = CODE_RELATED_TOOLS | FILE_REMOVAL_TOOLS | {'manage_open_files'}
+    trigger_tools = CODE_RELATED_TOOLS | FILE_REMOVAL_TOOLS | {'manage_visible_files'}
     block_start = CODE_INTERPRETER_START
     block_end = CODE_INTERPRETER_END
 
@@ -174,7 +174,7 @@ class CodeInterpreterPanel(Panel):
             "\n\nNote: This display shows the LATEST state of each file "
             "with accurate line numbers. Always use these line numbers "
             "for edit_file calls — never use memorised line numbers. "
-            "Use manage_open_files() to set which files are visible — "
+            "Use manage_visible_files() to set which files are visible — "
             "files not listed are removed from this display."
         )
         if len(state) > CONTEXT_DISPLAY_MAX_ITEMS or len(combined) > CONTEXT_DISPLAY_WARN_CHARS:
@@ -182,7 +182,7 @@ class CodeInterpreterPanel(Panel):
             notes += (
                 f"\n\u26a0\ufe0f CONTEXT WARNING: {len(state)} files open "
                 f"({total_lines:,} lines).  "
-                f"Use manage_open_files() to keep only what you need.  "
+                f"Use manage_visible_files() to keep only what you need.  "
                 f"Largest files: "
                 + ", ".join(largest)
                 + "."

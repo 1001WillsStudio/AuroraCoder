@@ -208,7 +208,7 @@ def _file_metadata(filepath: str) -> tuple:
         return (None, "[unreadable]")
 
 
-def manage_open_files_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+def manage_visible_files_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     """Set exactly which files are visible in the code interpreter.
 
     Declares the FULL set of files the agent wants to see —
@@ -216,7 +216,7 @@ def manage_open_files_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, An
     When ``additive=true``, adds to the existing set instead.
     Returns a summary with line counts for each file.
     """
-    files = arguments.get("files", [])
+    files = arguments.get("visible_files", [])
     additive = arguments.get("additive", False)
     if isinstance(files, str):
         files = [files]
