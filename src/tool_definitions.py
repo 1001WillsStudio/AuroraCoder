@@ -5,8 +5,9 @@ This module defines all available tools in the standard OpenAI function calling 
 to replace the previous custom XML-based tool system.
 """
 
-from typing import Dict, List, Any
+import copy
 import logging
+from typing import Dict, List, Any
 
 # Import all the tool functions
 from .core_tools.google_search import search_for_llm
@@ -22,7 +23,11 @@ from .code_tools.file_operations import (
 )
 # from .code_tools.grep_search import grep_search_tool  # COMMENTED OUT — agent can use terminal grep
 from .code_tools.terminal_runner import run_terminal_cmd_tool
-from .core_tools.tool_store_client import tool_store_tool
+from .core_tools.tool_store_client import (
+    tool_store_tool,
+    get_primary_tool_schemas,
+    execute_tool_direct,
+)
 from .core_tools.subagent import run_subagent
 from .core_tools.continue_chat import continue_as_new_chat
 
@@ -437,10 +442,8 @@ def get_tool_definitions() -> List[Dict[str, Any]]:
     whose function schemas are injected directly so the LLM can call them
     like any other native tool.
     """
-    import copy
     tools = copy.deepcopy(NATIVE_TOOL_DEFINITIONS)
     try:
-        from .core_tools.tool_store_client import get_primary_tool_schemas
         tools.extend(get_primary_tool_schemas())
     except Exception:
         pass
@@ -500,7 +503,6 @@ def execute_tool_call(tool_name: str, arguments: Dict[str, Any], tool_call_id: s
     if tool_name not in TOOL_FUNCTION_MAP:
         # Not a native tool — route to the ToolStore (primary tools). Their
         # schemas are injected at startup so the LLM calls them like any other.
-        from .core_tools.tool_store_client import execute_tool_direct
         return arguments, execute_tool_direct(tool_name, arguments)
 
     # ── Uniform native-tool execution ────────────────────────────────

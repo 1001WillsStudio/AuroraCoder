@@ -19,6 +19,7 @@ import uuid
 import requests
 
 from ..config import SUBAGENT_MAX_RESULT_CHARS
+from ..code_tools.file_operations import _current_conversation_id as parent_cid
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,6 @@ def run_subagent(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     # Strip execution-only tool_call_id from the returned arguments
     arguments = {k: v for k, v in arguments.items() if k != "tool_call_id"}
 
-    from ..code_tools.file_operations import _current_conversation_id as parent_cid
 
     tools = "read_only"
 

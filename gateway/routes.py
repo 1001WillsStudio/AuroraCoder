@@ -10,7 +10,7 @@ circular import works safely at import time.
 import asyncio
 import io
 import json
-import logging
+import subprocess
 import os
 import shutil
 import tempfile
@@ -27,7 +27,12 @@ from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from pydantic import BaseModel, Field
 
 from src.config import WORKSPACE_DIR
-from src.code_sandbox import shell
+from src.code_sandbox import shell, WORKSPACE
+
+try:
+    from toolstore.config_manager import ConfigManager
+except ImportError:
+    ConfigManager = None
 
 from gateway.conversation_store import store, strip_task_instruction
 from gateway.settings_store import (
@@ -371,22 +376,19 @@ def _count_tools_in_dict(tools_dict: dict, by_source: dict) -> int:
 @app.get("/api/toolstore/status")
 async def get_toolstore_status():
     """Return tool counts — registry (online) + MCP/skills (local)."""
-    import json as _json
-    from pathlib import Path as _Path
 
     by_source: dict = {}
     total = 0
 
     try:
-        from toolstore.config_manager import ConfigManager as _CM
-        home = _Path(_CM().config_dir)
+        home = Path(ConfigManager().config_dir)
     except ImportError:
-        home = _Path(os.environ.get("TOOLSTORE_HOME", os.path.expanduser("~/.toolstore")))
+        home = Path(os.environ.get("TOOLSTORE_HOME", os.path.expanduser("~/.toolstore")))
 
     index_path = home / "index.json"
     if index_path.exists():
         try:
-            data = _json.loads(index_path.read_text())
+            data = json.loads(index_path.read_text())
             tools = data.get("tools", {}) if isinstance(data, dict) else {}
             total += _count_tools_in_dict(tools, by_source)
         except Exception:
@@ -395,7 +397,7 @@ async def get_toolstore_status():
     config_path = home / "config.json"
     if config_path.exists():
         try:
-            cfg = _json.loads(config_path.read_text())
+            cfg = json.loads(config_path.read_text())
             local_tools = cfg.get("tools", {}) if isinstance(cfg, dict) else {}
             total += _count_tools_in_dict(local_tools, by_source)
         except Exception:
@@ -407,14 +409,12 @@ async def get_toolstore_status():
 @app.post("/api/toolstore/refresh")
 async def refresh_toolstore():
     """Run `toolstore update` to rebuild the local tool index."""
-    import subprocess as _sp
     try:
-        from toolstore.config_manager import ConfigManager as _CM
-        _home = str(_CM().config_dir)
+        _home = str(ConfigManager().config_dir)
     except ImportError:
         _home = os.environ.get("TOOLSTORE_HOME", os.path.expanduser("~/.toolstore"))
     try:
-        result = _sp.run(
+        result = subprocess.run(
             ["toolstore", "update"],
             capture_output=True, text=True, timeout=60,
             env={**os.environ, "TOOLSTORE_HOME": _home}
@@ -431,9 +431,8 @@ async def refresh_toolstore():
 @app.get("/api/workspace")
 async def get_workspace_info():
     """Return basic workspace info."""
-    from src.code_sandbox import WORKSPACE as ws
     return {
-        "workspace": str(ws),
+        "workspace": str(WORKSPACE),
         "shell_alive": shell.is_alive,
     }
 
