@@ -1,3 +1,4 @@
+import os
 import re
 import httplib2
 from googleapiclient.discovery import build
@@ -64,7 +65,6 @@ def _get_google_config():
     The gateway (``gateway.provider_registry._sync_tool_env_vars``) pushes
     these into the environment on startup and after every settings save.
     """
-    import os
     api_key = os.environ.get("GOOGLE_SEARCH_API_KEY", "")
     cse_id = os.environ.get("GOOGLE_CSE_ID", "")
     return api_key, cse_id

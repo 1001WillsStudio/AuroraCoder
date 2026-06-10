@@ -6,6 +6,8 @@ This replaces the XML-based configuration with settings for native OpenAI functi
 
 from pathlib import Path
 import os
+import sys as _sys
+
 
 # ---------------------------------------------------------------------------
 # Data directory — all runtime data (conversation logs, training data, etc.)
@@ -224,7 +226,6 @@ if DOCKER_MODE:
         + _TERMINAL_BLOCKING_NOTE
     )
 else:
-    import sys as _sys
     if _sys.platform == "win32":
         TERMINAL_ENV_NOTE = (
             "Environment Note: The terminal runs commands in a Windows Command Prompt (cmd.exe) session within a Conda environment. "

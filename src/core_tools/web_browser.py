@@ -8,6 +8,7 @@ Like Claude Code, uses a small/cheap model to process raw page content so only
 a concise summary enters the main agent's context window.
 """
 
+import os
 import time
 import logging
 from typing import Optional, Dict, Any, Tuple
@@ -23,6 +24,7 @@ from ..config import (
     DOCKER_MODE, proxy_host, proxy_port,
     WEB_MAX_MARKDOWN_LENGTH, WEB_FETCH_TIMEOUT_S,
     WEB_CACHE_MAX_ENTRIES, WEB_CACHE_TTL_S,
+    MODEL_PROVIDERS, DEFAULT_PROVIDER,
 )
 
 
@@ -31,8 +33,6 @@ def _get_web_secondary_config():
 
     Falls back to the default provider config when env vars are not set.
     """
-    import os
-    from ..config import MODEL_PROVIDERS, DEFAULT_PROVIDER
     default_prov = MODEL_PROVIDERS.get(DEFAULT_PROVIDER, {})
     return {
         "base_url": os.environ.get("WEB_SECONDARY_BASE_URL")

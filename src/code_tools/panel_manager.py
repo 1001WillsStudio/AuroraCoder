@@ -16,6 +16,8 @@ to ``main_flow.py`` or ``tool_executor.py``.
 
 from __future__ import annotations
 
+import re
+
 from abc import ABC, abstractmethod
 from typing import Dict, List, Set
 
@@ -100,7 +102,6 @@ class Panel(ABC):
 
     def strip_blocks(self, content: str) -> str:
         """Remove all instances of this panel's heading block from *content*."""
-        import re
 
         if not content:
             return content

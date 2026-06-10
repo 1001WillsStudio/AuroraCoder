@@ -15,8 +15,20 @@ import json
 import re
 from typing import Dict, List, Set
 
+try:
+    from toolstore.native_tool import tool_store_tool as _raw_ts
+except ImportError:
+    _raw_ts = None
+
+try:
+    from toolstore.tool import Tool
+except ImportError:
+    Tool = None
+
+
 from .panel_manager import Panel
 from ..config import CONTEXT_DISPLAY_WARN_CHARS, CONTEXT_DISPLAY_MAX_ITEMS
+from ..core_tools.tool_store_client import tool_store_tool
 
 # The panel lives in its own system message now; the heading doubles as the lookup key.
 TOOLSTORE_START = "# Panel - Tool Store"
@@ -85,7 +97,6 @@ def generate_toolstore_display(messages: List[Dict]) -> str:
         return ""
 
     # Use raw tool directly — the wrapper returns short messages for skills
-    from toolstore.native_tool import tool_store_tool as _raw_ts
 
     sections: List[str] = []
     for name in sorted(open_tools):
@@ -113,11 +124,11 @@ def _format_tool_display(tool: Dict) -> str:
     path.  Falls back to the old per-type formatters for backwards
     compatibility when ``toolstore.tool`` is not available.
     """
-    try:
-        from toolstore.tool import Tool
-        return Tool.from_dict(tool).format_display()
-    except (ValueError, ImportError, Exception):
-        pass
+    if Tool is not None:
+        try:
+            return Tool.from_dict(tool).format_display()
+        except (ValueError, Exception):
+            pass
 
     # ── fallback formatters (kept for backwards compatibility) ─────
     ttype = tool.get("type", "")
@@ -170,7 +181,6 @@ def _fmt_mcp(tool: Dict) -> str:
     # We need to call tool_store(search) or access the index directly.
     # For now, show just the tool itself — the full grouping requires
     # the tool_store index which we access via tool_store_tool.
-    from ..core_tools.tool_store_client import tool_store_tool
 
     # Search for tools from this server
     try:
@@ -278,7 +288,6 @@ class ToolStorePanel(Panel):
         if not state:
             return ""
 
-        from toolstore.native_tool import tool_store_tool as _raw_ts
 
         sections: List[str] = []
         for name in sorted(state):

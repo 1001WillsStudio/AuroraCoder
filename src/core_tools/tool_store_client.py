@@ -24,6 +24,11 @@ To check where config is stored at runtime::
 from typing import Dict, Any, Tuple
 
 try:
+    from toolstore import get_secondary_tool_names
+except ImportError:
+    get_secondary_tool_names = None
+
+try:
     from toolstore.native_tool import (
         tool_store_tool as _raw_tool_store_tool,
     )
@@ -133,11 +138,12 @@ def get_toolstore_tools_prompt() -> str:
         )
 
     # ── Secondary tools (names only) ─────────────────────────────────
-    try:
-        from toolstore import get_secondary_tool_names
-
-        secondary_names = sorted(get_secondary_tool_names())
-        if secondary_names:
+    if get_secondary_tool_names is not None:
+        try:
+            secondary_names = sorted(get_secondary_tool_names())
+        except Exception:
+            pass
+        else:
             lines = [
                 "",
                 "**Tool Store — Secondary Tools** (use ``tool_store`` to access):",
@@ -145,8 +151,6 @@ def get_toolstore_tools_prompt() -> str:
             for name in secondary_names:
                 lines.append(f"- {name}")
             parts.append("\n".join(lines))
-    except Exception:
-        pass
 
     return "".join(parts)
 
