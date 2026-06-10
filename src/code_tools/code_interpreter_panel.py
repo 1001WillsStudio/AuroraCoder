@@ -62,15 +62,18 @@ def discover_open_files(messages: List[Dict]) -> Set[str]:
                 if not isinstance(args, dict):
                     continue
 
-                # ── ``manage_open_files`` replaces the entire set ────
+                # ── ``manage_open_files`` — full set or additive ────
                 if tool_name == "manage_open_files":
                     files = args.get("files", [])
                     if isinstance(files, str):
                         files = [files]
-                    if isinstance(files, list):
-                        open_files = set(f for f in files if isinstance(f, str))
+                    if not isinstance(files, list):
+                        files = []
+                    new_set = set(f for f in files if isinstance(f, str))
+                    if args.get("additive"):
+                        open_files |= new_set
                     else:
-                        open_files = set()
+                        open_files = new_set
                     continue
 
                 # ── add / remove individual files ───────────────────

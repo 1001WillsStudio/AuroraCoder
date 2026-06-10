@@ -213,15 +213,19 @@ def manage_open_files_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, An
 
     Declares the FULL set of files the agent wants to see —
     all other files are closed.  An empty list closes everything.
+    When ``additive=true``, adds to the existing set instead.
     Returns a summary with line counts for each file.
     """
     files = arguments.get("files", [])
+    additive = arguments.get("additive", False)
     if isinstance(files, str):
         files = [files]
     if not isinstance(files, list):
         files = []
 
     if not files:
+        if additive:
+            return "No files specified — nothing changed.", arguments
         return "All files closed. No files open.", arguments
 
     lines = []
@@ -236,8 +240,13 @@ def manage_open_files_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, An
         else:
             lines.append(f"  {f:40s}  {err}")
 
-    summary = f"Files open ({len(files)}):\n" + "\n".join(lines)
-    if total_lc:
+    if additive:
+        label = f"Added to open files ({len(files)}):"
+    else:
+        label = f"Files open ({len(files)}):"
+
+    summary = label + "\n" + "\n".join(lines)
+    if not additive and total_lc:
         summary += f"\nTotal: {total_lc} lines"
 
     return summary, arguments

@@ -181,7 +181,7 @@ NATIVE_TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "manage_open_files",
-            "description": "Sets which files are visible in the code interpreter — these will be the ONLY files you see. Any file not in the list is closed, regardless of what was open before.\n\nExamples:\n- manage_open_files(files=[\"foo.py\", \"bar.py\"]) → only foo.py and bar.py are visible, everything else closed\n- manage_open_files(files=[\"foo.py\"]) → only foo.py visible, everything else closed\n- manage_open_files(files=[]) → close everything, nothing visible\n\nThe code interpreter panel shows which files are currently open with their line counts. To change your working set, copy the ones you still need, drop the rest, and pass the result. Returns a summary with line counts.",
+            "description": "Sets which files are visible in the code interpreter — these will be the ONLY files you see. Any file not in the list is closed, regardless of what was open before.\n\nExamples:\n- manage_open_files(files=[\"foo.py\", \"bar.py\"]) → only foo.py and bar.py visible, everything else closed\n- manage_open_files(files=[\"foo.py\"]) → only foo.py visible, everything else closed\n- manage_open_files(files=[\"foo.py\"], additive=true) → adds foo.py on top of whatever was already open\n- manage_open_files(files=[]) → close everything\n\nThe code interpreter panel shows which files are currently open with their line counts. To change your working set, copy the ones you still need, drop the rest, and pass the result. Returns a summary with line counts.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -189,11 +189,14 @@ NATIVE_TOOL_DEFINITIONS = [
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "The complete list of file paths you want visible. All other files are closed. Use an empty array [] to close everything."
+                    },
+                    "additive": {
+                        "type": "boolean",
+                        "description": "If true, ADD these files to what is already open instead of replacing everything. Use this sparingly — the default (false, full replacement) is clearer and more predictable. Default is false."
                     }
                 },
                 "required": ["files"]
             }
-        }
     },
     {
         "type": "function",

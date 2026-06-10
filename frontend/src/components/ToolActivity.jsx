@@ -240,13 +240,30 @@ function getToolConfig(toolName, args, result, t) {
         hasExpandedView: false
       }
     
-    case 'close_file':
+    case 'manage_open_files': {
+      const fileList = Array.isArray(args.files) ? args.files : (args.files ? [args.files] : [])
+      const fileCount = fileList.length
       return {
-        icon: <FileText size={16} />,
-        label: t('tool.closingFile'),
-        detail: args.target_file || 'file',
-        hasExpandedView: false
+        icon: <FolderOpen size={16} />,
+        label: t('tool.managingFiles'),
+        detail: fileCount === 0 ? t('tool.closingAllFiles')
+              : fileCount === 1 ? fileList[0]
+              : `${fileCount} ${t('tool.filesCount')}`,
+        hasExpandedView: fileCount > 0,
+        expandedContent: fileCount > 0 ? (
+          <div className="file-preview">
+            <div className="file-preview-content">
+              {fileList.map((f, i) => (
+                <div key={i} className="file-line new">
+                  <span className="line-number">{i + 1}</span>
+                  <span className="line-content">{f}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null
       }
+    }
     
     case 'list_directory':
       return {
