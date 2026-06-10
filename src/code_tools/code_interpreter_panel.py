@@ -1,9 +1,9 @@
 """
 Code interpreter panel — consolidated, line-numbered file display.
 
-Scans message history for file-touching tool calls (read/write/edit),
-discovers which files the agent is working with, and renders a
-consolidated display block appended to tool responses.
+Scans message history for file-touching tool calls (manage_open_files,
+write, edit, delete), discovers which files the agent is working with,
+and renders a consolidated display block appended to tool responses.
 
 Mirrors ``tool_store_panel.py``.  State lives in message history — no
 separate session objects.
@@ -20,10 +20,10 @@ CODE_INTERPRETER_START = "<====CODE_INTERPRETER_START====>"
 CODE_INTERPRETER_END   = "<====CODE_INTERPRETER_END====>"
 
 # Tools that add a file to the display
-CODE_RELATED_TOOLS = {'read_file', 'write_file', 'edit_file'}
+CODE_RELATED_TOOLS = {'write_file', 'edit_file'}
 
 # Tools that remove a file from the display
-FILE_REMOVAL_TOOLS = {'delete_file', 'close_file'}
+FILE_REMOVAL_TOOLS = {'delete_file'}
 
 
 # ---------------------------------------------------------------------------
@@ -34,19 +34,13 @@ def discover_open_files(messages: List[Dict]) -> Set[str]:
     """
     Scan message history to discover all files that should be displayed.
 
-    Files are added when read_file, write_file, or edit_file is called,
-    and removed when delete_file or close_file is called (order matters).
-
-    Args:
-        messages: List of message dictionaries
-
-    Returns:
-        Set of file paths that should be displayed
+    ``manage_open_files`` replaces the entire set; ``write_file`` /
+    ``edit_file`` auto-add; ``delete_file`` auto-removes.
+    Order of tool calls in history matters — later calls override earlier ones.
     """
     open_files: Set[str] = set()
 
     for msg in messages:
-        # Look for assistant messages with tool calls
         if msg.get("role") == "assistant" and msg.get("tool_calls"):
             for tc in msg["tool_calls"]:
                 if not tc.get("function"):
@@ -55,7 +49,6 @@ def discover_open_files(messages: List[Dict]) -> Set[str]:
                 tool_name = tc["function"].get("name", "")
                 args_raw = tc["function"].get("arguments", "{}")
 
-                # Normalise: arguments may already be a dict or a JSON string
                 if isinstance(args_raw, dict):
                     args = args_raw
                 elif isinstance(args_raw, str):
@@ -66,11 +59,21 @@ def discover_open_files(messages: List[Dict]) -> Set[str]:
                 else:
                     continue
 
-                # After normalisation args may still be a plain string
-                # (e.g. when the JSON payload is a bare string literal)
                 if not isinstance(args, dict):
                     continue
 
+                # ── ``manage_open_files`` replaces the entire set ────
+                if tool_name == "manage_open_files":
+                    files = args.get("files", [])
+                    if isinstance(files, str):
+                        files = [files]
+                    if isinstance(files, list):
+                        open_files = set(f for f in files if isinstance(f, str))
+                    else:
+                        open_files = set()
+                    continue
+
+                # ── add / remove individual files ───────────────────
                 target_file = args.get("target_file")
                 if not target_file:
                     continue
@@ -102,12 +105,13 @@ def _display_file(filepath: str) -> str:
     try:
         full_path = WORKSPACE / filepath
         if not full_path.is_file():
-            return f"--- {filepath} ---\n[File not found: {filepath}]"
+            return f"--- {filepath}  [not found] ---"
         with open(full_path, 'r', encoding='utf-8') as f:
             code = f.read()
-        return f"--- {filepath} ---\n{_format_code(code)}"
+        lc = code.count('\n') + (1 if code and not code.endswith('\n') else 0)
+        return f"--- {filepath}  ({lc} lines) ---\n{_format_code(code)}"
     except Exception as e:
-        return f"--- {filepath} ---\n[Error reading file: {str(e)}]"
+        return f"--- {filepath}  [error] ---\n[Error reading file: {str(e)}]"
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +122,7 @@ class CodeInterpreterPanel(Panel):
     """Living Tool State panel for workspace files."""
 
     name = "files"
-    trigger_tools = CODE_RELATED_TOOLS | FILE_REMOVAL_TOOLS
+    trigger_tools = CODE_RELATED_TOOLS | FILE_REMOVAL_TOOLS | {'manage_open_files'}
     block_start = CODE_INTERPRETER_START
     block_end = CODE_INTERPRETER_END
 
@@ -129,23 +133,55 @@ class CodeInterpreterPanel(Panel):
         if not state:
             return ""
 
-        sorted_files = sorted(state)
+        # ── gather metadata in one pass ──────────────────────────────
+        file_info = []  # (path, line_count, error)
+        for f in state:
+            p = WORKSPACE / f
+            if not p.is_file():
+                file_info.append((f, 0, "[not found]"))
+                continue
+            try:
+                content = p.read_text(encoding='utf-8')
+                lc = content.count('\n') + (1 if content and not content.endswith('\n') else 0)
+                file_info.append((f, lc, None))
+            except Exception:
+                file_info.append((f, 0, "[error]"))
+
+        # sort largest first so the agent spots context hogs
+        sorted_info = sorted(file_info, key=lambda x: x[1], reverse=True)
+        sorted_files = [fi[0] for fi in sorted_info]
         combined = "\n\n".join(_display_file(f) for f in sorted_files)
 
+        # ── summary header with per-file line counts ─────────────────
+        total_lines = sum(fi[1] for fi in sorted_info)
+        summary_lines = []
+        for path, lc, err in sorted_info:
+            if err:
+                summary_lines.append(f"    {path:40s}  {err}")
+            else:
+                summary_lines.append(f"    {path:40s} {lc:>5}L")
+
+        header = (
+            f"\U0001f4c2 Open files ({len(state)}) — {total_lines} lines total\n"
+            + "\n".join(summary_lines)
+        )
+
+        # ── notes ───────────────────────────────────────────────────
         notes = (
             "\n\nNote: This display shows the LATEST state of each file "
             "with accurate line numbers. Always use these line numbers "
             "for edit_file calls — never use memorised line numbers. "
-            "Closing a file removes it from this display, including "
-            "previous tool responses — you will no longer see its "
-            "contents unless you open it again. Only close a file "
-            "after you have fully extracted all information you need from it."
+            "Use manage_open_files() to set which files are visible — "
+            "files not listed are removed from this display."
         )
         if len(state) > CONTEXT_DISPLAY_MAX_ITEMS or len(combined) > CONTEXT_DISPLAY_WARN_CHARS:
+            largest = [fi[0] for fi in sorted_info[:3]]
             notes += (
-                f"\n⚠️ CONTEXT WARNING: You have {len(state)} files open "
-                f"({', '.join(sorted_files)}). "
-                "To avoid running out of context, please close files "
-                "you no longer need by calling close_file() on them."
+                f"\n\u26a0\ufe0f CONTEXT WARNING: {len(state)} files open "
+                f"({total_lines:,} lines).  "
+                f"Use manage_open_files() to keep only what you need.  "
+                f"Largest files: "
+                + ", ".join(largest)
+                + "."
             )
-        return f"{self.block_start}\n{combined}{notes}\n{self.block_end}"
+        return f"{self.block_start}\n{header}{notes}\n\n{combined}\n{self.block_end}"

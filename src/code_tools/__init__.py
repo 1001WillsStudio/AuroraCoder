@@ -1,7 +1,7 @@
 """Code tools package for development and programming operations."""
 
 from .file_operations import (
-    read_file_tool,
+    manage_open_files_tool,
     execute_edit_file,
     full_file_write_tool,
     delete_file_tool,
@@ -13,7 +13,7 @@ from .terminal_runner import run_terminal_cmd_tool
 
 
 __all__ = [
-    'read_file_tool',
+    'manage_open_files_tool',
     'execute_edit_file',
     'full_file_write_tool',
     'delete_file_tool',

@@ -13,12 +13,11 @@ from typing import Dict, List, Any
 from .core_tools.google_search import search_for_llm
 from .core_tools.web_browser import web_fetch
 from .code_tools.file_operations import (
-    read_file_tool,
     full_file_write_tool,
     delete_file_tool,
     list_dir_tool,
     file_search_tool,
-    close_file_tool,
+    manage_open_files_tool,
     execute_edit_file,
 )
 # from .code_tools.grep_search import grep_search_tool  # COMMENTED OUT — agent can use terminal grep
@@ -104,23 +103,6 @@ NATIVE_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
-            "name": "read_file",
-            "description": "Reads a file and displays its content in the code interpreter. Checks for file existence and confirms it can be opened.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "target_file": {
-                        "type": "string",
-                        "description": "Path to the file to read (relative to workspace)"
-                    }
-                },
-                "required": ["target_file"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "write_file",
             "description": "Creates a new file or completely replaces the content of an existing file.",
             "parameters": {
@@ -198,17 +180,18 @@ NATIVE_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
-            "name": "close_file",
-            "description": "Removes a file from the code interpreter display. The file itself is not deleted or modified. Once closed, you will no longer see its contents in the conversation until you reopen it with read_file.",
+            "name": "manage_open_files",
+            "description": "Sets which files are visible in the code interpreter — these will be the ONLY files you see. Any file not in the list is closed, regardless of what was open before.\n\nExamples:\n- manage_open_files(files=[\"foo.py\", \"bar.py\"]) → only foo.py and bar.py are visible, everything else closed\n- manage_open_files(files=[\"foo.py\"]) → only foo.py visible, everything else closed\n- manage_open_files(files=[]) → close everything, nothing visible\n\nThe code interpreter panel shows which files are currently open with their line counts. To change your working set, copy the ones you still need, drop the rest, and pass the result. Returns a summary with line counts.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "target_file": {
-                        "type": "string",
-                        "description": "Path to the file to close from interpreter view (relative to workspace)"
+                    "files": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "The complete list of file paths you want visible. All other files are closed. Use an empty array [] to close everything."
                     }
                 },
-                "required": ["target_file"]
+                "required": ["files"]
             }
         }
     },
@@ -396,9 +379,9 @@ NATIVE_TOOL_DEFINITIONS = [
 # These have no conflicting side effects / race conditions.
 # Used by partition_tool_calls() in main_flow.py to decide what can run concurrently.
 PARALLEL_SAFE_TOOLS = {
-    "read_file", "list_directory", "search_files",  # "grep_search",  # COMMENTED OUT
+    "list_directory", "search_files",  # "grep_search",  # COMMENTED OUT
     "google_search", "web_browser", "tool_store",
-    "subagent",
+    "subagent", "manage_open_files",
 }
 
 # Tools available to subagents in "read_only" mode.
@@ -406,8 +389,8 @@ PARALLEL_SAFE_TOOLS = {
 # system state.  Used by get_filtered_tools() in web_api/app.py.
 # "subagent" itself is excluded by get_filtered_tools() to prevent nesting.
 SUBAGENT_READ_ONLY_TOOLS = {
-    "read_file", "list_directory", "search_files",  # "grep_search",  # COMMENTED OUT
-    "google_search", "web_browser", "close_file",
+    "list_directory", "search_files",  # "grep_search",  # COMMENTED OUT
+    "google_search", "web_browser", "manage_open_files",
     # "tool_store",  # TODO: candidate — needs review.  Many external APIs
     #                 # are write-capable, so this can bypass subagent safety.
 }
@@ -420,11 +403,10 @@ READ_ONLY_TOOLS = PARALLEL_SAFE_TOOLS
 TOOL_FUNCTION_MAP = {
     "google_search": search_for_llm,
     "web_browser": web_fetch,
-    "read_file": read_file_tool,
     "write_file": full_file_write_tool,
     "edit_file": execute_edit_file,
     "delete_file": delete_file_tool,
-    "close_file": close_file_tool,
+    "manage_open_files": manage_open_files_tool,
     "list_directory": list_dir_tool,
     "search_files": file_search_tool,
     # "grep_search": grep_search_tool,  # COMMENTED OUT — agent can use terminal grep

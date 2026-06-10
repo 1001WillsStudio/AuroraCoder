@@ -160,8 +160,6 @@ class FileOperations:
 
 # --- Public Tool Wrappers ---
 
-def read_file_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
-    return FileOperations().read_file(arguments["target_file"]), arguments
 
 
 
@@ -193,6 +191,53 @@ def list_dir_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
 def file_search_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     return FileOperations().file_search(arguments["query"]), arguments
 
-def close_file_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
-    target_file = arguments["target_file"]
-    return f"Closed '{target_file}' from code interpreter view.", arguments
+
+
+def _file_metadata(filepath: str) -> tuple:
+    """Return (line_count, error_str) for *filepath*, or error markers."""
+    path = WORKSPACE / filepath
+    if not path.is_file():
+        return (None, "[not found]")
+    try:
+        content = path.read_text(encoding="utf-8")
+        lines = content.count("\n")
+        if content and not content.endswith("\n"):
+            lines += 1
+        return (lines, "")
+    except Exception:
+        return (None, "[unreadable]")
+
+
+def manage_open_files_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    """Set exactly which files are visible in the code interpreter.
+
+    Declares the FULL set of files the agent wants to see —
+    all other files are closed.  An empty list closes everything.
+    Returns a summary with line counts for each file.
+    """
+    files = arguments.get("files", [])
+    if isinstance(files, str):
+        files = [files]
+    if not isinstance(files, list):
+        files = []
+
+    if not files:
+        return "All files closed. No files open.", arguments
+
+    lines = []
+    total_lc = 0
+    for f in files:
+        lc, err = _file_metadata(f)
+        if lc is not None:
+            total_lc += lc
+            lines.append(f"  {f:40s} {lc:>5}L")
+        elif err == "[not found]":
+            lines.append(f"  {f:40s}  [not found]  ⚠")
+        else:
+            lines.append(f"  {f:40s}  {err}")
+
+    summary = f"Files open ({len(files)}):\n" + "\n".join(lines)
+    if total_lc:
+        summary += f"\nTotal: {total_lc} lines"
+
+    return summary, arguments

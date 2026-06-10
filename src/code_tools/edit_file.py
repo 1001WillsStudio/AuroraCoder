@@ -196,7 +196,7 @@ def anchor_hint(lines: List[str], anchor_text: str,
     found_at = search_entire_file(lines, search_key)
     if found_at is None:
         return ("\n💡 Not found anywhere in this file. "
-                "Wrong file? Re-read with read_file().")
+                "Wrong file? Re-add with manage_open_files().")
     return (f"\n💡 Found at line {found_at + 1} (specified {specified_line}). "
             "Re-read the file for current line numbers.")
 
