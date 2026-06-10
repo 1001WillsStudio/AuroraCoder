@@ -7,7 +7,6 @@ have been moved to ``gateway/api.py`` (port 8081, internal).
 """
 
 import json
-import uuid
 import asyncio
 import logging
 import threading
@@ -16,6 +15,7 @@ from typing import Optional, Dict, Any, AsyncGenerator, List
 from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
 
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,11 +23,11 @@ from pydantic import BaseModel, Field
 
 from ..main_flow import generate_chat_responses_stream_native
 from ..code_sandbox import shell, get_workspace, WORKSPACE
-from ..code_tools.file_operations import set_file_tracking_callbacks, set_current_conversation
+from ..code_tools.file_operations import set_current_conversation
 from ..core_tools.subagent import cancel_active_subagents
 from ..config import DEFAULT_PROVIDER
-
 from ..providers import provider_manager
+from ..tool_definitions import NATIVE_TOOL_DEFINITIONS, SUBAGENT_READ_ONLY_TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +90,6 @@ def unregister_stream(conversation_id: str, cancel_event: threading.Event):
 # ============================================================================
 
 def get_filtered_tools(mode: str):
-    from ..tool_definitions import NATIVE_TOOL_DEFINITIONS, SUBAGENT_READ_ONLY_TOOLS
     defs = []
     for td in NATIVE_TOOL_DEFINITIONS:
         name = td["function"]["name"]
