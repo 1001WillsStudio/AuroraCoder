@@ -193,13 +193,6 @@ function getToolConfig(toolName, args, result, t) {
         hasExpandedView: false
       }
     
-    case 'read_file':
-      return {
-        icon: <Eye size={16} />,
-        label: t('tool.readingFile'),
-        detail: args.target_file || 'file',
-        hasExpandedView: false
-      }
     
     case 'write_file':
       return {
@@ -240,12 +233,14 @@ function getToolConfig(toolName, args, result, t) {
         hasExpandedView: false
       }
     
-    case 'manage_open_files': {
-      const fileList = Array.isArray(args.files) ? args.files : (args.files ? [args.files] : [])
+    case 'manage_visible_files': {
+      const fileList = Array.isArray(args.visible_files) ? args.visible_files : (args.visible_files ? [args.visible_files] : [])
+      const closeOthers = args.close_others === true
       const fileCount = fileList.length
+      const isSingleOpen = fileCount === 1 && !closeOthers
       return {
-        icon: <FolderOpen size={16} />,
-        label: t('tool.managingFiles'),
+        icon: isSingleOpen ? <Eye size={16} /> : <FolderOpen size={16} />,
+        label: isSingleOpen ? t('tool.readingFile') : t('tool.managingFiles'),
         detail: fileCount === 0 ? t('tool.closingAllFiles')
               : fileCount === 1 ? fileList[0]
               : `${fileCount} ${t('tool.filesCount')}`,

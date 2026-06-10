@@ -205,8 +205,8 @@ WEB_CACHE_MAX_ENTRIES = 64
 WEB_CACHE_TTL_S = 15 * 60  # 15 minutes
 
 # Code interpreter display limits
-CONTEXT_DISPLAY_WARN_CHARS = 50_000  # Total display chars before context warning
-CONTEXT_DISPLAY_MAX_ITEMS  = 5        # Max open items before context warning
+CONTEXT_DISPLAY_WARN_CHARS = 150_000  # Total display chars before context warning (~ 3 000 lines)
+CONTEXT_DISPLAY_MAX_ITEMS  = 3        # Max open items before context warning
 INTERPRETER_MAX_FILE_CHARS = 150_000  # Per-file char limit; larger files get truncated
 INTERPRETER_TRUNCATE_PREVIEW_LINES = 20  # Lines shown when a file is truncated
 
