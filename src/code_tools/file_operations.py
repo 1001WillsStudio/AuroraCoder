@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from ..code_sandbox import WORKSPACE
-from .edit_file import RangeReplaceEditor, maybe_truncate_edits as _maybe_truncate_edits
+from .edit_file import RangeReplaceEditor, maybe_truncate_edits
 
 logger = logging.getLogger(__name__)
 
@@ -19,9 +19,6 @@ logger = logging.getLogger(__name__)
 
 
 # --- Edit-file pre/post-processing ---
-
-# Re-export for backward compatibility
-maybe_truncate_edits = _maybe_truncate_edits
 
 
 # --- File Operations Class ---

@@ -18,7 +18,7 @@ from typing import List
 import httpx
 from openai import OpenAI
 
-from src.config import MODEL_PROVIDERS, DEFAULT_PROVIDER as _STATIC_DEFAULT
+from src.config import MODEL_PROVIDERS, DEFAULT_PROVIDER
 from gateway.settings_store import (
     get_api_key,
     get_custom_providers,
@@ -57,7 +57,7 @@ def resolve_provider(provider_id: str) -> dict:
         match = next((cp for cp in custom_list if cp.get("id") == provider_id), None)
         if match is None:
             # Unknown — fall back to default provider
-            prov = dict(MODEL_PROVIDERS[_STATIC_DEFAULT])
+            prov = dict(MODEL_PROVIDERS[DEFAULT_PROVIDER])
         else:
             prov = dict(match)
             custom = True
@@ -97,7 +97,7 @@ def get_default_provider() -> str:
     """Return the settings-aware default provider ID."""
     settings = get_all_settings()
     return settings.get("other", {}).get("agent", {}).get(
-        "default_provider", _STATIC_DEFAULT
+        "default_provider", DEFAULT_PROVIDER
     )
 
 
