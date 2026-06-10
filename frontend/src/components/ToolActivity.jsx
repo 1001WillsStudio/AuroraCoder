@@ -69,7 +69,7 @@ function ToolActivityItem({ toolCall, result, onStop, onLoadConversation, childC
   try {
     const rawArgs = toolCall.arguments
     if (typeof rawArgs === 'string' && rawArgs.trim()) {
-      args = JSON.parse(rawArgs)
+      args = JSON.parse(rawArgs) || {}
     } else if (typeof rawArgs === 'object') {
       args = rawArgs || {}
     }

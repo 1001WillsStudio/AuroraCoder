@@ -110,8 +110,14 @@ NATIVE_TOOL_DEFINITIONS = [
                 "type": "object",
                 "properties": {
                     "target_file": {
-                        "type": "string",
-                        "description": "Path to the file to read (relative to workspace)"
+                        "type": ["string", "array"],
+                        "description": "Path to the file(s) to read (relative to workspace). Pass a single string or an array of strings to open multiple files at once.",
+                        "items": {"type": "string"}
+                    },
+                    "focus": {
+                        "type": "boolean",
+                        "description": "If true, close ALL other open files and keep only the specified file(s) open. Use to reset your workspace view to specific files. Default is false (additive open).",
+                        "default": false
                     }
                 },
                 "required": ["target_file"]
@@ -199,16 +205,22 @@ NATIVE_TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "close_file",
-            "description": "Removes a file from the code interpreter display. The file itself is not deleted or modified. Once closed, you will no longer see its contents in the conversation until you reopen it with read_file.",
+            "description": "Removes files from the code interpreter display. The files themselves are not deleted or modified. Once closed, you will no longer see their contents in the conversation until you reopen them with read_file.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "target_file": {
-                        "type": "string",
-                        "description": "Path to the file to close from interpreter view (relative to workspace)"
+                        "type": ["string", "array"],
+                        "description": "Path to the file(s) to close (relative to workspace). Pass a single string or an array of strings to close multiple files at once. Omit when using 'keep'.",
+                        "items": {"type": "string"}
+                    },
+                    "keep": {
+                        "type": "array",
+                        "description": "Close ALL open files EXCEPT those listed here. When provided, target_file is ignored. Use an empty array to close everything.",
+                        "items": {"type": "string"}
                     }
                 },
-                "required": ["target_file"]
+                "required": []
             }
         }
     },
