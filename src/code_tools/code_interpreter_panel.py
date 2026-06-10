@@ -1,51 +1,57 @@
 """
-Code interpreter context management.
+Code interpreter panel — consolidated, line-numbered file display.
 
-Handles discovering open files from message history, cleaning stale
-interpreter blocks, and generating consolidated file displays to help
-the agent maintain awareness of the files it is working with.
+Scans message history for file-touching tool calls (read/write/edit),
+discovers which files the agent is working with, and renders a
+consolidated display block appended to tool responses.
+
+Mirrors ``tool_store_panel.py``.  State lives in message history — no
+separate session objects.
 """
 
 import json
-import re
 from typing import Dict, List, Set
 
-from .code_interpreter import code_interpreter, CODE_INTERPRETER_START, CODE_INTERPRETER_END
 from .panel_manager import Panel
 from ..code_sandbox import WORKSPACE
 from ..config import CONTEXT_DISPLAY_WARN_CHARS, CONTEXT_DISPLAY_MAX_ITEMS
 
+CODE_INTERPRETER_START = "<====CODE_INTERPRETER_START====>"
+CODE_INTERPRETER_END   = "<====CODE_INTERPRETER_END====>"
 
-# Tools that trigger code interpreter display
+# Tools that add a file to the display
 CODE_RELATED_TOOLS = {'read_file', 'write_file', 'edit_file'}
 
-# Tools that remove files from the interpreter
+# Tools that remove a file from the display
 FILE_REMOVAL_TOOLS = {'delete_file', 'close_file'}
 
 
+# ---------------------------------------------------------------------------
+# Discovery — scan message history
+# ---------------------------------------------------------------------------
+
 def discover_open_files(messages: List[Dict]) -> Set[str]:
     """
-    Scan message history to discover all files that should be displayed
-    in the code interpreter.
-    
-    Files are added when read_file, write_file, or edit_file is called.
-    Files are removed when delete_file or close_file is called.
-    
+    Scan message history to discover all files that should be displayed.
+
+    Files are added when read_file, write_file, or edit_file is called,
+    and removed when delete_file or close_file is called (order matters).
+
     Args:
         messages: List of message dictionaries
-        
+
     Returns:
         Set of file paths that should be displayed
     """
-    open_files = set()
-    
+    open_files: Set[str] = set()
+
     for msg in messages:
         # Look for assistant messages with tool calls
         if msg.get("role") == "assistant" and msg.get("tool_calls"):
             for tc in msg["tool_calls"]:
                 if not tc.get("function"):
                     continue
-                    
+
                 tool_name = tc["function"].get("name", "")
                 args_raw = tc["function"].get("arguments", "{}")
 
@@ -68,109 +74,40 @@ def discover_open_files(messages: List[Dict]) -> Set[str]:
                 target_file = args.get("target_file")
                 if not target_file:
                     continue
-                
+
                 if tool_name in CODE_RELATED_TOOLS:
                     open_files.add(target_file)
                 elif tool_name in FILE_REMOVAL_TOOLS:
                     open_files.discard(target_file)
-    
+
     return open_files
 
 
-def strip_code_interpreter_blocks(content: str) -> str:
-    """
-    Remove all code interpreter blocks from a string.
-    
-    Args:
-        content: The string content to clean
-        
-    Returns:
-        Content with all code interpreter blocks removed
-    """
-    if not content:
-        return content
-    
-    # Pattern to match the entire code interpreter block
-    pattern = re.compile(
-        re.escape(CODE_INTERPRETER_START) + r'.*?' + re.escape(CODE_INTERPRETER_END),
-        re.DOTALL
+# ---------------------------------------------------------------------------
+# Display formatting
+# ---------------------------------------------------------------------------
+
+def _format_code(code: str) -> str:
+    """Format code with right-aligned line numbers."""
+    lines = code.splitlines()
+    width = len(str(len(lines)))
+    return "\n".join(
+        f"{str(i + 1).rjust(width)}|{line}"
+        for i, line in enumerate(lines)
     )
-    
-    cleaned = pattern.sub('', content)
-    
-    # Clean up any double newlines left behind
-    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
-    
-    return cleaned.strip()
 
 
-def clean_previous_interpreter_blocks(messages: List[Dict]) -> List[Dict]:
-    """
-    Remove code interpreter blocks from all previous tool response messages.
-    This is done in-place to save context tokens.
-    
-    Args:
-        messages: List of message dictionaries (modified in place)
-        
-    Returns:
-        The same list with interpreter blocks removed from tool messages
-    """
-    for msg in messages:
-        if msg.get("role") == "tool":
-            content = msg.get("content", "")
-            if CODE_INTERPRETER_START in content:
-                msg["content"] = strip_code_interpreter_blocks(content)
-    
-    return messages
-
-
-def should_trigger_code_interpreter(tool_name: str) -> bool:
-    """Determines if a tool should trigger the code interpreter display."""
-    return tool_name in CODE_RELATED_TOOLS or tool_name in FILE_REMOVAL_TOOLS
-
-
-def generate_consolidated_interpreter_display(messages: List[Dict]) -> str:
-    """
-    Generate a consolidated code interpreter display for all open files.
-    
-    If the display would be too large, appends a warning asking the agent
-    to close files it no longer needs.
-    
-    Args:
-        messages: Current message history to discover open files from
-        
-    Returns:
-        Consolidated code interpreter block, or empty string if no files
-    """
-    open_files = discover_open_files(messages)
-    
-    if not open_files:
-        return ""
-    
-    # Sort files for consistent display order
-    sorted_files = sorted(open_files)
-    
-    # Set root path and generate display
-    root_path = WORKSPACE
-    code_interpreter.set_root_path(root_path)
-    
-    display = code_interpreter.display_multiple_files(sorted_files)
-
-    notes = "\n\nNote: This display shows the LATEST state of each file with accurate line numbers. Always use these line numbers for edit_file calls — never use memorised line numbers. Closing a file removes it from this display, including previous tool responses — you will no longer see its contents unless you open it again. Only close a file after you have fully extracted all information you need from it."
-
-    if len(open_files) > CONTEXT_DISPLAY_MAX_ITEMS or len(display) > CONTEXT_DISPLAY_WARN_CHARS:
-        file_list = ", ".join(sorted_files)
-        notes += (
-            f"\n⚠️ CONTEXT WARNING: You have {len(open_files)} files open "
-            f"({file_list}). "
-            "To avoid running out of context, please close files you no longer "
-            "need by calling close_file() on them. If you still need data from a "
-            "currently open file, disregard this warning."
-        )
-
-    display = display.replace(CODE_INTERPRETER_END, notes + "\n" + CODE_INTERPRETER_END)
-
-    return display
+def _display_file(filepath: str) -> str:
+    """Read a single file (relative to WORKSPACE) with line numbers."""
+    try:
+        full_path = WORKSPACE / filepath
+        if not full_path.is_file():
+            return f"--- {filepath} ---\n[File not found: {filepath}]"
+        with open(full_path, 'r', encoding='utf-8') as f:
+            code = f.read()
+        return f"--- {filepath} ---\n{_format_code(code)}"
+    except Exception as e:
+        return f"--- {filepath} ---\n[Error reading file: {str(e)}]"
 
 
 # ---------------------------------------------------------------------------
@@ -191,9 +128,10 @@ class CodeInterpreterPanel(Panel):
     def render(self, state):
         if not state:
             return ""
+
         sorted_files = sorted(state)
-        code_interpreter.set_root_path(WORKSPACE)
-        display = code_interpreter.display_multiple_files(sorted_files)
+        combined = "\n\n".join(_display_file(f) for f in sorted_files)
+
         notes = (
             "\n\nNote: This display shows the LATEST state of each file "
             "with accurate line numbers. Always use these line numbers "
@@ -203,13 +141,11 @@ class CodeInterpreterPanel(Panel):
             "contents unless you open it again. Only close a file "
             "after you have fully extracted all information you need from it."
         )
-        if len(state) > CONTEXT_DISPLAY_MAX_ITEMS or len(display) > CONTEXT_DISPLAY_WARN_CHARS:
+        if len(state) > CONTEXT_DISPLAY_MAX_ITEMS or len(combined) > CONTEXT_DISPLAY_WARN_CHARS:
             notes += (
                 f"\n⚠️ CONTEXT WARNING: You have {len(state)} files open "
                 f"({', '.join(sorted_files)}). "
                 "To avoid running out of context, please close files "
                 "you no longer need by calling close_file() on them."
             )
-        return display.replace(self.block_end, notes + "\n" + self.block_end)
-
-
+        return f"{self.block_start}\n{combined}{notes}\n{self.block_end}"

@@ -75,18 +75,24 @@ class Panel(ABC):
     # -- helpers (rarely overridden) ---------------------------------------
 
     def strip_blocks(self, content: str) -> str:
-        """Remove all instances of this panel's block from *content*."""
-        import re
+        """Remove this panel's display block from *content*.
 
+        The display block is always *appended* to the end of a tool
+        message (see ``append_to_message``), so everything from the first
+        ``block_start`` marker onward is the regenerated block. We simply
+        keep the content before that marker.
+
+        We deliberately do NOT match a full ``start ... end`` pair: a file
+        the agent opened may itself contain the literal marker strings,
+        which would make a paired regex match the wrong (inner) boundary
+        and corrupt the cleanup.
+        """
         if not content:
             return content
-        pattern = re.compile(
-            re.escape(self.block_start) + r'.*?' + re.escape(self.block_end),
-            re.DOTALL,
-        )
-        cleaned = pattern.sub('', content)
-        cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
-        return cleaned.strip()
+        idx = content.find(self.block_start)
+        if idx == -1:
+            return content
+        return content[:idx].strip()
 
     def clean_previous_blocks(self, messages: List[Dict]) -> List[Dict]:
         """Strip stale display blocks from all tool messages (in-place)."""

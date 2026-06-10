@@ -12,7 +12,6 @@ State lives in message history — no separate session objects.
 from __future__ import annotations
 
 import json
-import re
 from typing import Dict, List, Set
 
 from .panel_manager import Panel
@@ -84,37 +83,6 @@ def discover_open_tools(messages: List[Dict]) -> Set[str]:
 # ---------------------------------------------------------------------------
 # Display generation
 # ---------------------------------------------------------------------------
-
-def generate_toolstore_display(messages: List[Dict]) -> str:
-    """For every open tool, call ``tool_store(action="info")`` to get raw
-    JSON, format it, and return a consolidated display block.
-
-    Returns an empty string when no tools are open.
-    """
-    open_tools = discover_open_tools(messages)
-    if not open_tools:
-        return ""
-
-    # Use raw tool directly — the wrapper returns short messages for skills
-
-    sections: List[str] = []
-    for name in sorted(open_tools):
-        raw = _raw_ts(action="info", tool_name=name)
-        try:
-            tool = json.loads(raw) if isinstance(raw, str) else raw
-        except (json.JSONDecodeError, TypeError):
-            continue
-
-        display = _format_tool_display(tool)
-        if display:
-            sections.append(f"### {name}\n{display}")
-
-    if not sections:
-        return ""
-
-    combined = "\n\n".join(sections)
-    return f"{TOOLSTORE_START}\n{combined}\n{TOOLSTORE_END}"
-
 
 def _format_tool_display(tool: Dict) -> str:
     """Dispatch to the correct formatter based on tool type.
@@ -236,37 +204,6 @@ def _format_signature(name: str, params: Dict) -> str:
             default = pinfo.get("default", "None")
             param_strs.append(f"{pname}: {ptype} = {default!r}")
     return f"{name}({', '.join(param_strs)})"
-
-
-# ---------------------------------------------------------------------------
-# Block stripping — mirror code_interpreter_panel.py
-# ---------------------------------------------------------------------------
-
-def strip_toolstore_blocks(content: str) -> str:
-    """Remove all ``TOOLSTORE_START … TOOLSTORE_END`` blocks from *content*."""
-    if not content:
-        return content
-
-    pattern = re.compile(
-        re.escape(TOOLSTORE_START) + r'.*?' + re.escape(TOOLSTORE_END),
-        re.DOTALL,
-    )
-    cleaned = pattern.sub('', content)
-    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
-    return cleaned.strip()
-
-
-def clean_previous_toolstore_blocks(messages: List[Dict]) -> List[Dict]:
-    """Strip old toolstore blocks from all tool response messages (in-place)."""
-    for msg in messages:
-        if msg.get("role") == "tool" and TOOLSTORE_START in msg.get("content", ""):
-            msg["content"] = strip_toolstore_blocks(msg["content"])
-    return messages
-
-
-def should_trigger_toolstore_interpreter(tool_name: str) -> bool:
-    """Return ``True`` when *tool_name* could change the toolset display."""
-    return tool_name == "tool_store"
 
 
 # ---------------------------------------------------------------------------

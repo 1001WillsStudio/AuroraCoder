@@ -100,6 +100,12 @@ def _atomic_write_json(path: Path, data: Any) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2, default=str)
+            # Flush Python buffers AND force the OS to persist the data blocks
+            # to disk before the rename.  Without this, a crash can leave the
+            # renamed file present but its contents unwritten (all-zero bytes)
+            # because the metadata rename outlived the unflushed data.
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp_path, str(path))
     except BaseException:
         try:
@@ -142,15 +148,136 @@ class ConversationStore:
 
     def _load_index(self) -> None:
         path = self._index_path()
-        if path.exists():
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    self._index = json.load(f)
-            except (json.JSONDecodeError, OSError) as e:
-                logger.warning(f"Corrupt conversation index, starting fresh: {e}")
-                self._index = {}
-        else:
+        if not path.exists():
             self._index = {}
+            return
+
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            if not isinstance(loaded, dict):
+                raise ValueError(f"index is a {type(loaded).__name__}, expected object")
+            self._index = loaded
+            return
+        except (json.JSONDecodeError, OSError, ValueError) as e:
+            # A crash (e.g. unexpected power loss) can leave index.json filled
+            # with NUL bytes or truncated, which fails to parse.  Rather than
+            # silently dropping every conversation, move the bad file aside and
+            # rebuild the index from the per-conversation message files that
+            # survived on disk.
+            logger.warning(
+                f"Corrupt conversation index ({e}); rebuilding from conversation files"
+            )
+
+        self._backup_corrupt_index(path)
+        rebuilt = self._rebuild_index_from_files()
+        self._index = rebuilt
+        if rebuilt:
+            try:
+                self._save_index()
+                logger.warning(
+                    f"Rebuilt conversation index with {len(rebuilt)} conversation(s)"
+                )
+            except OSError as e:
+                logger.error(f"Failed to persist rebuilt index: {e}")
+        else:
+            logger.warning("No conversation files found to rebuild index; starting fresh")
+
+    def _backup_corrupt_index(self, path: Path) -> None:
+        """Move a corrupt index aside so it can be inspected later."""
+        try:
+            ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            backup = path.with_name(f"index.corrupt-{ts}.json")
+            os.replace(str(path), str(backup))
+            logger.warning(f"Backed up corrupt index to {backup.name}")
+        except OSError as e:
+            logger.error(f"Could not back up corrupt index: {e}")
+
+    def _rebuild_index_from_files(self) -> Dict[str, Dict]:
+        """Reconstruct index metadata by scanning surviving message files.
+
+        Type and parent/child relationships are not stored in the message
+        files, so recovered conversations default to ``type="user_chat"`` with
+        ``status="completed"`` and are flagged with ``recovered=True``.
+        """
+        index: Dict[str, Dict] = {}
+        try:
+            entries = list(self._dir.iterdir())
+        except OSError as e:
+            logger.error(f"Cannot scan storage dir for rebuild: {e}")
+            return index
+
+        cids = set()
+        for p in entries:
+            name = p.name
+            if not name.endswith(".json"):
+                continue
+            if (
+                name == "index.json"
+                or name.startswith(".tmp_")
+                or name.startswith("index.corrupt-")
+            ):
+                continue
+            if name.endswith(".frontend.json"):
+                cids.add(name[: -len(".frontend.json")])
+            else:
+                cids.add(name[: -len(".json")])
+
+        for cid in cids:
+            meta = self._reconstruct_meta(cid)
+            if meta is not None:
+                index[cid] = meta
+        return index
+
+    def _reconstruct_meta(self, cid: str) -> Optional[Dict]:
+        """Build a best-effort index entry for *cid* from its message files."""
+        backend = self._messages_path(cid)
+        frontend = self._frontend_messages_path(cid)
+
+        if not backend.exists() and not frontend.exists():
+            return None
+
+        messages: List[Dict] = []
+        for src in (backend, frontend):
+            if not src.exists():
+                continue
+            try:
+                with open(src, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                if isinstance(loaded, list) and loaded:
+                    messages = loaded
+                    break
+            except (json.JSONDecodeError, OSError):
+                continue
+
+        ctimes, mtimes = [], []
+        for src in (backend, frontend):
+            if src.exists():
+                try:
+                    st = src.stat()
+                    ctimes.append(st.st_ctime)
+                    mtimes.append(st.st_mtime)
+                except OSError:
+                    pass
+
+        if ctimes:
+            created = datetime.fromtimestamp(min(ctimes), timezone.utc).isoformat()
+            updated = datetime.fromtimestamp(max(mtimes), timezone.utc).isoformat()
+        else:
+            created = updated = datetime.now(timezone.utc).isoformat()
+
+        return {
+            "id": cid,
+            "parent_id": None,
+            "session_id": None,
+            "type": "user_chat",
+            "status": "completed",
+            "provider_id": None,
+            "created_at": created,
+            "updated_at": updated,
+            "title": _extract_title(messages) if messages else "Untitled",
+            "recovered": True,
+        }
 
     def _save_index(self) -> None:
         """Caller must hold self._lock."""
