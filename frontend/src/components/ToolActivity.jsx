@@ -156,41 +156,34 @@ function ToolActivityItem({ toolCall, result, onStop, onLoadConversation, childC
 }
 
 /**
- * Get display configuration for each tool type
+ * Get display configuration for each tool type.
  */
 function getToolConfig(toolName, args, result, t) {
   const resultContent = result?.content || ''
-  
+
+  /** Helper: standard "result preview" tool config shape. */
+  function resultTool(icon, label, detail, { maxLines } = {}) {
+    return {
+      icon,
+      label,
+      detail,
+      hasExpandedView: true,
+      expandedContent: <ResultPreview content={resultContent} maxLines={maxLines} />
+    }
+  }
+
   switch (toolName) {
     case 'google_search':
-      return {
-        icon: <Search size={16} />,
-        label: t('tool.searching'),
-        detail: `"${args.search_term || 'the web'}"`,
-        hasExpandedView: true,
-        expandedContent: <ResultPreview content={resultContent} />
-      }
-    
+      return resultTool(<Search size={16} />, t('tool.searching'), `"${args.search_term || 'the web'}"`)
+
     case 'web_browser':
-      return {
-        icon: <Globe size={16} />,
-        label: t('tool.reading'),
-        detail: truncateUrl(args.target_url || 'webpage'),
-        hasExpandedView: true,
-        expandedContent: <ResultPreview content={resultContent} />
-      }
-    
+      return resultTool(<Globe size={16} />, t('tool.reading'), truncateUrl(args.target_url || 'webpage'))
+
     case 'read_file': {
       const readFiles = normalizeFileList(args.target_file)
-      return {
-        icon: <Eye size={16} />,
-        label: t('tool.readingFile'),
-        detail: formatFileDetail(readFiles),
-        hasExpandedView: true,
-        expandedContent: <ResultPreview content={resultContent} maxLines={100} />
-      }
+      return resultTool(<Eye size={16} />, t('tool.readingFile'), formatFileDetail(readFiles), { maxLines: 100 })
     }
-    
+
     case 'write_file':
       return {
         icon: <FilePlus size={16} />,
@@ -199,7 +192,7 @@ function getToolConfig(toolName, args, result, t) {
         hasExpandedView: true,
         expandedContent: <FilePreview content={args.code_edit} isNew={true} />
       }
-    
+
     case 'edit_file': {
       const edits = args.edits || []
       const editCount = edits.length
@@ -211,17 +204,13 @@ function getToolConfig(toolName, args, result, t) {
         expandedContent: (
           <div className="multi-edit-view">
             {edits.map((edit, i) => (
-              <EditRangeView
-                key={i}
-                edit={edit}
-                editIndex={edits.length > 1 ? i + 1 : null}
-              />
+              <EditRangeView key={i} edit={edit} editIndex={edits.length > 1 ? i + 1 : null} />
             ))}
           </div>
         )
       }
     }
-    
+
     case 'delete_file':
       return {
         icon: <Trash2 size={16} />,
@@ -229,9 +218,8 @@ function getToolConfig(toolName, args, result, t) {
         detail: args.target_file || 'file',
         hasExpandedView: false
       }
-    
+
     case 'close_file': {
-      // Handle "close all except" (keep) mode
       if (args.keep != null) {
         const keepList = normalizeFileList(args.keep)
         if (keepList.length > 0) {
@@ -242,12 +230,7 @@ function getToolConfig(toolName, args, result, t) {
             hasExpandedView: false
           }
         }
-        return {
-          icon: <FileText size={16} />,
-          label: t('tool.closingAll'),
-          detail: '',
-          hasExpandedView: false
-        }
+        return { icon: <FileText size={16} />, label: t('tool.closingAll'), detail: '', hasExpandedView: false }
       }
       const closeFiles = normalizeFileList(args.target_file)
       return {
@@ -257,34 +240,18 @@ function getToolConfig(toolName, args, result, t) {
         hasExpandedView: false
       }
     }
-    
+
     case 'list_directory':
-      return {
-        icon: <FolderOpen size={16} />,
-        label: t('tool.listingDirectory'),
-        detail: args.relative_workspace_path || '/',
-        hasExpandedView: true,
-        expandedContent: <ResultPreview content={resultContent} />
-      }
-    
+      return resultTool(<FolderOpen size={16} />, t('tool.listingDirectory'), args.relative_workspace_path || '/')
+
     case 'search_files':
-      return {
-        icon: <Search size={16} />,
-        label: t('tool.searchingFiles'),
-        detail: `"${args.query || ''}"`,
-        hasExpandedView: true,
-        expandedContent: <ResultPreview content={resultContent} />
-      }
-    
     case 'grep_search':
-      return {
-        icon: <Search size={16} />,
-        label: t('tool.searchingInFiles'),
-        detail: `"${args.query || ''}"`,
-        hasExpandedView: true,
-        expandedContent: <ResultPreview content={resultContent} />
-      }
-    
+      return resultTool(
+        <Search size={16} />,
+        toolName === 'search_files' ? t('tool.searchingFiles') : t('tool.searchingInFiles'),
+        `"${args.query || ''}"`
+      )
+
     case 'run_terminal_command':
       return {
         icon: <Terminal size={16} />,
@@ -293,25 +260,24 @@ function getToolConfig(toolName, args, result, t) {
         hasExpandedView: true,
         expandedContent: <CommandPreview command={args.command} output={resultContent} />
       }
-    
+
     case 'subagent':
       return {
         icon: <Package size={16} />,
         label: t('tool.subagent'),
         detail: (args.task || '').slice(0, 60) + ((args.task || '').length > 60 ? '...' : ''),
         hasExpandedView: false,
-        isSubagent: true,
+        isSubagent: true
       }
 
     case 'tool_store':
-      return {
-        icon: <Package size={16} />,
-        label: args.action === 'search' ? t('tool.searchingTools') : t('tool.usingTool'),
-        detail: args.query || args.tool_name || '',
-        hasExpandedView: true,
-        expandedContent: <ResultPreview content={resultContent} maxLines={80} />
-      }
-    
+      return resultTool(
+        <Package size={16} />,
+        args.action === 'search' ? t('tool.searchingTools') : t('tool.usingTool'),
+        args.query || args.tool_name || '',
+        { maxLines: 80 }
+      )
+
     default:
       return {
         icon: <Package size={16} />,
@@ -377,9 +343,6 @@ function EditRangeView({ edit, editIndex }) {
   const rangeSpan = (effectiveEnd != null && start_line != null) ? (effectiveEnd - start_line + 1) : 1
 
   const lines = isDelete ? [] : (replace_content || '').split('\n')
-  const maxPreview = 30
-  const hasMore = lines.length > maxPreview
-  const displayLines = hasMore ? lines.slice(0, maxPreview) : lines
 
   const showRemovedStart = !!start_content
   const showRemovedEnd = isMultiLine && effectiveEnd !== start_line && !!end_content
@@ -417,15 +380,17 @@ function EditRangeView({ edit, editIndex }) {
       )}
       {!isDelete && (
         <div className="diff-added">
-          {displayLines.map((line, idx) => (
-            <div key={idx} className="diff-line added">
-              <span className="diff-line-num">{(start_line || 1) + idx}</span>
-              <span className="diff-content">{line || ' '}</span>
-            </div>
-          ))}
-          {hasMore && (
-            <div className="diff-more">{t('tool.moreLines', { n: lines.length - maxPreview })}</div>
-          )}
+          <LinePreview
+            lines={lines}
+            maxLines={30}
+            moreClassName="diff-more"
+            renderLine={(line, idx) => (
+              <div key={idx} className="diff-line added">
+                <span className="diff-line-num">{(start_line || 1) + idx}</span>
+                <span className="diff-content">{line || ' '}</span>
+              </div>
+            )}
+          />
         </div>
       )}
     </div>
@@ -436,27 +401,22 @@ function EditRangeView({ edit, editIndex }) {
  * Preview for new file content
  */
 function FilePreview({ content, isNew }) {
-  const { t } = useLanguage()
   if (!content) return null
-  
   const lines = content.split('\n')
-  const displayLines = lines.slice(0, 20) // Show first 20 lines
-  const hasMore = lines.length > 20
-  
   return (
     <div className="file-preview">
       <div className="file-preview-content">
-        {displayLines.map((line, idx) => (
-          <div key={idx} className={`file-line ${isNew ? 'new' : ''}`}>
-            <span className="line-number">{idx + 1}</span>
-            <span className="line-content">{line || ' '}</span>
-          </div>
-        ))}
-        {hasMore && (
-          <div className="file-preview-more">
-            {t('tool.moreLines', { n: lines.length - 20 })}
-          </div>
-        )}
+        <LinePreview
+          lines={lines}
+          maxLines={20}
+          moreClassName="file-preview-more"
+          renderLine={(line, idx) => (
+            <div key={idx} className={`file-line ${isNew ? 'new' : ''}`}>
+              <span className="line-number">{idx + 1}</span>
+              <span className="line-content">{line || ' '}</span>
+            </div>
+          )}
+        />
       </div>
     </div>
   )
@@ -488,19 +448,39 @@ function ResultPreview({ content, maxLines }) {
     return <div className="result-preview-empty">{t('tool.noOutput')}</div>
   }
   const lines = String(content).split('\n')
+  return (
+    <div className="result-preview">
+      <pre className="result-preview-content">
+        <LinePreview
+          lines={lines}
+          maxLines={maxLines}
+          moreClassName="result-preview-more"
+          renderLine={(line, i) => <div key={i} className="result-line">{line || ' '}</div>}
+        />
+      </pre>
+    </div>
+  )
+}
+
+/**
+ * Shared line-by-line preview with truncation.
+ * Eliminates the "slice + hasMore + footer" duplication across
+ * ResultPreview, FilePreview, and EditRangeView.
+ */
+function LinePreview({ lines, maxLines, moreClassName, renderLine, emptyFallback }) {
+  const { t } = useLanguage()
+  if (!lines || lines.length === 0) {
+    return emptyFallback || null
+  }
   const truncated = maxLines && lines.length > maxLines
   const displayLines = truncated ? lines.slice(0, maxLines) : lines
   return (
-    <div className="result-preview">
-      <pre className="result-preview-content">{
-        displayLines.map((line, i) => (
-          <div key={i} className="result-line">{line || ' '}</div>
-        ))
-      }</pre>
+    <>
+      {displayLines.map((line, idx) => renderLine(line, idx))}
       {truncated && (
-        <div className="result-preview-more">{t('tool.moreLines', { n: lines.length - maxLines })}</div>
+        <div className={moreClassName}>{t('tool.moreLines', { n: lines.length - maxLines })}</div>
       )}
-    </div>
+    </>
   )
 }
 
