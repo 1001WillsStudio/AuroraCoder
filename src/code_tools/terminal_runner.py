@@ -70,16 +70,18 @@ class TerminalRunner:
             output = []
 
             if stdout:
-                output.append("\nSTDOUT:")
+                output.append("STDOUT:")
                 output.append(_truncate_output(stdout))
 
             if stderr:
-                output.append("\nSTDERR:")
+                if output:
+                    output.append("")
+                output.append("STDERR:")
                 output.append(_truncate_output(stderr))
 
             if not stdout and not stderr:
                 output.append(
-                    "\n[NOTE: Command produced no output. "
+                    "[NOTE: Command produced no output. "
                     "If empty-output issues persist, try calling this tool again "
                     "with new_terminal=true to restart the shell.]"
                 )
