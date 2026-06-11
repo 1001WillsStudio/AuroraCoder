@@ -167,6 +167,12 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout (tags only)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -188,6 +194,46 @@ jobs:
             echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
           fi
 
+      - name: Read tag annotation as changelog
+        id: changelog
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          # Extract annotated tag message (empty for lightweight tags)
+          TAG_MSG=$(git tag -l --format='%(contents)' "$TAG" 2>/dev/null || true)
+          # Build release body: changelog first, then install guide
+          # Use printf to avoid heredoc expansion issues with $ in changelog
+          printf '%s\n\n' "$TAG_MSG" > /tmp/release_body.md
+          cat >> /tmp/release_body.md << 'INSTALLOF'
+          ## Install
+
+          **Windows** — download `auroracoder-windows.zip`, extract, run `auroracoder-windows.exe`.
+          > If SmartScreen warns: **More info → Run anyway**.
+
+          **macOS (Apple Silicon)** —
+          ```bash
+          xattr -d com.apple.quarantine ./auroracoder-darwin-arm64
+          chmod +x ./auroracoder-darwin-arm64
+          ./auroracoder-darwin-arm64
+          ```
+
+          **macOS (Intel)** —
+          ```bash
+          xattr -d com.apple.quarantine ./auroracoder-darwin-amd64
+          chmod +x ./auroracoder-darwin-amd64
+          ./auroracoder-darwin-amd64
+          ```
+
+          **Linux** —
+          ```bash
+          chmod +x ./auroracoder-linux-amd64
+          ./auroracoder-linux-amd64
+          ```
+
+          Requires [Docker](https://docs.docker.com/get-docker/).
+          INSTALLOF
+          echo "=== Release body preview ==="
+          cat /tmp/release_body.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -195,32 +241,6 @@ jobs:
           files: dist/*
           draft: true
           generate_release_notes: true
-          body: |
-            ## Install
-
-            **Windows** — download `auroracoder-windows.zip`, extract, run `auroracoder-windows.exe`.
-            > If SmartScreen warns: **More info → Run anyway**.
-
-            **macOS (Apple Silicon)** —
-            ```bash
-            xattr -d com.apple.quarantine ./auroracoder-darwin-arm64
-            chmod +x ./auroracoder-darwin-arm64
-            ./auroracoder-darwin-arm64
-            ```
-
-            **macOS (Intel)** —
-            ```bash
-            xattr -d com.apple.quarantine ./auroracoder-darwin-amd64
-            chmod +x ./auroracoder-darwin-amd64
-            ./auroracoder-darwin-amd64
-            ```
-
-            **Linux** —
-            ```bash
-            chmod +x ./auroracoder-linux-amd64
-            ./auroracoder-linux-amd64
-            ```
-
-            Requires [Docker](https://docs.docker.com/get-docker/).
+          body_path: /tmp/release_body.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
