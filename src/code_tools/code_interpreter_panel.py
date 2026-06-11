@@ -120,7 +120,7 @@ def _format_code(code: str) -> str:
     lines = code.splitlines()
     width = len(str(len(lines)))
     return "\n".join(
-        f"{str(i + 1).rjust(width)}|{line}"
+        f"{str(i + 1).rjust(width)}\t{line}"
         for i, line in enumerate(lines)
     )
 
