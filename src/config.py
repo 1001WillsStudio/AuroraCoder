@@ -222,9 +222,11 @@ _TERMINAL_BLOCKING_NOTE = (
 )
 if DOCKER_MODE:
     TERMINAL_ENV_NOTE = (
-        "Environment Note: The terminal runs commands in a Bash shell inside a Docker container. "
-        "You can chain commands with '&&' (e.g. 'command_1 && command_2')."
-        + _TERMINAL_BLOCKING_NOTE
+        "**Terminal**: For long-running processes (servers, training, etc.), set blocking=false "
+        "instead of using nohup or &. The command runs in the background and a log "
+        "file path is returned so you can check progress later. "
+        "If a blocking command times out, the process keeps running and a new "
+        "terminal is created automatically — read the returned log path to monitor."
     )
 else:
     if sys.platform == "win32":
@@ -234,8 +236,7 @@ else:
         )
     else:
         TERMINAL_ENV_NOTE = (
-            "Environment Note: The terminal runs commands in a Bash shell within a Conda environment. "
-            "You can chain commands with '&&' (e.g. 'command_1 && command_2')."
+            "Environment Note: The terminal runs commands in a Bash shell within a Conda environment."
             + _TERMINAL_BLOCKING_NOTE
         )
 
@@ -262,9 +263,7 @@ SYSTEM_MESSAGE_TEMPLATE = """You are a helpful and autonomous agent with powerfu
 **Workspace File Tree**:
 {workspace_tree}
 
-**SUPER IMPORTANT**: Do EXACTLY what the user asks you to do. For anything else the user may need beyond their explicit request, ASK before doing so. Do not assume or add extra actions without user confirmation.
-
-As an autonomous agent, proactively leverage your tools to fully resolve the user's requests end-to-end. Refrain from asking the user to perform tasks or provide clarification unless essential information cannot be acquired through your tools.
+**SUPER IMPORTANT**: Do exactly what the user asks — no more, no less. Work autonomously toward the goal without stopping to ask the user. Use your tools to investigate and resolve issues yourself. Only ask the user when you truly cannot proceed without their input.
 
 {vnc_instructions}
 {terminal_env_note}
