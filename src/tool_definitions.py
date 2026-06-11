@@ -109,7 +109,7 @@ NATIVE_TOOL_DEFINITIONS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "target_file": {
+                    "file": {
                         "type": ["string", "array"],
                         "description": "Path to the file(s) to read (relative to workspace). Pass a single string or an array of strings to open multiple files at once.",
                         "items": {"type": "string"}
@@ -120,7 +120,7 @@ NATIVE_TOOL_DEFINITIONS = [
                         "default": False
                     }
                 },
-                "required": ["target_file"]
+                "required": ["file"]
             }
         }
     },
@@ -132,16 +132,16 @@ NATIVE_TOOL_DEFINITIONS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "target_file": {
+                    "file": {
                         "type": "string",
                         "description": "Path to the file to write (relative to workspace)"
                     },
-                    "code_edit": {
+                    "content": {
                         "type": "string",
                         "description": "The complete content to write to the file"
                     }
                 },
-                "required": ["target_file", "code_edit"]
+                "required": ["file", "content"]
             }
         }
     },
@@ -153,7 +153,7 @@ NATIVE_TOOL_DEFINITIONS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "target_file": {
+                    "file": {
                         "type": "string",
                         "description": "Path to the file to edit (relative to workspace)"
                     },
@@ -180,7 +180,7 @@ NATIVE_TOOL_DEFINITIONS = [
                         }
                     }
                 },
-                "required": ["target_file", "edits"]
+                "required": ["file", "edits"]
             }
         }
     },
@@ -192,12 +192,12 @@ NATIVE_TOOL_DEFINITIONS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "target_file": {
+                    "file": {
                         "type": "string",
                         "description": "Path to the file to delete (relative to workspace)"
                     }
                 },
-                "required": ["target_file"]
+                "required": ["file"]
             }
         }
     },
@@ -209,14 +209,14 @@ NATIVE_TOOL_DEFINITIONS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "target_file": {
+                    "file": {
                         "type": ["string", "array"],
                         "description": "Path to the file(s) to close (relative to workspace). Pass a single string or an array of strings to close multiple files at once. Omit when using 'keep'.",
                         "items": {"type": "string"}
                     },
                     "keep": {
                         "type": "array",
-                        "description": "Close ALL open files EXCEPT those listed here. When provided, target_file is ignored. Use an empty array to close everything.",
+                        "description": "Close ALL open files EXCEPT those listed here. When provided, file is ignored. Use an empty array to close everything.",
                         "items": {"type": "string"}
                     }
                 },

@@ -71,7 +71,7 @@ def discover_open_files(messages: List[Dict]) -> Set[str]:
                 if not isinstance(args, dict):
                     continue
 
-                target = args.get("target_file")
+                target = args.get("file")
 
                 # ── Handle keep on close_file (close all except) ────────
                 if tool_name == "close_file" and "keep" in args:
@@ -175,8 +175,8 @@ class CodeInterpreterPanel(Panel):
                 f"\n⚠️ CONTEXT WARNING: You have {len(state)} files open "
                 f"({', '.join(sorted_files)}). "
                 "To avoid running out of context, close files you no longer "
-                "need with close_file(target_file='file.py'), close multiple "
-                "at once with close_file(target_file=['a.py','b.py']), or "
+                "need with close_file(file='file.py'), close multiple "
+                "at once with close_file(file=['a.py','b.py']), or "
                 "keep only what you need with close_file(keep=['kept.py'])."
             )
         return f"{self.block_start}\n{combined}{notes}\n{self.block_end}"

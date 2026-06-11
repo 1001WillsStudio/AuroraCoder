@@ -152,7 +152,7 @@ def _track_file_changes(conversation_id: str, raw_messages: list):
                 args = json.loads(func.get("arguments", "{}"))
             except (json.JSONDecodeError, TypeError):
                 continue
-            file_path = args.get("target_file") or args.get("file_path") or ""
+            file_path = args.get("file") or args.get("target_file") or args.get("file_path") or ""
             if not file_path:
                 continue
 

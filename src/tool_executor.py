@@ -135,7 +135,7 @@ def _check_same_file_edit_guard(
     if tool_name != "edit_file":
         return None
     args = json.loads(tool_call["function"]["arguments"])
-    target = args.get("target_file")
+    target = args.get("file")
     if not target:
         return None
     if target in files_edited_this_turn:
