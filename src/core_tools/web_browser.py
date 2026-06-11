@@ -32,6 +32,9 @@ def _get_web_secondary_config():
     """Read web secondary model config from environment variables.
 
     Falls back to the default provider config when env vars are not set.
+    These env vars are synced from settings.json by
+    ``providers.ProviderManager._sync_tool_env_vars()`` during ``reload()``
+    (triggered by the gateway via ``POST /api/reload``) and at startup.
     """
     default_prov = MODEL_PROVIDERS.get(DEFAULT_PROVIDER, {})
     return {

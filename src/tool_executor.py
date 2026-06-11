@@ -7,6 +7,7 @@ loop focused.
 """
 
 import json
+import os
 from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -16,8 +17,47 @@ from .code_tools.panel_manager import triggered_by
 from .config import MAX_TOOL_CONCURRENCY
 
 
-# Shared executor for parallel read-only tool execution.
-_tool_executor = ThreadPoolExecutor(max_workers=MAX_TOOL_CONCURRENCY)
+def _get_max_tool_concurrency() -> int:
+    """Resolve tool concurrency: env var (set by _sync_tool_env_vars) → config constant."""
+    try:
+        val = int(os.environ.get("MAX_TOOL_CONCURRENCY", ""))
+        if val > 0:
+            return val
+    except (ValueError, TypeError):
+        pass
+    return MAX_TOOL_CONCURRENCY
+
+
+# Lazily-created executor for parallel read-only tool execution.
+# Use _get_executor() — it re-evaluates MAX_TOOL_CONCURRENCY from the
+# environment, so settings changes via _sync_tool_env_vars take effect
+# immediately without a process restart.
+_executor: ThreadPoolExecutor | None = None
+
+
+def _get_executor() -> ThreadPoolExecutor:
+    """Return (and cache) a ThreadPoolExecutor sized to the current
+    MAX_TOOL_CONCURRENCY env var.
+
+    When the env var changes (after a provider_manager.reload()), discard
+    the old executor by calling reload_concurrency() or simply re-use — the
+    env var is checked on first creation.  New executors are cheap (no
+    threads spawned until tasks are submitted), so we create a fresh one
+    whenever the desired concurrency differs from the current executor's
+    max_workers.
+    """
+    global _executor
+    desired = _get_max_tool_concurrency()
+    if _executor is None or getattr(_executor, "_max_workers", -1) != desired:
+        _executor = ThreadPoolExecutor(max_workers=desired)
+    return _executor
+
+
+def reload_concurrency() -> None:
+    """Force recreation of the shared executor on next _get_executor() call.
+    Called by provider_manager.reload() after syncing env vars."""
+    global _executor
+    _executor = None
 
 
 def partition_tool_calls(tool_calls: List[Dict]) -> List[Tuple[bool, List[Dict]]]:
@@ -134,7 +174,7 @@ def execute_tool_calls(
             for tc in batch:
                 maybe_truncate_edits(tc)
             futures = {
-                _tool_executor.submit(_execute_single_tool, tc, conversation_id): tc
+                _get_executor().submit(_execute_single_tool, tc, conversation_id): tc
                 for tc in batch
             }
             # Collect results keyed by tool_call id to preserve original order
