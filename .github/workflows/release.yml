@@ -196,12 +196,29 @@ jobs:
 
       - name: Read tag annotation as changelog
         id: changelog
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ steps.tag.outputs.tag }}"
-          # Extract annotated tag message (empty for lightweight tags)
-          TAG_MSG=$(git tag -l --format='%(contents)' "$TAG" 2>/dev/null || true)
+          REPO="${{ github.repository }}"
+
+          # Get tag SHA from GitHub API
+          TAG_SHA=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+            "https://api.github.com/repos/$REPO/git/ref/tags/$TAG" | \
+            python3 -c "import sys,json; print(json.load(sys.stdin).get('object',{}).get('sha',''))")
+
+          if [ -n "$TAG_SHA" ] && [ "$TAG_SHA" != "" ]; then
+            # Fetch the tag object to get the annotation message
+            TAG_MSG=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+              "https://api.github.com/repos/$REPO/git/tags/$TAG_SHA" | \
+              python3 -c "import sys,json; print(json.load(sys.stdin).get('message',''))")
+            echo "Read tag annotation from GitHub API (${#TAG_MSG} chars)"
+          else
+            echo "Tag $TAG not found via API, falling back to git"
+            TAG_MSG=$(git tag -l --format='%(contents)' "$TAG" 2>/dev/null || true)
+          fi
+
           # Build release body: changelog first, then install guide
-          # Use printf to avoid heredoc expansion issues with $ in changelog
           printf '%s\n\n' "$TAG_MSG" > /tmp/release_body.md
           cat >> /tmp/release_body.md << 'INSTALLOF'
           ## Install
@@ -232,7 +249,7 @@ jobs:
           Requires [Docker](https://docs.docker.com/get-docker/).
           INSTALLOF
           echo "=== Release body preview ==="
-          cat /tmp/release_body.md
+          head -c 2000 /tmp/release_body.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
