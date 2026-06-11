@@ -1,5 +1,6 @@
 import subprocess
 import os
+import re
 import sys
 import threading
 import time
@@ -9,6 +10,14 @@ import json
 
 from ..code_sandbox import shell, WORKSPACE
 from ..config import TERMINAL_MAX_OUTPUT_CHARS
+
+# ── Module-level terminal registry ──────────────────────────────────
+# Tracks log-file paths so close_terminal_id can return them.
+_terminal_log_cache: Dict[str, str] = {}  # label → log_path
+_terminal_counter: int = 0
+
+_LOG_PATH_RE = re.compile(r"Log:\s*(\S+)")
+_OUTFILE_RE = re.compile(r"being written to:\s*(\S+)")
 
 
 def _get_terminal_max_output_chars() -> int:
@@ -42,7 +51,15 @@ class TerminalRunner:
         self.workspace_root = WORKSPACE
     
     def run_command(
-        self, command: str, timeout: int = 30, blocking: bool = True, cwd: str = None, new_terminal: bool = False
+        self,
+        command: str = "",
+        timeout: int = 30,
+        blocking: bool = True,
+        cwd: str = None,
+        new_terminal: bool = False,
+        close_terminal_id: str = None,
+        refresh: bool = False,
+        terminal_label: str = None,
     ) -> str:
         """
         Run a terminal command in the persistent session shell.
@@ -53,11 +70,27 @@ class TerminalRunner:
             blocking: If False, launch in background and return the log file path.
             cwd: Working directory (now managed by the session).
             new_terminal: If True, restart the persistent shell before running the command.
+            close_terminal_id: If set, close this terminal from the display without
+                executing a command.  The log file path (if any) is returned so the
+                agent can ``read_file`` it later.
+            refresh: If True, just refresh the terminal panel without executing anything.
+            terminal_label: Optional human-readable label for this terminal.
 
         Returns:
             Command output or process information
         """
         try:
+            # ── Close terminal ────────────────────────────────────
+            if close_terminal_id:
+                return (
+                    f"Closed terminal \"{close_terminal_id}\".\n"
+                    f"The log file path for this terminal (if any) is shown in the terminal panel. "
+                    f"Use read_file to access the complete output."
+                )
+
+            # ── Refresh-only (no command executed) ────────────────
+            if refresh:
+                return "Terminal panel refreshed. No command executed."
 
             if new_terminal:
                 shell.restart()
@@ -137,11 +170,93 @@ class TerminalRunner:
 
 
 def run_terminal_cmd_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
-    """Run terminal command tool wrapper."""
+    """Run terminal command tool wrapper with log-path tracking."""
+    global _terminal_counter, _terminal_log_cache
+
+    # ── Close terminal — look up and return the log path ────────────
+    close_id = arguments.get("close_terminal_id")
+    if close_id:
+        log_path = _terminal_log_cache.pop(close_id, None)
+        if log_path:
+            return (
+                f"Closed terminal \"{close_id}\".\n"
+                f"Log file: {log_path}\n"
+                f"Use read_file to access the complete output."
+            ), arguments
+        else:
+            return (
+                f"Closed terminal \"{close_id}\". "
+                f"No log file was associated with this terminal."
+            ), arguments
+
+    # ── Refresh-only ────────────────────────────────────────────────
+    if arguments.get("refresh"):
+        return "Terminal panel refreshed. No command executed.", arguments
+
+    # ── Auto-generate terminal label ────────────────────────────────
+    terminal_label = arguments.get("terminal_label")
+    _terminal_counter += 1
+    if not terminal_label:
+        terminal_label = f"Terminal #{_terminal_counter}"
+    tid = f"terminal_{_terminal_counter}"
+
     runner = TerminalRunner(workspace_root=arguments.get("workspace_root"))
-    return runner.run_command(
-        command=arguments["command"],
+    result = runner.run_command(
+        command=arguments.get("command", ""),
         timeout=arguments.get("timeout", 30),
         blocking=arguments.get("blocking", True),
         new_terminal=arguments.get("new_terminal", False),
-    ), arguments
+        close_terminal_id=None,   # already handled above
+        refresh=False,            # already handled above
+        terminal_label=terminal_label,
+    )
+
+    # ── Extract and cache log path ──────────────────────────────────
+    log_match = _LOG_PATH_RE.search(result)
+    if log_match:
+        log_path = log_match.group(1)
+        _terminal_log_cache[terminal_label] = log_path
+        _terminal_log_cache[tid] = log_path
+    else:
+        outfile_match = _OUTFILE_RE.search(result)
+        if outfile_match:
+            log_path = outfile_match.group(1)
+            _terminal_log_cache[terminal_label] = log_path
+            _terminal_log_cache[tid] = log_path
+
+    return result, arguments
+
+
+# ---------------------------------------------------------------------------
+# close_terminal — separate tool, mirrors close_file for terminals
+# ---------------------------------------------------------------------------
+
+def close_terminal_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    """
+    Close (remove) a terminal from the Terminal Panel display.
+
+    Takes a ``terminal_id`` matching the label shown in the panel
+    (e.g. "Terminal #1" or a custom ``terminal_label``).  The terminal's
+    log file path is returned so you can still ``read_file`` it later.
+
+    No command is executed — this only manages the panel display.
+
+    Returns:
+        (result_str, applied_arguments)
+    """
+    terminal_id = arguments.get("terminal_id", "")
+    if not terminal_id:
+        return "Error: terminal_id is required to close a terminal.", arguments
+
+    log_path = _terminal_log_cache.pop(terminal_id, None)
+    if log_path:
+        return (
+            f"Closed terminal \"{terminal_id}\".\n"
+            f"Log file: {log_path}\n"
+            f"Use read_file to access the complete output."
+        ), arguments
+    else:
+        return (
+            f"Closed terminal \"{terminal_id}\". "
+            f"No log file was associated with this terminal."
+        ), arguments

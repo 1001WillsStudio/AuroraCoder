@@ -28,10 +28,12 @@ from .code_tools.panel_manager import get_all as get_panels
 from .code_tools.panel_manager import register
 from .code_tools.code_interpreter_panel import CodeInterpreterPanel
 from .code_tools.tool_store_panel import ToolStorePanel
+from .code_tools.terminal_panel import TerminalPanel
 
 # ── Register all Living Tool State panels ──────────────────────────
 register(CodeInterpreterPanel())
 register(ToolStorePanel())
+register(TerminalPanel())
 from .tool_executor import execute_tool_calls
 from .training_log import record_api_call, load_save_training_flag
 

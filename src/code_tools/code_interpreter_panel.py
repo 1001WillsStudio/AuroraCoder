@@ -20,7 +20,7 @@ CODE_INTERPRETER_START = "<====CODE_INTERPRETER_START====>"
 CODE_INTERPRETER_END   = "<====CODE_INTERPRETER_END====>"
 
 # Tools that add a file to the display
-CODE_RELATED_TOOLS = {'read_file', 'write_file', 'edit_file'}
+CODE_RELATED_TOOLS = {'read_file', 'edit_file'}
 
 # Tools that remove a file from the display
 FILE_REMOVAL_TOOLS = {'delete_file', 'close_file'}

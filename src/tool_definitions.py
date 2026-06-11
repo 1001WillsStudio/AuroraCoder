@@ -22,7 +22,7 @@ from .code_tools.file_operations import (
     execute_edit_file,
 )
 # from .code_tools.grep_search import grep_search_tool  # COMMENTED OUT — agent can use terminal grep
-from .code_tools.terminal_runner import run_terminal_cmd_tool
+from .code_tools.terminal_runner import run_terminal_cmd_tool, close_terminal_tool
 from .core_tools.tool_store_client import (
     tool_store_tool,
     get_primary_tool_schemas,
@@ -289,7 +289,7 @@ NATIVE_TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "run_terminal_command",
-            "description": "Executes terminal/shell commands in a persistent, stateful Bash shell. The shell starts in /workspace and its environment and working directory are preserved between commands. For long-running processes (servers, training, etc.), set blocking=false so the command runs in the background — output streams to a log file whose path is returned. You can read that log file later to check progress. Do NOT use nohup or trailing & yourself; use blocking=false instead. If a blocking command times out, the command keeps running in the old terminal and a new terminal is started automatically — the log file path is returned so you can check progress.",
+            "description": "Executes terminal/shell commands in a persistent, stateful Bash shell. The shell starts in /workspace and its environment and working directory are preserved between commands. For long-running processes (servers, training, etc.), set blocking=false so the command runs in the background — output streams to a log file whose path is returned. You can read that log file later to check progress. Do NOT use nohup or trailing & yourself; use blocking=false instead. If a blocking command times out, the command keeps running in the old terminal and a new terminal is started automatically — the log file path is returned so you can check progress.\n\nThe Terminal Panel displays all active terminals with ordered names (Terminal #1, #2, …). Use `close_terminal_id` to remove a terminal from the panel — the log file path will be returned so you can still read the results with read_file later. Use `refresh=true` to refresh the panel without executing a command. Use `terminal_label` to give a terminal a custom name.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -308,9 +308,38 @@ NATIVE_TOOL_DEFINITIONS = [
                     "new_terminal": {
                         "type": "boolean",
                         "description": "If true, restart the persistent shell before running the command. Use when the terminal is unresponsive or you need a clean environment. Default is false."
+                    },
+                    "close_terminal_id": {
+                        "type": "string",
+                        "description": "Close (remove) a terminal from the Terminal Panel display. Set this to a terminal ID shown in the panel (e.g., 'Terminal #1'). The log file path for the closed terminal will be returned so you can still read_file it later. No command is executed when this is set."
+                    },
+                    "refresh": {
+                        "type": "boolean",
+                        "description": "If true, refresh the Terminal Panel without executing any command. Use this to update the display when a background process may have completed. No command is executed."
+                    },
+                    "terminal_label": {
+                        "type": "string",
+                        "description": "Optional human-readable label for this terminal. If not provided, an ordered name like 'Terminal #1' is auto-generated."
                     }
                 },
                 "required": ["command"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "close_terminal",
+            "description": "Close (remove) a terminal from the Terminal Panel display without executing any command. Like close_file but for terminals. The terminal's log file path is returned so you can still read_file the results later. Use this after you have finished reading a background terminal's output.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "terminal_id": {
+                        "type": "string",
+                        "description": "The terminal to close. Use the label shown in the Terminal Panel, e.g. 'Terminal #1' or a custom label set via terminal_label."
+                    }
+                },
+                "required": ["terminal_id"]
             }
         }
     },
@@ -405,7 +434,7 @@ NATIVE_TOOL_DEFINITIONS = [
 PARALLEL_SAFE_TOOLS = {
     "read_file", "list_directory", "search_files",  # "grep_search",  # COMMENTED OUT
     "google_search", "web_browser", "tool_store",
-    "subagent",
+    "subagent", "close_terminal",  # Read-only — just closes a panel display entry
 }
 
 # Tools available to subagents in "read_only" mode.
@@ -415,6 +444,7 @@ PARALLEL_SAFE_TOOLS = {
 SUBAGENT_READ_ONLY_TOOLS = {
     "read_file", "list_directory", "search_files",  # "grep_search",  # COMMENTED OUT
     "google_search", "web_browser", "close_file",
+    "close_terminal",  # Read-only — just closes a panel display entry
     # "tool_store",  # TODO: candidate — needs review.  Many external APIs
     #                 # are write-capable, so this can bypass subagent safety.
 }
@@ -436,6 +466,7 @@ TOOL_FUNCTION_MAP = {
     "search_files": file_search_tool,
     # "grep_search": grep_search_tool,  # COMMENTED OUT — agent can use terminal grep
     "run_terminal_command": run_terminal_cmd_tool,
+    "close_terminal": close_terminal_tool,
     "tool_store": tool_store_tool,
     "subagent": run_subagent,
     "continue_as_new_chat": continue_as_new_chat,
