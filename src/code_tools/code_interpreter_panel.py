@@ -88,10 +88,6 @@ def discover_open_files(messages: List[Dict]) -> Set[str]:
                         open_files.clear()
                     continue
 
-                # ── Handle focus on read_file (close all others) ──────
-                if tool_name == "read_file" and args.get("focus"):
-                    open_files.clear()
-                    # Fall through to add the target file(s) below
 
                 if not target:
                     continue

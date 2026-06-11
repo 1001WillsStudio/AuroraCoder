@@ -166,8 +166,6 @@ class FileOperations:
 
 def read_file_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     target = arguments.get("file")
-    focus = arguments.get("focus", False)
-
     if isinstance(target, list):
         targets = target
     else:
@@ -176,9 +174,6 @@ def read_file_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     fo = FileOperations()
     results = [fo.read_file(t) for t in targets]
     msg = "\n".join(results)
-
-    if focus:
-        msg += f"\n(Focus mode: closed all other files)"
 
     return msg, arguments
 

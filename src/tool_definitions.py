@@ -114,11 +114,6 @@ NATIVE_TOOL_DEFINITIONS = [
                         "description": "Path to the file(s) to read (relative to workspace). Pass a single string or an array of strings to open multiple files at once.",
                         "items": {"type": "string"}
                     },
-                    "focus": {
-                        "type": "boolean",
-                        "description": "If true, close ALL other open files and keep only the specified file(s) open. Use to reset your workspace view to specific files. Default is false (additive open).",
-                        "default": False
-                    }
                 },
                 "required": ["file"]
             }
