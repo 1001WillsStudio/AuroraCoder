@@ -129,7 +129,7 @@ def _is_same_host_redirect(original: str, redirect: str) -> bool:
 
 
 def _get_proxies() -> Optional[Dict[str, str]]:
-    if DOCKER_MODE:
+    if DOCKER_MODE or not proxy_host:
         return None
     proxy_url = f"http://{proxy_host}:{proxy_port}"
     return {"http": proxy_url, "https": proxy_url}

@@ -10,7 +10,7 @@ from ..config import proxy_host, proxy_port, DOCKER_MODE
 
 def _build_http():
     """Build httplib2.Http with proxy only when not in Docker."""
-    if DOCKER_MODE:
+    if DOCKER_MODE or not proxy_host:
         return httplib2.Http()
     proxy_info = httplib2.ProxyInfo(
         httplib2.socks.PROXY_TYPE_HTTP,
