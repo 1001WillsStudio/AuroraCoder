@@ -218,9 +218,17 @@ jobs:
             TAG_MSG=$(git tag -l --format='%(contents)' "$TAG" 2>/dev/null || true)
           fi
 
-          # Build release body: folded changelog first, then install guide
+          # Generate auto-release notes via GitHub API
+          GEN_NOTES=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -X POST \
+            "https://api.github.com/repos/$REPO/releases/generate-notes" \
+            -d "{\"tag_name\":\"$TAG\"}" | \
+            python3 -c "import sys,json; print(json.load(sys.stdin).get('body',''))")
+
+          # Build release body: all changelog together in one fold, then install
           printf '<details>\n<summary><strong>📋 Release Notes</strong></summary>\n\n' > /tmp/release_body.md
           printf '%s\n' "$TAG_MSG" >> /tmp/release_body.md
+          printf '\n---\n\n%s\n' "$GEN_NOTES" >> /tmp/release_body.md
           printf '\n</details>\n\n' >> /tmp/release_body.md
           cat >> /tmp/release_body.md << 'INSTALLOF'
           ## Install
@@ -259,7 +267,7 @@ jobs:
           tag_name: ${{ steps.tag.outputs.tag }}
           files: dist/*
           draft: true
-          generate_release_notes: true
+          generate_release_notes: false
           body_path: /tmp/release_body.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
