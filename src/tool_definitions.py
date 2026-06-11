@@ -114,11 +114,6 @@ NATIVE_TOOL_DEFINITIONS = [
                         "description": "Path to the file(s) to read (relative to workspace). Pass a single string or an array of strings to open multiple files at once.",
                         "items": {"type": "string"}
                     },
-                    "focus": {
-                        "type": "boolean",
-                        "description": "If true, close ALL other open files and keep only the specified file(s) open. Use to reset your workspace view to specific files. Default is false (additive open).",
-                        "default": False
-                    }
                 },
                 "required": ["file"]
             }
@@ -188,13 +183,14 @@ NATIVE_TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "delete_file",
-            "description": "Deletes a specified file from the filesystem.",
+            "description": "Deletes a specified file from the filesystem. Accepts a single file path or a list of file paths to delete multiple files at once.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "file": {
-                        "type": "string",
-                        "description": "Path to the file to delete (relative to workspace)"
+                        "type": ["string", "array"],
+                        "description": "Path to the file(s) to delete (relative to workspace). Pass a single string or an array of strings to delete multiple files at once.",
+                        "items": {"type": "string"}
                     }
                 },
                 "required": ["file"]
@@ -242,23 +238,24 @@ NATIVE_TOOL_DEFINITIONS = [
             }
         }
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_files",
-            "description": "Searches for files by name pattern in the workspace.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "File name pattern to search for"
-                    }
-                },
-                "required": ["query"]
-            }
-        }
-    },
+    # COMMENTED OUT — agent can use terminal: find / fd to search for files
+    # {
+    #     "type": "function",
+    #     "function": {
+    #         "name": "search_files",
+    #         "description": "Searches for files by name pattern in the workspace.",
+    #         "parameters": {
+    #             "type": "object",
+    #             "properties": {
+    #                 "query": {
+    #                     "type": "string",
+    #                     "description": "File name pattern to search for"
+    #                 }
+    #             },
+    #             "required": ["query"]
+    #         }
+    #     }
+    # },
     # COMMENTED OUT — agent can use terminal: grep -rn "pattern" .
     # {
     #     "type": "function",
@@ -408,7 +405,7 @@ NATIVE_TOOL_DEFINITIONS = [
 # These have no conflicting side effects / race conditions.
 # Used by partition_tool_calls() in main_flow.py to decide what can run concurrently.
 PARALLEL_SAFE_TOOLS = {
-    "read_file", "list_directory", "search_files",  # "grep_search",  # COMMENTED OUT
+    "read_file", "list_directory",  # "search_files", "grep_search",  # COMMENTED OUT
     "google_search", "web_browser", "tool_store",
     "subagent",
 }
@@ -418,7 +415,7 @@ PARALLEL_SAFE_TOOLS = {
 # system state.  Used by get_filtered_tools() in web_api/app.py.
 # "subagent" itself is excluded by get_filtered_tools() to prevent nesting.
 SUBAGENT_READ_ONLY_TOOLS = {
-    "read_file", "list_directory", "search_files",  # "grep_search",  # COMMENTED OUT
+    "read_file", "list_directory",  # "search_files", "grep_search",  # COMMENTED OUT
     "google_search", "web_browser", "close_file",
     # "tool_store",  # TODO: candidate — needs review.  Many external APIs
     #                 # are write-capable, so this can bypass subagent safety.
@@ -438,7 +435,7 @@ TOOL_FUNCTION_MAP = {
     "delete_file": delete_file_tool,
     "close_file": close_file_tool,
     "list_directory": list_dir_tool,
-    "search_files": file_search_tool,
+    # "search_files": file_search_tool,  # COMMENTED OUT — agent can use terminal: find / fd
     # "grep_search": grep_search_tool,  # COMMENTED OUT — agent can use terminal grep
     "run_terminal_command": run_terminal_cmd_tool,
     "tool_store": tool_store_tool,

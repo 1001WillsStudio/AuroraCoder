@@ -18,7 +18,6 @@ import uuid
 
 import requests
 
-from ..config import SUBAGENT_MAX_RESULT_CHARS
 
 logger = logging.getLogger(__name__)
 
@@ -161,10 +160,5 @@ def run_subagent(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     if not final_text:
         final_text = f"[Subagent finished with status '{final_status}' but produced no text summary.]"
 
-    if len(final_text) > SUBAGENT_MAX_RESULT_CHARS:
-        final_text = (
-            final_text[:SUBAGENT_MAX_RESULT_CHARS]
-            + f"\n... [truncated — {len(final_text)} chars total]"
-        )
 
     return final_text, arguments

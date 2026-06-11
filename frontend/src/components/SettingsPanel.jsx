@@ -36,15 +36,14 @@ export default function SettingsPanel({ isOpen, onClose }) {
   /** Hardcoded fallback provider list — used when the backend is unreachable.
    *  Must be kept in sync with MODEL_PROVIDERS in src/config.py. */
   const BUILT_IN_FALLBACK = [
-    { id: 'deepseek',          name: 'DeepSeek V4 Pro',                  description: 'Fast reasoning model with thinking (~2s TTFT)',   supports_thinking: true,  api_key_configured: false },
-    { id: 'deepseek-flash',    name: 'DeepSeek V4 Flash',                description: 'DeepSeek V4 Flash — fast, no reasoning',           supports_thinking: false, api_key_configured: false },
-    { id: 'nvidia',            name: 'NVIDIA DS V4 Pro',           description: 'NVIDIA hosted V4 Pro with thinking',              supports_thinking: true,  api_key_configured: false },
-    { id: 'nvidia-fast',       name: 'NVIDIA DS V4 Pro (No Reasoning)', description: 'NVIDIA hosted V4 Pro, no reasoning (faster)',      supports_thinking: false, api_key_configured: false },
-    { id: 'nvidia-glm5',       name: 'NVIDIA GLM-5.1',                   description: 'Z-AI GLM-5.1 on NVIDIA with deep thinking',       supports_thinking: true,  api_key_configured: false },
-    { id: 'nvidia-glm5-fast',  name: 'NVIDIA GLM-5.1 (No Reasoning)',    description: 'Z-AI GLM-5.1 on NVIDIA, no reasoning (faster)',    supports_thinking: false, api_key_configured: false },
-    { id: 'gemini-3-pro-api',  name: 'Gemini 3.1 Pro (AI Studio)',      description: 'Google AI Studio API (Requires GEMINI_API_KEY)',    supports_thinking: true,  api_key_configured: false },
-    { id: 'opencode-ds-v4-pro',  name: 'OpenCode DS V4 Pro',      description: 'OpenCode-hosted DeepSeek V4 Pro with reasoning',    supports_thinking: true,  api_key_configured: false },
-    { id: 'opencode-ds-v4-flash', name: 'OpenCode DS V4 Flash',   description: 'OpenCode-hosted DeepSeek V4 Flash — fast with reasoning', supports_thinking: true, api_key_configured: false },
+    { id: 'deepseek',             name: 'DeepSeek V4 Pro',                  description: 'Flagship reasoning model',                    supports_thinking: true,  api_key_configured: false },
+    { id: 'deepseek-flash',       name: 'DeepSeek V4 Flash',                description: 'Fast reasoning model',                        supports_thinking: true,  api_key_configured: false },
+    { id: 'opencode-ds-v4-pro',   name: 'OpenCode DS V4 Pro',               description: 'OpenCode Go hosted',                          supports_thinking: true,  api_key_configured: false },
+    { id: 'opencode-ds-v4-flash', name: 'OpenCode DS V4 Flash',             description: 'OpenCode Go hosted',                          supports_thinking: true,  api_key_configured: false },
+    { id: 'nvidia',               name: 'NVIDIA DS V4 Pro',                 description: 'NVIDIA hosted',                               supports_thinking: true,  api_key_configured: false },
+    { id: 'nvidia-fast',          name: 'NVIDIA DS V4 Pro (No Reasoning)',  description: 'NVIDIA hosted, no reasoning',                 supports_thinking: false, api_key_configured: false },
+    { id: 'nvidia-glm5',          name: 'NVIDIA GLM-5.1',                   description: 'NVIDIA hosted',                               supports_thinking: true,  api_key_configured: false },
+    { id: 'nvidia-glm5-fast',     name: 'NVIDIA GLM-5.1 (No Reasoning)',    description: 'NVIDIA hosted, no reasoning',                 supports_thinking: false, api_key_configured: false },
   ]
 
   // ── Load ────────────────────────────────────────────────────────────────

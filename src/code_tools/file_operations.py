@@ -166,8 +166,6 @@ class FileOperations:
 
 def read_file_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     target = arguments.get("file")
-    focus = arguments.get("focus", False)
-
     if isinstance(target, list):
         targets = target
     else:
@@ -176,9 +174,6 @@ def read_file_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     fo = FileOperations()
     results = [fo.read_file(t) for t in targets]
     msg = "\n".join(results)
-
-    if focus:
-        msg += f"\n(Focus mode: closed all other files)"
 
     return msg, arguments
 
@@ -204,7 +199,17 @@ def full_file_write_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]
     return FileOperations().full_file_write(arguments["file"], arguments["content"]), arguments
 
 def delete_file_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
-        return FileOperations().delete_file(arguments["file"]), arguments
+    target = arguments.get("file")
+    if isinstance(target, list):
+        targets = target
+    else:
+        targets = [target]
+
+    fo = FileOperations()
+    results = [fo.delete_file(t) for t in targets]
+    msg = "\n".join(results)
+
+    return msg, arguments
 
 def list_dir_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     return FileOperations().list_dir(arguments.get("relative_workspace_path", "")), arguments
@@ -236,3 +241,7 @@ def close_file_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
         return f"Closed {closed} from code interpreter view.", arguments
     else:
         return f"Closed {closed} from code interpreter view.", arguments
+
+
+
+

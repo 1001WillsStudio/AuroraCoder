@@ -25,7 +25,7 @@ try:
     from toolstore.tool import Tool
 except ImportError:
     Tool = None
-from ..config import CONTEXT_DISPLAY_WARN_CHARS, CONTEXT_DISPLAY_MAX_ITEMS
+from ..config import CODE_PANEL_WARN_CHARS, CODE_PANEL_WARN_ITEMS
 from ..core_tools.tool_store_client import tool_store_tool
 
 TOOLSTORE_START = "<====TOOLSTORE_START====>"
@@ -242,10 +242,10 @@ class ToolStorePanel(Panel):
 
         combined = "\n\n".join(sections)
         hint = ""
-        if len(state) > CONTEXT_DISPLAY_MAX_ITEMS or len(combined) > CONTEXT_DISPLAY_WARN_CHARS:
+        if len(state) > CODE_PANEL_WARN_ITEMS or len(combined) > CODE_PANEL_WARN_CHARS:
             names = ", ".join(sorted(state))
             hint = (
-                f"\n⚠️ CONTEXT WARNING: You have {len(state)} toolsets open "
+                f"\n⚠️ CODE INTERPRETER LOAD WARNING: You have {len(state)} toolsets open "
                 f"({names}). To avoid running out of context, please close "
                 f"toolsets you no longer need by calling "
                 f"tool_store(action='close', tool_name='X')."

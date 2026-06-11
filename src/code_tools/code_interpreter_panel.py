@@ -14,13 +14,16 @@ from typing import Dict, List, Set
 
 from .panel_manager import Panel
 from ..code_sandbox import WORKSPACE
-from ..config import CONTEXT_DISPLAY_WARN_CHARS, CONTEXT_DISPLAY_MAX_ITEMS
+from ..config import (
+    CODE_PANEL_WARN_CHARS, CODE_PANEL_WARN_ITEMS,
+    CODE_PANEL_CRITICAL_ITEMS, CODE_PANEL_CRITICAL_CHARS,
+)
 
 CODE_INTERPRETER_START = "<====CODE_INTERPRETER_START====>"
 CODE_INTERPRETER_END   = "<====CODE_INTERPRETER_END====>"
 
 # Tools that add a file to the display
-CODE_RELATED_TOOLS = {'read_file', 'write_file', 'edit_file'}
+CODE_RELATED_TOOLS = {'read_file', 'edit_file'}
 
 # Tools that remove a file from the display
 FILE_REMOVAL_TOOLS = {'delete_file', 'close_file'}
@@ -88,10 +91,6 @@ def discover_open_files(messages: List[Dict]) -> Set[str]:
                         open_files.clear()
                     continue
 
-                # ── Handle focus on read_file (close all others) ──────
-                if tool_name == "read_file" and args.get("focus"):
-                    open_files.clear()
-                    # Fall through to add the target file(s) below
 
                 if not target:
                     continue
@@ -121,7 +120,7 @@ def _format_code(code: str) -> str:
     lines = code.splitlines()
     width = len(str(len(lines)))
     return "\n".join(
-        f"{str(i + 1).rjust(width)}|{line}"
+        f"{str(i + 1).rjust(width)}\t{line}"
         for i, line in enumerate(lines)
     )
 
@@ -170,13 +169,26 @@ class CodeInterpreterPanel(Panel):
             "contents unless you open it again. Only close a file "
             "after you have fully extracted all information you need from it."
         )
-        if len(state) > CONTEXT_DISPLAY_MAX_ITEMS or len(combined) > CONTEXT_DISPLAY_WARN_CHARS:
+        # ── Tiered warnings: severe overrides mild ────────────────────
+        if len(state) >= CODE_PANEL_CRITICAL_ITEMS or len(combined) >= CODE_PANEL_CRITICAL_CHARS:
             notes += (
-                f"\n⚠️ CONTEXT WARNING: You have {len(state)} files open "
+                f"\n⚠️ CODE INTERPRETER OVERLOAD WARNING: You have {len(state)} files open "
+                f"({', '.join(sorted_files)}) totalling {len(combined):,} characters. "
+                "This severely strains the context window and risks "
+                "degradation or truncation of critical information. "
+                "CLOSE every file you no longer absolutely need RIGHT NOW: "
+                "close multiple at once with close_file(file=['a.py','b.py']), "
+                "or keep only what you need with close_file(keep=['kept.py']). "
+                "Only keep files that are strictly necessary for your "
+                "immediate next step."
+            )
+        elif len(state) > CODE_PANEL_WARN_ITEMS or len(combined) > CODE_PANEL_WARN_CHARS:
+            notes += (
+                f"\n⚠️ CODE INTERPRETER LOAD WARNING: You have {len(state)} files open "
                 f"({', '.join(sorted_files)}). "
                 "To avoid running out of context, close files you no longer "
-                "need with close_file(file='file.py'), close multiple "
-                "at once with close_file(file=['a.py','b.py']), or "
-                "keep only what you need with close_file(keep=['kept.py'])."
+                "need: close multiple at once with "
+                "close_file(file=['a.py','b.py']), or keep only what you "
+                "need with close_file(keep=['kept.py'])."
             )
         return f"{self.block_start}\n{combined}{notes}\n{self.block_end}"

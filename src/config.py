@@ -28,8 +28,9 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 TRAINING_DATA_DIR = DATA_DIR / "training"
 
-proxy_host = 'localhost'
-proxy_port = 10794
+_proxy_port = os.environ.get("AURORACODER_PROXY_PORT")
+proxy_host = os.environ.get("AURORACODER_PROXY_HOST")
+proxy_port = int(_proxy_port) if _proxy_port else None
 
 # =============================================================================
 # Model Provider Configurations
@@ -133,10 +134,6 @@ MODEL_PROVIDERS = {
 # Default provider to use
 DEFAULT_PROVIDER = "deepseek"
 
-# Legacy compatibility - these are used as defaults if provider not specified
-BASE_URL = MODEL_PROVIDERS[DEFAULT_PROVIDER]["base_url"]
-API_KEY = MODEL_PROVIDERS[DEFAULT_PROVIDER]["api_key"]
-MODEL_NAME = MODEL_PROVIDERS[DEFAULT_PROVIDER]["model"]
 
 # Model Parameters
 MAX_TOKENS = 32768
@@ -152,8 +149,7 @@ MAX_STREAMING_RETRIES = 10  # Consecutive streaming failures before giving up
 MAX_TOOL_CONCURRENCY = 5  # Max parallel threads for concurrent-safe tools
 
 # Subagent
-SUBAGENT_MAX_ITERATIONS = 15  # Lower cap than the parent agent
-SUBAGENT_MAX_RESULT_CHARS = 4000  # Truncate subagent final response to save parent context
+SUBAGENT_MAX_ITERATIONS = MAX_ITERATIONS  # Same cap as the parent agent
 
 # Context continuation (CONTEXT_WINDOW_TOKENS is the fallback; per-provider
 # values live in MODEL_PROVIDERS[provider]["context_window"])
@@ -205,10 +201,15 @@ WEB_CACHE_MAX_ENTRIES = 64
 WEB_CACHE_TTL_S = 15 * 60  # 15 minutes
 
 # Code interpreter display limits
-CONTEXT_DISPLAY_WARN_CHARS = 150_000  # Total display chars before context warning
-CONTEXT_DISPLAY_MAX_ITEMS  = 3        # Max open items before context warning
+CODE_PANEL_WARN_CHARS = 150_000  # Total display chars before mild warning
+CODE_PANEL_WARN_ITEMS  = 3        # Max open items before mild warning
 INTERPRETER_MAX_FILE_CHARS = 150_000  # Per-file char limit; larger files get truncated
 INTERPRETER_TRUNCATE_PREVIEW_LINES = 20  # Lines shown when a file is truncated
+
+# Severe warning thresholds — triggers a stronger, more urgent warning
+# when the agent has too many files open or the combined display is huge.
+CODE_PANEL_CRITICAL_ITEMS = 7        # >= this many files → severe warning
+CODE_PANEL_CRITICAL_CHARS = 300_000  # >= this many display chars → severe warning
 
 # File Operation Markers
 # Terminal Environment Note — adapts to platform
@@ -221,9 +222,11 @@ _TERMINAL_BLOCKING_NOTE = (
 )
 if DOCKER_MODE:
     TERMINAL_ENV_NOTE = (
-        "Environment Note: The terminal runs commands in a Bash shell inside a Docker container. "
-        "You can chain commands with '&&' (e.g. 'command_1 && command_2')."
-        + _TERMINAL_BLOCKING_NOTE
+        "**Terminal**: For long-running processes (servers, training, etc.), set blocking=false "
+        "instead of using nohup or &. The command runs in the background and a log "
+        "file path is returned so you can check progress later. "
+        "If a blocking command times out, the process keeps running and a new "
+        "terminal is created automatically — read the returned log path to monitor."
     )
 else:
     if sys.platform == "win32":
@@ -233,8 +236,7 @@ else:
         )
     else:
         TERMINAL_ENV_NOTE = (
-            "Environment Note: The terminal runs commands in a Bash shell within a Conda environment. "
-            "You can chain commands with '&&' (e.g. 'command_1 && command_2')."
+            "Environment Note: The terminal runs commands in a Bash shell within a Conda environment."
             + _TERMINAL_BLOCKING_NOTE
         )
 
@@ -258,9 +260,10 @@ SYSTEM_MESSAGE_TEMPLATE = """You are a helpful and autonomous agent with powerfu
 
 **Workspace**: Your working directory is `/workspace`. All file operations use paths **relative to /workspace** unless an absolute path is given. The terminal shell also starts in `/workspace`. When the user uploads a project, its files appear here.
 
-**SUPER IMPORTANT**: Do EXACTLY what the user asks you to do. For anything else the user may need beyond their explicit request, ASK before doing so. Do not assume or add extra actions without user confirmation.
+**Workspace File Tree**:
+{workspace_tree}
 
-As an autonomous agent, proactively leverage your tools to fully resolve the user's requests end-to-end. Refrain from asking the user to perform tasks or provide clarification unless essential information cannot be acquired through your tools.
+**SUPER IMPORTANT**: Do exactly what the user asks — no more, no less. Work autonomously toward the goal without stopping to ask the user. Use your tools to investigate and resolve issues yourself. Only ask the user when you truly cannot proceed without their input.
 
 {vnc_instructions}
 {terminal_env_note}
