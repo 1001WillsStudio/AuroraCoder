@@ -68,7 +68,6 @@ class TerminalRunner:
             stdout, stderr = shell.run(command, timeout=timeout, blocking=blocking)
 
             output = []
-            output.append(f"Command: {command}")
 
             if stdout:
                 output.append("\nSTDOUT:")
@@ -110,7 +109,6 @@ class TerminalRunner:
             )
             
             output = []
-            output.append(f"Command: {command}")
             output.append(f"Working Directory: {work_dir}")
             output.append(f"Exit Code: {result.returncode}")
             output.append("")
