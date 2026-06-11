@@ -218,8 +218,10 @@ jobs:
             TAG_MSG=$(git tag -l --format='%(contents)' "$TAG" 2>/dev/null || true)
           fi
 
-          # Build release body: changelog first, then install guide
-          printf '%s\n\n' "$TAG_MSG" > /tmp/release_body.md
+          # Build release body: folded changelog first, then install guide
+          printf '<details>\n<summary><strong>📋 Release Notes</strong></summary>\n\n' > /tmp/release_body.md
+          printf '%s\n' "$TAG_MSG" >> /tmp/release_body.md
+          printf '\n</details>\n\n' >> /tmp/release_body.md
           cat >> /tmp/release_body.md << 'INSTALLOF'
           ## Install
 
