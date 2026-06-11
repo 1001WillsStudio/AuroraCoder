@@ -51,6 +51,7 @@ from gateway.workspace import (
     clear_conversation_snapshots,
     get_file_diffs_for_conversation,
     get_cached_file_tree,
+    generate_workspace_tree_text,
     invalidate_tree_cache,
     count_workspace_files,
 )
@@ -134,6 +135,17 @@ async def proxy_chat(request: Request):
         body["max_iterations"] = get_max_iterations()
     conversation_id = body.get("conversation_id") or str(uuid.uuid4())
     body["conversation_id"] = conversation_id
+
+    # ── Generate workspace tree for the agent's system message ──
+    # Only on the *first* turn — continuations already carry the tree
+    # inside the cached system message.
+    if not body.get("messages"):
+        try:
+            body["workspace_tree"] = generate_workspace_tree_text(WORKSPACE)
+        except Exception:
+            body["workspace_tree"] = ""
+    else:
+        body["workspace_tree"] = ""
 
     # ── Extract conversation-server metadata (not forwarded to backend) ─
     # Must be extracted (and the conversation created) BEFORE we try to

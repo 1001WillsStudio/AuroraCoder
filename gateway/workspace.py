@@ -321,3 +321,91 @@ def count_workspace_files(work_dir: Path) -> int:
     if not work_dir or not work_dir.exists():
         return 0
     return sum(1 for _ in work_dir.rglob("*") if _.is_file())
+
+
+# ===========================================================================
+# Workspace Tree (text) — compact text tree injected into the agent's system
+# message so the agent has a basic understanding of the workspace without
+# spending turns on manual exploration.
+# ===========================================================================
+
+_TREE_SKIP_NAMES = {
+    "__pycache__", "node_modules", ".git", ".venv", "venv",
+    ".pytest_cache", ".ruff_cache", ".mypy_cache", "dist",
+    "build", ".next", "target",
+}
+
+
+def _format_tree_size(size_bytes: int) -> str:
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    elif size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    else:
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
+
+
+def generate_workspace_tree_text(
+    workspace_root: Path,
+    max_depth: int = 3,
+    max_files_per_dir: int = 3,
+) -> str:
+    """Generate a compact text tree of the workspace for the system message.
+
+    - All directories are always shown (up to *max_depth* levels deep).
+    - Up to *max_files_per_dir* files are shown per directory.
+      When there are more, a ``... and N more file(s)`` line is appended.
+    - Hidden items (dot-prefixed) and common noise directories
+      (``__pycache__``, ``node_modules``, ``.git``, etc.) are skipped.
+    """
+    lines = [f"📁 {workspace_root.name}/"]
+
+    def _walk(path: Path, indent_prefix: str, depth: int):
+        if depth > max_depth:
+            return
+        try:
+            entries = sorted(
+                path.iterdir(),
+                key=lambda e: (not e.is_dir(), e.name.lower()),
+            )
+        except (PermissionError, OSError):
+            return
+
+        visible = [
+            e for e in entries
+            if not e.name.startswith(".") and e.name not in _TREE_SKIP_NAMES
+        ]
+        dirs = [e for e in visible if e.is_dir()]
+        files = [e for e in visible if e.is_file()]
+
+        show_files = files[:max_files_per_dir]
+        remaining = len(files) - max_files_per_dir
+
+        # Show all dirs, then up to max_files_per_dir files, then a
+        # "... and N more" line if files were truncated.
+        all_to_show = dirs + show_files
+        has_remaining = remaining > 0
+        total_shown = len(all_to_show) + (1 if has_remaining else 0)
+
+        for i, entry in enumerate(all_to_show):
+            is_last = (i == total_shown - 1)
+            branch = "└── " if is_last else "├── "
+
+            if entry.is_dir():
+                lines.append(f"{indent_prefix}{branch}📁 {entry.name}/")
+                if depth < max_depth:
+                    next_indent = indent_prefix + ("    " if is_last else "│   ")
+                    _walk(entry, next_indent, depth + 1)
+            else:
+                size_str = _format_tree_size(entry.stat().st_size)
+                lines.append(f"{indent_prefix}{branch}📄 {entry.name} ({size_str})")
+
+        if has_remaining:
+            lines.append(
+                f"{indent_prefix}└── ... and {remaining} more file(s)"
+            )
+
+    _walk(workspace_root, "", 0)
+    return "\n".join(lines)
+
+

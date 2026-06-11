@@ -236,3 +236,7 @@ def close_file_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
         return f"Closed {closed} from code interpreter view.", arguments
     else:
         return f"Closed {closed} from code interpreter view.", arguments
+
+
+
+

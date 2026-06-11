@@ -8,6 +8,7 @@ management is delegated to code_tools/code_interpreter_panel.py.
 
 import time
 import datetime
+from pathlib import Path
 import logging
 from typing import Dict, List, Generator, Optional
 
@@ -92,6 +93,7 @@ def generate_chat_responses_stream_native(
     provider_id: Optional[str] = None,
     tools_override: Optional[List[Dict]] = None,
     conversation_id: str | None = None,
+    workspace_tree: str = "",
 ) -> Generator[dict, None, None]:
     """
     Handles chat interaction using native OpenAI tool calling with thinking/reasoning support.
@@ -134,6 +136,7 @@ def generate_chat_responses_stream_native(
         vnc_instructions=VNC_INSTRUCTIONS,
         terminal_env_note=TERMINAL_ENV_NOTE,
         toolstore_tools=get_toolstore_tools_prompt(),
+        workspace_tree=workspace_tree,
     )
 
     # Eagerly load primary tool schemas once at startup so the LLM's
