@@ -71,14 +71,43 @@ def discover_open_files(messages: List[Dict]) -> Set[str]:
                 if not isinstance(args, dict):
                     continue
 
-                target_file = args.get("target_file")
-                if not target_file:
+                target = args.get("file")
+
+                # ── Handle keep on close_file (close all except) ────────
+                if tool_name == "close_file" and "keep" in args:
+                    keep_list = args["keep"]
+                    if isinstance(keep_list, list):
+                        if keep_list:
+                            open_files.intersection_update(keep_list)
+                        else:
+                            open_files.clear()
+                    elif keep_list:
+                        # Single string, not in a list
+                        open_files.intersection_update({keep_list})
+                    else:
+                        open_files.clear()
                     continue
 
+                # ── Handle focus on read_file (close all others) ──────
+                if tool_name == "read_file" and args.get("focus"):
+                    open_files.clear()
+                    # Fall through to add the target file(s) below
+
+                if not target:
+                    continue
+
+                # ── Normalise target to list ──────────────────────────
+                if isinstance(target, list):
+                    targets = target
+                else:
+                    targets = [target]
+
                 if tool_name in CODE_RELATED_TOOLS:
-                    open_files.add(target_file)
+                    for t in targets:
+                        open_files.add(t)
                 elif tool_name in FILE_REMOVAL_TOOLS:
-                    open_files.discard(target_file)
+                    for t in targets:
+                        open_files.discard(t)
 
     return open_files
 
@@ -145,7 +174,9 @@ class CodeInterpreterPanel(Panel):
             notes += (
                 f"\n⚠️ CONTEXT WARNING: You have {len(state)} files open "
                 f"({', '.join(sorted_files)}). "
-                "To avoid running out of context, please close files "
-                "you no longer need by calling close_file() on them."
+                "To avoid running out of context, close files you no longer "
+                "need with close_file(file='file.py'), close multiple "
+                "at once with close_file(file=['a.py','b.py']), or "
+                "keep only what you need with close_file(keep=['kept.py'])."
             )
         return f"{self.block_start}\n{combined}{notes}\n{self.block_end}"

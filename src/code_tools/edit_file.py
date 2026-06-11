@@ -231,7 +231,7 @@ class RangeReplaceEditor:
 
         Returns ``(result_message, applied_arguments)``.
         """
-        self.applied_arguments = {"target_file": target_file, "edits": edits}
+        self.applied_arguments = {"file": target_file, "edits": edits}
 
         try:
             file_path = self._resolve_path(target_file)
@@ -307,7 +307,7 @@ class RangeReplaceEditor:
             os.replace(temp_path, file_path)
 
             self.applied_arguments = {
-                "target_file": target_file,
+                "file": target_file,
                 "edits": applied_edits,
             }
 

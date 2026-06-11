@@ -42,7 +42,7 @@ function ToolActivity({ toolCalls, toolResults, onStopTool, onLoadConversation, 
 
 function ToolActivityItem({ toolCall, result, onStop, onLoadConversation, childConversationId }) {
   const { t } = useLanguage()
-  const [expanded, setExpanded] = useState(true)  // Open by default
+  const [expanded, setExpanded] = useState(true)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const startTimeRef = useRef(Date.now())
   const isComplete = !!result
@@ -51,59 +51,42 @@ function ToolActivityItem({ toolCall, result, onStop, onLoadConversation, childC
   // Track elapsed time for running tools
   useEffect(() => {
     if (isComplete) return
-    
-    // Reset start time when tool starts
     startTimeRef.current = Date.now()
     setElapsedSeconds(0)
-    
     const interval = setInterval(() => {
-      const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000)
-      setElapsedSeconds(elapsed)
+      setElapsedSeconds(Math.floor((Date.now() - startTimeRef.current) / 1000))
     }, 1000)
-    
     return () => clearInterval(interval)
   }, [isComplete, toolCall.id])
   
-  // Parse arguments safely — LLM sometimes produces malformed JSON
+  // Parse arguments safely
   let args = {}
   try {
     const rawArgs = toolCall.arguments
     if (typeof rawArgs === 'string' && rawArgs.trim()) {
-      args = JSON.parse(rawArgs)
+      args = JSON.parse(rawArgs) || {}
     } else if (typeof rawArgs === 'object') {
       args = rawArgs || {}
     }
   } catch (e) {
-    // Downgraded to debug: LLM-generated JSON is occasionally malformed.
-    // This is handled gracefully by falling back to empty args.
     console.debug('[ToolActivityItem] Failed to parse arguments:', e.message)
     args = {}
   }
 
   const config = getToolConfig(toolCall.name, args, result, t)
   
-  // Format elapsed time
   const formatElapsed = (seconds) => {
     if (seconds < 60) return `${seconds}s`
-    const mins = Math.floor(seconds / 60)
-    const secs = seconds % 60
-    return `${mins}m ${secs}s`
+    return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
   }
   
-  // Handle stop click
   const handleStopClick = (e) => {
     e.stopPropagation()
-    if (onStop) {
-      onStop({
-        toolCall,
-        toolName: toolCall.name,
-        elapsedSeconds,
-        config
-      })
-    }
+    if (onStop) onStop({ toolCall, toolName: toolCall.name, elapsedSeconds, config })
   }
   
   const handleHeaderClick = () => {
+    // Subagent header navigates; all other tools toggle result visibility
     if (config.isSubagent && childConversationId && onLoadConversation) {
       onLoadConversation(childConversationId)
     } else if (config.hasExpandedView) {
@@ -111,11 +94,15 @@ function ToolActivityItem({ toolCall, result, onStop, onLoadConversation, childC
     }
   }
 
+  const isClickable = (config.isSubagent && childConversationId) || config.hasExpandedView
+
   return (
     <div className={`tool-activity-item ${isComplete ? (isTerminated ? 'terminated' : 'complete') : 'running'}`}>
       <div
-        className={`tool-activity-header${config.isSubagent && childConversationId ? ' clickable-subagent' : ''}`}
-        onClick={handleHeaderClick}
+        className={`tool-activity-header${isClickable ? ' clickable' : ''}${(config.isSubagent && childConversationId) ? ' clickable-subagent' : ''}`}
+        onClick={isClickable ? handleHeaderClick : undefined}
+        style={isClickable ? undefined : { cursor: 'default' }}
+        title={config.hasExpandedView ? (expanded ? t('tool.hideOutput') : t('tool.showOutput')) : undefined}
       >
         <span className="tool-activity-icon">{config.icon}</span>
         <span className="tool-activity-label">{config.label}</span>
@@ -125,9 +112,14 @@ function ToolActivityItem({ toolCall, result, onStop, onLoadConversation, childC
           <span className="subagent-view-link">{t('tool.viewSubagent')}</span>
         )}
         
-        {/* Elapsed time for running tools */}
         {!isComplete && (
           <span className="tool-activity-elapsed">{formatElapsed(elapsedSeconds)}</span>
+        )}
+        
+        {config.hasExpandedView && (
+          <span className="tool-activity-expand">
+            {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+          </span>
         )}
         
         <span className="tool-activity-status">
@@ -142,7 +134,6 @@ function ToolActivityItem({ toolCall, result, onStop, onLoadConversation, childC
           )}
         </span>
         
-        {/* Stop button for running tools */}
         {!isComplete && onStop && (
           <button 
             className="tool-stop-btn"
@@ -153,15 +144,9 @@ function ToolActivityItem({ toolCall, result, onStop, onLoadConversation, childC
             <span>{t('tool.stop')}</span>
           </button>
         )}
-        
-        {config.hasExpandedView && (
-          <span className="tool-activity-expand">
-            {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-          </span>
-        )}
       </div>
       
-      {expanded && config.hasExpandedView && (
+      {config.hasExpandedView && expanded && (
         <div className="tool-activity-content">
           {config.expandedContent}
         </div>
@@ -171,36 +156,34 @@ function ToolActivityItem({ toolCall, result, onStop, onLoadConversation, childC
 }
 
 /**
- * Get display configuration for each tool type
+ * Get display configuration for each tool type.
  */
 function getToolConfig(toolName, args, result, t) {
   const resultContent = result?.content || ''
-  
+
+  /** Helper: standard "result preview" tool config shape. */
+  function resultTool(icon, label, detail, { maxLines } = {}) {
+    return {
+      icon,
+      label,
+      detail,
+      hasExpandedView: true,
+      expandedContent: <ResultPreview content={resultContent} maxLines={maxLines} />
+    }
+  }
+
   switch (toolName) {
     case 'google_search':
-      return {
-        icon: <Search size={16} />,
-        label: t('tool.searching'),
-        detail: `"${args.search_term || 'the web'}"`,
-        hasExpandedView: false
-      }
-    
+      return resultTool(<Search size={16} />, t('tool.searching'), `"${args.search_term || 'the web'}"`)
+
     case 'web_browser':
-      return {
-        icon: <Globe size={16} />,
-        label: t('tool.reading'),
-        detail: truncateUrl(args.target_url || 'webpage'),
-        hasExpandedView: false
-      }
-    
-    case 'read_file':
-      return {
-        icon: <Eye size={16} />,
-        label: t('tool.readingFile'),
-        detail: args.target_file || 'file',
-        hasExpandedView: false
-      }
-    
+      return resultTool(<Globe size={16} />, t('tool.reading'), truncateUrl(args.target_url || 'webpage'))
+
+    case 'read_file': {
+      const readFiles = normalizeFileList(args.target_file)
+      return resultTool(<Eye size={16} />, t('tool.readingFile'), formatFileDetail(readFiles), { maxLines: 100 })
+    }
+
     case 'write_file':
       return {
         icon: <FilePlus size={16} />,
@@ -209,7 +192,7 @@ function getToolConfig(toolName, args, result, t) {
         hasExpandedView: true,
         expandedContent: <FilePreview content={args.code_edit} isNew={true} />
       }
-    
+
     case 'edit_file': {
       const edits = args.edits || []
       const editCount = edits.length
@@ -221,17 +204,13 @@ function getToolConfig(toolName, args, result, t) {
         expandedContent: (
           <div className="multi-edit-view">
             {edits.map((edit, i) => (
-              <EditRangeView
-                key={i}
-                edit={edit}
-                editIndex={edits.length > 1 ? i + 1 : null}
-              />
+              <EditRangeView key={i} edit={edit} editIndex={edits.length > 1 ? i + 1 : null} />
             ))}
           </div>
         )
       }
     }
-    
+
     case 'delete_file':
       return {
         icon: <Trash2 size={16} />,
@@ -239,39 +218,40 @@ function getToolConfig(toolName, args, result, t) {
         detail: args.target_file || 'file',
         hasExpandedView: false
       }
-    
-    case 'close_file':
+
+    case 'close_file': {
+      if (args.keep != null) {
+        const keepList = normalizeFileList(args.keep)
+        if (keepList.length > 0) {
+          return {
+            icon: <FileText size={16} />,
+            label: t('tool.closingAllExcept'),
+            detail: keepList.join(', '),
+            hasExpandedView: false
+          }
+        }
+        return { icon: <FileText size={16} />, label: t('tool.closingAll'), detail: '', hasExpandedView: false }
+      }
+      const closeFiles = normalizeFileList(args.target_file)
       return {
         icon: <FileText size={16} />,
         label: t('tool.closingFile'),
-        detail: args.target_file || 'file',
+        detail: formatFileDetail(closeFiles),
         hasExpandedView: false
       }
-    
+    }
+
     case 'list_directory':
-      return {
-        icon: <FolderOpen size={16} />,
-        label: t('tool.listingDirectory'),
-        detail: args.relative_workspace_path || '/',
-        hasExpandedView: false
-      }
-    
+      return resultTool(<FolderOpen size={16} />, t('tool.listingDirectory'), args.relative_workspace_path || '/')
+
     case 'search_files':
-      return {
-        icon: <Search size={16} />,
-        label: t('tool.searchingFiles'),
-        detail: `"${args.query || ''}"`,
-        hasExpandedView: false
-      }
-    
     case 'grep_search':
-      return {
-        icon: <Search size={16} />,
-        label: t('tool.searchingInFiles'),
-        detail: `"${args.query || ''}"`,
-        hasExpandedView: false
-      }
-    
+      return resultTool(
+        <Search size={16} />,
+        toolName === 'search_files' ? t('tool.searchingFiles') : t('tool.searchingInFiles'),
+        `"${args.query || ''}"`
+      )
+
     case 'run_terminal_command':
       return {
         icon: <Terminal size={16} />,
@@ -280,29 +260,29 @@ function getToolConfig(toolName, args, result, t) {
         hasExpandedView: true,
         expandedContent: <CommandPreview command={args.command} output={resultContent} />
       }
-    
+
     case 'subagent':
       return {
         icon: <Package size={16} />,
         label: t('tool.subagent'),
         detail: (args.task || '').slice(0, 60) + ((args.task || '').length > 60 ? '...' : ''),
         hasExpandedView: false,
-        isSubagent: true,
+        isSubagent: true
       }
 
     case 'tool_store':
-      return {
-        icon: <Package size={16} />,
-        label: args.action === 'search' ? t('tool.searchingTools') : t('tool.usingTool'),
-        detail: args.query || args.tool_name || '',
-        hasExpandedView: false
-      }
-    
+      return resultTool(
+        <Package size={16} />,
+        args.action === 'search' ? t('tool.searchingTools') : t('tool.usingTool'),
+        args.query || args.tool_name || '',
+        { maxLines: 80 }
+      )
+
     default:
       return {
         icon: <Package size={16} />,
         label: toolName?.replace(/_/g, ' ') || 'Tool',
-        detail: '',
+        detail: defaultToolDetail(args),
         hasExpandedView: false
       }
   }
@@ -363,9 +343,6 @@ function EditRangeView({ edit, editIndex }) {
   const rangeSpan = (effectiveEnd != null && start_line != null) ? (effectiveEnd - start_line + 1) : 1
 
   const lines = isDelete ? [] : (replace_content || '').split('\n')
-  const maxPreview = 30
-  const hasMore = lines.length > maxPreview
-  const displayLines = hasMore ? lines.slice(0, maxPreview) : lines
 
   const showRemovedStart = !!start_content
   const showRemovedEnd = isMultiLine && effectiveEnd !== start_line && !!end_content
@@ -403,15 +380,17 @@ function EditRangeView({ edit, editIndex }) {
       )}
       {!isDelete && (
         <div className="diff-added">
-          {displayLines.map((line, idx) => (
-            <div key={idx} className="diff-line added">
-              <span className="diff-line-num">{(start_line || 1) + idx}</span>
-              <span className="diff-content">{line || ' '}</span>
-            </div>
-          ))}
-          {hasMore && (
-            <div className="diff-more">{t('tool.moreLines', { n: lines.length - maxPreview })}</div>
-          )}
+          <LinePreview
+            lines={lines}
+            maxLines={30}
+            moreClassName="diff-more"
+            renderLine={(line, idx) => (
+              <div key={idx} className="diff-line added">
+                <span className="diff-line-num">{(start_line || 1) + idx}</span>
+                <span className="diff-content">{line || ' '}</span>
+              </div>
+            )}
+          />
         </div>
       )}
     </div>
@@ -422,27 +401,22 @@ function EditRangeView({ edit, editIndex }) {
  * Preview for new file content
  */
 function FilePreview({ content, isNew }) {
-  const { t } = useLanguage()
   if (!content) return null
-  
   const lines = content.split('\n')
-  const displayLines = lines.slice(0, 20) // Show first 20 lines
-  const hasMore = lines.length > 20
-  
   return (
     <div className="file-preview">
       <div className="file-preview-content">
-        {displayLines.map((line, idx) => (
-          <div key={idx} className={`file-line ${isNew ? 'new' : ''}`}>
-            <span className="line-number">{idx + 1}</span>
-            <span className="line-content">{line || ' '}</span>
-          </div>
-        ))}
-        {hasMore && (
-          <div className="file-preview-more">
-            {t('tool.moreLines', { n: lines.length - 20 })}
-          </div>
-        )}
+        <LinePreview
+          lines={lines}
+          maxLines={20}
+          moreClassName="file-preview-more"
+          renderLine={(line, idx) => (
+            <div key={idx} className={`file-line ${isNew ? 'new' : ''}`}>
+              <span className="line-number">{idx + 1}</span>
+              <span className="line-content">{line || ' '}</span>
+            </div>
+          )}
+        />
       </div>
     </div>
   )
@@ -452,9 +426,6 @@ function FilePreview({ content, isNew }) {
  * Terminal command preview with output
  */
 function CommandPreview({ command, output }) {
-  const { t } = useLanguage()
-  const [showOutput, setShowOutput] = useState(false)
-  
   return (
     <div className="command-preview">
       <div className="command-line">
@@ -462,19 +433,54 @@ function CommandPreview({ command, output }) {
         <code>{command}</code>
       </div>
       {output && (
-        <>
-          <button 
-            className="command-output-toggle"
-            onClick={() => setShowOutput(!showOutput)}
-          >
-            {showOutput ? t('tool.hideOutput') : t('tool.showOutput')}
-          </button>
-          {showOutput && (
-            <pre className="command-output">{output.slice(0, 2000)}</pre>
-          )}
-        </>
+        <pre className="command-output">{output.slice(0, 2000)}</pre>
       )}
     </div>
+  )
+}
+
+/**
+ * Generic result preview — displays tool output content in a scrollable block.
+ */
+function ResultPreview({ content, maxLines }) {
+  const { t } = useLanguage()
+  if (!content) {
+    return <div className="result-preview-empty">{t('tool.noOutput')}</div>
+  }
+  const lines = String(content).split('\n')
+  return (
+    <div className="result-preview">
+      <pre className="result-preview-content">
+        <LinePreview
+          lines={lines}
+          maxLines={maxLines}
+          moreClassName="result-preview-more"
+          renderLine={(line, i) => <div key={i} className="result-line">{line || ' '}</div>}
+        />
+      </pre>
+    </div>
+  )
+}
+
+/**
+ * Shared line-by-line preview with truncation.
+ * Eliminates the "slice + hasMore + footer" duplication across
+ * ResultPreview, FilePreview, and EditRangeView.
+ */
+function LinePreview({ lines, maxLines, moreClassName, renderLine, emptyFallback }) {
+  const { t } = useLanguage()
+  if (!lines || lines.length === 0) {
+    return emptyFallback || null
+  }
+  const truncated = maxLines && lines.length > maxLines
+  const displayLines = truncated ? lines.slice(0, maxLines) : lines
+  return (
+    <>
+      {displayLines.map((line, idx) => renderLine(line, idx))}
+      {truncated && (
+        <div className={moreClassName}>{t('tool.moreLines', { n: lines.length - maxLines })}</div>
+      )}
+    </>
   )
 }
 
@@ -494,6 +500,42 @@ function truncateUrl(url) {
 function truncateCommand(cmd) {
   if (!cmd) return ''
   return cmd.length > 50 ? cmd.slice(0, 50) + '...' : cmd
+}
+
+/**
+ * Normalize a file argument (string or list) into an array of strings.
+ */
+function normalizeFileList(value) {
+  if (!value) return []
+  if (typeof value === 'string') return [value]
+  if (Array.isArray(value)) return value.filter(v => typeof v === 'string')
+  return []
+}
+
+/**
+ * Format a file list for display in the tool detail line.
+ * Shows all filenames comma-separated so users can see exactly what was read/closed.
+ */
+function formatFileDetail(files) {
+  if (!files || files.length === 0) return 'file'
+  return files.join(', ')
+}
+
+/**
+ * Generate a meaningful detail string for unknown tool args.
+ */
+function defaultToolDetail(args) {
+  if (!args || Object.keys(args).length === 0) return ''
+  // Pick the first string-like arg value as detail
+  for (const [key, value] of Object.entries(args)) {
+    if (typeof value === 'string' && value.length < 80 && value.length > 0) {
+      return value
+    }
+    if (Array.isArray(value) && value.length > 0 && typeof value[0] === 'string') {
+      return value.join(', ')
+    }
+  }
+  return ''
 }
 
 export default ToolActivity

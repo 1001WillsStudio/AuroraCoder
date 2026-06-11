@@ -62,8 +62,11 @@ def format_for_llm(results: List[Dict[str, Any]], search_term: str) -> str:
 def _get_google_config():
     """Read Google Search API key and CSE ID from environment variables.
 
-    The gateway (``gateway.provider_registry._sync_tool_env_vars``) pushes
-    these into the environment on startup and after every settings save.
+    The gateway pushes these into the environment on startup and after
+    every settings save via ``gateway.provider_registry.sync_tool_env_vars``.
+    The backend process reads its own copy from ``settings.json`` via
+    ``providers.ProviderManager._sync_tool_env_vars`` during ``reload()``,
+    which the gateway triggers with ``POST /api/reload``.
     """
     api_key = os.environ.get("GOOGLE_SEARCH_API_KEY", "")
     cse_id = os.environ.get("GOOGLE_CSE_ID", "")

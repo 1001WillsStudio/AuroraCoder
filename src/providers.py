@@ -81,10 +81,24 @@ class ProviderManager:
     # ── Reload (self-contained, no gateway imports) ──────────────────────
 
     def reload(self) -> None:
-        """Re-read settings.json, resolve all providers, rebuild client cache.
+        """Re-read settings.json, resolve all providers, rebuild client cache,
+        and sync non-provider tool settings (Google Search, Web Secondary
+        Model, max_tool_concurrency, terminal_max_output) into the backend
+        process's environment variables.
 
         Called at startup and when the gateway POSTs to ``/api/reload``.
         """
+        self._reload_provider_clients()
+        self._sync_tool_env_vars()
+        # Let tool_executor recreate its thread pool on next use
+        try:
+            from .tool_executor import reload_concurrency  # noqa: F811
+            reload_concurrency()
+        except ImportError:
+            pass
+
+    def _reload_provider_clients(self) -> None:
+        """Rebuild OpenAI client cache from settings.json."""
         self._clients.clear()
         all_ids = list(MODEL_PROVIDERS.keys())
 
@@ -113,6 +127,77 @@ class ProviderManager:
                 logger.warning(
                     "[ProviderManager] Failed to load %s: %s", provider_id, e
                 )
+
+    def _sync_tool_env_vars(self) -> None:
+        """Push non-provider tool settings from settings.json into environment
+        variables for the backend process.
+
+        This mirrors ``gateway.provider_registry.sync_tool_env_vars``,
+        but runs **inside the backend process** so that tools like
+        ``google_search`` and ``web_browser`` actually see the updated values.
+
+        The gateway's version only affects the gateway process — by also
+        calling this from ``reload()`` (which the gateway triggers via
+        ``POST /api/reload``), the backend's env vars stay in sync.
+        """
+        settings = _load_settings()
+        other = settings.get("other", {})
+        api_keys = settings.get("api_keys", {})
+
+        # ── Google Search ──
+        gs_api_key = api_keys.get("google_search", "")
+        if gs_api_key and gs_api_key is not True and "YOUR_" not in str(gs_api_key):
+            os.environ["GOOGLE_SEARCH_API_KEY"] = gs_api_key
+        else:
+            # Fall back to env var (don't clear if already set from .env)
+            gs_api_key = os.environ.get("GOOGLE_SEARCH_API_KEY", "")
+
+        gs = other.get("google_search", {})
+        cse_id = gs.get("cse_id", "")
+        if cse_id:
+            os.environ["GOOGLE_CSE_ID"] = cse_id
+        else:
+            cse_id = os.environ.get("GOOGLE_CSE_ID", "")
+
+        # ── Web Secondary Model ──
+        ws = other.get("web_secondary", {})
+        provider_id = ws.get("provider", "")
+
+        if provider_id:
+            # Resolve provider config for the secondary model
+            default = MODEL_PROVIDERS.get(provider_id, MODEL_PROVIDERS.get(DEFAULT_PROVIDER, {}))
+            base_url = _resolve_base_url(provider_id, default.get("base_url", ""))
+            api_key = _resolve_api_key(provider_id, default.get("api_key", ""))
+            model = ws.get("model", "") or _resolve_model(provider_id, default.get("model", ""))
+        else:
+            # No provider selected — use defaults from env or config
+            default_prov = MODEL_PROVIDERS.get(DEFAULT_PROVIDER, {})
+            base_url = default_prov.get("base_url", "")
+            api_key = os.environ.get("DEEPSEEK_API_KEY", default_prov.get("api_key", ""))
+            model = default_prov.get("model", "")
+
+        if base_url:
+            os.environ["WEB_SECONDARY_BASE_URL"] = base_url
+        if api_key:
+            os.environ["WEB_SECONDARY_API_KEY"] = api_key
+        os.environ["WEB_SECONDARY_MODEL"] = model or ""
+        os.environ["WEB_SECONDARY_MAX_TOKENS"] = str(
+            ws.get(
+                "max_tokens",
+                int(os.environ.get("WEB_SECONDARY_MODEL_MAX_TOKENS", "4096")),
+            )
+        )
+
+        # ── Agent / Tool behaviour ──
+        agent = other.get("agent", {})
+
+        mtc = agent.get("max_tool_concurrency")
+        if mtc is not None and str(mtc).isdigit():
+            os.environ["MAX_TOOL_CONCURRENCY"] = str(mtc)
+
+        tmo = agent.get("terminal_max_output")
+        if tmo is not None and str(tmo).isdigit():
+            os.environ["TERMINAL_MAX_OUTPUT_CHARS"] = str(tmo)
 
     # ── Agent API (pull) ────────────────────────────────────────────────
 

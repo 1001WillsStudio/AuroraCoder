@@ -40,7 +40,11 @@ class FileOperations:
                 return f"Error: File '{target_file}' does not exist"
             if not file_path.is_file():
                 return f"Error: '{target_file}' is not a file"
-            return f"The file '{target_file}' is opened in the code interpreter."
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            lines = content.count('\n') + 1
+            size = file_path.stat().st_size
+            return f"The file '{target_file}' ({lines} lines, {size} bytes) is opened in the code interpreter."
         except Exception as e:
             return f"Error reading file '{target_file}': {str(e)}"
 
@@ -161,7 +165,22 @@ class FileOperations:
 # --- Public Tool Wrappers ---
 
 def read_file_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
-    return FileOperations().read_file(arguments["target_file"]), arguments
+    target = arguments.get("file")
+    focus = arguments.get("focus", False)
+
+    if isinstance(target, list):
+        targets = target
+    else:
+        targets = [target]
+
+    fo = FileOperations()
+    results = [fo.read_file(t) for t in targets]
+    msg = "\n".join(results)
+
+    if focus:
+        msg += f"\n(Focus mode: closed all other files)"
+
+    return msg, arguments
 
 
 
@@ -176,16 +195,16 @@ def execute_edit_file(arguments: Dict[str, Any]):
     """
     editor = RangeReplaceEditor(WORKSPACE)
     result, applied = editor.edit(
-        arguments.get("target_file"),
+        arguments.get("file"),
         arguments.get("edits"),
     )
-    return result, applied
+    return result, applied if applied is not None else arguments
 
 def full_file_write_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
-    return FileOperations().full_file_write(arguments["target_file"], arguments["code_edit"]), arguments
+    return FileOperations().full_file_write(arguments["file"], arguments["content"]), arguments
 
 def delete_file_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
-    return FileOperations().delete_file(arguments["target_file"]), arguments
+        return FileOperations().delete_file(arguments["file"]), arguments
 
 def list_dir_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     return FileOperations().list_dir(arguments.get("relative_workspace_path", "")), arguments
@@ -194,5 +213,26 @@ def file_search_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     return FileOperations().file_search(arguments["query"]), arguments
 
 def close_file_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
-    target_file = arguments["target_file"]
-    return f"Closed '{target_file}' from code interpreter view.", arguments
+    keep = arguments.get("keep")
+    if keep is not None:
+        # "Close all except" mode — file is ignored
+        keep_list = keep if isinstance(keep, list) else [keep]
+        if keep_list:
+            return f"Closed all files except: {', '.join(repr(k) for k in keep_list)}", arguments
+        else:
+            return "Closed all files from code interpreter view.", arguments
+
+    target = arguments.get("file")
+    if not target:
+        return "Error: must provide 'file' or 'keep' parameter", arguments
+
+    if isinstance(target, list):
+        targets = target
+    else:
+        targets = [target]
+
+    closed = ", ".join(f"'{t}'" for t in targets)
+    if len(targets) == 1:
+        return f"Closed {closed} from code interpreter view.", arguments
+    else:
+        return f"Closed {closed} from code interpreter view.", arguments
