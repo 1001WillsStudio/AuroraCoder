@@ -22,14 +22,12 @@ WORKDIR /app
 # ── PyTorch with CUDA (default: cu128 for Blackwell sm_120 + all recent GPUs)
 # Override via --build-arg CUDA_INDEX=cu130 for CUDA 13.0
 # Installed into the existing 'agent' conda environment from auroracoder-base.
-# This layer is expensive to rebuild — keep it stable, right after WORKDIR.
-# Don't add ARG/ENV/COPY above it that would invalidate the cache.
+# The NVIDIA Container Toolkit mounts host CUDA libs at runtime — no CUDA
+# toolkit needed inside the image.
 ARG CUDA_INDEX=cu128
 RUN conda run -n agent pip install --no-cache-dir \
     torch torchvision torchaudio \
     --index-url https://download.pytorch.org/whl/${CUDA_INDEX}
-
-
 
 # Frontend dependencies (cached unless package.json changes)
 COPY frontend/package.json frontend/package-lock.json /app/frontend/
