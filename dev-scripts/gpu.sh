@@ -52,8 +52,8 @@ echo "[gpu] GPU argument: $GPU_ARG"
 
 # ── Stop existing container FIRST ─────────────────────────────────────────
 echo "Stopping old container if any..."
-docker stop auroracoder-agent >/dev/null 2>&1 || true
-docker rm auroracoder-agent >/dev/null 2>&1 || true
+docker stop auroracoder-agent-gpu >/dev/null 2>&1 || true
+docker rm auroracoder-agent-gpu >/dev/null 2>&1 || true
 
 # Short delay to ensure ports are released
 echo "Waiting for port cleanup..."
@@ -148,11 +148,11 @@ echo ""
 
 # ── Storage base ────────────────────────────────────────────────────────
 if [ -d "$HOME/Documents" ]; then
-    STORAGE_BASE="$HOME/Documents/AuroraCoder"
+    STORAGE_BASE="$HOME/Documents/AuroraCoder-GPU"
 elif [ -d "$HOME/documents" ]; then
-    STORAGE_BASE="$HOME/documents/AuroraCoder"
+    STORAGE_BASE="$HOME/documents/AuroraCoder-GPU"
 else
-    STORAGE_BASE="$HOME/AuroraCoder"
+    STORAGE_BASE="$HOME/AuroraCoder-GPU"
 fi
 
 # ── Build base image if missing ──────────────────────────────────────────
@@ -204,7 +204,7 @@ echo "Starting backend in Docker (app + frontend + GPU)..."
 mkdir -p "$STORAGE_BASE/data" "$STORAGE_BASE/workspace"
 # shellcheck disable=SC2086
 docker run --rm -d \
-    --name auroracoder-agent \
+    --name auroracoder-agent-gpu \
     $GPU_ARG \
     $ENV_FILE_ARG \
     -e AURORACODER_DOCKER=1 \
@@ -227,10 +227,10 @@ docker run --rm -d \
 echo "Container started."
 echo ""
 echo "AuroraCoder GPU is running at http://localhost:$FRONTEND_PORT"
-echo "To stop: docker stop auroracoder-agent"
+echo "To stop: docker stop auroracoder-agent-gpu"
 echo ""
 echo "Verify GPU inside container:"
-echo "  docker exec auroracoder-agent conda run -n agent python -c \"import torch; print(torch.cuda.get_device_name(0))\""
+echo "  docker exec auroracoder-agent-gpu conda run -n agent python -c \"import torch; print(torch.cuda.get_device_name(0))\""
 echo ""
 echo "Opening browser..."
 (sleep 3 && open_browser "http://localhost:$FRONTEND_PORT") &

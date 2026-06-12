@@ -3,9 +3,9 @@ cd /d "%~dp0\.."
 
 :: ── Stop existing container FIRST ───────────────────────────────────────
 echo [%time%] Stopping old container...
-docker stop auroracoder-agent >nul 2>&1
+docker stop auroracoder-agent-gpu >nul 2>&1
 echo [%time%] docker stop done
-docker rm auroracoder-agent >nul 2>&1
+docker rm auroracoder-agent-gpu >nul 2>&1
 echo [%time%] docker rm done
 
 :: Short delay for port cleanup
@@ -64,8 +64,8 @@ echo   ToolStore:      http://localhost:%TOOLSTORE_PORT%
 echo ========================================
 echo.
 
-:: Storage base — all persistent data lives under Documents\AuroraCoder
-set "STORAGE_BASE=%USERPROFILE%\Documents\AuroraCoder"
+:: Storage base — separate from normal AuroraCoder (Documents\AuroraCoder-GPU)
+set "STORAGE_BASE=%USERPROFILE%\Documents\AuroraCoder-GPU"
 
 :: ── Check if base image exists; build if missing ─────────────────────────
 docker inspect --type=image auroracoder-base >nul 2>&1
@@ -108,7 +108,7 @@ if exist ".env" (
 )
 if not exist "%STORAGE_BASE%\data" mkdir "%STORAGE_BASE%\data"
 if not exist "%STORAGE_BASE%\workspace" mkdir "%STORAGE_BASE%\workspace"
-docker run --rm -d --name auroracoder-agent --gpus all %ENV_FILE_ARG% -e AURORACODER_DOCKER=1 -e AURORACODER_VNC=1 -e AURORACODER_GPU=1 -v "%STORAGE_BASE%\data:/app/data" -v "%STORAGE_BASE%\workspace:/workspace" -p %BACKEND_PORT%:8080 -p %FRONTEND_PORT%:3000 -p %VNC_PORT%:6080 -p %TOOLSTORE_PORT%:8765 -p %DEV_PORT_START%-%DEV_PORT_END%:8900-8902 auroracoder-gpu
+docker run --rm -d --name auroracoder-agent-gpu --gpus all %ENV_FILE_ARG% -e AURORACODER_DOCKER=1 -e AURORACODER_VNC=1 -e AURORACODER_GPU=1 -v "%STORAGE_BASE%\data:/app/data" -v "%STORAGE_BASE%\workspace:/workspace" -p %BACKEND_PORT%:8080 -p %FRONTEND_PORT%:3000 -p %VNC_PORT%:6080 -p %TOOLSTORE_PORT%:8765 -p %DEV_PORT_START%-%DEV_PORT_END%:8900-8902 auroracoder-gpu
 if errorlevel 1 (
     echo Failed to start container.
     pause
@@ -117,7 +117,7 @@ if errorlevel 1 (
 echo Container started.
 echo.
 echo AuroraCoder GPU is running at http://localhost:%FRONTEND_PORT%
-echo To stop: docker stop auroracoder-agent
+echo To stop: docker stop auroracoder-agent-gpu
 echo.
 echo Opening browser in 3 seconds...
 timeout /t 3 /nobreak >nul
