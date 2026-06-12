@@ -1,0 +1,55 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# AuroraCoder — GPU-enabled app image
+#
+# Builds on top of the cached auroracoder-base image (built by Dockerfile.base).
+# Only one extra layer vs the regular Dockerfile: PyTorch with CUDA 12.8 for
+# Blackwell (RTX 5090 / sm_120) and other NVIDIA GPUs.
+#
+# Usage:
+#   docker build -t auroracoder-gpu -f docker/Dockerfile.gpu .
+#
+# The base image (auroracoder-base) must already exist:
+#   docker build -t auroracoder-base -f docker/Dockerfile.base .
+# ──────────────────────────────────────────────────────────────────────────────
+FROM auroracoder-base
+
+ENV AURORACODER_DOCKER=1 \
+    AURORACODER_VNC=1 \
+    AURORACODER_GPU=1
+
+WORKDIR /app
+
+# ── PyTorch with CUDA (default: cu128 for Blackwell sm_120 + all recent GPUs)
+# Override via --build-arg CUDA_INDEX=cu130 for CUDA 13.0
+# Installed into the existing 'agent' conda environment from auroracoder-base.
+# The NVIDIA Container Toolkit mounts host CUDA libs at runtime — no CUDA
+# toolkit needed inside the image.
+ARG CUDA_INDEX=cu128
+RUN conda run -n agent pip install --no-cache-dir \
+    torch torchvision torchaudio \
+    --index-url https://download.pytorch.org/whl/${CUDA_INDEX}
+
+# Frontend dependencies (cached unless package.json changes)
+COPY frontend/package.json frontend/package-lock.json /app/frontend/
+RUN cd /app/frontend && npm install
+
+# ── ToolStore client (unstable — bumped independently of requirements.txt) ──
+RUN conda run -n agent pip install --no-cache-dir agent-tool-store>=2.1.8
+
+# ── Cache-bust boundary: cached above, always rebuilt below ──
+
+COPY . /app
+
+# Build frontend (produces frontend/dist/)
+RUN cd /app/frontend && npm run build
+
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
+
+COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+RUN sed -i 's/\r$//' /etc/supervisor/conf.d/supervisord.conf
+
+# Agent API + conversation history + dev-server ports + noVNC + ToolStore mgmt
+EXPOSE 8080 3000 8900 8901 8902 6080 8765
+
+ENTRYPOINT ["/entrypoint.sh"]
