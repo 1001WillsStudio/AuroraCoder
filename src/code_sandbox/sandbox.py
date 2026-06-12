@@ -213,8 +213,11 @@ class PersistentShell:
                 f"echo {boundary}\n"
             )
         else:
+            # Use ': ;' instead of ';' before '}' — interactive bash (bash -i)
+            # rejects bare '; }' as a syntax error after heredocs.  The ':'
+            # builtin is a POSIX no-op that satisfies the parser requirement.
             wrapped = (
-                f'{{ {command}; }} > "{out_file}" 2>&1\n'
+                f'{{ {command}; : }} > "{out_file}" 2>&1\n'
                 f"echo {boundary}\n"
             )
 
