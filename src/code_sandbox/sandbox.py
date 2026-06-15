@@ -216,8 +216,13 @@ class PersistentShell:
             # Use ': ;' instead of ';' before '}' — interactive bash (bash -i)
             # rejects bare '; }' as a syntax error after heredocs.  The ':'
             # builtin is a POSIX no-op that satisfies the parser requirement.
+            # The trailing ';' after ':' is mandatory: '}' is only recognised
+            # as the closing reserved word when it appears as a command word
+            # (after ';' or a newline).  Without it, '}' becomes an argument
+            # to ':', the brace group never closes, and the boundary echo is
+            # swallowed — so the reader blocks until timeout (no output ever).
             wrapped = (
-                f'{{ {command}; : }} > "{out_file}" 2>&1\n'
+                f'{{ {command}; : ; }} > "{out_file}" 2>&1\n'
                 f"echo {boundary}\n"
             )
 
