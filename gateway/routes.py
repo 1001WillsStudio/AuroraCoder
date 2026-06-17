@@ -155,6 +155,12 @@ async def proxy_chat(request: Request):
     parent_id = body.pop("parent_id", None)
     tool_call_id = body.pop("tool_call_id", None)
 
+    # Subagent inherits parent's provider by default
+    if not body.get("provider") and parent_id:
+        parent_stream = active_streams.get(parent_id)
+        if parent_stream and parent_stream.provider:
+            body["provider"] = parent_stream.provider
+
     # Ensure the conversation record exists (idempotent) before any
     # save_messages call, so forks don't raise KeyError.
     store.create_conversation(
