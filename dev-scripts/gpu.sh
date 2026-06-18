@@ -167,13 +167,26 @@ else
     echo "[base] Done."
 fi
 
-# ── Build GPU app image ──────────────────────────────────────────────────
-# The --build-arg lets us pin the CUDA index if needed (defaults to cu128 in
-# the Dockerfile, but can be overridden via AURORACODER_CUDA env var).
-echo "[gpu] Building GPU app image (CUDA: $CUDA_INDEX)..."
+# ── Build GPU base image if missing (PyTorch + CUDA) ─────────────────────
+# CUDA_INDEX can be overridden via AURORACODER_CUDA env var.
+if docker inspect --type=image auroracoder-gpu-base >/dev/null 2>&1; then
+    echo "[gpu-base] GPU base image found, skipping."
+else
+    echo "[gpu-base] Building GPU base image (PyTorch + CUDA: ${CUDA_INDEX}) -- this may take a few minutes..."
+    docker build \
+        -t auroracoder-gpu-base \
+        --build-arg CUDA_INDEX="$CUDA_INDEX" \
+        -f docker/Dockerfile.gpu-base . || {
+        echo "GPU base image build failed."
+        exit 1
+    }
+    echo "[gpu-base] Done."
+fi
+
+# ── Build GPU app image (fast: only source layers, PyTorch is in gpu-base) ──
+echo "[gpu] Building GPU app image..."
 docker build \
     -t auroracoder-gpu \
-    --build-arg CUDA_INDEX="$CUDA_INDEX" \
     -f docker/Dockerfile.gpu . || {
     echo "GPU app image build failed."
     exit 1

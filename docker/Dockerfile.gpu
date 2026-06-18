@@ -1,35 +1,20 @@
-# ──────────────────────────────────────────────────────────────────────────────
-# Inline annotations are disallowed in this file. Do not add comments between the
-# build instructions, as doing so breaks Docker's layer cache. All annotations
-# must live at the end of the file. This header itself may never be edited to
-# keep the build cache stable.
-# ──────────────────────────────────────────────────────────────────────────────
-FROM auroracoder-base
-
-ENV AURORACODER_DOCKER=1 \
-    AURORACODER_VNC=1 \
-    AURORACODER_GPU=1
-
-RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        build-essential && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
-
-ARG CUDA_INDEX=cu128
-RUN conda run -n agent pip install --no-cache-dir \
-    torch torchvision torchaudio \
-    --index-url https://download.pytorch.org/whl/${CUDA_INDEX} && \
-    conda run -n agent pip install --no-cache-dir accelerate
+FROM auroracoder-gpu-base
 
 WORKDIR /app
 
+# Frontend dependencies (cached unless package.json changes)
 COPY frontend/package.json frontend/package-lock.json /app/frontend/
 RUN cd /app/frontend && npm install
 
+# ── ToolStore client (unstable — bumped independently of requirements.txt) ──
 RUN conda run -n agent pip install --no-cache-dir agent-tool-store>=2.1.8
 
+# ── Cache-bust boundary: cached above, always rebuilt below ──
+
+ARG CACHEBUST
 COPY . /app
 
+# Build frontend (produces frontend/dist/)
 RUN cd /app/frontend && npm run build
 
 COPY docker/entrypoint.sh /entrypoint.sh
@@ -38,53 +23,7 @@ RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 RUN sed -i 's/\r$//' /etc/supervisor/conf.d/supervisord.conf
 
+# Agent API (8080) + Frontend (3000) + dev-server ports + noVNC (6080) + ToolStore (8765)
 EXPOSE 8080 3000 8900 8901 8902 6080 8765
 
 ENTRYPOINT ["/entrypoint.sh"]
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Annotations
-# ──────────────────────────────────────────────────────────────────────────────
-#
-# AuroraCoder — GPU-enabled app image.
-#
-# Builds on top of the cached auroracoder-base image (built by Dockerfile.base).
-# Compared with the regular Dockerfile, this adds a single extra concern: PyTorch
-# with CUDA 12.8 for Blackwell (RTX 5090 / sm_120) and other NVIDIA GPUs.
-#
-# Usage:
-#   docker build -t auroracoder-gpu -f docker/Dockerfile.gpu .
-#
-# The base image (auroracoder-base) must already exist:
-#   docker build -t auroracoder-base -f docker/Dockerfile.base .
-#
-# FROM auroracoder-base
-#   Reuses the cached base image so only the GPU-specific layers are rebuilt.
-#
-# RUN apt-get ... build-essential
-#   Build essentials for compiling GPU-related Python packages.
-#
-# ARG CUDA_INDEX / RUN conda run ... torch torchvision torchaudio
-#   Installs PyTorch with CUDA (default: cu128 for Blackwell sm_120 and all
-#   recent GPUs) into the existing 'agent' conda environment from
-#   auroracoder-base. Override via --build-arg CUDA_INDEX=cu130 for CUDA 13.0.
-#   The NVIDIA Container Toolkit mounts host CUDA libs at runtime, so no CUDA
-#   toolkit is needed inside the image.
-#
-# COPY frontend/package.json ... / RUN npm install
-#   Installs frontend dependencies. Cached unless package.json changes.
-#
-# RUN conda run ... agent-tool-store>=2.1.8
-#   ToolStore client. Unstable, so it is bumped independently of
-#   requirements.txt.
-#
-# COPY . /app
-#   Cache-bust boundary: everything above is cached, everything below is always
-#   rebuilt.
-#
-# RUN cd /app/frontend && npm run build
-#   Builds the frontend (produces frontend/dist/).
-#
-# EXPOSE 8080 3000 8900 8901 8902 6080 8765
-#   Agent API + conversation history + dev-server ports + noVNC + ToolStore mgmt.
-# ──────────────────────────────────────────────────────────────────────────────

@@ -1,0 +1,19 @@
+FROM auroracoder-base
+
+ENV AURORACODER_DOCKER=1 \
+    AURORACODER_VNC=1 \
+    AURORACODER_GPU=1
+
+# Build essentials for compiling GPU-related Python packages
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        build-essential && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# PyTorch with CUDA (default: cu128 for Blackwell sm_120 + all recent GPUs)
+# Override via --build-arg CUDA_INDEX=cu130 for CUDA 13.0
+ARG CUDA_INDEX=cu128
+RUN conda run -n agent pip install --no-cache-dir \
+    torch torchvision torchaudio \
+    --index-url https://download.pytorch.org/whl/${CUDA_INDEX} && \
+    conda run -n agent pip install --no-cache-dir accelerate

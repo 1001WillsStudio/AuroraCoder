@@ -215,7 +215,8 @@ async def _cancel_active_stream(conversation_id: str) -> None:
             tasks_to_await.append(old.task)
         streams_to_kill.append(old)
 
-    # Cancel any continuation child created by this stream
+    # Cancel any continuation child created by this stream.
+    # Also cascade to grandchildren (subagents spawned by the continuation).
     async with _streams_lock:
         parent = active_streams.get(conversation_id)
         if parent and parent.new_conversation_id:
@@ -227,6 +228,19 @@ async def _cancel_active_stream(conversation_id: str) -> None:
                     continuation.task.cancel()
                     tasks_to_await.append(continuation.task)
                 streams_to_kill.append(continuation)
+
+                # Recursively cancel subagents that were spawned by the continuation
+                grandchild_children = [
+                    s for s in active_streams.values()
+                    if s.parent_id == continuation.conversation_id and not s.finished
+                ]
+                for gc in grandchild_children:
+                    logger.info(f"[cancel] Cascading cancel to grandchild {gc.conversation_id[:8]}...")
+                    gc.cancel_event.set()
+                    if gc.task and not gc.task.done():
+                        gc.task.cancel()
+                        tasks_to_await.append(gc.task)
+                    streams_to_kill.append(gc)
 
     # Await all cancelled tasks concurrently — total wait bounded to 2 s
     if tasks_to_await:

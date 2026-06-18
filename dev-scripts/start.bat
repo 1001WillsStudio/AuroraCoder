@@ -86,11 +86,10 @@ if errorlevel 1 (
 echo [base] Done.
 
 :build_app
-:: Always rebuild app image (fast: just copies source code)
-:: Generate unique cache-bust key to force ToolStore reinstall every run
-for /f "tokens=2 delims==." %%I in ('wmic os get localdatetime /value ^| find "="') do set "CACHEBUST=%%I"
-echo [app] Building app image (cache-bust: %CACHEBUST%)...
-docker build -t auroracoder --build-arg CACHEBUST=%CACHEBUST% -f docker\Dockerfile .
+:: Rebuild app image — large modules (npm, tool-store) are Docker-layer cached.
+:: Only source code layers rebuild, so this is fast after the first build.
+echo [app] Building app image...
+docker build -t auroracoder -f docker\Dockerfile .
 if errorlevel 1 (
     echo App image build failed.
     pause

@@ -67,11 +67,11 @@ echo.
 :: Storage base — separate from normal AuroraCoder (Documents\AuroraCoder-GPU)
 set "STORAGE_BASE=%USERPROFILE%\Documents\AuroraCoder-GPU"
 
-:: ── Check if base image exists; build if missing ─────────────────────────
+:: ── Check if base images exist; build if missing ──────────────────────────
 docker inspect --type=image auroracoder-base >nul 2>&1
 if errorlevel 1 goto :build_base
 echo [base] Base image found, skipping.
-goto :build_gpu
+goto :check_gpu_base
 
 :build_base
 echo [base] Building base image -- first time, this may take a few minutes...
@@ -83,11 +83,27 @@ if errorlevel 1 (
 )
 echo [base] Done.
 
+:check_gpu_base
+docker inspect --type=image auroracoder-gpu-base >nul 2>&1
+if errorlevel 1 goto :build_gpu_base
+echo [gpu-base] GPU base image found, skipping.
+goto :build_gpu
+
+:build_gpu_base
+echo [gpu-base] Building GPU base image (PyTorch + CUDA) -- this may take a few minutes...
+docker build -t auroracoder-gpu-base -f docker\Dockerfile.gpu-base .
+if errorlevel 1 (
+    echo GPU base image build failed.
+    pause
+    exit /b 1
+)
+echo [gpu-base] Done.
+
 :build_gpu
-:: Always rebuild GPU app image (fast: just copies source code + cached base layers)
-for /f "tokens=2 delims==." %%I in ('wmic os get localdatetime /value ^| find "="') do set "CACHEBUST=%%I"
-echo [gpu] Building GPU app image (cache-bust: %CACHEBUST%)...
-docker build -t auroracoder-gpu --build-arg CACHEBUST=%CACHEBUST% -f docker\Dockerfile.gpu .
+:: Rebuild GPU app image -- large modules (PyTorch, npm) are cached in the base images.
+:: Only source code layers rebuild, so this is fast after the first build.
+echo [gpu] Building GPU app image...
+docker build -t auroracoder-gpu -f docker\Dockerfile.gpu .
 if errorlevel 1 (
     echo GPU app image build failed.
     pause

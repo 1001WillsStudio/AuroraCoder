@@ -15,6 +15,7 @@ RUN conda run -n agent pip install --no-cache-dir agent-tool-store>=2.1.8
 
 # ── Cache-bust boundary: cached above, always rebuilt below ──
 
+ARG CACHEBUST
 COPY . /app
 
 # ── Quick-test: clone dev branch of AgentToolStore and install client from source ──

@@ -218,8 +218,9 @@ async def stream_chat_response(
                             "provider": current_provider,
                         })
                     )
-                else:
-                    cancel_active_subagents(conversation_id)
+                # If cancelled, subagent cleanup is handled in the finally
+                # block below (stream_chat_response level) so it always runs
+                # even when the generator thread is stuck inside run_subagent().
             except Exception as e:
                 if not cancel_event.is_set():
                     logger.exception("Error in generator thread")
@@ -248,8 +249,15 @@ async def stream_chat_response(
                     break
                 continue
     finally:
+        was_cancelled = cancel_event.is_set()
         cancel_event.set()
         unregister_stream(conversation_id, cancel_event)
+        # Cancel any active subagents that were spawned by this conversation.
+        # This runs at the asyncio level (not the generator thread), so it
+        # always executes — even when the generator is stuck inside
+        # run_subagent() waiting on an HTTP response.
+        if was_cancelled:
+            cancel_active_subagents(conversation_id)
 
 
 # ============================================================================
