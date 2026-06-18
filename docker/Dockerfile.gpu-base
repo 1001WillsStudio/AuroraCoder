@@ -17,3 +17,6 @@ RUN conda run -n agent pip install --no-cache-dir \
     torch torchvision torchaudio \
     --index-url https://download.pytorch.org/whl/${CUDA_INDEX} && \
     conda run -n agent pip install --no-cache-dir accelerate
+
+# vLLM — high-throughput LLM serving engine (CUDA required)
+RUN conda run -n agent pip install --no-cache-dir vllm
