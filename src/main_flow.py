@@ -149,6 +149,8 @@ def generate_chat_responses_stream_native(
     
     iteration_count = 0
     total_tokens = 0
+    holekv_cache_id: str | None = None  # captured from previous LLM response
+    holekv_enabled = config.get("holekv_enabled", False)
     streaming_errors = 0
 
     # Read the user's training-data preference *once* — it cannot change mid-request.
@@ -175,8 +177,13 @@ def generate_chat_responses_stream_native(
         }
         
         # Add extra_body if provider requires it (e.g., NVIDIA thinking mode)
-        if extra_body:
-            api_kwargs["extra_body"] = extra_body
+        # Inject HoleKV cache reuse from the previous LLM turn.
+        merged_extra = dict(extra_body) if extra_body else {}
+        if holekv_enabled and holekv_cache_id:
+            merged_extra["holekv_ref"] = holekv_cache_id
+            merged_extra["holekv_owner_id"] = conversation_id or "default"
+        if merged_extra:
+            api_kwargs["extra_body"] = merged_extra
         
         # ── Call the LLM ────────────────────────────────────────────────
         # Yield an immediate event so the SSE stream isn't silent for the
@@ -200,6 +207,14 @@ def generate_chat_responses_stream_native(
             t_first_chunk = time.time()
             t_first_content = None
             for chunk in completion_stream:
+                # Capture HoleKV cache ID from the first stream chunk
+                # (vLLM sends it in the first chunk's model_extra / field)
+                if holekv_enabled and holekv_cache_id is None:
+                    cid = getattr(chunk, 'holekv_cache_id', None)
+                    if cid is None and hasattr(chunk, 'model_extra'):
+                        cid = chunk.model_extra.get('holekv_cache_id')
+                    if cid:
+                        holekv_cache_id = cid
                 if not chunk.choices:
                     # Usage info may come on a chunk with no choices
                     if hasattr(chunk, "usage") and chunk.usage:
