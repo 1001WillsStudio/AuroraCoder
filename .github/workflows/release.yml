@@ -130,19 +130,31 @@ jobs:
           goversioninfo -64 -platform-specific=false -o resource_windows.syso versioninfo.json
           echo "✅ Generated resource_windows.syso with VERSIONINFO metadata"
 
-      - name: Build binary (${{ matrix.os }}-${{ matrix.arch }})
+      - name: Build CPU binary (${{ matrix.os }}-${{ matrix.arch }})
         run: |
           cd launcher
-          # Friendly name: auroracoder-{os} with -arm64 suffix for non-amd64
           BASE="auroracoder-${{ matrix.os }}"
           if [ "${{ matrix.arch }}" != "amd64" ]; then
             BASE="${BASE}-${{ matrix.arch }}"
           fi
-          OUTPUT="${BASE}${{ matrix.ext }}"
+          CPU_OUTPUT="${BASE}${{ matrix.ext }}"
           GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} CGO_ENABLED=0 \
-            go build -trimpath -ldflags="-s -w" -o "$OUTPUT" .
-          echo "BINARY=$OUTPUT" >> $GITHUB_ENV
-          ls -lh "$OUTPUT"
+            go build -trimpath -ldflags="-s -w" -o "$CPU_OUTPUT" .
+          echo "CPU_OUTPUT=$CPU_OUTPUT" >> $GITHUB_ENV
+          ls -lh "$CPU_OUTPUT"
+
+      - name: Build GPU binary (${{ matrix.os }}-${{ matrix.arch }})
+        run: |
+          cd launcher
+          GPU_BASE="auroracoder-gpu-${{ matrix.os }}"
+          if [ "${{ matrix.arch }}" != "amd64" ]; then
+            GPU_BASE="${GPU_BASE}-${{ matrix.arch }}"
+          fi
+          GPU_OUTPUT="${GPU_BASE}${{ matrix.ext }}"
+          GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} CGO_ENABLED=0 \
+            go build -trimpath -ldflags="-s -w -X main.gpuMode=true" -o "$GPU_OUTPUT" .
+          echo "GPU_OUTPUT=$GPU_OUTPUT" >> $GITHUB_ENV
+          ls -lh "$GPU_OUTPUT"
 
       # ── Windows: package .exe in .zip (dramatically reduces browser download blocks) ──
       - name: Package Windows binary in ZIP
@@ -150,17 +162,19 @@ jobs:
         run: |
           cd launcher
           ZIP_NAME="auroracoder-windows.zip"
-          zip "$ZIP_NAME" "${{ env.BINARY }}"
+          zip "$ZIP_NAME" "${{ env.CPU_OUTPUT }}" "${{ env.GPU_OUTPUT }}"
           echo "BINARY=$ZIP_NAME" >> $GITHUB_ENV
           ls -lh "$ZIP_NAME"
-          echo "✅ Packaged Windows binary in ZIP: $ZIP_NAME"
+          echo "✅ Packaged Windows binaries in ZIP: $ZIP_NAME"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: auroracoder-${{ matrix.os }}-${{ matrix.arch }}
           path: |
-            launcher/${{ env.BINARY }}
+            launcher/${{ env.CPU_OUTPUT }}
+            launcher/${{ env.GPU_OUTPUT }}
+            launcher/auroracoder-*.zip
 
   release:
     name: Create GitHub Release

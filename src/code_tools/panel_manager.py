@@ -16,8 +16,11 @@ See ``README.md`` §1 "Living Tool State" for the design philosophy.
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from typing import Dict, List, Set
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Abstract base
@@ -113,22 +116,33 @@ class Panel(ABC):
     def refresh(self, messages: List[Dict], at_index: int | None = None) -> None:
         """Full refresh: clean old blocks, regenerate, append.
 
-        If *at_index* is given, the display is appended to that specific
-        tool message (the one that triggered this panel).  Otherwise
-        it falls back to the last tool message.
+        *at_index* MUST be provided during normal operation — it is the
+        index of the tool message that triggered this panel.  The
+        fallback path (``at_index is None``) exists only for legacy
+        call sites and is expected to be removed once all callers
+        supply a proper index.
         """
         self.clean_previous_blocks(messages)
         state = self.discover(messages)
         display = self.render(state)
-        if display:
-            if at_index is not None:
-                self.append_to_message(messages, display, at_index)
-            else:
-                # Fallback: append to last tool message
-                for i in range(len(messages) - 1, -1, -1):
-                    if messages[i].get("role") == "tool":
-                        self.append_to_message(messages, display, i)
-                        break
+        if not display:
+            return
+
+        if at_index is not None:
+            self.append_to_message(messages, display, at_index)
+            return
+
+        # ── FALLBACK (legacy) ──────────────────────────────────────────
+        logger.warning(
+            "Panel '%s': refresh() called without at_index — "
+            "this is a legacy call path that will be removed.  "
+            "Falling back to the last tool message.",
+            self.name,
+        )
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get("role") == "tool":
+                self.append_to_message(messages, display, i)
+                break
 
 
 # ---------------------------------------------------------------------------

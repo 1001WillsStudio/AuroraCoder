@@ -3,9 +3,9 @@ cd /d "%~dp0\.."
 
 :: ── Stop existing container FIRST ───────────────────────────────────────
 echo [%time%] Stopping old container...
-docker stop auroracoder-agent >nul 2>&1
+docker stop auroracoder-agent-gpu >nul 2>&1
 echo [%time%] docker stop done
-docker rm auroracoder-agent >nul 2>&1
+docker rm auroracoder-agent-gpu >nul 2>&1
 echo [%time%] docker rm done
 
 :: Short delay for port cleanup
@@ -54,7 +54,7 @@ echo [%time%] DEV range=%DEV_PORT_START%-%DEV_PORT_END%
 del "%TEMP%\_ac_ports.tmp" 2>nul
 
 echo ========================================
-echo   AuroraCoder
+echo   AuroraCoder GPU
 echo ========================================
 echo   Frontend:       http://localhost:%FRONTEND_PORT%
 echo   Backend API:    http://localhost:%BACKEND_PORT%
@@ -64,16 +64,14 @@ echo   ToolStore:      http://localhost:%TOOLSTORE_PORT%
 echo ========================================
 echo.
 
-:: Storage base — all persistent data lives under Documents\AuroraCoder
-set "STORAGE_BASE=%USERPROFILE%\Documents\AuroraCoder"
+:: Storage base — separate from normal AuroraCoder (Documents\AuroraCoder-GPU)
+set "STORAGE_BASE=%USERPROFILE%\Documents\AuroraCoder-GPU"
 
-:: ── Check if base image exists; build if missing ─────────────────────────
-:: These Docker steps are slow — but because we stopped the old container
-:: at the very beginning, ports have already been released by now.
+:: ── Check if base images exist; build if missing ──────────────────────────
 docker inspect --type=image auroracoder-base >nul 2>&1
 if errorlevel 1 goto :build_base
 echo [base] Base image found, skipping.
-goto :build_app
+goto :check_gpu_base
 
 :build_base
 echo [base] Building base image -- first time, this may take a few minutes...
@@ -85,19 +83,35 @@ if errorlevel 1 (
 )
 echo [base] Done.
 
-:build_app
-:: Rebuild app image — large modules (npm, tool-store) are Docker-layer cached.
-:: Only source code layers rebuild, so this is fast after the first build.
-echo [app] Building app image...
-docker build -t auroracoder -f docker\Dockerfile .
+:check_gpu_base
+docker inspect --type=image auroracoder-gpu-base >nul 2>&1
+if errorlevel 1 goto :build_gpu_base
+echo [gpu-base] GPU base image found, skipping.
+goto :build_gpu
+
+:build_gpu_base
+echo [gpu-base] Building GPU base image (PyTorch + CUDA) -- this may take a few minutes...
+docker build -t auroracoder-gpu-base -f docker\Dockerfile.gpu-base .
 if errorlevel 1 (
-    echo App image build failed.
+    echo GPU base image build failed.
+    pause
+    exit /b 1
+)
+echo [gpu-base] Done.
+
+:build_gpu
+:: Rebuild GPU app image -- large modules (PyTorch, npm) are cached in the base images.
+:: Only source code layers rebuild, so this is fast after the first build.
+echo [gpu] Building GPU app image...
+docker build -t auroracoder-gpu -f docker\Dockerfile.gpu .
+if errorlevel 1 (
+    echo GPU app image build failed.
     pause
     exit /b 1
 )
 
 :: ── Start backend container ─────────────────────────────────────────────
-echo Starting backend in Docker (app + frontend)...
+echo Starting backend in Docker (app + frontend + GPU)...
 :: Check if .env exists; warn but don't abort (keys can be set via Settings UI)
 set "ENV_FILE_ARG="
 if exist ".env" (
@@ -110,7 +124,7 @@ if exist ".env" (
 )
 if not exist "%STORAGE_BASE%\data" mkdir "%STORAGE_BASE%\data"
 if not exist "%STORAGE_BASE%\workspace" mkdir "%STORAGE_BASE%\workspace"
-docker run --rm -d --name auroracoder-agent %ENV_FILE_ARG% -e AURORACODER_DOCKER=1 -e AURORACODER_VNC=1 -v "%STORAGE_BASE%\data:/app/data" -v "%STORAGE_BASE%\workspace:/workspace" -p %BACKEND_PORT%:8080 -p %FRONTEND_PORT%:3000 -p %VNC_PORT%:6080 -p %TOOLSTORE_PORT%:8765 -p %DEV_PORT_START%-%DEV_PORT_END%:8900-8902 auroracoder
+docker run --rm -d --name auroracoder-agent-gpu --gpus all %ENV_FILE_ARG% -e AURORACODER_DOCKER=1 -e AURORACODER_VNC=1 -e AURORACODER_GPU=1 -v "%STORAGE_BASE%\data:/app/data" -v "%STORAGE_BASE%\workspace:/workspace" -p %BACKEND_PORT%:8080 -p %FRONTEND_PORT%:3000 -p %VNC_PORT%:6080 -p %TOOLSTORE_PORT%:8765 -p %DEV_PORT_START%-%DEV_PORT_END%:8900-8902 auroracoder-gpu
 if errorlevel 1 (
     echo Failed to start container.
     pause
@@ -118,8 +132,8 @@ if errorlevel 1 (
 )
 echo Container started.
 echo.
-echo AuroraCoder is running at http://localhost:%FRONTEND_PORT%
-echo To stop: docker stop auroracoder-agent
+echo AuroraCoder GPU is running at http://localhost:%FRONTEND_PORT%
+echo To stop: docker stop auroracoder-agent-gpu
 echo.
 echo Opening browser in 3 seconds...
 timeout /t 3 /nobreak >nul

@@ -82,10 +82,38 @@ export function createStreamCallbacks({
     setHistoryRefreshTrigger(prev => prev + 1)
   }
 
+	const onDelta = (delta, _status) => {
+	  if (!delta || (!delta.content && !delta.reasoning_content)) return;
+	  setMessages(prevMessages => {
+	    const newMessages = [...prevMessages];
+	    if (newMessages.length === 0) {
+	      newMessages.push({ role: 'assistant', content: delta.content || '', activities: [] });
+	      return newMessages;
+	    }
+	    const msg = { ...newMessages[newMessages.length - 1] };
+	    if (delta.content) {
+	      msg.content = (msg.content || '') + delta.content;
+	    }
+	    if (delta.reasoning_content) {
+	      msg.activities = msg.activities ? [...msg.activities] : [];
+	      const lastAct = msg.activities.length > 0 ? msg.activities[msg.activities.length - 1] : null;
+	      if (lastAct && lastAct.type === 'thinking') {
+	        const lastIdx = msg.activities.length - 1;
+	        msg.activities[lastIdx] = { ...lastAct, content: (lastAct.content || '') + delta.reasoning_content };
+	      } else {
+	        msg.activities.push({ type: 'thinking', content: delta.reasoning_content });
+	      }
+	    }
+	    newMessages[newMessages.length - 1] = msg;
+	    return newMessages;
+	  });
+	};
+
   return {
     onMessages: overrides.onMessages || onMessages,
     onDone: overrides.onDone || onDone,
     onError: overrides.onError || onError,
     onSubagentEvent: overrides.onSubagentEvent || onSubagentEvent,
-  }
+    onDelta: overrides.onDelta || onDelta,
+  };
 }

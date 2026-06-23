@@ -18,6 +18,7 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$SCRIPT_DIR"
 
 OUTPUT_NAME="auroracoder"
+GPU_OUTPUT_NAME="auroracoder-gpu"
 EMBED_DIR="$SCRIPT_DIR/embed"
 
 # ── Clean & prepare embed directory ──────────────────────────────────────────
@@ -92,6 +93,34 @@ if [ "${1:-}" == "--all" ]; then
     build_for darwin  amd64   ""
     build_for darwin  arm64   ""
     build_for windows amd64   ".exe"
+
+    # ── GPU variant: same source, gpuMode=true via ldflags ──────
+    GPU_LDFLAGS="${LDFLAGS} -X main.gpuMode=true"
+
+    gpu_build_for() {
+        local os="$1"
+        local arch="$2"
+        local ext="$3"
+        if [ "$arch" != "amd64" ]; then
+            local out="${GPU_OUTPUT_NAME}-${os}-${arch}${ext}"
+        else
+            local out="${GPU_OUTPUT_NAME}-${os}${ext}"
+        fi
+        echo ""
+        echo "═══ Building GPU variant for ${os}/${arch}..."
+        GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build \
+            -trimpath \
+            -ldflags "$GPU_LDFLAGS" \
+            -o "$out" \
+            .
+        echo "  ✅ $out ($(du -h "$out" | cut -f1))"
+    }
+
+    gpu_build_for linux   amd64   ""
+    gpu_build_for linux   arm64   ""
+    gpu_build_for darwin  amd64   ""
+    gpu_build_for darwin  arm64   ""
+    gpu_build_for windows amd64   ".exe"
 
     echo ""
     echo "══════════════════════════════════════════════"

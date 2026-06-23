@@ -72,7 +72,9 @@ export async function streamChat(message, conversationId, callbacks, signal, exi
   const t0 = performance.now()
   _tlog('streamChat() called', seq)
 
-  const { onMessages, onDone, onError, onSubagentEvent } = callbacks
+  const { onMessages, onDone, onError, onSubagentEvent, onDelta } = callbacks
+  let _lastSeq = 0
+  let _needsFullRefresh = false
   
   const requestBody = {
     message,
@@ -137,21 +139,33 @@ export async function streamChat(message, conversationId, callbacks, signal, exi
           }
           
           switch (event.type) {
+            case 'delta':
+              if (event.data.seq && event.data.seq !== _lastSeq + 1) {
+                _needsFullRefresh = true;
+              }
+              _lastSeq = event.data.seq || _lastSeq;
+              if (!_needsFullRefresh) {
+                onDelta?.(event.data.delta, event.data.status);
+              }
+              break;
+
             case 'messages':
-              onMessages?.(event.data.messages, event.data.status, event.data)
-              break
-              
+              _lastSeq = event.data.seq || _lastSeq;
+              _needsFullRefresh = false;
+              onMessages?.(event.data.messages, event.data.status, event.data);
+              break;
+
             case 'done':
-              onDone?.(event.data)
-              break
-              
+              onDone?.(event.data);
+              break;
+
             case 'error':
-              onError?.(event.data)
-              break
+              onError?.(event.data);
+              break;
 
             case 'subagent_event':
-              onSubagentEvent?.(event.data)
-              break
+              onSubagentEvent?.(event.data);
+              break;
           }
         }
       }
@@ -277,7 +291,7 @@ export async function getActiveStreams() {
  * @param {AbortSignal} signal
  */
 export async function resumeStream(conversationId, callbacks, signal) {
-  const { onMessages, onDone, onError, onSubagentEvent } = callbacks
+  const { onMessages, onDone, onError, onSubagentEvent, onDelta } = callbacks
 
   try {
     const response = await fetch(`${API_BASE}/conversations/${conversationId}/stream`, { signal, headers: _headers() })
@@ -303,19 +317,25 @@ export async function resumeStream(conversationId, callbacks, signal) {
         const events = parseSSEEvents(part)
         for (const event of events) {
           switch (event.type) {
+            case 'delta':
+              onDelta?.(event.data.delta, event.data.status);
+              break;
+
             case 'messages':
-              onMessages?.(event.data.messages, event.data.status, event.data)
-              break
+              onMessages?.(event.data.messages, event.data.status, event.data);
+              break;
+
             case 'done':
-              onDone?.(event.data)
-              break
+              onDone?.(event.data);
+              break;
+
             case 'error':
-              onError?.(event.data)
-              break
+              onError?.(event.data);
+              break;
 
             case 'subagent_event':
-              onSubagentEvent?.(event.data)
-              break
+              onSubagentEvent?.(event.data);
+              break;
           }
         }
       }

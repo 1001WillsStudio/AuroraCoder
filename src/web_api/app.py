@@ -157,6 +157,8 @@ def format_sse_event(event_type: str, data: Any) -> str:
     return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+
+
 async def stream_chat_response(
     messages: list, conversation_id: str, request: Request,
     max_iterations: int, provider: Optional[str] = None,
@@ -167,11 +169,17 @@ async def stream_chat_response(
     cancel_active_stream(conversation_id)
     register_stream(conversation_id, cancel_event)
 
+    seq = 0
+    prev_frontend = None
+    full_snapshot_counter = 0
+    DELTA_BEFORE_FULL_SNAPSHOT = 50
+
     try:
         queue = asyncio.Queue()
         loop = asyncio.get_event_loop()
 
         def run_generator():
+            nonlocal seq, prev_frontend, full_snapshot_counter
             try:
                 if restart_shell:
                     try:
@@ -191,26 +199,65 @@ async def stream_chat_response(
                 ):
                     if cancel_event.is_set():
                         break
+                    seq += 1
                     current_messages = response["messages"]
                     status = response["status"]
                     current_provider = response.get("provider", provider)
                     frontend_messages = convert_messages_for_frontend(current_messages)
+
+                    # ── Trigger-based: delta by default, full snapshot on structural changes ──
+                    is_structural = (
+                        prev_frontend is None
+                        or len(frontend_messages) != len(prev_frontend)
+                    )
+
+                    if is_structural or full_snapshot_counter >= DELTA_BEFORE_FULL_SNAPSHOT:
+                        # Structural change or periodic checkpoint → full snapshot
+                        event_type = "messages"
+                        full_snapshot_counter = 0
+                        event_data = {
+                            "seq": seq,
+                            "messages": frontend_messages,
+                            "raw_messages": current_messages,
+                            "status": status,
+                            "conversation_id": conversation_id,
+                            "provider": current_provider,
+                        }
+                    else:
+                        # Non-structural: forward raw LLM delta directly — zero compute
+                        event_type = "delta"
+                        full_snapshot_counter += 1
+                        event_data = {
+                            "seq": seq,
+                            "conversation_id": conversation_id,
+                            "status": status,
+                            "delta": response.get("llm_delta", {}),
+                        }
+
+                    prev_frontend = frontend_messages
+                    loop.call_soon_threadsafe(
+                        queue.put_nowait, (event_type, event_data)
+                    )
+
+                if not cancel_event.is_set():
+                    final_messages = convert_messages_for_frontend(current_messages)
+                    # ── Final full snapshot for safety before done ──
+                    seq += 1
                     loop.call_soon_threadsafe(
                         queue.put_nowait,
                         ("messages", {
-                            "messages": frontend_messages,
+                            "seq": seq,
+                            "messages": final_messages,
                             "raw_messages": current_messages,
                             "status": status,
                             "conversation_id": conversation_id,
                             "provider": current_provider,
                         })
                     )
-
-                if not cancel_event.is_set():
-                    final_messages = convert_messages_for_frontend(current_messages)
                     loop.call_soon_threadsafe(
                         queue.put_nowait,
                         ("done", {
+                            "seq": seq + 1,
                             "conversation_id": conversation_id,
                             "status": status,
                             "messages": final_messages,
@@ -218,8 +265,9 @@ async def stream_chat_response(
                             "provider": current_provider,
                         })
                     )
-                else:
-                    cancel_active_subagents(conversation_id)
+                # If cancelled, subagent cleanup is handled in the finally
+                # block below (stream_chat_response level) so it always runs
+                # even when the generator thread is stuck inside run_subagent().
             except Exception as e:
                 if not cancel_event.is_set():
                     logger.exception("Error in generator thread")
@@ -248,8 +296,15 @@ async def stream_chat_response(
                     break
                 continue
     finally:
+        was_cancelled = cancel_event.is_set()
         cancel_event.set()
         unregister_stream(conversation_id, cancel_event)
+        # Cancel any active subagents that were spawned by this conversation.
+        # This runs at the asyncio level (not the generator thread), so it
+        # always executes — even when the generator is stuck inside
+        # run_subagent() waiting on an HTTP response.
+        if was_cancelled:
+            cancel_active_subagents(conversation_id)
 
 
 # ============================================================================

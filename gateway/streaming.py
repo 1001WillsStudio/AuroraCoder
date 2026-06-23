@@ -55,6 +55,8 @@ class ActiveStream:
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
     task: Optional[asyncio.Task] = None
     new_conversation_id: Optional[str] = None   # set when continuation detected
+    last_full_snapshot: Optional[dict] = None   # latest tier 3 snapshot for reconnection
+    pending_deltas: list = field(default_factory=list)  # deltas since last full snapshot
 
 
 active_streams: Dict[str, ActiveStream] = {}
@@ -215,7 +217,8 @@ async def _cancel_active_stream(conversation_id: str) -> None:
             tasks_to_await.append(old.task)
         streams_to_kill.append(old)
 
-    # Cancel any continuation child created by this stream
+    # Cancel any continuation child created by this stream.
+    # Also cascade to grandchildren (subagents spawned by the continuation).
     async with _streams_lock:
         parent = active_streams.get(conversation_id)
         if parent and parent.new_conversation_id:
@@ -227,6 +230,19 @@ async def _cancel_active_stream(conversation_id: str) -> None:
                     continuation.task.cancel()
                     tasks_to_await.append(continuation.task)
                 streams_to_kill.append(continuation)
+
+                # Recursively cancel subagents that were spawned by the continuation
+                grandchild_children = [
+                    s for s in active_streams.values()
+                    if s.parent_id == continuation.conversation_id and not s.finished
+                ]
+                for gc in grandchild_children:
+                    logger.info(f"[cancel] Cascading cancel to grandchild {gc.conversation_id[:8]}...")
+                    gc.cancel_event.set()
+                    if gc.task and not gc.task.done():
+                        gc.task.cancel()
+                        tasks_to_await.append(gc.task)
+                    streams_to_kill.append(gc)
 
     # Await all cancelled tasks concurrently — total wait bounded to 2 s
     if tasks_to_await:
@@ -428,6 +444,13 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                             # Annotate events with new_conversation_id if continuation was detected
                             if stream.new_conversation_id:
                                 edata["new_conversation_id"] = stream.new_conversation_id
+
+                            # ── Track full snapshots and deltas for reconnection ──
+                            if etype == "messages":
+                                stream.last_full_snapshot = edata
+                                stream.pending_deltas.clear()
+                            elif etype == "delta":
+                                stream.pending_deltas.append(edata)
 
                             if etype in ("messages", "done"):
                                 stream.status = edata.get("status", stream.status)

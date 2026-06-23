@@ -16,7 +16,7 @@
 
 ## ✨ Overview
 
-**AuroraCoder** is a state-of-the-art autonomous AI coding agent powered primarily by **DeepSeek V4 Pro** (GLM-5.1 and OpenCode Go also supported) with **native OpenAI function calling**, executing real-world tasks in a Docker sandbox. It's not just a chat interface — it's an autonomous agent that reads your codebase, writes code, runs commands, searches the web, delegates to sub-agents, and even launches GUI applications visible through a built-in VNC desktop.
+**AuroraCoder** is a state-of-the-art autonomous AI coding agent powered primarily by **DeepSeek V4 Pro** (GLM-5.1 and OpenCode Go also supported) with **native OpenAI function calling**, executing real-world tasks in a Docker sandbox. It's not just a chat interface — it's an autonomous agent that reads your codebase, writes code, runs commands, searches the web, delegates to sub-agents, launches GUI applications visible through a built-in VNC desktop, and runs local LLMs with NVIDIA GPU passthrough for PyTorch + vLLM acceleration.
 
 > **Think of it as giving a frontier reasoning model a terminal, a file editor, a web browser, and a sub-agent workforce — all in an isolated Linux container.**
 
@@ -30,7 +30,7 @@
 
 ## 🚀 Quick Start
 
-There are three ways to launch AuroraCoder:
+There are several ways to launch AuroraCoder:
 
 ### 🟢 Easy: One-Click Launcher
 
@@ -60,6 +60,21 @@ dev-scripts\start.bat      # Windows
 ```
 
 
+### 🚀 GPU Accelerated: NVIDIA Passthrough
+
+For NVIDIA GPU users who want PyTorch, vLLM, and CUDA-accelerated workflows:
+
+**Prerequisites**: Docker with `nvidia-container-toolkit`, NVIDIA GPU, and API keys
+
+```bash
+# Clone, set up .env, then run the GPU dev script:
+./dev-scripts/gpu.sh        # Linux/macOS (handles build + launch + frontend)
+dev-scripts\gpu.bat         # Windows
+```
+
+The GPU variant extends the base image with **PyTorch + CUDA (cu128)**, **vLLM**, and **accelerate**. It uses `--gpus all` for full GPU passthrough, maintains separate storage (`AuroraCoder-GPU`) from CPU-only instances, and all other features (VNC, ToolStore, frontend) work identically.
+
+> 💡 **Tip**: First launch builds both `auroracoder-base` and `auroracoder-gpu-base`. Subsequent launches are fast — only source code layers rebuild.
 ### 📦 Quick: npm Install 🧪 EXPERIMENTAL
 
 > ⚠️ **This feature is experimental.** The npm launcher is under active development
@@ -239,6 +254,9 @@ At 80% context usage, `continue_as_new_chat` appears in the tool list with an in
 
 Xvfb + fluxbox + noVNC on port 6080. The agent can launch matplotlib (TkAgg backend), pygame, tkinter, or any GUI. System prompt auto-includes VNC instructions.
 
+### ⚡ Hybrid SSE Delta Streaming
+
+Instead of sending full message snapshots on every LLM yield (O(n) serialization per event), the backend defaults to lightweight **raw LLM deltas** — just `content` and `reasoning_content` from the provider. Full message snapshots are emitted only on **structural changes** (message count changing) or periodic checkpoints (every 50 delta events). The frontend SSE client handles both `"delta"` and `"messages"` event types seamlessly, falling back to full-snapshot mode when talking to older backends. Result: token-by-token streaming with **sub-millisecond latency** and O(1) serialization cost.
 ### 🔌 Pluggable Provider Architecture
 
 Multiple model providers with reasoning mode toggled per provider. `ProviderManager` singleton initializes all clients at import time.
@@ -365,14 +383,17 @@ Aurora Coder/
 │   ├── progress.go               # Terminal progress rendering
 │   └── build.sh                  # Cross-compilation (used by CI, not end users)
 ├── docker/                       # Docker configuration
-│   ├── Dockerfile                # App image
+│   ├── Dockerfile                # App image (CPU)
 │   ├── Dockerfile.base           # Base image with conda environment
+│   ├── Dockerfile.gpu-base       # GPU base (PyTorch + CUDA + vLLM)
+│   ├── Dockerfile.gpu            # GPU app image
 │   ├── entrypoint.sh             # Container entrypoint
 │   └── supervisord.conf          # Process supervision
 ├── dev-scripts/                  # Developer convenience scripts
 │   ├── start.bat / start.sh      # Local Docker launch
+│   ├── gpu.bat / gpu.sh          # GPU-accelerated launch (NVIDIA)
 │   ├── another-one.bat / .sh     # Multi-instance launcher
-│   └── build-base.bat / .sh      # Base image build
+│   └── build-base.bat / .sh      # Base image build (+ GPU base)
 ├── tests/                        # Test suite
 │   ├── test_context_fix_propagation.py
 │   ├── test_edit_file_edge_cases.py

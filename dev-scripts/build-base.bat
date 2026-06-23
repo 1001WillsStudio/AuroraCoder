@@ -16,4 +16,19 @@ if errorlevel 1 (
     exit /b 1
 )
 echo [base] Done.
+
+echo.
+echo ========================================
+echo   Building GPU Base Image (PyTorch + CUDA)
+echo ========================================
+echo.
+docker build -t auroracoder-gpu-base -f docker\Dockerfile.gpu-base .
+if errorlevel 1 (
+    echo GPU base image build failed.
+    pause
+    exit /b 1
+)
+echo [gpu-base] Done.
+echo.
+echo All base images built successfully.
 pause

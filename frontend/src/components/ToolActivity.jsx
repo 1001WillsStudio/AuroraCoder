@@ -180,7 +180,7 @@ function getToolConfig(toolName, args, result, t) {
       return resultTool(<Globe size={16} />, t('tool.reading'), truncateUrl(args.target_url || 'webpage'))
 
     case 'read_file': {
-      const readFiles = normalizeFileList(args.target_file)
+      const readFiles = normalizeFileList(args.file)
       return resultTool(<Eye size={16} />, t('tool.readingFile'), formatFileDetail(readFiles), { maxLines: 100 })
     }
 
@@ -188,9 +188,9 @@ function getToolConfig(toolName, args, result, t) {
       return {
         icon: <FilePlus size={16} />,
         label: t('tool.creatingFile'),
-        detail: args.target_file || 'file',
+        detail: args.file || 'file',
         hasExpandedView: true,
-        expandedContent: <FilePreview content={args.code_edit} isNew={true} />
+        expandedContent: <FilePreview content={args.content} isNew={true} />
       }
 
     case 'edit_file': {
@@ -199,7 +199,7 @@ function getToolConfig(toolName, args, result, t) {
       return {
         icon: <FileEdit size={16} />,
         label: t('tool.editingFile'),
-        detail: `${args.target_file || 'file'}${editCount > 1 ? ` (${editCount} edits)` : ''}`,
+        detail: `${args.file || 'file'}${editCount > 1 ? ` (${editCount} edits)` : ''}`,
         hasExpandedView: editCount > 0,
         expandedContent: (
           <div className="multi-edit-view">
@@ -215,7 +215,7 @@ function getToolConfig(toolName, args, result, t) {
       return {
         icon: <Trash2 size={16} />,
         label: t('tool.deletingFile'),
-        detail: args.target_file || 'file',
+        detail: args.file || 'file',
         hasExpandedView: false
       }
 
@@ -232,7 +232,7 @@ function getToolConfig(toolName, args, result, t) {
         }
         return { icon: <FileText size={16} />, label: t('tool.closingAll'), detail: '', hasExpandedView: false }
       }
-      const closeFiles = normalizeFileList(args.target_file)
+      const closeFiles = normalizeFileList(args.file)
       return {
         icon: <FileText size={16} />,
         label: t('tool.closingFile'),

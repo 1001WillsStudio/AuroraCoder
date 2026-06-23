@@ -37,7 +37,7 @@ def discover_open_files(messages: List[Dict]) -> Set[str]:
     """
     Scan message history to discover all files that should be displayed.
 
-    Files are added when read_file, write_file, or edit_file is called,
+    Files are added when read_file or edit_file is called,
     and removed when delete_file or close_file is called (order matters).
 
     Args:
