@@ -82,10 +82,53 @@ export function createStreamCallbacks({
     setHistoryRefreshTrigger(prev => prev + 1)
   }
 
+  const onDelta = (mode, deltas, status) => {
+    if (!deltas || !deltas.length) return;
+
+    if (mode === 'append') {
+      setMessages(prevMessages => {
+        const newMessages = [...prevMessages];
+        for (const d of deltas) {
+          const idx = d.index === -1 ? newMessages.length - 1 : d.index;
+          if (idx < 0 || idx >= newMessages.length) continue;
+
+          const msg = { ...newMessages[idx] };
+
+          if (d.path === 'content') {
+            msg.content = (msg.content || '') + d.value;
+          } else if (d.path.startsWith('activities[')) {
+            const match = d.path.match(/^activities\[(\d+)\]\.(arguments|content)$/);
+            if (match) {
+              const actIdx = parseInt(match[1]);
+              const field = match[2];
+              if (msg.activities?.[actIdx]) {
+                msg.activities = [...msg.activities];
+                msg.activities[actIdx] = {
+                  ...msg.activities[actIdx],
+                  [field]: (msg.activities[actIdx][field] || '') + d.value,
+                };
+              }
+            }
+          }
+
+          newMessages[idx] = msg;
+        }
+        return newMessages;
+      });
+    }
+
+    if (status) {
+      // React state setter — we can't call setStatus here since
+      // createStreamCallbacks is a plain factory, not a hook.
+      // Status updates come through full 'messages' events.
+    }
+  };
+
   return {
     onMessages: overrides.onMessages || onMessages,
     onDone: overrides.onDone || onDone,
     onError: overrides.onError || onError,
     onSubagentEvent: overrides.onSubagentEvent || onSubagentEvent,
-  }
+    onDelta: overrides.onDelta || onDelta,
+  };
 }

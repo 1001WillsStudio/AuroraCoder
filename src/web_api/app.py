@@ -157,6 +157,66 @@ def format_sse_event(event_type: str, data: Any) -> str:
     return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+def _compute_simple_deltas(prev_frontend, new_frontend):
+    """
+    Compute simple append deltas by diffing the last messages of
+    prev and new frontend arrays.  Only called when the message
+    count is the same (len(prev) == len(new)).
+
+    Returns a list of {"index": N, "path": "...", "value": "..."} dicts,
+    one per field that grew by appending.
+    """
+    if not prev_frontend or not new_frontend:
+        return []
+    if len(prev_frontend) != len(new_frontend):
+        return []
+
+    deltas = []
+    last_idx = len(prev_frontend) - 1
+    old_msg = prev_frontend[last_idx]
+    new_msg = new_frontend[last_idx]
+
+    # Only diff the last message — same-role / same-structure assumed
+    if old_msg.get("role") != new_msg.get("role"):
+        return deltas  # role mismatch — skip delta, will trigger full snapshot
+
+    # ── Content field ──
+    old_content = old_msg.get("content", "") or ""
+    new_content = new_msg.get("content", "") or ""
+    if new_content != old_content and new_content.startswith(old_content):
+        deltas.append({
+            "index": last_idx,
+            "path": "content",
+            "value": new_content[len(old_content):],
+        })
+
+    # ── Activities: thinking, tool_call args ──
+    old_activities = old_msg.get("activities", [])
+    new_activities = new_msg.get("activities", [])
+    for i, (old_a, new_a) in enumerate(zip(old_activities, new_activities)):
+        if old_a.get("type") == "thinking" and new_a.get("type") == "thinking":
+            old_t = old_a.get("content", "") or ""
+            new_t = new_a.get("content", "") or ""
+            if new_t != old_t and new_t.startswith(old_t):
+                deltas.append({
+                    "index": last_idx,
+                    "path": f"activities[{i}].content",
+                    "value": new_t[len(old_t):],
+                })
+        elif old_a.get("type") == "tool_call" and new_a.get("type") == "tool_call":
+            if old_a.get("id") == new_a.get("id"):
+                old_args = old_a.get("arguments", "") or ""
+                new_args = new_a.get("arguments", "") or ""
+                if new_args != old_args and new_args.startswith(old_args):
+                    deltas.append({
+                        "index": last_idx,
+                        "path": f"activities[{i}].arguments",
+                        "value": new_args[len(old_args):],
+                    })
+
+    return deltas
+
+
 async def stream_chat_response(
     messages: list, conversation_id: str, request: Request,
     max_iterations: int, provider: Optional[str] = None,
@@ -167,11 +227,17 @@ async def stream_chat_response(
     cancel_active_stream(conversation_id)
     register_stream(conversation_id, cancel_event)
 
+    seq = 0
+    prev_frontend = None
+    full_snapshot_counter = 0
+    DELTA_BEFORE_FULL_SNAPSHOT = 50
+
     try:
         queue = asyncio.Queue()
         loop = asyncio.get_event_loop()
 
         def run_generator():
+            nonlocal seq, prev_frontend, full_snapshot_counter
             try:
                 if restart_shell:
                     try:
@@ -191,26 +257,67 @@ async def stream_chat_response(
                 ):
                     if cancel_event.is_set():
                         break
+                    seq += 1
                     current_messages = response["messages"]
                     status = response["status"]
                     current_provider = response.get("provider", provider)
                     frontend_messages = convert_messages_for_frontend(current_messages)
+
+                    # ── Trigger-based: delta by default, full snapshot on structural changes ──
+                    is_structural = (
+                        prev_frontend is None
+                        or len(frontend_messages) != len(prev_frontend)
+                    )
+
+                    if is_structural or full_snapshot_counter >= DELTA_BEFORE_FULL_SNAPSHOT:
+                        # Structural change or periodic checkpoint → full snapshot
+                        event_type = "messages"
+                        full_snapshot_counter = 0
+                        event_data = {
+                            "seq": seq,
+                            "messages": frontend_messages,
+                            "raw_messages": current_messages,
+                            "status": status,
+                            "conversation_id": conversation_id,
+                            "provider": current_provider,
+                        }
+                    else:
+                        # Only last message changed (same count) → append delta
+                        event_type = "delta"
+                        full_snapshot_counter += 1
+                        deltas = _compute_simple_deltas(prev_frontend, frontend_messages)
+                        event_data = {
+                            "seq": seq,
+                            "mode": "append",
+                            "conversation_id": conversation_id,
+                            "status": status,
+                            "deltas": deltas,
+                        }
+
+                    prev_frontend = frontend_messages
+                    loop.call_soon_threadsafe(
+                        queue.put_nowait, (event_type, event_data)
+                    )
+
+                if not cancel_event.is_set():
+                    final_messages = convert_messages_for_frontend(current_messages)
+                    # ── Final full snapshot for safety before done ──
+                    seq += 1
                     loop.call_soon_threadsafe(
                         queue.put_nowait,
                         ("messages", {
-                            "messages": frontend_messages,
+                            "seq": seq,
+                            "messages": final_messages,
                             "raw_messages": current_messages,
                             "status": status,
                             "conversation_id": conversation_id,
                             "provider": current_provider,
                         })
                     )
-
-                if not cancel_event.is_set():
-                    final_messages = convert_messages_for_frontend(current_messages)
                     loop.call_soon_threadsafe(
                         queue.put_nowait,
                         ("done", {
+                            "seq": seq + 1,
                             "conversation_id": conversation_id,
                             "status": status,
                             "messages": final_messages,
