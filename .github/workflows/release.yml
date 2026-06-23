@@ -177,6 +177,7 @@ jobs:
           name: auroracoder-${{ matrix.os }}-${{ matrix.arch }}
           path: |
             launcher/${{ env.CPU_OUTPUT }}
+            launcher/${{ env.GPU_OUTPUT }}
             launcher/auroracoder-*.zip
 
   release:
