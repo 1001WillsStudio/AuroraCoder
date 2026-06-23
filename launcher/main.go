@@ -10,6 +10,12 @@ import (
 // version is set at build time via -ldflags
 var version = "dev"
 
+// gpuMode is set at build time via ldflags: "-X main.gpuMode=true"
+// When true, the launcher builds GPU images and uses --gpus all.
+var gpuMode = "false"
+
+func isGpu() bool { return gpuMode == "true" }
+
 func main() {
 	printBanner()
 
@@ -107,44 +113,89 @@ func main() {
  	}
  	ps.setStep(4, "done")
 
-	// Step 5: Build app Docker image
-	ps.setStep(5, "running")
-	if err := buildAppImage(cacheDir, ps); err != nil {
-		ps.fail(fmt.Sprintf("App image build failed: %v", err))
-		autoExit(1)
-	}
-	ps.setStep(5, "done")
+	var appURL string
+	var ports PortsConfig
 
-	// Step 6: Start container
-	ps.setStep(6, "running")
-	ps.logLine("Starting container...")
- 	ports, err := startContainer(cacheDir, ps)
- 	if err != nil {
- 		ps.fail(fmt.Sprintf("Container start failed: %v", err))
- 		autoExit(1)
- 	}
- 	ps.logLine("Container started, waiting for services to be ready...")
- 	appURL := fmt.Sprintf("http://localhost:%d", ports.Frontend)
- 	if err := waitForApp(appURL, ps, 60*time.Second); err != nil {
- 		ps.logLine(fmt.Sprintf("⚠️  Health check warning: %v", err))
- 		ps.logLine("The app may still be starting — please refresh if needed.")
- 	}
- 	ps.setStep(6, "done")
+	if isGpu() {
+		// GPU Step 5: Build GPU base Docker image
+		ps.setStep(5, "running")
+		if err := buildGpuBaseImage(cacheDir, ps); err != nil {
+			ps.fail(fmt.Sprintf("GPU base image build failed: %v", err))
+			autoExit(1)
+		}
+		ps.setStep(5, "done")
+
+		// GPU Step 6: Build GPU app Docker image
+		ps.setStep(6, "running")
+		if err := buildGpuAppImage(cacheDir, ps); err != nil {
+			ps.fail(fmt.Sprintf("GPU app image build failed: %v", err))
+			autoExit(1)
+		}
+		ps.setStep(6, "done")
+
+		// GPU Step 7: Start GPU container
+		ps.setStep(7, "running")
+		ps.logLine("Starting GPU container (--gpus all)...")
+		ports, err = startGpuContainer(cacheDir, ps)
+		if err != nil {
+			ps.fail(fmt.Sprintf("GPU container start failed: %v", err))
+			autoExit(1)
+		}
+		ps.logLine("GPU container started, waiting for services to be ready...")
+		appURL = fmt.Sprintf("http://localhost:%d", ports.Frontend)
+		if err := waitForApp(appURL, ps, 60*time.Second); err != nil {
+			ps.logLine(fmt.Sprintf("⚠️  Health check warning: %v", err))
+			ps.logLine("The app may still be starting — please refresh if needed.")
+		}
+		ps.setStep(7, "done")
+	} else {
+		// Step 5: Build app Docker image
+		ps.setStep(5, "running")
+		if err := buildAppImage(cacheDir, ps); err != nil {
+			ps.fail(fmt.Sprintf("App image build failed: %v", err))
+			autoExit(1)
+		}
+		ps.setStep(5, "done")
+
+		// Step 6: Start container
+		ps.setStep(6, "running")
+		ps.logLine("Starting container...")
+ 		ports, err = startContainer(cacheDir, ps)
+		if err != nil {
+			ps.fail(fmt.Sprintf("Container start failed: %v", err))
+			autoExit(1)
+		}
+		ps.logLine("Container started, waiting for services to be ready...")
+ 		appURL = fmt.Sprintf("http://localhost:%d", ports.Frontend)
+		if err := waitForApp(appURL, ps, 60*time.Second); err != nil {
+			ps.logLine(fmt.Sprintf("⚠️  Health check warning: %v", err))
+			ps.logLine("The app may still be starting — please refresh if needed.")
+		}
+		ps.setStep(6, "done")
+	}
 
  	// ── Done ──────────────────────────────────────────────────────
  	ps.done(appURL)
 
  	fmt.Println()
  	fmt.Println("════════════════════════════════════════")
- 	fmt.Println("  AuroraCoder is running!")
+ 	if isGpu() {
+ 		fmt.Println("  AuroraCoder GPU is running!")
+ 	} else {
+ 		fmt.Println("  AuroraCoder is running!")
+ 	}
  	fmt.Printf("  →  http://localhost:%d\n", ports.Frontend)
  	fmt.Println("════════════════════════════════════════")
  	fmt.Println()
  	fmt.Printf("  API Docs:      http://localhost:%d/docs\n", ports.Backend)
  	fmt.Printf("  VNC Desktop:   http://localhost:%d\n", ports.VNC)
  	fmt.Printf("  ToolStore:     http://localhost:%d\n", ports.ToolStore)
-	fmt.Println()
-	fmt.Println("  To stop:  docker stop auroracoder-agent")
+ 	fmt.Println()
+ 	if isGpu() {
+ 		fmt.Println("  To stop:  docker stop auroracoder-agent-gpu")
+ 	} else {
+ 		fmt.Println("  To stop:  docker stop auroracoder-agent")
+ 	}
 	fmt.Println()
 
 	autoExit(0)
@@ -153,9 +204,13 @@ func main() {
 func printBanner() {
 	fmt.Println()
 	fmt.Println("╔══════════════════════════════════════════════╗")
-	fmt.Println("║          AuroraCoder Launcher                ║")
+	label := "AuroraCoder Launcher"
+	if isGpu() {
+		label = "AuroraCoder GPU Launcher"
+	}
+	fmt.Printf("║          %-36s ║\n", label)
 	if version != "dev" {
-		fmt.Printf("║          v%s                              ║\n", version)
+		fmt.Printf("║          v%-36s ║\n", version)
 	}
 	fmt.Println("║     One-Click Docker Deployment              ║")
 	fmt.Println("╚══════════════════════════════════════════════╝")

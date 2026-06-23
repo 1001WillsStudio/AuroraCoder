@@ -229,22 +229,88 @@ func buildAppImage(cacheDir string, ps *progressServer) error {
 	return streamCommand(cmd, ps)
 }
 
+// ─── GPU base image build ─────────────────────────────────────────────────
+
+func buildGpuBaseImage(cacheDir string, ps *progressServer) error {
+	ps.logLine("Building gpu-base image (PyTorch + CUDA, may take several minutes)...")
+
+	cmd := exec.Command("docker", "build", "-t", gpuBaseImageName, "-f", "docker/Dockerfile.gpu-base", ".")
+	cmd.Dir = cacheDir
+
+	return streamCommand(cmd, ps)
+}
+
+// ─── GPU app image build ──────────────────────────────────────────────────
+
+func buildGpuAppImage(cacheDir string, ps *progressServer) error {
+	ps.logLine("Building gpu app image...")
+
+	cmd := exec.Command("docker", "build", "-t", gpuAppImageName, "-f", "docker/Dockerfile.gpu", ".")
+	cmd.Dir = cacheDir
+
+	return streamCommand(cmd, ps)
+}
+
+// ─── GPU container start ──────────────────────────────────────────────────
+
+func startGpuContainer(cacheDir string, ps *progressServer) (PortsConfig, error) {
+	ports := resolvePorts(cacheDir, ps)
+	ps.logLine(fmt.Sprintf("Resolved ports: frontend=%d backend=%d vnc=%d toolstore=%d dev=%d-%d",
+		ports.Frontend, ports.Backend, ports.VNC, ports.ToolStore, ports.DevPortStart, ports.DevPortEnd))
+
+	storageBase := getGpuStorageBase()
+	dataDir := filepath.Join(storageBase, "data")
+	workspaceDir := filepath.Join(storageBase, "workspace")
+	os.MkdirAll(dataDir, 0755)
+	os.MkdirAll(workspaceDir, 0755)
+
+	envFile := filepath.Join(cacheDir, ".env")
+
+	args := []string{"run", "--rm", "-d", "--gpus", "all"}
+
+	if _, err := os.Stat(envFile); err == nil {
+		args = append(args, "--env-file", envFile)
+	}
+
+	args = append(args,
+		"--name", gpuContainerName,
+		"-e", "AURORACODER_DOCKER=1",
+		"-e", "AURORACODER_VNC=1",
+		"-e", "AURORACODER_GPU=1",
+		"-v", fmt.Sprintf("%s:/app/data", dataDir),
+		"-v", fmt.Sprintf("%s:/workspace", workspaceDir),
+		"-p", fmt.Sprintf("%d:8080", ports.Backend),
+		"-p", fmt.Sprintf("%d:3000", ports.Frontend),
+		"-p", fmt.Sprintf("%d:6080", ports.VNC),
+		"-p", fmt.Sprintf("%d:8765", ports.ToolStore),
+		"-p", fmt.Sprintf("%d-%d:8900-8902", ports.DevPortStart, ports.DevPortEnd),
+		gpuAppImageName,
+	)
+
+	cmd := exec.Command("docker", args...)
+	cmd.Dir = cacheDir
+
+	return ports, streamCommand(cmd, ps)
+}
+
 // ─── Stop old container ──────────────────────────────────────────────────
 
 // stopOldContainer stops and removes any existing container early in the
 // launch sequence.  Docker builds take time, so doing this at the very
 // beginning gives ports plenty of time to be released before we need them.
 func stopOldContainer(ps *progressServer) {
-	ps.logLine("Stopping old container if any...")
+	ps.logLine("Stopping old container(s) if any...")
 
-	stopCmd := exec.Command("docker", "stop", containerName)
-	stopCmd.Run()
-	rmCmd := exec.Command("docker", "rm", containerName)
-	rmCmd.Run()
+	// Stop both CPU and GPU containers — whichever launcher is running,
+	// any old launcher container should be cleaned up.
+	for _, name := range []string{containerName, gpuContainerName} {
+		exec.Command("docker", "stop", name).Run()
+		exec.Command("docker", "rm", name).Run()
+	}
 
 	// Short delay to ensure ports are released before we start resolving them
 	time.Sleep(2 * time.Second)
-	ps.logLine("Old container cleaned up.")
+	ps.logLine("Old container(s) cleaned up.")
 }
 
 // ─── Container start ──────────────────────────────────────────────────────

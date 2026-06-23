@@ -172,13 +172,26 @@ func (ps *progressServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Send initial step definitions
-	steps := []map[string]interface{}{
-		{"step": 1, "label": "Checking Docker"},
-		{"step": 2, "label": "Extracting project files"},
-		{"step": 3, "label": "Checking configuration"},
-		{"step": 4, "label": "Building base Docker image"},
-		{"step": 5, "label": "Building app Docker image"},
-		{"step": 6, "label": "Starting container"},
+	var steps []map[string]interface{}
+	if isGpu() {
+		steps = []map[string]interface{}{
+			{"step": 1, "label": "Checking Docker"},
+			{"step": 2, "label": "Extracting project files"},
+			{"step": 3, "label": "Checking configuration"},
+			{"step": 4, "label": "Building CPU base Docker image"},
+			{"step": 5, "label": "Building GPU base Docker image"},
+			{"step": 6, "label": "Building GPU app Docker image"},
+			{"step": 7, "label": "Starting GPU container"},
+		}
+	} else {
+		steps = []map[string]interface{}{
+			{"step": 1, "label": "Checking Docker"},
+			{"step": 2, "label": "Extracting project files"},
+			{"step": 3, "label": "Checking configuration"},
+			{"step": 4, "label": "Building base Docker image"},
+			{"step": 5, "label": "Building app Docker image"},
+			{"step": 6, "label": "Starting container"},
+		}
 	}
 	initMsg, _ := json.Marshal(steps)
 	fmt.Fprintf(w, "event: init\ndata: %s\n\n", initMsg)

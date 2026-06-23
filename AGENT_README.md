@@ -61,6 +61,7 @@ launcher/                     ← One-click Go launcher (main.go, docker.go,
 - **VNC Desktop**: Xvfb + fluxbox + noVNC on port 6080 for GUI applications.
 - **Sub-Agent Delegation**: Delegates tasks to read-only child agents via HTTP.
 - **ToolStore Integration**: Universal tool discovery — search, inspect, and invoke tools from MCP servers, local skills, and tool packs.
+- **GPU Acceleration**: NVIDIA GPU passthrough with PyTorch + CUDA (cu128), vLLM, and accelerate for local LLM workloads.
 - **Living Tool State**: Tool responses are mutable — old code interpreter blocks are stripped, only the latest consolidated file display stays in context.
 
 ---
@@ -155,14 +156,17 @@ Aurora Coder/
 │   ├── build.sh                ← Cross-compilation (used by CI, outputs to releases)
 │   └── go.mod
 ├── docker/
-│   ├── Dockerfile              ← App image
+│   ├── Dockerfile              ← App image (CPU)
 │   ├── Dockerfile.base         ← Base image with conda environment
+│   ├── Dockerfile.gpu-base     ← GPU base (PyTorch + CUDA + vLLM)
+│   ├── Dockerfile.gpu          ← GPU app image
 │   ├── entrypoint.sh           ← Container entrypoint
 │   └── supervisord.conf        ← Process supervision config
 ├── dev-scripts/                ← Power-user launch scripts (repo-clone workflow)
 │   ├── start.bat / start.sh    ← Docker build + launch + frontend
+│   ├── gpu.bat / gpu.sh        ← GPU-accelerated launch (NVIDIA passthrough)
 │   ├── another-one.bat / .sh   ← Multi-instance launcher
-│   └── build-base.bat / .sh    ← Base image build
+│   └── build-base.bat / .sh    ← Base image build (+ GPU base)
 ├── tests/                      ← Test suite
 │   ├── test_context_fix_propagation.py
 │   ├── test_edit_file_edge_cases.py
@@ -195,7 +199,7 @@ gateway/routes.py  ──►  main_flow.generate_chat_responses_stream_native()
                               └─ Loops until: completion, max_iterations, or error
                                     │
                                     ▼
-                              Yields {messages, status, provider} dicts
+                              Yields {messages, status, provider, llm_delta} dicts — llm_delta is {content, reasoning_content} from the provider
                                     │
                                     ▼
                               gateway/streaming.py manages SSE events
@@ -373,6 +377,7 @@ The Docker-first sandbox. It provides:
 
 ### Persistent Shell
 - `shell.run(command, timeout, blocking)` — writes command to bash stdin, waits for boundary marker, reads output from temp file
+- Commands are wrapped in `{ ...; : ; }` brace groups — the `: ;` (POSIX no-op) ensures `}` is recognised as the closing reserved word even after heredocs (interactive bash rejects bare `; }` as a syntax error)
 - `blocking=False` → wraps in `nohup bash -c ... > logfile 2>&1 &`, returns log path
 - On timeout → spawns a new shell, returns note about log file
 - Conda environment is auto-activated on shell start
@@ -408,7 +413,7 @@ generate_chat_responses_stream_native(
 ) → Generator[dict]
 ```
 
-**Yield format**: `{"messages": [...], "status": "running"|"completed"|"error"|"max_iterations_reached", "provider": str}`
+**Yield format**: `{"messages": [...], "status": "running"|"completed"|"error"|"max_iterations_reached", "provider": str, "llm_delta": {"content": ..., "reasoning_content": ...}}` — lightweight LLM deltas carried on every yield for zero-compute SSE streaming
 
 **Tool execution**: Two separate tool sets control behavior: `PARALLEL_SAFE_TOOLS` (tools safe for concurrent `ThreadPoolExecutor` execution) and `SUBAGENT_READ_ONLY_TOOLS` (tools granted to subagents in read-only mode). Write tools run sequentially. Batches are partitioned by `partition_tool_calls()`.
 
@@ -448,6 +453,7 @@ generate_chat_responses_stream_native(
 ### `subagent.py` — SUB-AGENT DELEGATION
 
 - Sends HTTP POST to `CONVO_SERVER_URL/api/chat` (default `http://localhost:8081`)
+- Inherits parent's provider by default — subagent uses the same model as the invoking conversation for consistent results
 - Uses `tools: "read_only"` to restrict subagent to safe tools
 - Streams SSE response, extracts final assistant message
 - Truncates to `SUBAGENT_MAX_RESULT_CHARS` (4000)

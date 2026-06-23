@@ -23,9 +23,13 @@ var projectFS embed.FS
 // ─── Constants ─────────────────────────────────────────────────────────────
 
 const (
-	baseImageName = "auroracoder-base"
-	appImageName  = "auroracoder"
-	containerName = "auroracoder-agent"
+	baseImageName    = "auroracoder-base"
+	appImageName     = "auroracoder"
+	containerName    = "auroracoder-agent"
+
+	gpuBaseImageName = "auroracoder-gpu-base"
+	gpuAppImageName  = "auroracoder-gpu"
+	gpuContainerName = "auroracoder-agent-gpu"
 )
 
 // ─── Port configuration ─────────────────────────────────────────────────────
@@ -412,4 +416,22 @@ func getStorageBase() string {
 	}
 
 	return filepath.Join(home, "AuroraCoder")
+}
+
+func getGpuStorageBase() string {
+	home := os.Getenv("HOME")
+	if runtime.GOOS == "windows" {
+		home = os.Getenv("USERPROFILE")
+	}
+
+	if home == "" {
+		return filepath.Join(os.TempDir(), "AuroraCoder-GPU")
+	}
+
+	documents := filepath.Join(home, "Documents")
+	if _, err := os.Stat(documents); err == nil {
+		return filepath.Join(documents, "AuroraCoder-GPU")
+	}
+
+	return filepath.Join(home, "AuroraCoder-GPU")
 }
