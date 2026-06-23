@@ -209,6 +209,8 @@ jobs:
           mkdir -p gpu-pack
           find dist -name "auroracoder-gpu-*" -exec cp {} gpu-pack/ \;
           find dist -name "auroracoder-gpu-*" -delete
+          # Remove individual Windows .exe — already in auroracoder-windows.zip
+          find dist -name "auroracoder-windows.exe" -delete
           if ls gpu-pack/* >/dev/null 2>&1; then
             cd gpu-pack && zip "../dist/${GPU_ZIP}" * && cd ..
             echo "✅ Packaged GPU binaries: ${GPU_ZIP}"
