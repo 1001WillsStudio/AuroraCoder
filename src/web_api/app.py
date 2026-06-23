@@ -157,64 +157,6 @@ def format_sse_event(event_type: str, data: Any) -> str:
     return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def _compute_simple_deltas(prev_frontend, new_frontend):
-    """
-    Compute simple append deltas by diffing the last messages of
-    prev and new frontend arrays.  Only called when the message
-    count is the same (len(prev) == len(new)).
-
-    Returns a list of {"index": N, "path": "...", "value": "..."} dicts,
-    one per field that grew by appending.
-    """
-    if not prev_frontend or not new_frontend:
-        return []
-    if len(prev_frontend) != len(new_frontend):
-        return []
-
-    deltas = []
-    last_idx = len(prev_frontend) - 1
-    old_msg = prev_frontend[last_idx]
-    new_msg = new_frontend[last_idx]
-
-    # Only diff the last message — same-role / same-structure assumed
-    if old_msg.get("role") != new_msg.get("role"):
-        return deltas  # role mismatch — skip delta, will trigger full snapshot
-
-    # ── Content field ──
-    old_content = old_msg.get("content", "") or ""
-    new_content = new_msg.get("content", "") or ""
-    if new_content != old_content and new_content.startswith(old_content):
-        deltas.append({
-            "index": last_idx,
-            "path": "content",
-            "value": new_content[len(old_content):],
-        })
-
-    # ── Activities: thinking, tool_call args ──
-    old_activities = old_msg.get("activities", [])
-    new_activities = new_msg.get("activities", [])
-    for i, (old_a, new_a) in enumerate(zip(old_activities, new_activities)):
-        if old_a.get("type") == "thinking" and new_a.get("type") == "thinking":
-            old_t = old_a.get("content", "") or ""
-            new_t = new_a.get("content", "") or ""
-            if new_t != old_t and new_t.startswith(old_t):
-                deltas.append({
-                    "index": last_idx,
-                    "path": f"activities[{i}].content",
-                    "value": new_t[len(old_t):],
-                })
-        elif old_a.get("type") == "tool_call" and new_a.get("type") == "tool_call":
-            if old_a.get("id") == new_a.get("id"):
-                old_args = old_a.get("arguments", "") or ""
-                new_args = new_a.get("arguments", "") or ""
-                if new_args != old_args and new_args.startswith(old_args):
-                    deltas.append({
-                        "index": last_idx,
-                        "path": f"activities[{i}].arguments",
-                        "value": new_args[len(old_args):],
-                    })
-
-    return deltas
 
 
 async def stream_chat_response(
@@ -282,16 +224,14 @@ async def stream_chat_response(
                             "provider": current_provider,
                         }
                     else:
-                        # Only last message changed (same count) → append delta
+                        # Non-structural: forward raw LLM delta directly — zero compute
                         event_type = "delta"
                         full_snapshot_counter += 1
-                        deltas = _compute_simple_deltas(prev_frontend, frontend_messages)
                         event_data = {
                             "seq": seq,
-                            "mode": "append",
                             "conversation_id": conversation_id,
                             "status": status,
-                            "deltas": deltas,
+                            "delta": response.get("llm_delta", {}),
                         }
 
                     prev_frontend = frontend_messages

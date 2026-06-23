@@ -248,10 +248,16 @@ def generate_chat_responses_stream_native(
                 assistant_message["content"] = current_content
                 if current_tool_calls:
                     assistant_message["tool_calls"] = current_tool_calls
+
+                llm_delta = {
+                    "content": delta.content or "",
+                    "reasoning_content": getattr(delta, "reasoning_content", "") or "",
+                }
                 yield {
                     "messages": messages + [assistant_message],
                     "status": "running",
-                    "provider": provider_id
+                    "provider": provider_id,
+                    "llm_delta": llm_delta,
                 }
 
             # Log timing for this API call

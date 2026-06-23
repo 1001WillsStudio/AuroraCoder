@@ -82,47 +82,32 @@ export function createStreamCallbacks({
     setHistoryRefreshTrigger(prev => prev + 1)
   }
 
-  const onDelta = (mode, deltas, status) => {
-    if (!deltas || !deltas.length) return;
-
-    if (mode === 'append') {
-      setMessages(prevMessages => {
-        const newMessages = [...prevMessages];
-        for (const d of deltas) {
-          const idx = d.index === -1 ? newMessages.length - 1 : d.index;
-          if (idx < 0 || idx >= newMessages.length) continue;
-
-          const msg = { ...newMessages[idx] };
-
-          if (d.path === 'content') {
-            msg.content = (msg.content || '') + d.value;
-          } else if (d.path.startsWith('activities[')) {
-            const match = d.path.match(/^activities\[(\d+)\]\.(arguments|content)$/);
-            if (match) {
-              const actIdx = parseInt(match[1]);
-              const field = match[2];
-              if (msg.activities?.[actIdx]) {
-                msg.activities = [...msg.activities];
-                msg.activities[actIdx] = {
-                  ...msg.activities[actIdx],
-                  [field]: (msg.activities[actIdx][field] || '') + d.value,
-                };
-              }
-            }
-          }
-
-          newMessages[idx] = msg;
-        }
-        return newMessages;
-      });
-    }
-
-    if (status) {
-      // React state setter — we can't call setStatus here since
-      // createStreamCallbacks is a plain factory, not a hook.
-      // Status updates come through full 'messages' events.
-    }
-  };
+	const onDelta = (delta, _status) => {
+	  if (!delta || (!delta.content && !delta.reasoning_content)) return;
+	  setMessages(prevMessages => {
+	    const newMessages = [...prevMessages];
+	    if (newMessages.length === 0) {
+	      newMessages.push({ role: 'assistant', content: delta.content || '', activities: [] });
+	      return newMessages;
+	    }
+	    const msg = { ...newMessages[newMessages.length - 1] };
+	    if (delta.content) {
+	      msg.content = (msg.content || '') + delta.content;
+	    }
+	    if (delta.reasoning_content) {
+	      msg.activities = msg.activities ? [...msg.activities] : [];
+	      const lastAct = msg.activities.length > 0 ? msg.activities[msg.activities.length - 1] : null;
+	      if (lastAct && lastAct.type === 'thinking') {
+	        const lastIdx = msg.activities.length - 1;
+	        msg.activities[lastIdx] = { ...lastAct, content: (lastAct.content || '') + delta.reasoning_content };
+	      } else {
+	        msg.activities.push({ type: 'thinking', content: delta.reasoning_content });
+	      }
+	    }
+	    newMessages[newMessages.length - 1] = msg;
+	    return newMessages;
+	  });
+	};
 
   return {
     onMessages: overrides.onMessages || onMessages,

@@ -145,7 +145,7 @@ export async function streamChat(message, conversationId, callbacks, signal, exi
               }
               _lastSeq = event.data.seq || _lastSeq;
               if (!_needsFullRefresh) {
-                onDelta?.(event.data.mode, event.data.deltas, event.data.status);
+                onDelta?.(event.data.delta, event.data.status);
               }
               break;
 
@@ -318,7 +318,7 @@ export async function resumeStream(conversationId, callbacks, signal) {
         for (const event of events) {
           switch (event.type) {
             case 'delta':
-              onDelta?.(event.data.mode, event.data.deltas, event.data.status);
+              onDelta?.(event.data.delta, event.data.status);
               break;
 
             case 'messages':
