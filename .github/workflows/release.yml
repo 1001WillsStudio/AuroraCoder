@@ -167,7 +167,7 @@ jobs:
           cd launcher
           ZIP_NAME="auroracoder-windows.zip"
           zip "$ZIP_NAME" "${{ env.CPU_OUTPUT }}"
-          echo "BINARY=$ZIP_NAME" >> $GITHUB_ENV
+          echo "CPU_OUTPUT=$ZIP_NAME" >> $GITHUB_ENV
           ls -lh "$ZIP_NAME"
           echo "✅ Packaged Windows binaries in ZIP: $ZIP_NAME"
 
@@ -210,7 +210,6 @@ jobs:
           find dist -name "auroracoder-gpu-*" -exec cp {} gpu-pack/ \;
           find dist -name "auroracoder-gpu-*" -delete
           # Remove individual Windows .exe — already in auroracoder-windows.zip
-          find dist -name "auroracoder-windows.exe" -delete
           if ls gpu-pack/* >/dev/null 2>&1; then
             cd gpu-pack && zip "../dist/${GPU_ZIP}" * && cd ..
             echo "✅ Packaged GPU binaries: ${GPU_ZIP}"
