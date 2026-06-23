@@ -133,7 +133,9 @@ jobs:
       - name: Build CPU binary (${{ matrix.os }}-${{ matrix.arch }})
         run: |
           cd launcher
-          BASE="auroracoder-${{ matrix.os }}"
+          FRIENDLY="${{ matrix.os }}"
+          if [ "$FRIENDLY" = "darwin" ]; then FRIENDLY="macos"; fi
+          BASE="auroracoder-${FRIENDLY}"
           if [ "${{ matrix.arch }}" != "amd64" ]; then
             BASE="${BASE}-${{ matrix.arch }}"
           fi
@@ -146,7 +148,9 @@ jobs:
       - name: Build GPU binary (${{ matrix.os }}-${{ matrix.arch }})
         run: |
           cd launcher
-          GPU_BASE="auroracoder-gpu-${{ matrix.os }}"
+          FRIENDLY="${{ matrix.os }}"
+          if [ "$FRIENDLY" = "darwin" ]; then FRIENDLY="macos"; fi
+          GPU_BASE="auroracoder-gpu-${FRIENDLY}"
           if [ "${{ matrix.arch }}" != "amd64" ]; then
             GPU_BASE="${GPU_BASE}-${{ matrix.arch }}"
           fi
@@ -162,7 +166,7 @@ jobs:
         run: |
           cd launcher
           ZIP_NAME="auroracoder-windows.zip"
-          zip "$ZIP_NAME" "${{ env.CPU_OUTPUT }}" "${{ env.GPU_OUTPUT }}"
+          zip "$ZIP_NAME" "${{ env.CPU_OUTPUT }}"
           echo "BINARY=$ZIP_NAME" >> $GITHUB_ENV
           ls -lh "$ZIP_NAME"
           echo "✅ Packaged Windows binaries in ZIP: $ZIP_NAME"
@@ -173,7 +177,6 @@ jobs:
           name: auroracoder-${{ matrix.os }}-${{ matrix.arch }}
           path: |
             launcher/${{ env.CPU_OUTPUT }}
-            launcher/${{ env.GPU_OUTPUT }}
             launcher/auroracoder-*.zip
 
   release:
@@ -197,6 +200,21 @@ jobs:
           mkdir -p dist
           find artifacts -type f -exec cp {} dist/ \;
           echo "Release assets:"
+          ls -lh dist/
+
+      - name: Package GPU binaries into one zip
+        run: |
+          GPU_ZIP="auroracoder-gpu.zip"
+          mkdir -p gpu-pack
+          find dist -name "auroracoder-gpu-*" -exec cp {} gpu-pack/ \;
+          find dist -name "auroracoder-gpu-*" -delete
+          if ls gpu-pack/* >/dev/null 2>&1; then
+            cd gpu-pack && zip "../dist/${GPU_ZIP}" * && cd ..
+            echo "✅ Packaged GPU binaries: ${GPU_ZIP}"
+          fi
+          rm -rf gpu-pack
+          echo ""
+          echo "Final release assets:"
           ls -lh dist/
 
       - name: Determine tag name
@@ -252,23 +270,25 @@ jobs:
 
           **macOS (Apple Silicon)** —
           ```bash
-          xattr -d com.apple.quarantine ./auroracoder-darwin-arm64
-          chmod +x ./auroracoder-darwin-arm64
-          ./auroracoder-darwin-arm64
+          xattr -d com.apple.quarantine ./auroracoder-macos-arm64
+          chmod +x ./auroracoder-macos-arm64
+          ./auroracoder-macos-arm64
           ```
 
           **macOS (Intel)** —
           ```bash
-          xattr -d com.apple.quarantine ./auroracoder-darwin-amd64
-          chmod +x ./auroracoder-darwin-amd64
-          ./auroracoder-darwin-amd64
+          xattr -d com.apple.quarantine ./auroracoder-macos
+          chmod +x ./auroracoder-macos
+          ./auroracoder-macos
           ```
 
           **Linux** —
           ```bash
-          chmod +x ./auroracoder-linux-amd64
-          ./auroracoder-linux-amd64
+          chmod +x ./auroracoder-linux
+          ./auroracoder-linux
           ```
+
+          **GPU (NVIDIA)** — download `auroracoder-gpu.zip`, extract, and run the binary for your platform. Requires `nvidia-container-toolkit`.
 
           Requires [Docker](https://docs.docker.com/get-docker/).
           INSTALLOF

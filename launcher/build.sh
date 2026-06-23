@@ -65,11 +65,12 @@ build_for() {
     local os="$1"
     local arch="$2"
     local ext="$3"
-    # Friendly name: auroracoder-{os} with -arm64 suffix for non-amd64
+    local friendly="$os"
+    if [ "$os" = "darwin" ]; then friendly="macos"; fi
     if [ "$arch" != "amd64" ]; then
-        local out="${OUTPUT_NAME}-${os}-${arch}${ext}"
+        local out="${OUTPUT_NAME}-${friendly}-${arch}${ext}"
     else
-        local out="${OUTPUT_NAME}-${os}${ext}"
+        local out="${OUTPUT_NAME}-${friendly}${ext}"
     fi
 
     echo ""
@@ -98,14 +99,16 @@ if [ "${1:-}" == "--all" ]; then
     GPU_LDFLAGS="${LDFLAGS} -X main.gpuMode=true"
 
     gpu_build_for() {
-        local os="$1"
-        local arch="$2"
-        local ext="$3"
-        if [ "$arch" != "amd64" ]; then
-            local out="${GPU_OUTPUT_NAME}-${os}-${arch}${ext}"
-        else
-            local out="${GPU_OUTPUT_NAME}-${os}${ext}"
-        fi
+            local os="$1"
+            local arch="$2"
+            local ext="$3"
+            local friendly="$os"
+            if [ "$os" = "darwin" ]; then friendly="macos"; fi
+            if [ "$arch" != "amd64" ]; then
+                local out="${GPU_OUTPUT_NAME}-${friendly}-${arch}${ext}"
+            else
+                local out="${GPU_OUTPUT_NAME}-${friendly}${ext}"
+            fi
         echo ""
         echo "═══ Building GPU variant for ${os}/${arch}..."
         GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build \
