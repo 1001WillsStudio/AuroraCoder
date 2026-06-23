@@ -20,6 +20,14 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Dict, List, Set
 
+# HoleKV marker constants — injected around panel display blocks
+# in the legacy refresh path so vLLM can reuse KV cache across turns.
+_REMOVE_START = "<HOLEKV_REMOVE_START>"
+_REMOVE_END   = "<HOLEKV_REMOVE_END>"
+_ADD_START    = "<HOLEKV_ADD_START>"
+_ADD_END      = "<HOLEKV_ADD_END>"
+
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -113,7 +121,8 @@ class Panel(ABC):
 
     # -- full refresh cycle ------------------------------------------------
 
-    def refresh(self, messages: List[Dict], at_index: int | None = None) -> None:
+    def refresh(self, messages: List[Dict], at_index: int | None = None,
+                    holekv_wrap: bool = False) -> None:
         """Full refresh: clean old blocks, regenerate, append.
 
         *at_index* MUST be provided during normal operation — it is the
@@ -128,6 +137,15 @@ class Panel(ABC):
         if not display:
             return
 
+        # HoleKV wrapping: REMOVE holds the full panel block so vLLM
+        # can align against the previous turn's trace;  ADD is a short
+        # placeholder — the real block arrives via later tool calls.
+        if holekv_wrap:
+            display = (
+                f"{_REMOVE_START}{display}{_REMOVE_END}"
+                f"{_ADD_START}[{self.name} panel refreshed]{_ADD_END}"
+            )
+
         if at_index is not None:
             self.append_to_message(messages, display, at_index)
             return
@@ -139,6 +157,8 @@ class Panel(ABC):
             "Falling back to the last tool message.",
             self.name,
         )
+
+
         for i in range(len(messages) - 1, -1, -1):
             if messages[i].get("role") == "tool":
                 self.append_to_message(messages, display, i)

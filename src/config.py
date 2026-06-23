@@ -132,13 +132,14 @@ MODEL_PROVIDERS = {
     "holekv-qwen": {
         "id": "holekv-qwen",
         "name": "HoleKV Qwen3.5 9B (local)",
-        "description": "Local vLLM + HoleKV cache reuse",
+        "description": "Local vLLM + HoleKV cache reuse on RTX 5090",
         "base_url": "http://localhost:8000/v1",
         "api_key": "not-needed",
         "model": "/workspace/models/.cache/models--Qwen--Qwen3.5-9B/snapshots/c202236235762e1c871ad0ccb60c8ee5ba337b9a",
         "supports_thinking": True,
         "extra_body": None,
         "context_window": 8192,
+        "max_tokens": 4096,
         "holekv_enabled": True,
     },
 }
@@ -148,7 +149,7 @@ DEFAULT_PROVIDER = "deepseek"
 
 
 # Model Parameters
-MAX_TOKENS = 8192
+MAX_TOKENS = 32768
 
 # Tool Calling Limits
 MAX_TOOL_CALLS = 10  # Increased since native tool calling is more efficient

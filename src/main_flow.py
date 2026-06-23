@@ -94,6 +94,7 @@ def generate_chat_responses_stream_native(
     tools_override: Optional[List[Dict]] = None,
     conversation_id: str | None = None,
     workspace_tree: str = "",
+    holekv_cache_id: str | None = None,
 ) -> Generator[dict, None, None]:
     """
     Handles chat interaction using native OpenAI tool calling with thinking/reasoning support.
@@ -117,12 +118,14 @@ def generate_chat_responses_stream_native(
     config = provider_manager.get_config(provider_id)
     model_name = config["model"]
     extra_body = config.get("extra_body")
+    holekv_enabled = config.get("holekv_enabled", False)
+    captured_cache_id: str | None = holekv_cache_id
     
     # Strip old context blocks, then rebuild them on tool messages
     # so the LLM sees current state (open files, toolsets, etc.) before generating
     for panel in get_panels():
         panel.clean_previous_blocks(messages)
-        panel.refresh(messages)
+        panel.refresh(messages, holekv_wrap=holekv_enabled)
     
     # Get tool definitions (or use override for subagents / force_continuation)
     tools = tools_override if tools_override is not None else get_tool_definitions()
@@ -149,8 +152,6 @@ def generate_chat_responses_stream_native(
     
     iteration_count = 0
     total_tokens = 0
-    holekv_cache_id: str | None = None  # captured from previous LLM response
-    holekv_enabled = config.get("holekv_enabled", False)
     streaming_errors = 0
 
     # Read the user's training-data preference *once* — it cannot change mid-request.
@@ -173,14 +174,15 @@ def generate_chat_responses_stream_native(
             "tool_choice": "auto",
             "max_tokens": MAX_TOKENS,
             "stream": True,
+            "max_tokens": config.get("max_tokens", MAX_TOKENS),
             "stream_options": {"include_usage": True},
         }
         
-        # Add extra_body if provider requires it (e.g., NVIDIA thinking mode)
-        # Inject HoleKV cache reuse from the previous LLM turn.
+        # Add extra_body if provider requires it (e.g., NVIDIA thinking mode).
+        # Also inject HoleKV cache reuse from the previous LLM turn.
         merged_extra = dict(extra_body) if extra_body else {}
-        if holekv_enabled and holekv_cache_id:
-            merged_extra["holekv_ref"] = holekv_cache_id
+        if holekv_enabled and captured_cache_id:
+            merged_extra["holekv_ref"] = captured_cache_id
             merged_extra["holekv_owner_id"] = conversation_id or "default"
         if merged_extra:
             api_kwargs["extra_body"] = merged_extra
@@ -207,14 +209,16 @@ def generate_chat_responses_stream_native(
             t_first_chunk = time.time()
             t_first_content = None
             for chunk in completion_stream:
-                # Capture HoleKV cache ID from the first stream chunk
-                # (vLLM sends it in the first chunk's model_extra / field)
-                if holekv_enabled and holekv_cache_id is None:
+                # Capture HoleKV cache_id from the first chunk that has it.
+                # The API returns this on the first streamed token of every
+                # request; we capture it so subagents / next turns can reuse.
+                if holekv_enabled:
                     cid = getattr(chunk, 'holekv_cache_id', None)
                     if cid is None and hasattr(chunk, 'model_extra'):
                         cid = chunk.model_extra.get('holekv_cache_id')
-                    if cid:
-                        holekv_cache_id = cid
+                    if cid and cid != captured_cache_id:
+                        captured_cache_id = cid
+
                 if not chunk.choices:
                     # Usage info may come on a chunk with no choices
                     if hasattr(chunk, "usage") and chunk.usage:
@@ -308,9 +312,8 @@ def generate_chat_responses_stream_native(
         if not current_tool_calls:
             if not current_content:
                 messages.append({
-                    "role": "system",
-                    "content": """This message only appears when you made this mistake in previous (removed) responses.
-                    You did not provide any tool call or reply last time."""
+                    "role": "user",
+                    "content": "Note: your previous response was empty. Please provide a reply or tool call."
                 })
                 continue
             else:
@@ -318,7 +321,8 @@ def generate_chat_responses_stream_native(
                 yield {
                     "messages": messages,
                     "status": "completed",
-                    "provider": provider_id
+                    "provider": provider_id,
+                    "holekv_cache_id": captured_cache_id,
                 }
                 return
 
@@ -332,7 +336,7 @@ def generate_chat_responses_stream_native(
         if context_window and current_usage and not _has_continuation_notice_been_shown(messages):
             if total_tokens / context_window >= CONTEXT_WARN_THRESHOLD:
                 messages.append({
-                    "role": "system",
+                    "role": "user",
                     "content": _CONTINUATION_NOTICE_MARKER + "\n" + CONTINUATION_NOTICE
                 })
 
@@ -349,7 +353,7 @@ def generate_chat_responses_stream_native(
         for panel in get_panels():
             idx = triggered_trackers.get(panel.name)
             if idx is not None:
-                panel.refresh(messages, at_index=idx)
+                panel.refresh(messages, at_index=idx, holekv_wrap=holekv_enabled)
 
         yield {
             "messages": messages,
@@ -361,7 +365,8 @@ def generate_chat_responses_stream_native(
     yield {
         "messages": messages,
         "status": "max_iterations_reached",
-        "provider": provider_id
+        "provider": provider_id,
+        "holekv_cache_id": captured_cache_id,
     }
 
 
