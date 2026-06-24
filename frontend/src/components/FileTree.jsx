@@ -206,6 +206,17 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0 }) => {
   // Initial load.
   useEffect(() => { fetchTree() }, [fetchTree])
 
+  // Auto-retry on failure — handles the backend startup race so the user
+  // doesn't have to click the manual "Retry" button.
+  const treeRetryCountRef = useRef(0)
+  useEffect(() => {
+    if (!error) { treeRetryCountRef.current = 0; return }
+    if (treeRetryCountRef.current >= 10) return  // max 10 retries (~30 s)
+    treeRetryCountRef.current++
+    const timer = setTimeout(() => fetchTree(), 3000)
+    return () => clearTimeout(timer)
+  }, [error, fetchTree])
+
   // Re-fetch on detected file-system changes: agent write/delete/terminal,
   // and project upload (both bump refreshTrigger).
   useEffect(() => {

@@ -53,6 +53,7 @@ function App() {
   
   // Provider state
   const [providers, setProviders] = useState([])
+  const [providersLoading, setProvidersLoading] = useState(true)
   const [selectedProvider, setSelectedProvider] = useState(null)
   const [showProviderDropdown, setShowProviderDropdown] = useState(false)
   
@@ -129,10 +130,15 @@ function App() {
   }, [])
 
   useEffect(() => {
+    let retryTimer = null
+    let cancelled = false
+
     async function loadProviders() {
       try {
         const data = await getProviders()
+        if (cancelled) return
         setProviders(data.providers || [])
+        setProvidersLoading(false)
         const savedProvider = localStorage.getItem('selectedProvider')
         if (savedProvider && data.providers?.find(p => p.id === savedProvider)) {
           setSelectedProvider(savedProvider)
@@ -140,11 +146,33 @@ function App() {
           setSelectedProvider(data.default || data.providers?.[0]?.id)
         }
       } catch {
-        setProviders([{ id: 'deepseek', name: 'DeepSeek V4 Pro', description: 'Default model' }])
-        setSelectedProvider('deepseek')
+        if (cancelled) return
+        // Use saved provider from localStorage as fallback rather than
+        // hardcoding deepseek — preserves the user's configured default.
+        const savedProvider = localStorage.getItem('selectedProvider')
+        if (savedProvider) {
+          setSelectedProvider(prev => prev || savedProvider)
+          // Also create a minimal entry so the dropdown shows the name
+          setProviders(prev => {
+            if (prev.length === 0) {
+              return [{ id: savedProvider, name: savedProvider, description: '', api_key_configured: false }]
+            }
+            return prev
+          })
+        } else {
+          setProviders([{ id: 'deepseek', name: 'DeepSeek V4 Pro', description: 'Default model', api_key_configured: false }])
+          setSelectedProvider(prev => prev || 'deepseek')
+        }
+        // Retry every 3 s until the backend becomes available
+        retryTimer = setTimeout(loadProviders, 3000)
       }
     }
     loadProviders()
+
+    return () => {
+      cancelled = true
+      if (retryTimer) clearTimeout(retryTimer)
+    }
   }, [])
 
   useEffect(() => {
@@ -405,7 +433,7 @@ function App() {
       return prev
     })
     handleSend(lastRequest.existingMessages, lastRequest.message)
-  }, [lastRequest, isStreaming])
+  }, [lastRequest, isStreaming, selectedProvider])
 
   const handleLoadConversation = useCallback(async (targetConversationId) => {
     if (inputValueRef.current.trim()) draftInputsRef.current.set(conversationId ?? '__new__', inputValueRef.current)
@@ -522,6 +550,7 @@ function App() {
         historyCloseTrigger={historyCloseTrigger}
         onDrawerToggle={(open) => { if (open) setShowTaskInstructions(false) }}
         providers={providers}
+        providersLoading={providersLoading}
         selectedProvider={selectedProvider}
         onSelectProvider={(id) => { setSelectedProvider(id); setShowProviderDropdown(false) }}
         showProviderDropdown={showProviderDropdown}
