@@ -129,7 +129,7 @@ export default function Sidebar({
               disabled={isStreaming}
             >
               <span className="provider-name">
-                {providers.find(p => p.id === selectedProvider)?.name || t('sidebar.selectModel')}
+                {providers.find(p => p.id === selectedProvider)?.name || selectedProvider || t('sidebar.selectModel')}
               </span>
               <ChevronDown size={16} className={showProviderDropdown ? 'rotated' : ''} />
             </button>

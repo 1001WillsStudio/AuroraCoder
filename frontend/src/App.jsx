@@ -161,20 +161,13 @@ function App() {
         }
       } catch {
         if (cancelled) return
-        // Use saved provider from localStorage as fallback rather than
-        // hardcoding deepseek — preserves the user's configured default.
+        // Keep providersLoading=true so the dropdown shows "Loading…"
+        // rather than a stale fallback entry.  Only set selectedProvider
+        // so the button label is meaningful while we wait.
         const savedProvider = localStorage.getItem('selectedProvider')
         if (savedProvider) {
           setSelectedProvider(prev => prev || savedProvider)
-          // Also create a minimal entry so the dropdown shows the name
-          setProviders(prev => {
-            if (prev.length === 0) {
-              return [{ id: savedProvider, name: savedProvider, description: '', api_key_configured: false }]
-            }
-            return prev
-          })
         } else {
-          setProviders([{ id: 'deepseek', name: 'DeepSeek V4 Pro', description: 'Default model', api_key_configured: false }])
           setSelectedProvider(prev => prev || 'deepseek')
         }
         // Retry every 3 s until the backend becomes available
