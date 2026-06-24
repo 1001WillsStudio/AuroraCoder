@@ -7,6 +7,39 @@ import { getAuthHeader, clearToken } from '../utils/auth.js';
 
 const API_BASE = '/api'
 
+// ============================================================================
+// Task Instruction Persistence (server-side — follows the instance, not the port)
+// ============================================================================
+
+/** Fetch the persisted task instruction from the gateway. */
+export async function getTaskInstruction() {
+  const response = await fetch(`${API_BASE}/task-instruction`, { headers: _headers() })
+  if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+  return response.json()
+}
+
+/** Save a task instruction to the server filesystem. */
+export async function setTaskInstruction(instruction) {
+  const response = await fetch(`${API_BASE}/task-instruction`, {
+    method: 'PUT',
+    headers: _headers({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ instruction }),
+  })
+  if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+  return response.json()
+}
+
+// ============================================================================
+// Instance Identity (GPU vs Normal — so the frontend can label tabs)
+// ============================================================================
+
+/** Return { type: "normal" | "gpu" } so the UI can distinguish instances. */
+export async function getInstanceInfo() {
+  const response = await fetch(`${API_BASE}/instance-info`, { headers: _headers() })
+  if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+  return response.json()
+}
+
 let _reqSeq = 0
 function _wall() {
   const d = new Date()

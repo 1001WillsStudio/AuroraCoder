@@ -8,7 +8,7 @@ import LoginScreen from './components/LoginScreen'
 import Sidebar from './components/Sidebar'
 import WelcomeScreen from './components/WelcomeScreen'
 import SettingsPanel from './components/SettingsPanel'
-import { streamChat, getProviders, cancelConversation, getConversation, getActiveStreams, resumeStream } from './services/api'
+import { streamChat, getProviders, cancelConversation, getConversation, getActiveStreams, resumeStream, getTaskInstruction, setTaskInstruction, getInstanceInfo } from './services/api'
 import { isInterruptible, TASK_MARKER_START, TASK_MARKER_END } from './utils/streamUtils'
 import { checkAuth, isAuthRequired } from './utils/auth.js'
 import CodePanel from './components/CodePanel'
@@ -85,9 +85,8 @@ function App() {
   const taskInstructionsRef = useRef(null)
   const taskInstructionsBtnRef = useRef(null)
   const [historyCloseTrigger, setHistoryCloseTrigger] = useState(0)
-  const [systemPrompt, setSystemPrompt] = useState(() => {
-    try { return localStorage.getItem('systemPrompt') || '' } catch { return '' }
-  })
+    const [systemPrompt, setSystemPrompt] = useState('')
+    const [instanceType, setInstanceType] = useState('normal') // "normal" or "gpu"
   const [historyRefreshTrigger, setHistoryRefreshTrigger] = useState(0)
   const [activeConvoWarning, setActiveConvoWarning] = useState(false)
   const draftInputsRef = useRef(new Map())
@@ -115,6 +114,21 @@ function App() {
     document.documentElement.setAttribute('data-theme', theme)
     localStorage.setItem('theme', theme)
   }, [theme])
+
+  // ── Load task instruction from server (not localStorage — follows the instance, not the port) ──
+  useEffect(() => {
+    getTaskInstruction().then(data => {
+      if (data?.instruction) setSystemPrompt(data.instruction)
+    }).catch(() => { /* ignore — server may not be ready yet */ })
+  }, [])
+
+  // ── Fetch instance type and set browser tab title ──
+  useEffect(() => {
+    getInstanceInfo().then(data => {
+      setInstanceType(data.type)
+      document.title = data.type === 'gpu' ? 'AuroraCoder GPU' : 'AuroraCoder'
+    }).catch(() => { /* ignore — keep defaults */ })
+  }, [])
 
   useEffect(() => {
     const handleBeforeUnload = () => {
@@ -696,7 +710,7 @@ function App() {
               onChange={(e) => {
                 const value = e.target.value
                 setSystemPrompt(value)
-                try { localStorage.setItem('systemPrompt', value) } catch { /* ignore */ }
+                setTaskInstruction(value).catch(() => { /* ignore — best-effort server save */ })
               }}
               placeholder={t('app.taskInstructionsPlaceholder')}
               autoFocus
