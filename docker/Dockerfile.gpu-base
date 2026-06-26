@@ -1,22 +1,66 @@
-FROM auroracoder-base
+FROM nvcr.io/nvidia/vllm:26.05.post1-py3
+
+# ── GPU build on NVIDIA vLLM container ──────────────────────────────────────
+# Pre-installed: CUDA 13.2.1, PyTorch 2.12, vLLM 0.20, flash-attention 2.7,
+# flashinfer 0.6, transformers 5.6, xgrammar 0.1 — no pip torch/vllm needed.
 
 ENV AURORACODER_DOCKER=1 \
     AURORACODER_VNC=1 \
-    AURORACODER_GPU=1
+    AURORACODER_GPU=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
-# Build essentials for compiling GPU-related Python packages
+RUN mkdir -p /app /workspace /seed
+WORKDIR /app
+
+# ── System packages (Ubuntu 24.04 — NVIDIA vLLM container base) ────────────
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        build-essential && \
+        python3-venv \
+        xvfb \
+        x11vnc \
+        fluxbox \
+        novnc \
+        websockify \
+        supervisor \
+        xterm \
+        fonts-dejavu \
+        fonts-liberation \
+        dbus-x11 \
+        libgtk-3-0 \
+        libsdl2-2.0-0 \
+        libsdl2-image-2.0-0 \
+        libsdl2-mixer-2.0-0 \
+        libsdl2-ttf-2.0-0 \
+        git \
+        curl \
+        ca-certificates \
+        gnupg \
+        lsb-release && \
+    # Docker CLI (DinD)
+    mkdir -p /etc/apt/keyrings && \
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+        | gpg --dearmor -o /etc/apt/keyrings/docker.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) \
+        signed-by=/etc/apt/keyrings/docker.gpg] \
+        https://download.docker.com/linux/ubuntu \
+        $(lsb_release -cs) stable" \
+        > /etc/apt/sources.list.d/docker.list && \
+    apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        docker-ce-cli && \
+    apt-get clean && rm -rf /var/lib/apt/lists/* && \
+    ln -s /usr/share/novnc/vnc.html /usr/share/novnc/index.html
+
+# Node.js 20.x
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y --no-install-recommends nodejs && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# PyTorch with CUDA (default: cu128 for Blackwell sm_120 + all recent GPUs)
-# Override via --build-arg CUDA_INDEX=cu130 for CUDA 13.0
-ARG CUDA_INDEX=cu128
-RUN /opt/venv/bin/pip install --no-cache-dir \
-    torch torchvision torchaudio \
-    --index-url https://download.pytorch.org/whl/${CUDA_INDEX} && \
-    /opt/venv/bin/pip install --no-cache-dir accelerate
+# ── Python venv (--system-site-packages inherits torch/vLLM/flash-attention) ──
+COPY requirements.txt /app/requirements.txt
 
-# vLLM — high-throughput LLM serving engine (CUDA required)
-RUN /opt/venv/bin/pip install --no-cache-dir vllm
+RUN python3 -m venv --system-site-packages /opt/venv && \
+    /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
+
+ENV TOOLSTORE_HOME=/app/data/toolstore

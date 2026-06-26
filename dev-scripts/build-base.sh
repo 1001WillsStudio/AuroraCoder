@@ -2,21 +2,21 @@
 set -e
 cd "$(dirname "$0")/.."
 
-echo "========================================"
-echo "  Build AuroraCoder Base Image"
-echo "  (Node.js + Python env + ToolStore)"
-echo "========================================"
-echo ""
+echo "=== Build AuroraCoder Base Images ==="
 
-
-echo "[base] Building base image..."
+echo "[base] Building CPU base..."
 docker build -t auroracoder-base -f docker/Dockerfile.base .
 echo "[base] Done."
 
-echo ""
-echo "[gpu-base] Building GPU base image (PyTorch + CUDA, this may take a few minutes)..."
+NV_IMAGE="nvcr.io/nvidia/vllm:26.05.post1-py3"
+if docker inspect --type=image "$NV_IMAGE" >/dev/null 2>&1; then
+    echo "[nv] NVIDIA vLLM image already cached."
+else
+    echo "[nv] Pulling NVIDIA vLLM image (one time only, ~9 GB)..."
+    docker pull "$NV_IMAGE"
+fi
+
+echo "[gpu-base] Building GPU base..."
 docker build -t auroracoder-gpu-base -f docker/Dockerfile.gpu-base .
 echo "[gpu-base] Done."
-
-echo ""
-echo "All base images built. Run start.sh or gpu.sh to start."
+echo "All base images built."
