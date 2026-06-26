@@ -30,7 +30,7 @@ set "STORAGE_BASE=%USERPROFILE%\Documents\AuroraCoder-GPU"
 set "NV_IMAGE=nvcr.io/nvidia/vllm:26.05.post1-py3"
 docker inspect --type=image "%NV_IMAGE%" >nul 2>&1
 if errorlevel 1 (
-    echo [nv] Pulling NVIDIA vLLM image (one time only, ~9 GB)...
+    echo [nv] Pulling NVIDIA vLLM image - one time only, ~9 GB...
     docker pull "%NV_IMAGE%"
     if errorlevel 1 (echo Pull failed. & pause & exit /b 1)
 ) else (
