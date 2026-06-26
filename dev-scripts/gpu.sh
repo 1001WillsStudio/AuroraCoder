@@ -243,7 +243,7 @@ echo "AuroraCoder GPU is running at http://localhost:$FRONTEND_PORT"
 echo "To stop: docker stop auroracoder-agent-gpu"
 echo ""
 echo "Verify GPU inside container:"
-echo "  docker exec auroracoder-agent-gpu conda run -n agent python -c \"import torch; print(torch.cuda.get_device_name(0))\""
+echo "  docker exec auroracoder-agent-gpu python -c \"import torch; print(torch.cuda.get_device_name(0))\""
 echo ""
 echo "Opening browser..."
 (sleep 3 && open_browser "http://localhost:$FRONTEND_PORT") &

@@ -13,10 +13,10 @@ RUN apt-get update && \
 # PyTorch with CUDA (default: cu128 for Blackwell sm_120 + all recent GPUs)
 # Override via --build-arg CUDA_INDEX=cu130 for CUDA 13.0
 ARG CUDA_INDEX=cu128
-RUN conda run -n agent pip install --no-cache-dir \
+RUN /opt/venv/bin/pip install --no-cache-dir \
     torch torchvision torchaudio \
     --index-url https://download.pytorch.org/whl/${CUDA_INDEX} && \
-    conda run -n agent pip install --no-cache-dir accelerate
+    /opt/venv/bin/pip install --no-cache-dir accelerate
 
 # vLLM — high-throughput LLM serving engine (CUDA required)
-RUN conda run -n agent pip install --no-cache-dir vllm
+RUN /opt/venv/bin/pip install --no-cache-dir vllm

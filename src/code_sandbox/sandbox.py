@@ -2,8 +2,8 @@
 Docker-first sandbox: workspace path + persistent shell.
 
 Replaces the heavyweight ``session_manager`` for the Docker deployment model
-where the workspace is a fixed directory (``/workspace``) and the conda
-environment is pre-built (``agent``).
+where the workspace is a fixed directory (``/workspace``) and the Python
+environment is either a venv (Docker: ``/opt/venv``) or conda (host: ``agent``).
 
 Usage::
 
@@ -51,15 +51,20 @@ def get_workspace() -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Python / Conda helpers
+# Python / Environment helpers
 # ---------------------------------------------------------------------------
 
 def get_python_path() -> Optional[Path]:
-    """Return the Python executable for the sandbox conda environment.
+    """Return the Python executable for the sandbox environment.
 
-    In Docker the *agent* env is already active, so ``sys.executable``
-    is usually correct.  Falls back to a conda-info lookup.
+    In Docker the venv at ``/opt/venv`` is preferred; on the host a conda
+    lookup may be used.  Falls back to ``sys.executable``.
     """
+    # Fast path: Docker venv (no conda)
+    venv_python = Path("/opt/venv/bin/python")
+    if venv_python.exists():
+        return venv_python
+
     # Fast path: if we're already running inside the target env, just use it
     if DEFAULT_BASE_ENV_NAME and DEFAULT_BASE_ENV_NAME in (sys.executable or ""):
         return Path(sys.executable)
@@ -88,7 +93,12 @@ def get_python_path() -> Optional[Path]:
 
 
 def get_conda_env_path() -> Optional[Path]:
-    """Return the conda environment directory (e.g. ``/opt/conda/envs/agent``)."""
+    """Return the Python environment directory (venv or conda)."""
+    # Fast path: Docker venv (no conda)
+    venv = Path("/opt/venv")
+    if venv.exists():
+        return venv
+
     if not DEFAULT_BASE_ENV_NAME:
         return None
     try:
@@ -117,7 +127,7 @@ class PersistentShell:
 
     Environment variables, working directory, and shell history persist
     between ``run()`` calls.  The shell is started in ``WORKSPACE`` with
-    the sandbox conda environment activated.
+    the sandbox environment activated.
     """
 
     def __init__(self):
@@ -148,7 +158,7 @@ class PersistentShell:
                 bufsize=1,
                 universal_newlines=True,
             )
-            # Activate the conda env inside the shell
+            # Activate the environment inside the shell
             activate = self._activation_command()
             if activate:
                 self._init_command(activate)
@@ -275,6 +285,14 @@ class PersistentShell:
     # -- internals ----------------------------------------------------------
 
     def _activation_command(self) -> str:
+        # Docker venv (no conda)
+        if os.environ.get("AURORACODER_DOCKER"):
+            activate = Path("/opt/venv/bin/activate")
+            if activate.exists():
+                return f"source {activate}"
+            return ""
+
+        # Host / conda path
         if not DEFAULT_BASE_ENV_NAME:
             return ""
         if sys.platform == "win32":
