@@ -16,6 +16,7 @@ WORKDIR /app
 # ── System packages (Ubuntu 24.04 — NVIDIA vLLM container base) ────────────
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        python3-venv \
         xvfb \
         x11vnc \
         fluxbox \
@@ -56,8 +57,10 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# ── Python dependencies (system pip inherits torch/vLLM/flash-attention) ─────
+# ── Python venv (--system-site-packages inherits torch/vLLM/flash-attention) ──
 COPY requirements.txt /app/requirements.txt
-RUN pip3 install --no-cache-dir -r requirements.txt
+
+RUN python3 -m venv --system-site-packages /opt/venv && \
+    /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
 
 ENV TOOLSTORE_HOME=/app/data/toolstore

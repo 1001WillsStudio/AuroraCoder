@@ -11,7 +11,9 @@ COPY frontend/package.json frontend/package-lock.json /app/frontend/
 RUN cd /app/frontend && npm install
 
 # ── ToolStore client (unstable — bumped independently of requirements.txt) ──
-RUN pip install --no-cache-dir agent-tool-store>=2.1.8
+# Guard against stale base images that don't have /opt/venv yet
+RUN test -f /opt/venv/bin/pip || python -m venv /opt/venv; \
+    /opt/venv/bin/pip install --no-cache-dir agent-tool-store>=2.1.8
 
 # ── Cache-bust boundary: cached above, always rebuilt below ──
 
@@ -21,7 +23,7 @@ COPY . /app
 # ── Quick-test: clone dev branch of AgentToolStore and install client from source ──
 # RUN git clone -b dev https://github.com/1001WillsStudio/AgentToolStore /tmp/AgentToolStore && \
 #     cd /tmp/AgentToolStore/client && \
-#     pip install --no-cache-dir -e .
+#     /opt/venv/bin/pip install --no-cache-dir -e .
 
 # Build frontend (produces frontend/dist/)
 RUN cd /app/frontend && npm run build

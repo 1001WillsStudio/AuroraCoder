@@ -50,8 +50,10 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# ── Python dependencies ──────────────────────────────────────────────────────
+# ── Python virtual environment ───────────────────────────────────────────────
 COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+
+RUN python -m venv /opt/venv && \
+    /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
 
 ENV TOOLSTORE_HOME=/app/data/toolstore
