@@ -72,6 +72,12 @@ set "STORAGE_BASE=%USERPROFILE%\Documents\AuroraCoder"
 :: at the very beginning, ports have already been released by now.
 docker inspect --type=image auroracoder-base >nul 2>&1
 if errorlevel 1 goto :build_base
+docker run --rm auroracoder-base test -f /tmp/.auroracoder-base-sentinel >nul 2>&1
+if errorlevel 1 (
+    echo [base] Stale cached image detected, rebuilding...
+    docker rmi auroracoder-base >nul 2>&1
+    goto :build_base
+)
 echo [base] Base image found, skipping.
 goto :build_app
 

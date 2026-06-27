@@ -63,4 +63,7 @@ COPY requirements.txt /app/requirements.txt
 RUN python3 -m venv --system-site-packages /opt/venv && \
     /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
 
+# Version sentinel — scripts use this to detect stale cached images
+RUN echo "v2-pip" > /tmp/.auroracoder-gpu-base-sentinel
+
 ENV TOOLSTORE_HOME=/app/data/toolstore

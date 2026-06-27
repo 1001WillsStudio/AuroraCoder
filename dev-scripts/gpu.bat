@@ -71,6 +71,12 @@ echo.
 :: ── Build GPU base ─────────────────────────────────────────────────────
 docker inspect --type=image auroracoder-gpu-base >nul 2>&1
 if errorlevel 1 goto :build_gpu_base
+docker run --rm auroracoder-gpu-base test -f /tmp/.auroracoder-gpu-base-sentinel >nul 2>&1
+if errorlevel 1 (
+    echo [gpu-base] Stale cached image detected, rebuilding...
+    docker rmi auroracoder-gpu-base >nul 2>&1
+    goto :build_gpu_base
+)
 echo [gpu-base] Found, skipping.
 goto :build_gpu
 
