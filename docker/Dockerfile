@@ -11,7 +11,7 @@ COPY frontend/package.json frontend/package-lock.json /app/frontend/
 RUN cd /app/frontend && npm install
 
 # ── ToolStore client (unstable — bumped independently of requirements.txt) ──
-RUN (test -f /opt/venv/bin/pip && /opt/venv/bin/pip install --no-cache-dir agent-tool-store>=2.1.8) || pip install --no-cache-dir agent-tool-store>=2.1.8
+RUN pip install --no-cache-dir agent-tool-store>=2.1.8
 
 # ── Cache-bust boundary: cached above, always rebuilt below ──
 
