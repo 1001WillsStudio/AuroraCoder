@@ -3,7 +3,7 @@ Docker-first sandbox: workspace path + persistent shell.
 
 Replaces the heavyweight ``session_manager`` for the Docker deployment model
 where the workspace is a fixed directory (``/workspace``) and the Python
-environment is either a venv (Docker: ``/opt/venv``) or conda (host: ``agent``).
+environment is the system Python (Docker) or conda (host: ``agent``).
 
 Usage::
 
@@ -57,13 +57,9 @@ def get_workspace() -> Path:
 def get_python_path() -> Optional[Path]:
     """Return the Python executable for the sandbox environment.
 
-    In Docker the venv at ``/opt/venv`` is preferred; on the host a conda
+    In Docker, ``sys.executable`` is the canonical Python. On the host a conda
     lookup may be used.  Falls back to ``sys.executable``.
     """
-    # Fast path: Docker venv (no conda)
-    venv_python = Path("/opt/venv/bin/python")
-    if venv_python.exists():
-        return venv_python
 
     # Fast path: if we're already running inside the target env, just use it
     if DEFAULT_BASE_ENV_NAME and DEFAULT_BASE_ENV_NAME in (sys.executable or ""):
@@ -93,11 +89,7 @@ def get_python_path() -> Optional[Path]:
 
 
 def get_conda_env_path() -> Optional[Path]:
-    """Return the Python environment directory (venv or conda)."""
-    # Fast path: Docker venv (no conda)
-    venv = Path("/opt/venv")
-    if venv.exists():
-        return venv
+    """Return the Python environment directory (conda)."""
 
     if not DEFAULT_BASE_ENV_NAME:
         return None
@@ -285,11 +277,8 @@ class PersistentShell:
     # -- internals ----------------------------------------------------------
 
     def _activation_command(self) -> str:
-        # Docker venv (no conda)
+        # Docker: system Python, no activation needed
         if os.environ.get("AURORACODER_DOCKER"):
-            activate = Path("/opt/venv/bin/activate")
-            if activate.exists():
-                return f"source {activate}"
             return ""
 
         # Host / conda path

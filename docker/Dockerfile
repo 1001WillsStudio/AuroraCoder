@@ -21,7 +21,7 @@ COPY . /app
 # ── Quick-test: clone dev branch of AgentToolStore and install client from source ──
 # RUN git clone -b dev https://github.com/1001WillsStudio/AgentToolStore /tmp/AgentToolStore && \
 #     cd /tmp/AgentToolStore/client && \
-#     /opt/venv/bin/pip install --no-cache-dir -e .
+#     pip install --no-cache-dir -e .
 
 # Build frontend (produces frontend/dist/)
 RUN cd /app/frontend && npm run build
