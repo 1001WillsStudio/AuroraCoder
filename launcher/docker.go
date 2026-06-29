@@ -158,7 +158,7 @@ func printDockerInstallGuide() {
 
 // baseImageDockerHub is the FROM image used in Dockerfile.base.
 // On build failure we try pulling it from Chinese mirrors and retrying.
-const baseImageDockerHub = "continuumio/miniconda3:latest"
+const baseImageDockerHub = "python:3.12-slim-bookworm"
 
 func buildBaseImage(cacheDir string, ps *progressServer) error {
 	// ── Hash-based cache check ──

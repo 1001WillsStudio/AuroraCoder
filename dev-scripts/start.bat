@@ -83,6 +83,26 @@ goto :build_app
 
 :build_base
 echo [base] Building base image -- first time, this may take a few minutes...
+:: Pre-pull base image -- tries Chinese mirrors if Docker Hub is unreachable
+set "BASE_IMAGE=python:3.12-slim-bookworm"
+docker pull %BASE_IMAGE% >nul 2>&1
+if not errorlevel 1 goto :base_build_now
+echo [mirror] Docker Hub unreachable, trying Chinese mirrors...
+docker pull docker.m.daocloud.io/library/%BASE_IMAGE%
+if errorlevel 1 goto :cnmirror2
+docker tag docker.m.daocloud.io/library/%BASE_IMAGE% %BASE_IMAGE%
+echo [mirror] Pulled via daoCloud.
+goto :base_build_now
+:cnmirror2
+docker pull hub-mirror.c.163.com/library/%BASE_IMAGE%
+if errorlevel 1 goto :cnmirror_fail
+docker tag hub-mirror.c.163.com/library/%BASE_IMAGE% %BASE_IMAGE%
+echo [mirror] Pulled via NetEase.
+goto :base_build_now
+:cnmirror_fail
+echo [mirror] All mirrors exhausted, proceeding anyway...
+goto :base_build_now
+:base_build_now
 docker build -t auroracoder-base -f docker\Dockerfile.base .
 if errorlevel 1 (
     echo Base image build failed.
