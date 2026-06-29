@@ -248,14 +248,15 @@ class PersistentShell:
         reader.join(timeout=timeout)
 
         if not found.is_set():
-            logger.warning("Command timed out after %ds, spawning new shell: %s", timeout, command[:120])
+            logger.warning("Command still running after %ds, spawning new shell: %s", timeout, command[:120])
+            old_pid = self._proc.pid
             self._proc = None
             self.start()
             return "", (
-                f"Command timed out after {timeout}s but is still running in the old terminal. "
-                f"Output is being written to: {out_file}\n"
-                "A new terminal has been started for subsequent commands. "
-                "You can read the log file above to check progress."
+                f"Command is still running after {timeout}s (not killed) — continuing in background.\n"
+                f"Terminal PID: {old_pid}\n"
+                f"Output file: {out_file}\n"
+                "Read the log to get the complete result."
             )
 
         stdout = ""

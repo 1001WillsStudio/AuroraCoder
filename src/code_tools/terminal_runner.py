@@ -76,8 +76,12 @@ class TerminalRunner:
             if stderr:
                 if output:
                     output.append("")
-                output.append("STDERR:")
-                output.append(_truncate_output(stderr))
+                # Timeout messages from PersistentShell are informational — not errors.
+                if "Command is still running after" in stderr:
+                    output.append(_truncate_output(stderr))
+                else:
+                    output.append("STDERR:")
+                    output.append(_truncate_output(stderr))
 
             if not stdout and not stderr:
                 output.append(
