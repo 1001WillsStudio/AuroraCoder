@@ -82,32 +82,43 @@ export function createStreamCallbacks({
     setHistoryRefreshTrigger(prev => prev + 1)
   }
 
-	const onDelta = (delta, _status) => {
-	  if (!delta || (!delta.content && !delta.reasoning_content)) return;
-	  setMessages(prevMessages => {
-	    const newMessages = [...prevMessages];
-	    if (newMessages.length === 0) {
-	      newMessages.push({ role: 'assistant', content: delta.content || '', activities: [] });
-	      return newMessages;
-	    }
-	    const msg = { ...newMessages[newMessages.length - 1] };
-	    if (delta.content) {
-	      msg.content = (msg.content || '') + delta.content;
-	    }
-	    if (delta.reasoning_content) {
-	      msg.activities = msg.activities ? [...msg.activities] : [];
-	      const lastAct = msg.activities.length > 0 ? msg.activities[msg.activities.length - 1] : null;
-	      if (lastAct && lastAct.type === 'thinking') {
-	        const lastIdx = msg.activities.length - 1;
-	        msg.activities[lastIdx] = { ...lastAct, content: (lastAct.content || '') + delta.reasoning_content };
-	      } else {
-	        msg.activities.push({ type: 'thinking', content: delta.reasoning_content });
-	      }
-	    }
-	    newMessages[newMessages.length - 1] = msg;
-	    return newMessages;
-	  });
-	};
+		const onDelta = (delta, _status) => {
+		  if (!delta || (!delta.content && !delta.reasoning_content && !delta.tool_calls)) return;
+		  setMessages(prevMessages => {
+		    const newMessages = [...prevMessages];
+		    if (newMessages.length === 0) {
+		      newMessages.push({ role: 'assistant', content: delta.content || '', activities: [] });
+		      return newMessages;
+		    }
+		    const msg = { ...newMessages[newMessages.length - 1] };
+		    if (delta.content) {
+		      msg.content = (msg.content || '') + delta.content;
+		    }
+		    if (delta.reasoning_content) {
+		      msg.activities = msg.activities ? [...msg.activities] : [];
+		      const lastAct = msg.activities.length > 0 ? msg.activities[msg.activities.length - 1] : null;
+		      if (lastAct && lastAct.type === 'thinking') {
+		        const lastIdx = msg.activities.length - 1;
+		        msg.activities[lastIdx] = { ...lastAct, content: (lastAct.content || '') + delta.reasoning_content };
+		      } else {
+		        msg.activities.push({ type: 'thinking', content: delta.reasoning_content });
+		      }
+		    }
+		    if (delta.tool_calls && delta.tool_calls.length > 0) {
+		      msg.activities = msg.activities ? [...msg.activities] : [];
+		      for (const tc of delta.tool_calls) {
+		        const existingIdx = msg.activities.findIndex(a => a.type === 'tool_call' && a.id === tc.id);
+		        if (existingIdx >= 0) {
+		          msg.activities[existingIdx] = { ...msg.activities[existingIdx], name: tc.name, arguments: tc.arguments };
+		        } else {
+		          msg.activities.push({ type: 'tool_call', id: tc.id, name: tc.name, arguments: tc.arguments });
+		        }
+		      }
+		    }
+		    newMessages[newMessages.length - 1] = msg;
+		    return newMessages;
+		  });
+		};
 
   return {
     onMessages: overrides.onMessages || onMessages,

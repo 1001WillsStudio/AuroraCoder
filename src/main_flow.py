@@ -248,6 +248,15 @@ def generate_chat_responses_stream_native(
                     "content": delta.content or "",
                     "reasoning_content": getattr(delta, "reasoning_content", "") or "",
                 }
+                if current_tool_calls:
+                    llm_delta["tool_calls"] = [
+                        {
+                            "id": tc.get("id", ""),
+                            "name": tc["function"]["name"],
+                            "arguments": tc["function"]["arguments"],
+                        }
+                        for tc in current_tool_calls
+                    ]
                 yield {
                     "messages": messages + [assistant_message],
                     "status": "running",
@@ -310,7 +319,15 @@ def generate_chat_responses_stream_native(
 
         # Add tool call requests to messages
         messages.append(assistant_message)
-        
+
+        # Yield full snapshot BEFORE execution so the frontend shows tool
+        # calls with their details (command, args, etc.) while the tool runs.
+        yield {
+            "messages": messages,
+            "status": "running",
+            "provider": provider_id
+        }
+
         # Delegate to the tool execution engine
         triggered_trackers = execute_tool_calls(current_tool_calls, messages, conversation_id=conversation_id)
 
