@@ -174,7 +174,7 @@ def generate_chat_responses_stream_native(
             api_kwargs["extra_body"] = extra_body
         
         # ── Call the LLM ────────────────────────────────────────────────
-        assistant_message = {"role": "assistant"}
+        assistant_message = {"role": "assistant", "content": "", "reasoning_content": ""}
         current_content = ""
         current_reasoning = ""
         current_tool_calls = []
