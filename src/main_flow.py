@@ -174,29 +174,25 @@ def generate_chat_responses_stream_native(
             api_kwargs["extra_body"] = extra_body
         
         # ── Call the LLM ────────────────────────────────────────────────
-        # Yield an immediate event so the SSE stream isn't silent for the
-        # entire LLM TTFB (5+ seconds on large contexts).  Without this the
-        # frontend reader.read() blocks with zero data and the UI looks frozen.
-        #
-        # Include the empty assistant_message so the frontend gets a clean
-        # new assistant bubble for this iteration.  Otherwise deltas from
-        # this round append to the *previous* round's assistant message.
-
         assistant_message = {"role": "assistant"}
         current_content = ""
         current_reasoning = ""
         current_tool_calls = []
         current_usage = None
 
+        t_api_start = time.time()
+        completion_stream = client.chat.completions.create(**api_kwargs)
+
         yield {
             "messages": messages + [assistant_message],
             "status": "running",
-            "provider": provider_id
+            "provider": provider_id,
+            "llm_delta": {
+                "content": "",
+                "reasoning_content": "",
+            },
         }
 
-        t_api_start = time.time()
-        completion_stream = client.chat.completions.create(**api_kwargs)
-        
         try:
             t_first_chunk = time.time()
             t_first_content = None
