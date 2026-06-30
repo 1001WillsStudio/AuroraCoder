@@ -322,6 +322,11 @@ def _scan_for_continuation(raw_messages: list) -> dict | None:
                 try:
                     return json.loads(tc["function"]["arguments"])
                 except json.JSONDecodeError:
+                    logger.warning(
+                        "[continuation] Skipping continue_as_new_chat (id=%s) — "
+                        "invalid JSON arguments: %s",
+                        tc.get("id", "?"), tc.get("function", {}).get("arguments", "")[:200],
+                    )
                     continue
     return None
 
