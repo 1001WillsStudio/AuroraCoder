@@ -113,9 +113,6 @@ function ChatMessage({ message, msgIdx, isLatest, isStreaming, onRetry, onStopTo
   // Each block follows: thinking → content → tool_calls/results
   const groupedActivities = useMemo(() => groupActivities(activities, message.content), [activities, message.content])
   
-  // Count thinking blocks for labeling
-  const thinkingCount = activities.filter(a => a.type === 'thinking').length
-  let thinkingIndex = 0
 
   return (
     <div className={`message ${isUser ? 'user-message' : 'assistant-message'} ${message.isError ? 'error-message' : ''}`}>
@@ -183,10 +180,7 @@ function ChatMessage({ message, msgIdx, isLatest, isStreaming, onRetry, onStopTo
               const isLastGroup = groupIdx === groupedActivities.length - 1
               
               if (group.type === 'thinking') {
-                thinkingIndex++
-                const label = thinkingCount > 1
-                  ? t('chat.reasoning', { current: thinkingIndex, total: thinkingCount })
-                  : (isStreaming && isLatest && isLastGroup ? t('chat.thinking') : t('chat.reasoningShort'))
+                const label = (isStreaming && isLatest && isLastGroup) ? t('chat.thinking') : t('chat.reasoningShort')
 
                 return (
                   <ThinkingBlock
@@ -194,7 +188,7 @@ function ChatMessage({ message, msgIdx, isLatest, isStreaming, onRetry, onStopTo
                     content={group.content}
                     label={label}
                     isActive={isStreaming && isLatest && isLastGroup}
-                    defaultOpen={isStreaming && isLatest && isLastGroup}
+                    defaultOpen={true}
                   />
                 )
               }

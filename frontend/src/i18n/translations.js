@@ -120,7 +120,6 @@ const LANG = {
     'chat.interruptQueued': 'Interrupt queued: "{msg}" — Waiting for tool calls to complete…',
 
     // ── Chat message ───────────────────────────────────────────────
-    'chat.reasoning': 'Reasoning {current}/{total}',
     'chat.thinking': 'Thinking…',
     'chat.reasoningShort': 'Reasoning',
     'chat.retryRequest': 'Retry Request',
@@ -350,7 +349,6 @@ const LANG = {
     'chat.interruptQueued': '中断已排队："{msg}" — 等待工具调用完成…',
 
     // ── Chat message ───────────────────────────────────────────────
-    'chat.reasoning': '推理 {current}/{total}',
     'chat.thinking': '思考中…',
     'chat.reasoningShort': '推理',
     'chat.retryRequest': '重试请求',
