@@ -312,18 +312,19 @@ def _parse_sse_blocks(text: str) -> List[tuple]:
 def _scan_for_continuation(raw_messages: list) -> dict | None:
     """
     Scan assistant messages for a continue_as_new_chat tool call.
-    Returns the tool arguments dict, or None.
+    Returns the tool arguments dict of the LAST (most recent) valid call, or None.
     """
+    last_valid = None
     for msg in raw_messages:
         if msg.get("role") != "assistant":
             continue
         for tc in msg.get("tool_calls", []):
             if tc.get("function", {}).get("name") == "continue_as_new_chat":
                 try:
-                    return json.loads(tc["function"]["arguments"])
+                    last_valid = json.loads(tc["function"]["arguments"])
                 except json.JSONDecodeError:
                     continue
-    return None
+    return last_valid
 
 
 async def _start_continuation(new_cid: str, provider_id: str, user_msg: str):
