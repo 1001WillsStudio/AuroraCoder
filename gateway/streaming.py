@@ -322,7 +322,7 @@ def _scan_for_continuation(raw_messages: list) -> dict | None:
                 try:
                     return json.loads(tc["function"]["arguments"])
                 except json.JSONDecodeError:
-                    return None
+                    continue
     return None
 
 
