@@ -314,17 +314,16 @@ def _scan_for_continuation(raw_messages: list) -> dict | None:
     Scan assistant messages for a continue_as_new_chat tool call.
     Returns the tool arguments dict of the LAST (most recent) valid call, or None.
     """
-    last_valid = None
-    for msg in raw_messages:
+    for msg in reversed(raw_messages):
         if msg.get("role") != "assistant":
             continue
         for tc in msg.get("tool_calls", []):
             if tc.get("function", {}).get("name") == "continue_as_new_chat":
                 try:
-                    last_valid = json.loads(tc["function"]["arguments"])
+                    return json.loads(tc["function"]["arguments"])
                 except json.JSONDecodeError:
                     continue
-    return last_valid
+    return None
 
 
 async def _start_continuation(new_cid: str, provider_id: str, user_msg: str):
