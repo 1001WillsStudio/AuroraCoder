@@ -553,18 +553,15 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
         elif persist_status == "running":
             persist_status = "error"
 
-        # Final persistence pass — ensures the terminal status and any
-        # last-moment messages are captured even if the incremental saves
-        # already covered most of the data.
+        # Final persistence pass — only save if the last backend event
+        # was a full-snapshot ("messages") or a "done" event.  Deltas
+        # don't carry ``raw_messages`` or ``frontend_messages`` and
+        # would overwrite the incremental saves with stale data.
         raw_messages = []
-        if stream.latest_event_data:
+        if stream.latest_event_data and stream.latest_event_type in ("messages", "done"):
             raw_messages = stream.latest_event_data.get("raw_messages", [])
 
-        # Orphan tool calls are NOT fixed here — they are healed lazily
-        # the next time POST /api/chat is called (see proxy_chat in routes.py).
-
         try:
-            # Don't overwrite "continued" status if the proxy already set it
             current_status = None
             try:
                 conv = store.get_conversation(cid)
@@ -575,8 +572,8 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                 store.update_status(cid, persist_status)
             if raw_messages:
                 store.save_messages(cid, raw_messages)
-            if stream.latest_frontend_messages:
-                store.save_frontend_messages(cid, stream.latest_frontend_messages)
+                if stream.latest_frontend_messages:
+                    store.save_frontend_messages(cid, stream.latest_frontend_messages)
         except Exception as e:
             logger.error(f"[proxy] Final persist failed for {cid[:8]}...: {e}")
 
