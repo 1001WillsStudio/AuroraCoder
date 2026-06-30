@@ -112,6 +112,7 @@ function ChatMessage({ message, msgIdx, isLatest, isStreaming, onRetry, onStopTo
   // Group consecutive activities for better display
   // Each block follows: thinking → content → tool_calls/results
   const groupedActivities = useMemo(() => groupActivities(activities, message.content), [activities, message.content])
+  const lastThinkingIdx = groupedActivities.findLastIndex(g => g.type === 'thinking')
   
 
   return (
@@ -188,7 +189,7 @@ function ChatMessage({ message, msgIdx, isLatest, isStreaming, onRetry, onStopTo
                     content={group.content}
                     label={label}
                     isActive={isStreaming && isLatest && isLastGroup}
-                    defaultOpen={isLastGroup}
+                    defaultOpen={groupIdx === lastThinkingIdx}
                   />
                 )
               }
