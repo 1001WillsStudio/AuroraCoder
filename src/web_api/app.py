@@ -159,6 +159,22 @@ def format_sse_event(event_type: str, data: Any) -> str:
 
 
 
+def _last_activities_changed(prev_fe: list | None, curr_fe: list) -> bool:
+    """True when any frontend message's activities array changed size.
+
+    Tool calls, tool results, and thinking blocks are all stored as
+    activities *inside* the same assistant message.  Since the delta path
+    only forwards ``content`` and ``reasoning_content``, any new activity
+    is invisible to the frontend unless we force a full snapshot.
+    """
+    if not prev_fe or len(curr_fe) != len(prev_fe):
+        return True
+    for i in range(len(curr_fe)):
+        if len(curr_fe[i].get("activities", [])) != len(prev_fe[i].get("activities", [])):
+            return True
+    return False
+
+
 async def stream_chat_response(
     messages: list, conversation_id: str, request: Request,
     max_iterations: int, provider: Optional[str] = None,
@@ -206,9 +222,14 @@ async def stream_chat_response(
                     frontend_messages = convert_messages_for_frontend(current_messages)
 
                     # ── Trigger-based: delta by default, full snapshot on structural changes ──
+                    # Structural = message count changed OR activities array
+                    # changed (tool_calls, tool_results, thinking blocks).  The
+                    # delta path only forwards content + reasoning_content, so
+                    # any activity change must use a full snapshot.
                     is_structural = (
                         prev_frontend is None
                         or len(frontend_messages) != len(prev_frontend)
+                        or _last_activities_changed(prev_frontend, frontend_messages)
                     )
 
                     if is_structural or full_snapshot_counter >= DELTA_BEFORE_FULL_SNAPSHOT:
