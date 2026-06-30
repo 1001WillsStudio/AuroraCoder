@@ -181,19 +181,21 @@ def generate_chat_responses_stream_native(
         # Include the empty assistant_message so the frontend gets a clean
         # new assistant bubble for this iteration.  Otherwise deltas from
         # this round append to the *previous* round's assistant message.
+
         assistant_message = {"role": "assistant"}
+        current_content = ""
+        current_reasoning = ""
+        current_tool_calls = []
+        current_usage = None
+
         yield {
             "messages": messages + [assistant_message],
             "status": "running",
             "provider": provider_id
         }
+
         t_api_start = time.time()
         completion_stream = client.chat.completions.create(**api_kwargs)
-        
-        current_content = ""
-        current_reasoning = ""
-        current_tool_calls = []
-        current_usage = None
         
         try:
             t_first_chunk = time.time()
