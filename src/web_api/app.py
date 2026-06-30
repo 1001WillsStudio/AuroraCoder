@@ -204,33 +204,26 @@ async def stream_chat_response(
                     current_provider = response.get("provider", provider)
 
                     llm_delta = response.get("llm_delta")
+                    frontend_messages = convert_messages_for_frontend(current_messages)
+
+                    # Always send full state to the gateway (internal, cheap).
+                    # The gateway caches frontend_messages + raw_messages for
+                    # persistence, and strips down to delta-only when forwarding
+                    # to the frontend.
+                    common = {
+                        "seq": seq,
+                        "messages": frontend_messages,
+                        "raw_messages": current_messages,
+                        "status": status,
+                        "conversation_id": conversation_id,
+                        "provider": current_provider,
+                    }
+
                     if llm_delta is not None:
-                        # Text / reasoning delta from the LLM — forward directly.
-                        # No conversion needed; the generator already tells us
-                        # what's a delta and what's a structural snapshot.
-                        loop.call_soon_threadsafe(
-                            queue.put_nowait,
-                            ("delta", {
-                                "seq": seq,
-                                "conversation_id": conversation_id,
-                                "status": status,
-                                "delta": llm_delta,
-                            })
-                        )
+                        common["delta"] = llm_delta
+                        loop.call_soon_threadsafe(queue.put_nowait, ("delta", common))
                     else:
-                        # Structural snapshot (tool results, new iteration, etc.)
-                        frontend_messages = convert_messages_for_frontend(current_messages)
-                        loop.call_soon_threadsafe(
-                            queue.put_nowait,
-                            ("messages", {
-                                "seq": seq,
-                                "messages": frontend_messages,
-                                "raw_messages": current_messages,
-                                "status": status,
-                                "conversation_id": conversation_id,
-                                "provider": current_provider,
-                            })
-                        )
+                        loop.call_soon_threadsafe(queue.put_nowait, ("messages", common))
 
                 if not cancel_event.is_set():
                     final_messages = convert_messages_for_frontend(current_messages)
