@@ -311,8 +311,9 @@ def _parse_sse_blocks(text: str) -> List[tuple]:
 
 def _scan_for_continuation(raw_messages: list) -> dict | None:
     """
-    Scan assistant messages for a continue_as_new_chat tool call.
-    Returns the tool arguments dict of the LAST (most recent) valid call, or None.
+    Scan assistant messages for the LAST (most recent) continue_as_new_chat
+    tool call.  Returns its parsed arguments dict, or None if the most recent
+    call is missing or has invalid JSON.  Earlier calls are never used.
     """
     for msg in reversed(raw_messages):
         if msg.get("role") != "assistant":
@@ -323,11 +324,12 @@ def _scan_for_continuation(raw_messages: list) -> dict | None:
                     return json.loads(tc["function"]["arguments"])
                 except json.JSONDecodeError:
                     logger.warning(
-                        "[continuation] Skipping continue_as_new_chat (id=%s) — "
-                        "invalid JSON arguments: %s",
-                        tc.get("id", "?"), tc.get("function", {}).get("arguments", "")[:200],
+                        "[continuation] Most recent continue_as_new_chat (id=%s) "
+                        "has invalid JSON — aborting continuation.  Arguments: %s",
+                        tc.get("id", "?"),
+                        tc.get("function", {}).get("arguments", "")[:200],
                     )
-                    continue
+                    return None
     return None
 
 
