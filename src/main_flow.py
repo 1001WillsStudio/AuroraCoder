@@ -118,11 +118,6 @@ def generate_chat_responses_stream_native(
     model_name = config["model"]
     extra_body = config.get("extra_body")
     
-    # Strip old context blocks, then rebuild them on tool messages
-    # so the LLM sees current state (open files, toolsets, etc.) before generating
-    for panel in get_panels():
-        panel.clean_previous_blocks(messages)
-        panel.refresh(messages)
     
     # Get tool definitions (or use override for subagents / force_continuation)
     tools = tools_override if tools_override is not None else get_tool_definitions()
