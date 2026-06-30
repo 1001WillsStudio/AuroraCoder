@@ -299,15 +299,26 @@ async def resume_stream(conversation_id: str, request: Request):
 
 @app.post("/api/conversations/{conversation_id}/cancel")
 async def cancel_conversation_stream(conversation_id: str):
-    """Cancel an in-progress stream.
+    """Cancel an in-progress stream and return the latest persisted messages.
 
-    No message fix-up happens here — orphan tool calls are healed
-    lazily the next time ``POST /api/chat`` is called."""
-    stream = active_streams.get(conversation_id)
-    if not stream or stream.finished:
-        return {"cancelled": conversation_id}
+    After cancellation the old stream's ``finally`` block persists the
+    latest ``raw_messages`` and ``frontend_messages`` to the store.  We
+    return them immediately so the frontend can update its state — this
+    closes the gap where content streamed via deltas was never persisted
+    into the frontend's ``rawMessages`` and would be lost on interrupt.
+    """
     await _cancel_active_stream(conversation_id)
-    return {"cancelled": conversation_id}
+
+    raw_messages = store.get_messages(conversation_id)
+    frontend_messages = store.get_frontend_messages(conversation_id)
+
+    return {
+        "cancelled": conversation_id,
+        "raw_messages": raw_messages,
+        "frontend_messages": frontend_messages,
+    }
+
+
 
 
 @app.get("/api/conversations/active")

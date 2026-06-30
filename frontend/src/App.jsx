@@ -247,8 +247,26 @@ function App() {
       log('aborting previous controller')
       abortControllerRef.current.abort()
       abortControllerRef.current = null
-      await new Promise(resolve => setTimeout(resolve, 100))
-      log('abort settle done')
+      log('abort done')
+    }
+
+    // When interrupting, call cancelConversation.  The gateway cancels
+    // the old stream (triggering final persistence in its finally block)
+    // and returns the latest raw_messages — including content that was
+    // only delivered via deltas and never made it into the frontend's
+    // rawMessages state.  Without this the backend receives a stale
+    // history with the assistant's ``content`` still at ``""``.
+    let latestRawMessages = null
+    if (isInterrupt && conversationId) {
+      try {
+        const result = await cancelConversation(conversationId)
+        if (result?.raw_messages?.length > 0) {
+          latestRawMessages = result.raw_messages
+        }
+        log('cancel returned latest messages')
+      } catch (e) {
+        console.warn('[handleSend] Cancel fetch failed, using stale messages:', e.message)
+      }
     }
 
     log('setState batch (messages, streaming, etc.)')
@@ -262,7 +280,10 @@ function App() {
 
     let messagesToSend = null
     if (isInterrupt) {
-      messagesToSend = interruptMessages
+      messagesToSend = latestRawMessages || interruptMessages
+      if (latestRawMessages) {
+        setRawMessages(latestRawMessages)
+      }
     } else if (conversationId && rawMessages.length > 0) {
       messagesToSend = rawMessages
     }
@@ -407,7 +428,10 @@ function App() {
     if (abortControllerRef.current) abortControllerRef.current.abort()
     if (conversationId) {
       try {
-        await cancelConversation(conversationId)
+        const result = await cancelConversation(conversationId)
+        if (result?.raw_messages?.length > 0) {
+          setRawMessages(result.raw_messages)
+        }
       } catch { /* ignore — best-effort cancel */ }
     }
 

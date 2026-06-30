@@ -264,14 +264,18 @@ export async function updateSettings(payload) {
  */
 export async function cancelConversation(conversationId) {
   try {
-    await fetch(`${API_BASE}/conversations/${conversationId}/cancel`, {
+    const response = await fetch(`${API_BASE}/conversations/${conversationId}/cancel`, {
       method: 'POST',
       headers: _headers(),
     })
+    if (!response.ok) throw new Error(`Cancel error! status: ${response.status}`)
+    return response.json()
   } catch (error) {
     console.warn('[cancelConversation] Error:', error.message)
+    return null
   }
 }
+
 
 /**
  * List past conversations (metadata only).
