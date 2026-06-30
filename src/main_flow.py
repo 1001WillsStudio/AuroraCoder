@@ -187,10 +187,6 @@ def generate_chat_responses_stream_native(
             "messages": messages + [assistant_message],
             "status": "running",
             "provider": provider_id,
-            "llm_delta": {
-                "content": "",
-                "reasoning_content": "",
-            },
         }
 
         try:
