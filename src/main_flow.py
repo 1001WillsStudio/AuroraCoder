@@ -177,8 +177,13 @@ def generate_chat_responses_stream_native(
         # Yield an immediate event so the SSE stream isn't silent for the
         # entire LLM TTFB (5+ seconds on large contexts).  Without this the
         # frontend reader.read() blocks with zero data and the UI looks frozen.
+        #
+        # Include the empty assistant_message so the frontend gets a clean
+        # new assistant bubble for this iteration.  Otherwise deltas from
+        # this round append to the *previous* round's assistant message.
+        assistant_message = {"role": "assistant"}
         yield {
-            "messages": messages,
+            "messages": messages + [assistant_message],
             "status": "running",
             "provider": provider_id
         }
