@@ -159,20 +159,6 @@ def format_sse_event(event_type: str, data: Any) -> str:
 
 
 
-def _last_activities_changed(prev_fe: list | None, curr_fe: list) -> bool:
-    """True when any frontend message's activities array changed size.
-
-    Tool calls, tool results, and thinking blocks are all stored as
-    activities *inside* the same assistant message.  Since the delta path
-    only forwards ``content`` and ``reasoning_content``, any new activity
-    is invisible to the frontend unless we force a full snapshot.
-    """
-    if not prev_fe or len(curr_fe) != len(prev_fe):
-        return True
-    for i in range(len(curr_fe)):
-        if len(curr_fe[i].get("activities", [])) != len(prev_fe[i].get("activities", [])):
-            return True
-    return False
 
 
 async def stream_chat_response(
@@ -186,16 +172,13 @@ async def stream_chat_response(
     register_stream(conversation_id, cancel_event)
 
     seq = 0
-    prev_frontend = None
-    full_snapshot_counter = 0
-    DELTA_BEFORE_FULL_SNAPSHOT = 50
 
     try:
         queue = asyncio.Queue()
         loop = asyncio.get_event_loop()
 
         def run_generator():
-            nonlocal seq, prev_frontend, full_snapshot_counter
+            nonlocal seq
             try:
                 if restart_shell:
                     try:
@@ -221,43 +204,16 @@ async def stream_chat_response(
                     current_provider = response.get("provider", provider)
                     frontend_messages = convert_messages_for_frontend(current_messages)
 
-                    # ── Trigger-based: delta by default, full snapshot on structural changes ──
-                    # Structural = message count changed OR activities array
-                    # changed (tool_calls, tool_results, thinking blocks).  The
-                    # delta path only forwards content + reasoning_content, so
-                    # any activity change must use a full snapshot.
-                    is_structural = (
-                        prev_frontend is None
-                        or len(frontend_messages) != len(prev_frontend)
-                        or _last_activities_changed(prev_frontend, frontend_messages)
-                    )
-
-                    if is_structural or full_snapshot_counter >= DELTA_BEFORE_FULL_SNAPSHOT:
-                        # Structural change or periodic checkpoint → full snapshot
-                        event_type = "messages"
-                        full_snapshot_counter = 0
-                        event_data = {
+                    loop.call_soon_threadsafe(
+                        queue.put_nowait,
+                        ("messages", {
                             "seq": seq,
                             "messages": frontend_messages,
                             "raw_messages": current_messages,
                             "status": status,
                             "conversation_id": conversation_id,
                             "provider": current_provider,
-                        }
-                    else:
-                        # Non-structural: forward raw LLM delta directly — zero compute
-                        event_type = "delta"
-                        full_snapshot_counter += 1
-                        event_data = {
-                            "seq": seq,
-                            "conversation_id": conversation_id,
-                            "status": status,
-                            "delta": response.get("llm_delta", {}),
-                        }
-
-                    prev_frontend = frontend_messages
-                    loop.call_soon_threadsafe(
-                        queue.put_nowait, (event_type, event_data)
+                        })
                     )
 
                 if not cancel_event.is_set():
