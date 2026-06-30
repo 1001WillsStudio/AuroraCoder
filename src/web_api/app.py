@@ -202,19 +202,35 @@ async def stream_chat_response(
                     current_messages = response["messages"]
                     status = response["status"]
                     current_provider = response.get("provider", provider)
-                    frontend_messages = convert_messages_for_frontend(current_messages)
 
-                    loop.call_soon_threadsafe(
-                        queue.put_nowait,
-                        ("messages", {
-                            "seq": seq,
-                            "messages": frontend_messages,
-                            "raw_messages": current_messages,
-                            "status": status,
-                            "conversation_id": conversation_id,
-                            "provider": current_provider,
-                        })
-                    )
+                    llm_delta = response.get("llm_delta")
+                    if llm_delta is not None:
+                        # Text / reasoning delta from the LLM — forward directly.
+                        # No conversion needed; the generator already tells us
+                        # what's a delta and what's a structural snapshot.
+                        loop.call_soon_threadsafe(
+                            queue.put_nowait,
+                            ("delta", {
+                                "seq": seq,
+                                "conversation_id": conversation_id,
+                                "status": status,
+                                "delta": llm_delta,
+                            })
+                        )
+                    else:
+                        # Structural snapshot (tool results, new iteration, etc.)
+                        frontend_messages = convert_messages_for_frontend(current_messages)
+                        loop.call_soon_threadsafe(
+                            queue.put_nowait,
+                            ("messages", {
+                                "seq": seq,
+                                "messages": frontend_messages,
+                                "raw_messages": current_messages,
+                                "status": status,
+                                "conversation_id": conversation_id,
+                                "provider": current_provider,
+                            })
+                        )
 
                 if not cancel_event.is_set():
                     final_messages = convert_messages_for_frontend(current_messages)
