@@ -192,7 +192,6 @@ def generate_chat_responses_stream_native(
         
         current_content = ""
         current_reasoning = ""
-        assistant_message = {"role": "assistant"}
         current_tool_calls = []
         current_usage = None
         
