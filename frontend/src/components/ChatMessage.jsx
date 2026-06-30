@@ -188,7 +188,7 @@ function ChatMessage({ message, msgIdx, isLatest, isStreaming, onRetry, onStopTo
                     content={group.content}
                     label={label}
                     isActive={isStreaming && isLatest && isLastGroup}
-                    defaultOpen={true}
+                    defaultOpen={isLastGroup}
                   />
                 )
               }
