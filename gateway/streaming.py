@@ -311,10 +311,11 @@ def _parse_sse_blocks(text: str) -> List[tuple]:
 
 def _scan_for_continuation(raw_messages: list) -> dict | None:
     """
-    Scan assistant messages for a continue_as_new_chat tool call.
-    Returns the tool arguments dict, or None.
+    Scan assistant messages for the LAST (most recent) continue_as_new_chat
+    tool call.  Returns its parsed arguments dict, or None if the most recent
+    call is missing or has invalid JSON.  Earlier calls are never used.
     """
-    for msg in raw_messages:
+    for msg in reversed(raw_messages):
         if msg.get("role") != "assistant":
             continue
         for tc in msg.get("tool_calls", []):
@@ -322,6 +323,12 @@ def _scan_for_continuation(raw_messages: list) -> dict | None:
                 try:
                     return json.loads(tc["function"]["arguments"])
                 except json.JSONDecodeError:
+                    logger.warning(
+                        "[continuation] Most recent continue_as_new_chat (id=%s) "
+                        "has invalid JSON — aborting continuation.  Arguments: %s",
+                        tc.get("id", "?"),
+                        tc.get("function", {}).get("arguments", "")[:200],
+                    )
                     return None
     return None
 
@@ -445,6 +452,15 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                             if stream.new_conversation_id:
                                 edata["new_conversation_id"] = stream.new_conversation_id
 
+                            # ── Always update latest state from *every* event ──
+                            # The backend now always includes full messages in
+                            # every event (delta or messages), so the gateway
+                            # always has fresh data for persistence.
+                            stream.status = edata.get("status", stream.status)
+                            stream.provider = edata.get("provider", stream.provider)
+                            if edata.get("messages"):
+                                stream.latest_frontend_messages = edata["messages"]
+
                             # ── Track full snapshots and deltas for reconnection ──
                             if etype == "messages":
                                 stream.last_full_snapshot = edata
@@ -452,47 +468,45 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                             elif etype == "delta":
                                 stream.pending_deltas.append(edata)
 
-                            if etype in ("messages", "done"):
-                                stream.status = edata.get("status", stream.status)
-                                stream.provider = edata.get("provider", stream.provider)
-                                if edata.get("messages"):
-                                    stream.latest_frontend_messages = edata["messages"]
+                            # --- File tracking for diff endpoint ---
+                            raw_msgs = edata.get("raw_messages", [])
+                            if raw_msgs:
+                                try:
+                                    _track_file_changes(cid, raw_msgs)
+                                except Exception:
+                                    pass
 
-                                # --- File tracking for diff endpoint ---
-                                raw_msgs = edata.get("raw_messages", [])
-                                if raw_msgs:
-                                    try:
-                                        _track_file_changes(cid, raw_msgs)
-                                    except Exception:
-                                        pass
+                            # --- Incremental persistence on EVERY event ---
+                            if raw_msgs and len(raw_msgs) > last_saved_msg_count:
+                                last_saved_msg_count = len(raw_msgs)
+                                try:
+                                    store.save_messages(cid, raw_msgs)
+                                    if edata.get("messages"):
+                                        store.save_frontend_messages(cid, edata["messages"])
+                                    if stream.status != "continued":
+                                        store.update_status(cid, stream.status)
+                                except Exception as exc:
+                                    logger.warning(
+                                        f"[proxy] Incremental save failed for "
+                                        f"{cid[:8]}... ({len(raw_msgs)} msgs): {exc}"
+                                    )
 
-                                # --- Incremental persistence ---
-                                # Save whenever the raw message list has grown,
-                                # which happens after each tool execution round.
-                                if raw_msgs and len(raw_msgs) > last_saved_msg_count:
-                                    last_saved_msg_count = len(raw_msgs)
-                                    try:
-                                        store.save_messages(cid, raw_msgs)
-                                        if edata.get("messages"):
-                                            store.save_frontend_messages(cid, edata["messages"])
-                                        # Keep the on-disk status in sync with the
-                                        # live stream so that a page refresh during
-                                        # a running continuation doesn't show a stale
-                                        # "max_iterations_reached" / Continue button.
-                                        # Don't overwrite "continued" — it was set
-                                        # intentionally by the continuation detection
-                                        # and the stream will finish soon anyway.
-                                        if stream.status != "continued":
-                                            store.update_status(cid, stream.status)
-                                    except Exception as exc:
-                                        logger.warning(
-                                            f"[proxy] Incremental save failed for "
-                                            f"{cid[:8]}... ({len(raw_msgs)} msgs): {exc}"
-                                        )
+                            # ── Forward to frontend subscribers ──
+                            # Delta events carry full messages for the gateway's
+                            # benefit — strip down before forwarding to frontend.
+                            if etype == "delta":
+                                frontend_edata = {
+                                    "seq": edata.get("seq"),
+                                    "conversation_id": edata.get("conversation_id"),
+                                    "status": edata.get("status"),
+                                    "delta": edata.get("delta"),
+                                }
+                            else:
+                                frontend_edata = edata
 
                             for q in list(stream.subscribers):
                                 try:
-                                    q.put_nowait((etype, edata))
+                                    q.put_nowait((etype, frontend_edata))
                                 except asyncio.QueueFull:
                                     pass
 
@@ -546,18 +560,11 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
         elif persist_status == "running":
             persist_status = "error"
 
-        # Final persistence pass — ensures the terminal status and any
-        # last-moment messages are captured even if the incremental saves
-        # already covered most of the data.
-        raw_messages = []
-        if stream.latest_event_data:
-            raw_messages = stream.latest_event_data.get("raw_messages", [])
-
-        # Orphan tool calls are NOT fixed here — they are healed lazily
-        # the next time POST /api/chat is called (see proxy_chat in routes.py).
-
+        # Final persistence pass — the backend now always includes full
+        # messages in every event (delta + messages), so
+        # latest_frontend_messages and latest_event_data are always
+        # fresh regardless of the last event type.
         try:
-            # Don't overwrite "continued" status if the proxy already set it
             current_status = None
             try:
                 conv = store.get_conversation(cid)
@@ -566,10 +573,11 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                 pass
             if current_status != "continued":
                 store.update_status(cid, persist_status)
-            if raw_messages:
-                store.save_messages(cid, raw_messages)
             if stream.latest_frontend_messages:
                 store.save_frontend_messages(cid, stream.latest_frontend_messages)
+            raw_msgs = stream.latest_event_data.get("raw_messages", []) if stream.latest_event_data else []
+            if raw_msgs:
+                store.save_messages(cid, raw_msgs)
         except Exception as e:
             logger.error(f"[proxy] Final persist failed for {cid[:8]}...: {e}")
 

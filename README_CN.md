@@ -293,7 +293,7 @@ Xvfb + fluxbox + noVNC，端口 6080。智能体可以跑 matplotlib（TkAgg 后
 │  │  └──────────────────────────────────────────────────────┘  │  │
 │  │                              │                              │  │
 │  │  ┌── 沙箱 (/workspace) ───────────────────────────────┐  │  │
-│  │  │  持久化 Bash Shell · Conda 环境                     │  │  │
+│  │  │  持久化 Bash Shell · System Python                 │  │  │
 │  │  │  Xvfb + Fluxbox + noVNC (:6080)                    │  │  │
 │  │  │  后台进程管理                                        │  │  │
 │  │  └──────────────────────────────────────────────────────┘  │  │
@@ -363,7 +363,7 @@ Aurora Coder/
 │   └── build.sh                  # 交叉编译（CI 用，终端用户无需关心）
 ├── docker/                       # Docker 配置
 │   ├── Dockerfile                # 应用镜像
-│   ├── Dockerfile.base           # 含 conda 环境的基础镜像
+│   ├── Dockerfile.base           # 含系统 Python + GUI 依赖的基础镜像
 │   ├── entrypoint.sh             # 容器入口
 │   └── supervisord.conf          # 进程监管
 ├── dev-scripts/                  # 开发者脚本
@@ -494,9 +494,9 @@ AuroraCoder 内置了完整虚拟 Linux 桌面（Xvfb + fluxbox + noVNC），端
 git clone https://github.com/1001WillsStudio/AuroraCoder.git
 cd AuroraCoder
 
-# 配 Python 环境
-conda create -n auroracoder python=3.11
-conda activate auroracoder
+# 配 Python 环境（venv）
+python3 -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
 # 装前端依赖

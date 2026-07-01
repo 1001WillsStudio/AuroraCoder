@@ -314,7 +314,7 @@ A standalone vanilla JS mobile web app lives in `mobile/` — no build step, jus
 │  │  └──────────────────────────────────────────────────────┘  │  │
 │  │                              │                              │  │
 │  │  ┌── Sandbox (/workspace) ─────────────────────────────┐  │  │
-│  │  │  Persistent Bash Shell · Conda Environment           │  │  │
+│  │  │  Persistent Bash Shell · System Python               │  │  │
 │  │  │  Xvfb + Fluxbox + noVNC (:6080)                     │  │  │
 │  │  │  Background process management                       │  │  │
 │  │  └──────────────────────────────────────────────────────┘  │  │
@@ -384,7 +384,7 @@ Aurora Coder/
 │   └── build.sh                  # Cross-compilation (used by CI, not end users)
 ├── docker/                       # Docker configuration
 │   ├── Dockerfile                # App image (CPU)
-│   ├── Dockerfile.base           # Base image with conda environment
+│   ├── Dockerfile.base           # Base image with system Python + GUI deps
 │   ├── Dockerfile.gpu-base       # GPU base (PyTorch + CUDA + vLLM)
 │   ├── Dockerfile.gpu            # GPU app image
 │   ├── entrypoint.sh             # Container entrypoint
@@ -517,9 +517,9 @@ Override the data path with the `AURORACODER_DATA_DIR` env var.
 git clone https://github.com/1001WillsStudio/AuroraCoder.git
 cd AuroraCoder
 
-# Set up Python environment
-conda create -n auroracoder python=3.11
-conda activate auroracoder
+# Set up Python environment (venv)
+python3 -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
 # Install frontend deps

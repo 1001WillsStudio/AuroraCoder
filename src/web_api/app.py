@@ -159,6 +159,8 @@ def format_sse_event(event_type: str, data: Any) -> str:
 
 
 
+
+
 async def stream_chat_response(
     messages: list, conversation_id: str, request: Request,
     max_iterations: int, provider: Optional[str] = None,
@@ -170,16 +172,13 @@ async def stream_chat_response(
     register_stream(conversation_id, cancel_event)
 
     seq = 0
-    prev_frontend = None
-    full_snapshot_counter = 0
-    DELTA_BEFORE_FULL_SNAPSHOT = 50
 
     try:
         queue = asyncio.Queue()
         loop = asyncio.get_event_loop()
 
         def run_generator():
-            nonlocal seq, prev_frontend, full_snapshot_counter
+            nonlocal seq
             try:
                 if restart_shell:
                     try:
@@ -203,41 +202,28 @@ async def stream_chat_response(
                     current_messages = response["messages"]
                     status = response["status"]
                     current_provider = response.get("provider", provider)
+
+                    llm_delta = response.get("llm_delta")
                     frontend_messages = convert_messages_for_frontend(current_messages)
 
-                    # ── Trigger-based: delta by default, full snapshot on structural changes ──
-                    is_structural = (
-                        prev_frontend is None
-                        or len(frontend_messages) != len(prev_frontend)
-                    )
+                    # Always send full state to the gateway (internal, cheap).
+                    # The gateway caches frontend_messages + raw_messages for
+                    # persistence, and strips down to delta-only when forwarding
+                    # to the frontend.
+                    common = {
+                        "seq": seq,
+                        "messages": frontend_messages,
+                        "raw_messages": current_messages,
+                        "status": status,
+                        "conversation_id": conversation_id,
+                        "provider": current_provider,
+                    }
 
-                    if is_structural or full_snapshot_counter >= DELTA_BEFORE_FULL_SNAPSHOT:
-                        # Structural change or periodic checkpoint → full snapshot
-                        event_type = "messages"
-                        full_snapshot_counter = 0
-                        event_data = {
-                            "seq": seq,
-                            "messages": frontend_messages,
-                            "raw_messages": current_messages,
-                            "status": status,
-                            "conversation_id": conversation_id,
-                            "provider": current_provider,
-                        }
+                    if llm_delta is not None:
+                        common["delta"] = llm_delta
+                        loop.call_soon_threadsafe(queue.put_nowait, ("delta", common))
                     else:
-                        # Non-structural: forward raw LLM delta directly — zero compute
-                        event_type = "delta"
-                        full_snapshot_counter += 1
-                        event_data = {
-                            "seq": seq,
-                            "conversation_id": conversation_id,
-                            "status": status,
-                            "delta": response.get("llm_delta", {}),
-                        }
-
-                    prev_frontend = frontend_messages
-                    loop.call_soon_threadsafe(
-                        queue.put_nowait, (event_type, event_data)
-                    )
+                        loop.call_soon_threadsafe(queue.put_nowait, ("messages", common))
 
                 if not cancel_event.is_set():
                     final_messages = convert_messages_for_frontend(current_messages)

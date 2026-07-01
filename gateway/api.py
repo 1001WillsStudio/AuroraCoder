@@ -172,6 +172,74 @@ async def check_auth(request: Request):
 
 
 # ============================================================================
+# Task Instruction Persistence
+# ============================================================================
+# Stored server-side so task instructions follow the instance, not the browser
+# port. This prevents cross-contamination when two AuroraCoder instances
+# are running on the same host with different ports.
+
+_TASK_INSTRUCTION_PATH = Path(
+    os.environ.get("AURORACODER_DATA_DIR", "/app/data")
+) / "task_instruction.txt"
+
+
+class TaskInstructionRequest(BaseModel):
+    instruction: str
+
+
+@app.get("/api/task-instruction")
+async def get_task_instruction():
+    """Return the persisted task instruction, or empty string if none."""
+    try:
+        if _TASK_INSTRUCTION_PATH.exists():
+            return {"instruction": _TASK_INSTRUCTION_PATH.read_text(encoding="utf-8")}
+    except OSError:
+        pass
+    return {"instruction": ""}
+
+
+@app.put("/api/task-instruction")
+async def set_task_instruction(body: TaskInstructionRequest):
+    """Persist a task instruction on the server filesystem."""
+    try:
+        _TASK_INSTRUCTION_PATH.parent.mkdir(parents=True, exist_ok=True)
+        # atomic write: temp file + rename
+        fd, tmp = __import__("tempfile").mkstemp(
+            dir=str(_TASK_INSTRUCTION_PATH.parent),
+            prefix=".tmp_task_",
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(body.instruction)
+            os.replace(tmp, str(_TASK_INSTRUCTION_PATH))
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+        return {"ok": True}
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save task instruction: {e}")
+
+
+# ============================================================================
+# Instance Identity
+# ============================================================================
+
+_AURORACODER_GPU = os.environ.get("AURORACODER_GPU", "0").strip() == "1"
+
+
+@app.get("/api/instance-info")
+async def instance_info():
+    """Return instance type so the frontend can label tabs correctly."""
+    return {
+        "type": "gpu" if _AURORACODER_GPU else "normal",
+        "version": "1.0.0",
+    }
+
+
+# ============================================================================
 # Register all REST + SSE route handlers
 # ============================================================================
 # Must be imported BEFORE the static mounts below so that API routes take

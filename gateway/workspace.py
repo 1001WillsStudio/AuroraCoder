@@ -336,13 +336,6 @@ _TREE_SKIP_NAMES = {
 }
 
 
-def _format_tree_size(size_bytes: int) -> str:
-    if size_bytes < 1024:
-        return f"{size_bytes} B"
-    elif size_bytes < 1024 * 1024:
-        return f"{size_bytes / 1024:.1f} KB"
-    else:
-        return f"{size_bytes / (1024 * 1024):.1f} MB"
 
 
 def generate_workspace_tree_text(
@@ -397,8 +390,7 @@ def generate_workspace_tree_text(
                     next_indent = indent_prefix + ("    " if is_last else "│   ")
                     _walk(entry, next_indent, depth + 1)
             else:
-                size_str = _format_tree_size(entry.stat().st_size)
-                lines.append(f"{indent_prefix}{branch}📄 {entry.name} ({size_str})")
+                lines.append(f"{indent_prefix}{branch}📄 {entry.name}")
 
         if has_remaining:
             lines.append(

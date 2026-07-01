@@ -118,11 +118,6 @@ def generate_chat_responses_stream_native(
     model_name = config["model"]
     extra_body = config.get("extra_body")
     
-    # Strip old context blocks, then rebuild them on tool messages
-    # so the LLM sees current state (open files, toolsets, etc.) before generating
-    for panel in get_panels():
-        panel.clean_previous_blocks(messages)
-        panel.refresh(messages)
     
     # Get tool definitions (or use override for subagents / force_continuation)
     tools = tools_override if tools_override is not None else get_tool_definitions()
@@ -179,23 +174,21 @@ def generate_chat_responses_stream_native(
             api_kwargs["extra_body"] = extra_body
         
         # ── Call the LLM ────────────────────────────────────────────────
-        # Yield an immediate event so the SSE stream isn't silent for the
-        # entire LLM TTFB (5+ seconds on large contexts).  Without this the
-        # frontend reader.read() blocks with zero data and the UI looks frozen.
-        yield {
-            "messages": messages,
-            "status": "running",
-            "provider": provider_id
-        }
-        t_api_start = time.time()
-        completion_stream = client.chat.completions.create(**api_kwargs)
-        
+        assistant_message = {"role": "assistant", "content": "", "reasoning_content": ""}
         current_content = ""
         current_reasoning = ""
-        assistant_message = {"role": "assistant"}
         current_tool_calls = []
         current_usage = None
-        
+
+        t_api_start = time.time()
+        completion_stream = client.chat.completions.create(**api_kwargs)
+
+        yield {
+            "messages": messages + [assistant_message],
+            "status": "running",
+            "provider": provider_id,
+        }
+
         try:
             t_first_chunk = time.time()
             t_first_content = None
@@ -253,6 +246,15 @@ def generate_chat_responses_stream_native(
                     "content": delta.content or "",
                     "reasoning_content": getattr(delta, "reasoning_content", "") or "",
                 }
+                if current_tool_calls:
+                    llm_delta["tool_calls"] = [
+                        {
+                            "id": tc.get("id", ""),
+                            "name": tc["function"]["name"],
+                            "arguments": tc["function"]["arguments"],
+                        }
+                        for tc in current_tool_calls
+                    ]
                 yield {
                     "messages": messages + [assistant_message],
                     "status": "running",
@@ -315,7 +317,15 @@ def generate_chat_responses_stream_native(
 
         # Add tool call requests to messages
         messages.append(assistant_message)
-        
+
+        # Yield full snapshot BEFORE execution so the frontend shows tool
+        # calls with their details (command, args, etc.) while the tool runs.
+        yield {
+            "messages": messages,
+            "status": "running",
+            "provider": provider_id
+        }
+
         # Delegate to the tool execution engine
         triggered_trackers = execute_tool_calls(current_tool_calls, messages, conversation_id=conversation_id)
 

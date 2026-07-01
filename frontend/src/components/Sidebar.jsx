@@ -28,6 +28,7 @@ export default function Sidebar({
   historyCloseTrigger,
   onDrawerToggle,
   providers,
+  providersLoading,
   selectedProvider,
   onSelectProvider,
   showProviderDropdown,
@@ -128,7 +129,7 @@ export default function Sidebar({
               disabled={isStreaming}
             >
               <span className="provider-name">
-                {providers.find(p => p.id === selectedProvider)?.name || t('sidebar.selectModel')}
+                {providers.find(p => p.id === selectedProvider)?.name || selectedProvider || t('sidebar.selectModel')}
               </span>
               <ChevronDown size={16} className={showProviderDropdown ? 'rotated' : ''} />
             </button>
@@ -136,7 +137,7 @@ export default function Sidebar({
               <div className="provider-dropdown-menu">
                 {providers.length === 0 ? (
                   <div className="provider-option provider-option-empty">
-                    {t('sidebar.noProviders')}
+                    {providersLoading ? t('sidebar.loadingProviders') || 'Loading models...' : t('sidebar.noProviders')}
                   </div>
                 ) : (
                   providers.map(provider => (

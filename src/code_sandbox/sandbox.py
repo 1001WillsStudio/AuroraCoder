@@ -2,8 +2,8 @@
 Docker-first sandbox: workspace path + persistent shell.
 
 Replaces the heavyweight ``session_manager`` for the Docker deployment model
-where the workspace is a fixed directory (``/workspace``) and the conda
-environment is pre-built (``agent``).
+where the workspace is a fixed directory (``/workspace``) and the Python
+environment is the system Python (Docker) or conda (host: ``agent``).
 
 Usage::
 
@@ -51,15 +51,16 @@ def get_workspace() -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Python / Conda helpers
+# Python / Environment helpers
 # ---------------------------------------------------------------------------
 
 def get_python_path() -> Optional[Path]:
-    """Return the Python executable for the sandbox conda environment.
+    """Return the Python executable for the sandbox environment.
 
-    In Docker the *agent* env is already active, so ``sys.executable``
-    is usually correct.  Falls back to a conda-info lookup.
+    In Docker, ``sys.executable`` is the canonical Python. On the host a conda
+    lookup may be used.  Falls back to ``sys.executable``.
     """
+
     # Fast path: if we're already running inside the target env, just use it
     if DEFAULT_BASE_ENV_NAME and DEFAULT_BASE_ENV_NAME in (sys.executable or ""):
         return Path(sys.executable)
@@ -88,7 +89,8 @@ def get_python_path() -> Optional[Path]:
 
 
 def get_conda_env_path() -> Optional[Path]:
-    """Return the conda environment directory (e.g. ``/opt/conda/envs/agent``)."""
+    """Return the Python environment directory (conda)."""
+
     if not DEFAULT_BASE_ENV_NAME:
         return None
     try:
@@ -117,7 +119,7 @@ class PersistentShell:
 
     Environment variables, working directory, and shell history persist
     between ``run()`` calls.  The shell is started in ``WORKSPACE`` with
-    the sandbox conda environment activated.
+    the sandbox environment activated.
     """
 
     def __init__(self):
@@ -148,7 +150,7 @@ class PersistentShell:
                 bufsize=1,
                 universal_newlines=True,
             )
-            # Activate the conda env inside the shell
+            # Activate the environment inside the shell
             activate = self._activation_command()
             if activate:
                 self._init_command(activate)
@@ -246,14 +248,15 @@ class PersistentShell:
         reader.join(timeout=timeout)
 
         if not found.is_set():
-            logger.warning("Command timed out after %ds, spawning new shell: %s", timeout, command[:120])
+            logger.warning("Command still running after %ds, spawning new shell: %s", timeout, command[:120])
+            old_pid = self._proc.pid
             self._proc = None
             self.start()
             return "", (
-                f"Command timed out after {timeout}s but is still running in the old terminal. "
-                f"Output is being written to: {out_file}\n"
-                "A new terminal has been started for subsequent commands. "
-                "You can read the log file above to check progress."
+                f"Command is still running after {timeout}s (not killed) — continuing in background.\n"
+                f"Terminal PID: {old_pid}\n"
+                f"Output file: {out_file}\n"
+                "Read the log to get the complete result."
             )
 
         stdout = ""
@@ -275,6 +278,11 @@ class PersistentShell:
     # -- internals ----------------------------------------------------------
 
     def _activation_command(self) -> str:
+        # Docker: system Python, no activation needed
+        if os.environ.get("AURORACODER_DOCKER"):
+            return ""
+
+        # Host / conda path
         if not DEFAULT_BASE_ENV_NAME:
             return ""
         if sys.platform == "win32":

@@ -8,7 +8,7 @@ import LoginScreen from './components/LoginScreen'
 import Sidebar from './components/Sidebar'
 import WelcomeScreen from './components/WelcomeScreen'
 import SettingsPanel from './components/SettingsPanel'
-import { streamChat, getProviders, cancelConversation, getConversation, getActiveStreams, resumeStream } from './services/api'
+import { streamChat, getProviders, cancelConversation, getConversation, getActiveStreams, resumeStream, getTaskInstruction, setTaskInstruction, getInstanceInfo } from './services/api'
 import { isInterruptible, TASK_MARKER_START, TASK_MARKER_END } from './utils/streamUtils'
 import { checkAuth, isAuthRequired } from './utils/auth.js'
 import CodePanel from './components/CodePanel'
@@ -53,6 +53,7 @@ function App() {
   
   // Provider state
   const [providers, setProviders] = useState([])
+  const [providersLoading, setProvidersLoading] = useState(true)
   const [selectedProvider, setSelectedProvider] = useState(null)
   const [showProviderDropdown, setShowProviderDropdown] = useState(false)
   
@@ -84,9 +85,8 @@ function App() {
   const taskInstructionsRef = useRef(null)
   const taskInstructionsBtnRef = useRef(null)
   const [historyCloseTrigger, setHistoryCloseTrigger] = useState(0)
-  const [systemPrompt, setSystemPrompt] = useState(() => {
-    try { return localStorage.getItem('systemPrompt') || '' } catch { return '' }
-  })
+    const [systemPrompt, setSystemPrompt] = useState('')
+    const [instanceType, setInstanceType] = useState('normal') // "normal" or "gpu"
   const [historyRefreshTrigger, setHistoryRefreshTrigger] = useState(0)
   const [activeConvoWarning, setActiveConvoWarning] = useState(false)
   const draftInputsRef = useRef(new Map())
@@ -115,6 +115,21 @@ function App() {
     localStorage.setItem('theme', theme)
   }, [theme])
 
+  // ── Load task instruction from server (not localStorage — follows the instance, not the port) ──
+  useEffect(() => {
+    getTaskInstruction().then(data => {
+      if (data?.instruction) setSystemPrompt(data.instruction)
+    }).catch(() => { /* ignore — server may not be ready yet */ })
+  }, [])
+
+  // ── Fetch instance type and set browser tab title ──
+  useEffect(() => {
+    getInstanceInfo().then(data => {
+      setInstanceType(data.type)
+      document.title = data.type === 'gpu' ? 'AuroraCoder GPU' : 'AuroraCoder'
+    }).catch(() => { /* ignore — keep defaults */ })
+  }, [])
+
   useEffect(() => {
     const handleBeforeUnload = () => {
       if (abortControllerRef.current) {
@@ -129,10 +144,15 @@ function App() {
   }, [])
 
   useEffect(() => {
+    let retryTimer = null
+    let cancelled = false
+
     async function loadProviders() {
       try {
         const data = await getProviders()
+        if (cancelled) return
         setProviders(data.providers || [])
+        setProvidersLoading(false)
         const savedProvider = localStorage.getItem('selectedProvider')
         if (savedProvider && data.providers?.find(p => p.id === savedProvider)) {
           setSelectedProvider(savedProvider)
@@ -140,11 +160,26 @@ function App() {
           setSelectedProvider(data.default || data.providers?.[0]?.id)
         }
       } catch {
-        setProviders([{ id: 'deepseek', name: 'DeepSeek V4 Pro', description: 'Default model' }])
-        setSelectedProvider('deepseek')
+        if (cancelled) return
+        // Keep providersLoading=true so the dropdown shows "Loading…"
+        // rather than a stale fallback entry.  Only set selectedProvider
+        // so the button label is meaningful while we wait.
+        const savedProvider = localStorage.getItem('selectedProvider')
+        if (savedProvider) {
+          setSelectedProvider(prev => prev || savedProvider)
+        } else {
+          setSelectedProvider(prev => prev || 'deepseek')
+        }
+        // Retry every 3 s until the backend becomes available
+        retryTimer = setTimeout(loadProviders, 3000)
       }
     }
     loadProviders()
+
+    return () => {
+      cancelled = true
+      if (retryTimer) clearTimeout(retryTimer)
+    }
   }, [])
 
   useEffect(() => {
@@ -212,8 +247,26 @@ function App() {
       log('aborting previous controller')
       abortControllerRef.current.abort()
       abortControllerRef.current = null
-      await new Promise(resolve => setTimeout(resolve, 100))
-      log('abort settle done')
+      log('abort done')
+    }
+
+    // When interrupting, call cancelConversation.  The gateway cancels
+    // the old stream (triggering final persistence in its finally block)
+    // and returns the latest raw_messages — including content that was
+    // only delivered via deltas and never made it into the frontend's
+    // rawMessages state.  Without this the backend receives a stale
+    // history with the assistant's ``content`` still at ``""``.
+    let latestRawMessages = null
+    if (isInterrupt && conversationId) {
+      try {
+        const result = await cancelConversation(conversationId)
+        if (result?.raw_messages?.length > 0) {
+          latestRawMessages = result.raw_messages
+        }
+        log('cancel returned latest messages')
+      } catch (e) {
+        console.warn('[handleSend] Cancel fetch failed, using stale messages:', e.message)
+      }
     }
 
     log('setState batch (messages, streaming, etc.)')
@@ -227,7 +280,10 @@ function App() {
 
     let messagesToSend = null
     if (isInterrupt) {
-      messagesToSend = interruptMessages
+      messagesToSend = latestRawMessages || interruptMessages
+      if (latestRawMessages) {
+        setRawMessages(latestRawMessages)
+      }
     } else if (conversationId && rawMessages.length > 0) {
       messagesToSend = rawMessages
     }
@@ -372,7 +428,10 @@ function App() {
     if (abortControllerRef.current) abortControllerRef.current.abort()
     if (conversationId) {
       try {
-        await cancelConversation(conversationId)
+        const result = await cancelConversation(conversationId)
+        if (result?.raw_messages?.length > 0) {
+          setRawMessages(result.raw_messages)
+        }
       } catch { /* ignore — best-effort cancel */ }
     }
 
@@ -405,7 +464,7 @@ function App() {
       return prev
     })
     handleSend(lastRequest.existingMessages, lastRequest.message)
-  }, [lastRequest, isStreaming])
+  }, [lastRequest, isStreaming, selectedProvider])
 
   const handleLoadConversation = useCallback(async (targetConversationId) => {
     if (inputValueRef.current.trim()) draftInputsRef.current.set(conversationId ?? '__new__', inputValueRef.current)
@@ -522,6 +581,7 @@ function App() {
         historyCloseTrigger={historyCloseTrigger}
         onDrawerToggle={(open) => { if (open) setShowTaskInstructions(false) }}
         providers={providers}
+        providersLoading={providersLoading}
         selectedProvider={selectedProvider}
         onSelectProvider={(id) => { setSelectedProvider(id); setShowProviderDropdown(false) }}
         showProviderDropdown={showProviderDropdown}
@@ -667,7 +727,7 @@ function App() {
               onChange={(e) => {
                 const value = e.target.value
                 setSystemPrompt(value)
-                try { localStorage.setItem('systemPrompt', value) } catch { /* ignore */ }
+                setTaskInstruction(value).catch(() => { /* ignore — best-effort server save */ })
               }}
               placeholder={t('app.taskInstructionsPlaceholder')}
               autoFocus
