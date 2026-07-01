@@ -57,7 +57,7 @@ launcher/                     ← One-click Go launcher (main.go, docker.go,
 - **Direct File Manipulation**: Full read/write capabilities on the codebase with intelligent code display.
 - **Native Tool Calling**: Structured, reliable OpenAI function calling format.
 - **Extended Thinking**: Supports models with reasoning/thinking capabilities (e.g., DeepSeek, GLM).
-- **Docker Sandbox**: Runs in a container with a fixed `/workspace` directory and pre-built conda environment.
+- **Docker Sandbox**: Runs in a container with a fixed `/workspace` directory and system Python environment.
 - **VNC Desktop**: Xvfb + fluxbox + noVNC on port 6080 for GUI applications.
 - **Sub-Agent Delegation**: Delegates tasks to read-only child agents via HTTP.
 - **ToolStore Integration**: Universal tool discovery — search, inspect, and invoke tools from MCP servers, local skills, and tool packs.
@@ -157,7 +157,7 @@ Aurora Coder/
 │   └── go.mod
 ├── docker/
 │   ├── Dockerfile              ← App image (CPU)
-│   ├── Dockerfile.base         ← Base image with conda environment
+│   ├── Dockerfile.base         ← Base image with system Python + GUI deps
 │   ├── Dockerfile.gpu-base     ← GPU base (PyTorch + CUDA + vLLM)
 │   ├── Dockerfile.gpu          ← GPU app image
 │   ├── entrypoint.sh           ← Container entrypoint
@@ -372,7 +372,7 @@ The Docker-first sandbox. It provides:
 
 - **`WORKSPACE`** — `Path("/workspace")` (from `WORKSPACE_DIR` env var, falls back to `cwd`)
 - **`get_workspace()`** — returns `WORKSPACE`, creating it if needed
-- **`get_python_path()` / `get_conda_env_path()`** — resolve the pre-built conda `agent` environment
+- **`get_python_path()` / `get_conda_env_path()`** — resolve the Python environment (system Python in Docker, conda on host)
 - **`shell`** — module-level `PersistentShell` singleton
 
 ### Persistent Shell
@@ -380,7 +380,7 @@ The Docker-first sandbox. It provides:
 - Commands are wrapped in `{ ...; : ; }` brace groups — the `: ;` (POSIX no-op) ensures `}` is recognised as the closing reserved word even after heredocs (interactive bash rejects bare `; }` as a syntax error)
 - `blocking=False` → wraps in `nohup bash -c ... > logfile 2>&1 &`, returns log path
 - On timeout → spawns a new shell, returns note about log file
-- Conda environment is auto-activated on shell start
+- No activation in Docker (system Python); on host, conda env is auto-activated
 
 ---
 
