@@ -55,6 +55,16 @@ def test_store_crud():
 def test_gateway_routes():
     from fastapi.testclient import TestClient
     from gateway.api import app
+    import gateway.routes as routes
+
+    # The `remember` route runs every write through an LLM review gate
+    # (gateway/memory/ops/reviewer.py) — see test_memory_reviewer.py for
+    # dedicated coverage of that gate's approve/reject/duplicate logic.
+    # This test is about the CRUD routes themselves, so auto-approve here.
+    routes.review_candidate = lambda candidate, similar, is_update=False: {
+        "decision": "approve", "reason": "test auto-approve", "duplicate_of": None,
+        "adjusted_plane": None, "adjusted_confidence": None,
+    }
 
     client = TestClient(app)
 

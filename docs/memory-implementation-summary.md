@@ -22,7 +22,8 @@ gateway/memory/
   stance.py       build_stance_block() — assembles the always-injected prefix block
   gap_store.py    GapLedger — SQLite work-queue for open knowledge gaps
   ops/
-    prompts.py       Extraction system prompt (no-op gate, "what NOT to save")
+    prompts.py       Extraction + review system prompts (no-op gate, "what NOT to save")
+    reviewer.py       Layer 1: synchronous, fail-closed review gate for `remember`
     extractor.py      Layer 2a: one structured LLM call per finished session
     consolidator.py   Layer 2a: dedupe + unused-decay heuristics (no LLM)
     dispatcher.py     Layer 2b: DooD worker spawn/teardown — gated, unexercised
@@ -38,9 +39,10 @@ docker/
   entrypoint.sh                    AURORACODER_ROLE=memory-worker branch
 
 tests/
-  test_memory_layer1.py   schema round-trip, store CRUD, gateway routes (TestClient)
-  test_memory_layer2.py   extractor (fake LLM client) + consolidator heuristics
-  test_memory_layer3.py   gap ledger dedupe/escalation, dispatcher gate + docker-arg build
+  test_memory_layer1.py    schema round-trip, store CRUD, gateway routes (TestClient)
+  test_memory_layer2.py    extractor (fake LLM client) + consolidator heuristics
+  test_memory_layer3.py    gap ledger dedupe/escalation, dispatcher gate + docker-arg build
+  test_memory_reviewer.py  remember review gate: approve/reject/demote/duplicate/fail-closed
 ```
 
 Gateway is the **sole owner** of all memory state (files + `index.sqlite` +
@@ -59,6 +61,10 @@ than raising, so a memory outage can never break the agent's turn loop.
   parallel/subagent-safe), or `log_gap` (flag an unresolved unknown, also a
   write). `remember` and `log_gap` are sequential-only and excluded from
   subagents; `recall` is read-only and safe for both.
+- **Every `remember` call** is checked synchronously by an LLM review gate
+  (`ops/reviewer.py`) *before* anything is persisted — see "Review gate for
+  `remember`" below. `log_gap` is not reviewed (it's a work-queue note, not
+  a fact injected into future context, so the risk profile is much lower).
 - **At session end** (`gateway/streaming.py`, top-level `user_chat` only,
   terminal status): passive extraction runs off the hot path in a small
   dedicated thread pool, never awaited. No-op is the expected common case —
@@ -76,10 +82,42 @@ than raising, so a memory outage can never break the agent's turn loop.
 | Key | Default | Effect |
 |---|---|---|
 | `enabled` | `true` | Master switch for Layer 1 (stance/remember/recall/log_gap) |
+| `remember_review_enabled` | `true` | Review-gate every `remember` call before persisting |
 | `passive_enabled` | `true` | Layer 2a extraction after each session |
-| `extraction_provider` | *(default provider)* | Which provider/model runs extraction |
+| `extraction_provider` | *(default provider)* | Which provider/model runs extraction *and* review |
 | `heavy_ops_enabled` | `false` | Layer 2b — spawn worker containers |
 | `worker_image` | `"auroracoder"` | Image tag used for `memory-worker` containers |
+
+## Review gate for `remember` (design doc §11 "Active, high precision")
+
+Passive extraction (§2a) gets to review a whole finished transcript in
+hindsight, with an explicit no-op bias, before writing anything. A live
+`remember` call has no such luxury: it fires immediately, mid-session, on
+the model's own in-the-moment judgment. The design doc frames active
+writes as needing *higher* precision than passive ones for exactly this
+reason — so `remember` doesn't get a lighter touch just because it's the
+agent's own explicit choice.
+
+Every `remember` call now runs through `ops/reviewer.py` before the store
+is touched:
+
+1. Cheap keyword-overlap search (`find_similar_existing`) surfaces existing
+   memories that might be duplicates.
+2. A single structured-output LLM call (reusing the extraction system's
+   no-op-gate philosophy — see `REVIEW_SYSTEM_PROMPT`) sees the candidate
+   plus those similar memories and returns `approve` or `reject`, plus
+   optional overrides: merge into an existing memory (`duplicate_of`),
+   demote plane (e.g. an overreaching "stance" claim → "world"), or adjust
+   confidence.
+3. Only on `approve` does the write happen at all.
+
+This is the **one deliberate exception** to this system's fail-open
+default: if the reviewer call itself errors (bad provider config, network
+failure, unparsable output), the candidate is **rejected**, not written
+unchecked — a moderation gate that quietly disables itself on error isn't
+a gate. A missed memory can usually be re-established later (the user can
+restate it, or passive extraction may catch it at session end); a bad one
+persists and gets shown to every future session.
 
 ## What was deliberately left unfinished (and why)
 

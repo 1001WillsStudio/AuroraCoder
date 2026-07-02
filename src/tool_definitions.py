@@ -386,7 +386,10 @@ NATIVE_TOOL_DEFINITIONS = [
                 "or a non-obvious convention/gotcha. Do NOT save: anything re-derivable by "
                 "reading the code, ephemeral task state, secrets/credentials, or anything "
                 "already in AGENTS.md. When in doubt, don't call this tool — silence is the "
-                "correct default (most turns should not call `remember`)."
+                "correct default (most turns should not call `remember`). Note: every call "
+                "is checked by an automatic review step before being saved and can be "
+                "rejected (e.g. as low-value, ephemeral, or a duplicate) or have its plane/"
+                "confidence adjusted — this is expected and not an error to work around."
             ),
             "parameters": {
                 "type": "object",

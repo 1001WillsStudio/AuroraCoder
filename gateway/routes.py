@@ -71,6 +71,7 @@ from gateway.memory.stance import build_stance_block
 from gateway.memory.retrieval import rank_candidates
 from gateway.memory.gap_store import get_gap_ledger, GAP_PRIORITIES, GAP_STRATEGIES
 from gateway.memory.ops.dispatcher import dispatch_gap_investigation
+from gateway.memory.ops.reviewer import review_candidate, find_similar_existing
 
 # Import app after stream deps are resolved — app already exists in api.py's
 # namespace by the time api.py does ``from gateway import routes``.
@@ -523,6 +524,15 @@ async def remember_memory(body: RememberRequest):
 
     Only ever called by the agent's ``remember`` tool — memory writes are
     agent-authored by construction (design doc §7.1 item 4 / §18).
+
+    Gated by a synchronous LLM review (``ops/reviewer.py``) before anything
+    is persisted — an in-session ``remember`` call has no lookback/no-op
+    bias the way the M2 extraction pass does, so it needs the *higher*
+    precision bar per design doc §11, not a lower one. Fails closed: if
+    the review call itself fails, the write is rejected, not allowed
+    through — the one deliberate exception to this system's fail-open
+    default, since silently disabling a moderation gate on error defeats
+    its purpose.
     """
     if not _memory_enabled():
         return {"ok": False, "reason": "memory disabled in settings"}
@@ -532,27 +542,46 @@ async def remember_memory(body: RememberRequest):
     if body.type not in MEMORY_TYPES:
         raise HTTPException(status_code=400, detail=f"invalid type: {body.type}")
 
+    repo = get_memory_repository()
+
+    candidate = {
+        "content": body.content,
+        "description": body.description,
+        "plane": body.plane,
+        "type": body.type,
+        "scope": body.scope,
+        "confidence": body.confidence,
+    }
+    similar = find_similar_existing(repo, plane=body.plane, scope=body.scope, description=body.description)
+    decision = review_candidate(candidate, similar, is_update=bool(body.memory_id))
+
+    if decision["decision"] != "approve":
+        return {"ok": False, "reason": f"rejected by review: {decision.get('reason') or 'no reason given'}"}
+
+    plane = decision.get("adjusted_plane") or body.plane
+    confidence = decision.get("adjusted_confidence") or body.confidence
+    memory_id = body.memory_id or decision.get("duplicate_of")
+
     kwargs = dict(
         content=body.content,
         description=body.description,
-        plane=body.plane,
+        plane=plane,
         type=body.type,
         scope=body.scope,
-        confidence=body.confidence,
+        confidence=confidence,
         provenance=body.provenance,
         volatile=body.volatile,
         ttl_days=body.ttl_days,
         supersedes=body.supersedes,
     )
-    if body.memory_id:
-        kwargs["id"] = body.memory_id
+    if memory_id:
+        kwargs["id"] = memory_id
 
     try:
         item = MemoryItem(**kwargs)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    repo = get_memory_repository()
     saved = repo.upsert(item)
     return {"ok": True, "id": saved.id}
 

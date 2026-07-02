@@ -8,6 +8,8 @@ explicitly rather than leaving it to model default behavior (which skews
 toward "always produce something").
 """
 
+from typing import Any, Dict, List
+
 EXTRACTION_SYSTEM_PROMPT = """You are a memory-extraction pass running silently after a coding-agent \
 session ended. You are NOT talking to the user — your only output is a JSON \
 list of candidate memories (or an empty list).
@@ -59,3 +61,72 @@ def build_extraction_user_prompt(transcript_text: str) -> str:
         f"{transcript_text}\n"
         "--- TRANSCRIPT END ---"
     )
+
+
+# ---------------------------------------------------------------------------
+# Review gate for the in-session `remember` tool (design doc §11 "Active
+# (in-turn, high precision)").
+#
+# Extraction (above) gets to review a whole finished transcript in hindsight
+# with an explicit no-op bias before writing anything. A live `remember`
+# call has no such luxury — it fires immediately, on the model's own
+# in-the-moment judgment, with no lookback. Per the design doc, that makes
+# the ACTIVE path the one that needs the *higher* precision bar, not a
+# lower one just because it's "the agent's own explicit choice". This
+# prompt applies the same anti-pollution rules as extraction to a single
+# candidate, synchronously, before it is ever persisted.
+# ---------------------------------------------------------------------------
+
+REVIEW_SYSTEM_PROMPT = """You are the review gate for a single memory-write request made mid-session \
+by a coding agent, via its `remember` tool. Nothing is persisted until you approve it. You are NOT \
+talking to the user or the agent — your only output is a JSON decision.
+
+## Your job
+Apply the same discipline an end-of-session extraction pass would: most things proposed for \
+long-term memory should NOT be saved. The agent calling `remember` is not infallible — it may be \
+overconfident, may be saving something ephemeral, or may be duplicating something already known.
+
+## What to REJECT
+- Anything derivable by reading the code, git history, or AGENTS.md.
+- Ephemeral task state, or anything scoped to just finishing the current request.
+- Secrets, credentials, API keys, tokens.
+- Anything not confident enough that a future agent would concretely act differently because of it.
+- A "stance" plane candidate (injected on EVERY future turn, forever) that is not clearly durable, \
+unambiguous, and high-confidence. When in doubt about a stance candidate, either reject it or \
+recommend demoting it to "world" plane instead (set adjusted_plane="world") rather than approving \
+it as stance.
+
+## Duplicates
+You will be shown existing memories that might overlap. If the candidate restates or refines an \
+existing memory, set "duplicate_of" to that memory's id (it will be updated in place) instead of \
+approving a new, separate entry.
+
+## Output format
+Return ONLY a JSON object:
+{
+  "decision": "approve" | "reject",
+  "reason": "one sentence, always required",
+  "duplicate_of": "<existing memory id>" | null,
+  "adjusted_plane": "stance" | "world" | null,
+  "adjusted_confidence": "high" | "medium" | "low" | null
+}
+"adjusted_*" fields are optional overrides applied only when decision is "approve" — leave null to \
+keep the agent's original values. Default to rejecting when uncertain; a missed memory can usually \
+be re-established later, but a bad one persists and is shown to every future session.
+"""
+
+
+def build_review_user_prompt(candidate: Dict[str, Any], similar_existing: List[Dict[str, Any]], is_update: bool) -> str:
+    import json
+
+    lines = [
+        f"Candidate memory ({'explicit update of an existing memory_id' if is_update else 'proposed new memory'}):",
+        json.dumps(candidate, indent=2),
+        "",
+    ]
+    if similar_existing:
+        lines.append("Existing memories that might be related/duplicates:")
+        lines.append(json.dumps(similar_existing, indent=2))
+    else:
+        lines.append("No existing memories found that appear related.")
+    return "\n".join(lines)
