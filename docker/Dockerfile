@@ -33,6 +33,10 @@ RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 RUN sed -i 's/\r$//' /etc/supervisor/conf.d/supervisord.conf
 
+# Slim profile for AURORACODER_ROLE=memory-worker (see docker/entrypoint.sh)
+COPY docker/supervisord.memory-worker.conf /etc/supervisor/conf.d/supervisord.memory-worker.conf
+RUN sed -i 's/\r$//' /etc/supervisor/conf.d/supervisord.memory-worker.conf
+
 # Agent API + conversation history + dev-server ports + noVNC + ToolStore mgmt
 # Agent API (8080), Frontend (3000), Gateway (8081 internal), dev-server + noVNC, ToolStore (8765)
 EXPOSE 8080 3000 8900 8901 8902 6080 8765

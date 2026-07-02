@@ -69,6 +69,8 @@ from gateway.memory.store import get_repository as get_memory_repository
 from gateway.memory.schema import MemoryItem, MEMORY_PLANES, MEMORY_TYPES
 from gateway.memory.stance import build_stance_block
 from gateway.memory.retrieval import rank_candidates
+from gateway.memory.gap_store import get_gap_ledger, GAP_PRIORITIES, GAP_STRATEGIES
+from gateway.memory.ops.dispatcher import dispatch_gap_investigation
 
 # Import app after stream deps are resolved — app already exists in api.py's
 # namespace by the time api.py does ``from gateway import routes``.
@@ -119,6 +121,14 @@ class RememberRequest(BaseModel):
     ttl_days: Optional[int] = Field(None, description="Re-verify after this many days if volatile")
     supersedes: Optional[str] = Field(None, description="ID of an existing memory this replaces/updates")
     memory_id: Optional[str] = Field(None, description="Reuse this id to update an existing memory in place")
+
+
+class LogGapRequest(BaseModel):
+    """Payload for the ``log_gap`` tool — flag a knowledge gap for later resolution."""
+    question: str = Field(..., description="The specific thing the agent didn't know")
+    scope: str = Field("project", description="'user' (global) or 'project'")
+    priority: str = Field("medium", description="'low' | 'medium' | 'high'")
+    strategy: str = Field("ask", description="'self' (cheap to self-investigate later) or 'ask' (needs the user)")
 
 
 def _get_workspace() -> Optional[Path]:
@@ -577,6 +587,69 @@ async def delete_memory(memory_id: str):
     if not repo.delete(memory_id):
         raise HTTPException(status_code=404, detail="Memory not found")
     return {"deleted": memory_id}
+
+
+# ============================================================================
+# Endpoints — Gap Ledger (design doc §13, Gap Engine — "light" half only)
+# ============================================================================
+# Logging/listing/resolving gaps is always on (cheap, synchronous). Actively
+# *investigating* an open gap is Layer 2b heavy-ops, disabled by default —
+# see gateway/memory/ops/dispatcher.py.
+
+@app.post("/api/memory/gaps")
+async def log_gap(body: LogGapRequest):
+    """Flag a knowledge gap. Only ever called by the agent's ``log_gap`` tool.
+
+    Recurring gaps on the same scope (similar question already open) are
+    escalated in priority rather than duplicated — see GapLedger.log_gap.
+    """
+    if not _memory_enabled():
+        return {"ok": False, "reason": "memory disabled in settings"}
+    if body.priority not in GAP_PRIORITIES or body.strategy not in GAP_STRATEGIES:
+        raise HTTPException(status_code=400, detail="Invalid priority or strategy")
+    ledger = get_gap_ledger()
+    gap = ledger.log_gap(
+        question=body.question, scope=body.scope,
+        priority=body.priority, detected_from="agent", strategy=body.strategy,
+    )
+    return {"ok": True, "gap": gap}
+
+
+@app.get("/api/memory/gaps")
+async def list_gaps(status: Optional[str] = None, scope: Optional[str] = None):
+    """List gap ledger entries — for a future Memory/Gaps browser UI."""
+    ledger = get_gap_ledger()
+    return {"gaps": ledger.list(status=status, scope=scope)}
+
+
+@app.get("/api/memory/gaps/{gap_id}")
+async def get_gap(gap_id: str):
+    ledger = get_gap_ledger()
+    gap = ledger.get(gap_id)
+    if gap is None:
+        raise HTTPException(status_code=404, detail="Gap not found")
+    return {"gap": gap}
+
+
+@app.post("/api/memory/gaps/{gap_id}/defer")
+async def defer_gap(gap_id: str):
+    ledger = get_gap_ledger()
+    if not ledger.defer(gap_id):
+        raise HTTPException(status_code=404, detail="Gap not found")
+    return {"ok": True}
+
+
+@app.post("/api/memory/gaps/{gap_id}/investigate")
+async def investigate_gap(gap_id: str):
+    """Dispatch active (heavy-ops) investigation of an open gap.
+
+    No-ops with a clear reason unless ``settings.other.memory.heavy_ops_enabled``
+    is explicitly set — this is scaffolding, not a working feature yet.
+    """
+    result = dispatch_gap_investigation(gap_id)
+    if not result.get("ok") and result.get("reason") == "gap not found":
+        raise HTTPException(status_code=404, detail="Gap not found")
+    return result
 
 
 # ============================================================================

@@ -97,3 +97,24 @@ def recall(query: str, plane: str = "world", scope: Optional[str] = None, k: int
     except Exception as e:
         logger.warning("[memory_client] recall failed: %s", e)
         return []
+
+
+def log_gap(
+    question: str,
+    scope: str = "project",
+    priority: str = "medium",
+    strategy: str = "ask",
+) -> Dict[str, Any]:
+    """Flag a knowledge gap for later resolution (Gap Ledger, design doc §13).
+
+    Returns {"ok": bool, "gap"/"error": ...}.
+    """
+    payload = {"question": question, "scope": scope, "priority": priority, "strategy": strategy}
+    try:
+        resp = requests.post(f"{GATEWAY_URL}/api/memory/gaps", json=payload, timeout=_TIMEOUT)
+        if resp.status_code >= 400:
+            return {"ok": False, "error": f"gateway returned {resp.status_code}: {resp.text[:300]}"}
+        return resp.json()
+    except Exception as e:
+        logger.warning("[memory_client] log_gap failed: %s", e)
+        return {"ok": False, "error": str(e)}

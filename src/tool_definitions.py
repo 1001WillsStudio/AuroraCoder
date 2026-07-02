@@ -30,7 +30,7 @@ from .core_tools.tool_store_client import (
 )
 from .core_tools.subagent import run_subagent
 from .core_tools.continue_chat import continue_as_new_chat
-from .core_tools.memory_tools import remember_tool, recall_tool
+from .core_tools.memory_tools import remember_tool, recall_tool, log_gap_tool
 
 
 
@@ -470,6 +470,47 @@ NATIVE_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "log_gap",
+            "description": (
+                "Flag something you don't know but had to guess at or defer, so it's "
+                "tracked instead of silently re-guessed next time (a 'gap'). Use when: "
+                "you resolved ambiguity by guessing, a needed convention/ownership/intent "
+                "was missing, an external system was referenced but you don't understand "
+                "it, or you noticed the SAME uncertainty come up again (recurring gaps are "
+                "escalated automatically). Prefer self-investigating cheap gaps in this "
+                "turn and calling `remember` with the answer instead of logging them — "
+                "`log_gap` is for gaps that are NOT cheap to resolve right now."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "The specific thing you don't know, phrased as a concrete question."
+                    },
+                    "scope": {
+                        "type": "string",
+                        "enum": ["user", "project"],
+                        "description": "'user' = applies across all projects. 'project' = specific to this workspace. Default 'project'."
+                    },
+                    "priority": {
+                        "type": "string",
+                        "enum": ["low", "medium", "high"],
+                        "description": "How much this gap is blocking good decisions. Default 'medium'."
+                    },
+                    "strategy": {
+                        "type": "string",
+                        "enum": ["self", "ask"],
+                        "description": "'self' if this is plausibly self-investigable later (grep/git log/docs). 'ask' if only the user can answer it. Default 'ask'."
+                    }
+                },
+                "required": ["question"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "continue_as_new_chat",
             "description": (
                 "Continue the current task in a fresh conversation. "
@@ -540,6 +581,7 @@ TOOL_FUNCTION_MAP = {
     "continue_as_new_chat": continue_as_new_chat,
     "remember": remember_tool,
     "recall": recall_tool,
+    "log_gap": log_gap_tool,
 }
 
 

@@ -1,6 +1,6 @@
 """
-``remember`` / ``recall`` tool implementations — the agent-facing surface
-of the memory system's Layer 1 (light runtime).
+``remember`` / ``recall`` / ``log_gap`` tool implementations — the
+agent-facing surface of the memory system's Layer 1 (light runtime).
 
 Both are thin wrappers around ``memory_client`` — all real work (storage,
 ranking, redaction) happens in the gateway process; see
@@ -49,3 +49,16 @@ def recall_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
         lines.append(f"- [{r['type']}] {r['description']} (confidence={r['confidence']})")
         lines.append(f"  {r['content']}")
     return "\n".join(lines), arguments
+
+
+def log_gap_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    result = memory_client.log_gap(
+        question=arguments["question"],
+        scope=arguments.get("scope", "project"),
+        priority=arguments.get("priority", "medium"),
+        strategy=arguments.get("strategy", "ask"),
+    )
+    if result.get("ok"):
+        gap = result.get("gap", {})
+        return f"Logged gap (id={gap.get('gap_id')}, priority={gap.get('priority')}): {arguments['question']}", arguments
+    return f"Failed to log gap: {result.get('error') or result.get('reason', 'unknown error')}", arguments
