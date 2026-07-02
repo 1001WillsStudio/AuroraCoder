@@ -26,12 +26,14 @@ gateway/memory/
   stance.py       build_stance_block() — assembles the always-injected prefix block
   gap_store.py    GapLedger — SQLite work-queue for open knowledge gaps
   ops/
-    prompts.py       Unified write-pass system prompt (no-op gate, "what NOT to save")
-    similarity.py    Shared keyword-overlap helper (used by extractor + consolidator)
-    extractor.py      Layer 2a: ONE structured LLM call per finished session, judges
-                      both agent-nominated (`remember`) and discovered candidates
-    consolidator.py   Layer 2a: dedupe + unused-decay heuristics (no LLM)
-    dispatcher.py     Layer 2b: DooD worker spawn/teardown — gated, unexercised
+    prompts.py             Unified write-pass system prompt (no-op gate, "what NOT to save")
+    similarity.py          Shared keyword-overlap helper (used by extractor + consolidator)
+    conversation_search.py Shared cross-conversation keyword search (used by extractor;
+                           reachable over HTTP for the future Layer 2b worker too)
+    extractor.py            Layer 2a: ONE structured LLM call per finished session, judges
+                            both agent-nominated (`remember`) and discovered candidates
+    consolidator.py         Layer 2a: dedupe + unused-decay heuristics (no LLM)
+    dispatcher.py           Layer 2b: DooD worker spawn/teardown — gated, unexercised
 
 src/core_tools/
   memory_client.py  Backend's only bridge to gateway memory API (fail-open)
@@ -147,6 +149,53 @@ Consequences worth being explicit about:
   tool result left to surface a failure through by the time this runs
   anyway. A missed memory can usually be re-established next session.
 
+## Why the write pass isn't an agent (and where cross-conversation context comes from instead)
+
+Natural follow-up question once judgment needs full transcript context:
+should the write pass go further and become a real agent with tool
+access (read files, search other sessions, etc.) to judge candidates
+more accurately? Deliberately no, for now:
+
+- It runs unattended, after **every** session and every
+  `continue_as_new_chat` handoff — by far the highest-frequency automated
+  LLM call in this system. Giving it the full tool suite (writes, shell)
+  would reintroduce the exact blast-radius problem the Layer 2b worker's
+  Docker isolation exists to contain, for something that fires
+  constantly rather than on rare, explicit gap-investigation requests.
+- The case that genuinely needs multi-step, tool-using investigation
+  already exists and is already isolated: Layer 2b's Gap Engine
+  (`ops/dispatcher.py`). Growing the write pass into an agent would
+  duplicate that role with a *less* isolated version of it.
+
+What the write pass actually needed was a bit more read-only context, not
+autonomy — so instead of tools, each nominated candidate gets two cheap,
+**deterministic** pre-fetches while the prompt is being built (the model
+never decides whether/how to search; it just receives the results):
+
+1. Similar existing memories (`ops/similarity.find_similar_existing`) —
+   unchanged from before.
+2. Relevant snippets from **other past conversations**
+   (`ops/conversation_search.search_conversations`) — new. Plain
+   keyword-overlap search over this gateway's own conversation store, so
+   a nominated candidate can be corroborated, contradicted, or revealed
+   as a one-off by earlier sessions instead of being judged on this
+   session's framing alone.
+
+`conversation_search.py` is deliberately a single, shared implementation
+rather than something built directly into the write pass: the Gap Engine
+worker will eventually want the same "search this user's history"
+capability, and since it runs in its own isolated container rather than
+the gateway process, two independent components each growing their own
+private reach into *all* stored conversations would be worse than one
+piece of logic with two access paths. The write pass calls it in-process
+(as a normal function); a new route,
+`GET /api/memory/conversations/search`, exposes the identical logic over
+HTTP for whenever the worker's investigate/report protocol is built —
+that route has no caller yet outside tests and the write pass. No project/
+workspace filter is needed here: AuroraCoder runs exactly one workspace
+per gateway instance, so every conversation this gateway has ever stored
+already belongs to the same project.
+
 ## What was deliberately left unfinished (and why)
 
 - **Gap Engine investigation protocol.** `dispatcher.py` can spawn/snapshot/
@@ -157,6 +206,9 @@ Consequences worth being explicit about:
   dispatcher). Building that without a live Docker integration-test loop
   risked shipping a plausible-looking but untested fake. The container
   lifecycle plumbing it will sit on top of is real and tested.
+  `GET /api/memory/conversations/search` is already there and tested for
+  when this gets built, so the worker doesn't need its own separate path
+  into conversation history (see "Why the write pass isn't an agent" above).
 - **Reflection / lesson learning (design doc §14).** Not started. This is
   additive on top of the same extraction pass (a second prompt variant keyed
   off error/retry/correction signals) — natural next milestone once the Gap

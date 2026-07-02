@@ -15,9 +15,15 @@ set of rules (see ``ops/prompts.py`` module docstring for the reasoning):
   - "Discovered": things the transcript reveals that the agent didn't
     explicitly flag.
 
-Runs entirely inside the gateway process: no tool access, no sandbox.
-Safe by construction — this is exactly why it doesn't need the isolated
-worker container that Layer 2b (Gap Engine) needs.
+For each nominated candidate, two cheap deterministic pre-fetches are
+done before the (single) LLM call: similar existing memories
+(``ops/similarity.py``) and relevant snippets from OTHER past
+conversations (``ops/conversation_search.py``). Both are plain function
+calls the caller makes while building the prompt — not tool calls the
+model itself decides to make. This still runs entirely inside the
+gateway process: no tool access, no sandbox, no agent loop. Safe by
+construction — this is exactly why it doesn't need the isolated worker
+container that Layer 2b (Gap Engine) needs.
 
 Triggered from ``gateway/streaming.py`` both when a top-level user_chat
 conversation reaches a terminal status, AND at the moment a conversation
@@ -42,6 +48,7 @@ from gateway.memory.schema import MemoryItem, MEMORY_PLANES, MEMORY_TYPES
 from gateway.memory.store import get_repository
 from gateway.memory.ops.prompts import EXTRACTION_SYSTEM_PROMPT, build_extraction_user_prompt
 from gateway.memory.ops.similarity import find_similar_existing
+from gateway.memory.ops.conversation_search import search_conversations
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +56,7 @@ MAX_TRANSCRIPT_CHARS = 20_000
 MIN_MESSAGES_TO_BOTHER = 4  # skip trivial 1-2 turn conversations, UNLESS something was nominated
 EXTRACTION_MAX_TOKENS = 3072
 SIMILAR_PER_NOMINATION_LIMIT = 5
+OTHER_CONVERSATIONS_PER_NOMINATION_LIMIT = 3
 
 
 def extraction_enabled() -> bool:
@@ -198,11 +206,26 @@ def run_extraction(conversation_id: str, messages: List[Dict[str, Any]]) -> List
                     similar.insert(0, {"id": existing.id, "description": existing.description,
                                         "type": existing.type, "confidence": existing.confidence})
 
+        # Deterministic pre-fetch (same shape as similar_by_nomination above),
+        # not an agent tool call — the model never decides whether/how to
+        # search, it just gets a few relevant snippets from OTHER sessions
+        # alongside the candidate, so it can judge whether something is
+        # actually corroborated (or contradicted) by earlier history rather
+        # than trusting this session's framing alone. See
+        # ops/conversation_search.py module docstring for why this is a
+        # single shared, deterministic utility rather than tool access.
+        other_convs_by_nomination = [
+            search_conversations(cand["description"], exclude_conversation_id=conversation_id,
+                                  limit=OTHER_CONVERSATIONS_PER_NOMINATION_LIMIT)
+            for cand in nominated
+        ]
+
         kwargs: Dict[str, Any] = dict(
             model=cfg["model"],
             messages=[
                 {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
-                {"role": "user", "content": build_extraction_user_prompt(transcript, nominated, similar_by_nomination)},
+                {"role": "user", "content": build_extraction_user_prompt(
+                    transcript, nominated, similar_by_nomination, other_convs_by_nomination)},
             ],
             max_tokens=EXTRACTION_MAX_TOKENS,
             temperature=0,

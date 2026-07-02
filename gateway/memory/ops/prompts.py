@@ -91,6 +91,14 @@ be updated in place) instead of creating a new, separate entry. If a nominated c
 named an existing memory_id to update, treat that as the agent's own explicit intent and prefer
 honoring it (as "duplicate_of") unless you're rejecting the candidate entirely.
 
+## Other conversations
+You may also be shown snippets from OTHER past sessions with this user, found by a simple keyword
+search (not curated, may be irrelevant — judge relevance yourself). Use these only to sanity-check
+a nominated candidate: does an earlier session corroborate it (raise your confidence), contradict
+it (the user may have changed their mind — prefer the more recent statement, or reject if genuinely
+unclear which should win), or reveal it's really a one-off from this session rather than a durable
+pattern? Do not go out of your way to invent connections that aren't clearly there.
+
 ## Output format
 Return ONLY a JSON object: {"memories": [...]}. Each item:
 {
@@ -111,9 +119,13 @@ def build_extraction_user_prompt(
     transcript_text: str,
     nominated: Optional[List[Dict[str, Any]]] = None,
     similar_by_nomination: Optional[List[List[Dict[str, Any]]]] = None,
+    other_conversations_by_nomination: Optional[List[List[Dict[str, Any]]]] = None,
 ) -> str:
-    """Build the combined user prompt: transcript + nominated candidates
-    (each paired with any similar existing memories found for it)."""
+    """Build the combined user prompt: transcript + nominated candidates,
+    each paired with any similar existing memories AND any relevant
+    snippets from other past conversations found for it (both are cheap
+    deterministic pre-fetches done by the caller, not tool calls the model
+    makes itself — see ops/conversation_search.py)."""
     parts = [
         "Here is the session transcript (user/assistant/tool messages, truncated if very long).",
         "--- TRANSCRIPT START ---",
@@ -135,5 +147,9 @@ def build_extraction_user_prompt(
             if similar:
                 parts.append("Existing memories that might be related/duplicates:")
                 parts.append(json.dumps(similar, indent=2))
+            other = (other_conversations_by_nomination or [[]] * len(nominated))[i] if other_conversations_by_nomination else []
+            if other:
+                parts.append("Snippets from other past conversations that might be related (keyword search, not curated):")
+                parts.append(json.dumps(other, indent=2))
 
     return "\n".join(parts)

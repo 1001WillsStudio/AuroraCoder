@@ -71,6 +71,7 @@ from gateway.memory.stance import build_stance_block
 from gateway.memory.retrieval import rank_candidates
 from gateway.memory.gap_store import get_gap_ledger, GAP_PRIORITIES, GAP_STRATEGIES
 from gateway.memory.ops.dispatcher import dispatch_gap_investigation
+from gateway.memory.ops.conversation_search import search_conversations
 
 # Import app after stream deps are resolved — app already exists in api.py's
 # namespace by the time api.py does ``from gateway import routes``.
@@ -657,6 +658,22 @@ async def investigate_gap(gap_id: str):
     if not result.get("ok") and result.get("reason") == "gap not found":
         raise HTTPException(status_code=404, detail="Gap not found")
     return result
+
+
+@app.get("/api/memory/conversations/search")
+async def search_other_conversations(query: str, exclude: Optional[str] = None, limit: int = 3):
+    """Deterministic keyword search over past conversations (see
+    ``ops/conversation_search.py``).
+
+    Called in-process by the write-pass today. This HTTP route exists so
+    Layer 2b's gap-investigation worker — which runs in its own isolated
+    container, not the gateway process — can reach the SAME search
+    implementation instead of growing its own separate path into
+    conversation history once its investigate/report protocol is built.
+    Not yet called by anything outside the write-pass and this repo's
+    tests.
+    """
+    return {"results": search_conversations(query, exclude_conversation_id=exclude, limit=limit)}
 
 
 # ============================================================================

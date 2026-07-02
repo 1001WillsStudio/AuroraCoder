@@ -22,6 +22,8 @@ os.environ.setdefault("AURORACODER_DOCKER", "0")
 from gateway.memory.schema import MemoryItem
 from gateway.memory.store import MemoryRepository
 from gateway.memory.ops import extractor, consolidator as C
+from gateway.memory.ops import conversation_search
+from gateway.conversation_store import store as conv_store
 
 _SAMPLE_MSGS = [
     {"role": "system", "content": "sys"},
@@ -49,6 +51,15 @@ def _patch_extractor(payload):
         "provider_id": "fake", "base_url": "http://fake", "api_key": "fake-key", "model": "fake-model",
     }
     extractor.OpenAI = lambda base_url, api_key: _FakeClient(payload)
+
+
+def test_prompt_renders_other_conversation_snippets():
+    from gateway.memory.ops.prompts import build_extraction_user_prompt
+
+    nominated = [{"description": "desc", "content": "c", "plane": "world", "type": "project", "scope": "project"}]
+    other = [[{"conversation_id": "conv-old", "title": "Old chat", "snippet": "ruff stuff", "score": 0.4}]]
+    prompt = build_extraction_user_prompt("transcript", nominated, [[]], other)
+    assert "conv-old" in prompt and "ruff stuff" in prompt
 
 
 def test_transcript_rendering():
@@ -183,6 +194,60 @@ def test_nominated_duplicate_of_updates_existing_memory_in_place():
     assert result == [existing.id], result
     updated = repo.get(existing.id)
     assert updated.content.startswith("Updated wording")
+
+
+# ---------------------------------------------------------------------------
+# Cross-conversation search (ops/conversation_search.py) — the shared,
+# deterministic utility both the write-pass (in-process) and, eventually,
+# Layer 2b's gap-investigation worker (over HTTP) are meant to use, rather
+# than each growing its own reach into all stored conversation history.
+# ---------------------------------------------------------------------------
+
+def _seed_conversation(cid: str, title_msg: str, other_msgs=None):
+    conv_store.create_conversation(conversation_id=cid, conv_type="user_chat")
+    msgs = [{"role": "user", "content": title_msg}] + (other_msgs or [])
+    conv_store.save_messages(cid, msgs)
+
+
+def test_conversation_search_finds_relevant_past_conversation():
+    _seed_conversation("conv-a", "I always want ruff run before you finish any task.")
+    _seed_conversation("conv-b", "Completely unrelated chat about deployment scripts.")
+
+    results = conversation_search.search_conversations("run ruff before finishing", limit=5)
+    ids = [r["conversation_id"] for r in results]
+    assert "conv-a" in ids
+    assert "conv-b" not in ids
+
+
+def test_conversation_search_excludes_specified_conversation():
+    _seed_conversation("conv-c", "Run ruff before declaring anything done.")
+    results = conversation_search.search_conversations("run ruff before finishing", exclude_conversation_id="conv-c")
+    assert all(r["conversation_id"] != "conv-c" for r in results)
+
+
+def test_conversation_search_empty_query_returns_empty():
+    assert conversation_search.search_conversations("") == []
+
+
+def test_extraction_calls_conversation_search_per_nomination():
+    calls = []
+
+    def _fake_search(query, exclude_conversation_id=None, limit=3):
+        calls.append((query, exclude_conversation_id))
+        return [{"conversation_id": "conv-old", "title": "old chat", "snippet": "…", "score": 0.5}]
+
+    orig = extractor.search_conversations
+    extractor.search_conversations = _fake_search
+    try:
+        _patch_extractor('{"memories": []}')
+        extractor.run_extraction("conv-current", _MSGS_WITH_REMEMBER_CALL)
+    finally:
+        extractor.search_conversations = orig
+
+    assert len(calls) == 1
+    query, excluded = calls[0]
+    assert query == _REMEMBER_ARGS["description"]
+    assert excluded == "conv-current"
 
 
 def test_remember_tool_is_a_pure_local_noop():
