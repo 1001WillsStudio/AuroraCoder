@@ -174,6 +174,24 @@ def get_web_secondary_config() -> dict:
     return {"provider_id": "", "base_url": "", "api_key": "", "model": ""}
 
 
+def get_memory_extraction_config() -> dict:
+    """Resolve the model used for passive memory extraction/consolidation
+    (Layer 2a). Falls back to the default provider — this is a
+    structured-output-only, no-tool call, so it doesn't need a
+    particularly strong model, but reuses the default rather than
+    inventing a second required setting for v1."""
+    settings = get_all_settings()
+    mem = settings.get("other", {}).get("memory", {})
+    provider_id = mem.get("extraction_provider", "") or get_default_provider()
+    r = resolve_provider(provider_id)
+    return {
+        "provider_id": provider_id,
+        "base_url": r["base_url"],
+        "api_key": r["api_key"],
+        "model": r.get("model", ""),
+    }
+
+
 def get_toolstore_url() -> str:
     """Return the ToolStore URL from settings or env."""
     settings = get_all_settings()
