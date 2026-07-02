@@ -18,8 +18,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("AURORACODER_DATA_DIR", tempfile.mkdtemp())
 os.environ.setdefault("AURORACODER_DOCKER", "0")
 
-from gateway.memory.schema import MemoryItem
-from gateway.memory.store import MemoryRepository
+from memory.schema import MemoryItem
+from memory.store import MemoryRepository
 
 
 def test_schema_markdown_roundtrip():

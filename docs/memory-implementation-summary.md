@@ -17,8 +17,13 @@ This implements the design doc's layering exactly:
 
 ## Where everything lives
 
+`memory/` is a top-level package, not nested under `gateway/` — it's a
+distinct subsystem that happens to run inside the gateway process (see
+"Why memory isn't a gateway concern" below), not one of the gateway's
+own concerns like conversation/settings persistence are.
+
 ```
-gateway/memory/
+memory/
   schema.py       MemoryItem dataclass, markdown+frontmatter (de)serialization
   store.py        MemoryRepository — file-backed store + SQLite ranking index
   redact.py       Secret redaction applied on every write
@@ -52,12 +57,29 @@ tests/
   test_memory_layer3.py    gap ledger dedupe/escalation, dispatcher gate + docker-arg build
 ```
 
-Gateway is the **sole owner** of all memory state (files + `index.sqlite` +
-`gaps.sqlite` under `DATA_DIR/memory/`), exactly mirroring how it already
-exclusively owns conversations and settings. The backend (`src/`) never
-touches the store directly — it only talks to `gateway/memory/*` over HTTP,
-and every call in `memory_client.py` fails open (empty/inert result) rather
-than raising, so a memory outage can never break the agent's turn loop.
+The gateway process is the **sole owner** of all memory state at runtime
+(files + `index.sqlite` + `gaps.sqlite` under `DATA_DIR/memory/`), exactly
+mirroring how it already exclusively owns conversations and settings —
+but that's a statement about which *process* runs this code, not which
+*package* it lives in (see below). The backend (`src/`) never touches the
+store directly — it only talks to `/api/memory/*` over HTTP, and every
+call in `memory_client.py` fails open (empty/inert result) rather than
+raising, so a memory outage can never break the agent's turn loop.
+
+## Why memory isn't a gateway concern
+
+`memory/` originally lived at `gateway/memory/`, reasoned about (correctly)
+as "runs in the same process that already owns all other persistent
+state." But nesting it inside a package literally named `gateway` —
+alongside `conversation_store.py`, `routes.py`, `streaming.py`, the actual
+SSE-proxy/persistence plumbing the name describes — made memory read like
+one more gateway concern, when it's really a whole separate subsystem
+(schema, store, retrieval, redaction, a Layer 2 write pass, a Gap Ledger)
+that simply happens to run in the same process. Moved to a top-level
+`memory/` package, sibling to `gateway/` and `src/`. Nothing about
+*runtime* changed: still the same process, same container, same
+`/api/memory/*` routes — `gateway/routes.py` and `gateway/streaming.py`
+just import from `memory.*` instead of owning it.
 
 ## Runtime behavior
 

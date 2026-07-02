@@ -36,7 +36,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from gateway.conversation_store import store
-from gateway.memory.ops.similarity import tokens
+from memory.ops.similarity import tokens
 
 # Only look at the N most recently touched conversations before scoring —
 # same "recency-cap before ranking" pattern as retrieval.py's RECENCY_CAP,

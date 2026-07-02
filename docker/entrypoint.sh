@@ -19,7 +19,7 @@ fi
 
 # ── Role selection ─────────────────────────────────────────────────────────
 # AURORACODER_ROLE=memory-worker boots a slim profile for the Layer 2b
-# Gap Engine worker (gateway/memory/ops/dispatcher.py): just the stateless
+# Gap Engine worker (memory/ops/dispatcher.py): just the stateless
 # backend agent process, no desktop/VNC/gateway/frontend/toolstore. The
 # worker is short-lived, spawned on demand with an isolated workspace
 # snapshot, and driven directly over its backend API by the dispatcher — it

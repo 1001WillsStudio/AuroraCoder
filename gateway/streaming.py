@@ -25,8 +25,8 @@ from gateway.workspace import (
     mark_file_touched,
     snapshot_file,
 )
-from gateway.memory.ops.extractor import run_extraction
-from gateway.memory.ops.consolidator import run_consolidation
+from memory.ops.extractor import run_extraction
+from memory.ops.consolidator import run_consolidation
 
 logging.basicConfig(
     level=logging.INFO,

@@ -3,9 +3,9 @@
 agent-facing surface of the memory system's Layer 1 (light runtime).
 
 Both are thin wrappers around ``memory_client`` — all real work (storage,
-ranking, redaction) happens in the gateway process; see
-``gateway/memory/``.  Kept deliberately dumb here so the backend never
-needs to touch the on-disk store.
+ranking, redaction) happens in the gateway process; see ``memory/``.
+Kept deliberately dumb here so the backend never needs to touch the
+on-disk store.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ def remember_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
 
     Memory is no longer written synchronously. This call just leaves a
     marker in the conversation transcript; the gateway's unified
-    end-of-session pass (gateway/memory/ops/extractor.py) parses it back
+    end-of-session pass (memory/ops/extractor.py) parses it back
     out and judges it with full transcript context, alongside anything
     it discovers on its own. See that module's docstring for why: a
     synchronous mid-session review could only ever judge structural

@@ -18,8 +18,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("AURORACODER_DATA_DIR", tempfile.mkdtemp())
 os.environ.setdefault("AURORACODER_DOCKER", "0")
 
-from gateway.memory.gap_store import GapLedger
-from gateway.memory.ops import dispatcher
+from memory.gap_store import GapLedger
+from memory.ops import dispatcher
 
 
 def _fresh_ledger() -> GapLedger:
@@ -123,7 +123,7 @@ def test_heavy_ops_disabled_by_default_short_circuits_before_any_io():
     dispatcher.snapshot_workspace = lambda gap_id: calls.append("snapshot") or pathlib.Path(tempfile.mkdtemp())
     dispatcher.spawn_worker = lambda gap_id, snap: calls.append("spawn") or "fake-container"
     try:
-        from gateway.memory.gap_store import get_gap_ledger
+        from memory.gap_store import get_gap_ledger
         ledger = get_gap_ledger()
         gap = ledger.log_gap("test gap for heavy-ops gate")
 

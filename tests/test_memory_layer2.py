@@ -19,10 +19,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("AURORACODER_DATA_DIR", tempfile.mkdtemp())
 os.environ.setdefault("AURORACODER_DOCKER", "0")
 
-from gateway.memory.schema import MemoryItem
-from gateway.memory.store import MemoryRepository
-from gateway.memory.ops import extractor, consolidator as C
-from gateway.memory.ops import conversation_search
+from memory.schema import MemoryItem
+from memory.store import MemoryRepository
+from memory.ops import extractor, consolidator as C
+from memory.ops import conversation_search
 from gateway.conversation_store import store as conv_store
 
 _SAMPLE_MSGS = [
@@ -54,7 +54,7 @@ def _patch_extractor(payload):
 
 
 def test_prompt_renders_other_conversation_snippets():
-    from gateway.memory.ops.prompts import build_extraction_user_prompt
+    from memory.ops.prompts import build_extraction_user_prompt
 
     nominated = [{"description": "desc", "content": "c", "plane": "world", "type": "project", "scope": "project"}]
     other = [[{"conversation_id": "conv-old", "title": "Old chat", "snippet": "ruff stuff", "score": 0.4}]]

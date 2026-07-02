@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from gateway.settings_store import get_other_settings
-from gateway.memory.gap_store import get_gap_ledger
+from memory.gap_store import get_gap_ledger
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ def _worker_image() -> str:
 
 
 def _snapshot_root() -> Path:
-    from gateway.memory.store import DEFAULT_STORAGE_DIR
+    from memory.store import DEFAULT_STORAGE_DIR
     root = DEFAULT_STORAGE_DIR / "gap_workspaces"
     root.mkdir(parents=True, exist_ok=True)
     return root
@@ -173,7 +173,7 @@ def dispatch_gap_investigation(gap_id: str) -> Dict[str, Any]:
         logger.warning(
             "[memory-worker] Spawned %s for gap %s, but the investigation protocol "
             "is not implemented yet — deferring gap instead of investigating. "
-            "See gateway/memory/ops/dispatcher.py module docstring.",
+            "See memory/ops/dispatcher.py module docstring.",
             container_name, gap_id,
         )
         ledger.defer(gap_id)

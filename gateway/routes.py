@@ -65,13 +65,13 @@ from gateway.streaming import (
     _subscriber_sse,
     _format_sse,
 )
-from gateway.memory.store import get_repository as get_memory_repository
-from gateway.memory.schema import MemoryItem, MEMORY_PLANES, MEMORY_TYPES
-from gateway.memory.stance import build_stance_block
-from gateway.memory.retrieval import rank_candidates
-from gateway.memory.gap_store import get_gap_ledger, GAP_PRIORITIES, GAP_STRATEGIES
-from gateway.memory.ops.dispatcher import dispatch_gap_investigation
-from gateway.memory.ops.conversation_search import search_conversations
+from memory.store import get_repository as get_memory_repository
+from memory.schema import MemoryItem, MEMORY_PLANES, MEMORY_TYPES
+from memory.stance import build_stance_block
+from memory.retrieval import rank_candidates
+from memory.gap_store import get_gap_ledger, GAP_PRIORITIES, GAP_STRATEGIES
+from memory.ops.dispatcher import dispatch_gap_investigation
+from memory.ops.conversation_search import search_conversations
 
 # Import app after stream deps are resolved — app already exists in api.py's
 # namespace by the time api.py does ``from gateway import routes``.
@@ -525,12 +525,12 @@ async def remember_memory(body: RememberRequest):
 
     The agent's ``remember`` tool does NOT call this at runtime anymore
     (see ``src/core_tools/memory_tools.py`` — it's a purely local no-op
-    that leaves a marker in the transcript for the gateway's unified
-    end-of-session pass to judge with full context, alongside anything it
-    discovers on its own; see ``gateway/memory/ops/extractor.py``). This
-    route is kept as a plain direct-write primitive: useful for a future
-    "add memory manually" UI, tests, or any other trusted caller that
-    doesn't need the LLM judgment pass a live agent tool call does.
+    that leaves a marker in the transcript for the unified end-of-session
+    pass to judge with full context, alongside anything it discovers on
+    its own; see ``memory/ops/extractor.py``). This route is kept as a
+    plain direct-write primitive: useful for a future "add memory
+    manually" UI, tests, or any other trusted caller that doesn't need
+    the LLM judgment pass a live agent tool call does.
     """
     if not _memory_enabled():
         return {"ok": False, "reason": "memory disabled in settings"}
@@ -602,7 +602,7 @@ async def delete_memory(memory_id: str):
 # ============================================================================
 # Logging/listing/resolving gaps is always on (cheap, synchronous). Actively
 # *investigating* an open gap is Layer 2b heavy-ops, disabled by default —
-# see gateway/memory/ops/dispatcher.py.
+# see memory/ops/dispatcher.py.
 
 @app.post("/api/memory/gaps")
 async def log_gap(body: LogGapRequest):

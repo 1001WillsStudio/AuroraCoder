@@ -11,10 +11,10 @@ Note there is no ``remember()`` here: writing memory is no longer a
 runtime operation at all. The agent's ``remember`` tool
 (``memory_tools.remember_tool``) is purely local — it leaves a marker in
 the transcript and returns immediately, with zero calls to this module.
-The gateway's unified end-of-session pass (``gateway/memory/ops/
-extractor.py``) parses those markers back out of the transcript and
-judges them with full conversation context, alongside anything it
-discovers on its own. See that module's docstring for why.
+The gateway's unified end-of-session pass (``memory/ops/extractor.py``)
+parses those markers back out of the transcript and judges them with
+full conversation context, alongside anything it discovers on its own.
+See that module's docstring for why.
 
 Every function here fails open: on any network/parse error it returns an
 inert default (empty stance, empty recall results, a clear error string

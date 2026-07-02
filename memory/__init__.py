@@ -1,10 +1,13 @@
 """
 Agent Memory subsystem — persistent, typed, agent-driven memory.
 
-Lives inside ``gateway/`` because gateway is already the sole owner of
-every other piece of persistent state in AuroraCoder (conversations,
-settings) — see ``gateway/conversation_store.py`` and
-``gateway/settings_store.py`` for the precedent this package follows.
+A top-level package, not nested under ``gateway/`` — it's a distinct
+subsystem that happens to run inside the same process as the gateway
+(exposed via ``/api/memory/*`` routes in ``gateway/routes.py``, same as
+``gateway/conversation_store.py`` and ``gateway/settings_store.py`` are
+the gateway's own persistence — memory reuses that "gateway owns all
+persistent state" precedent for where it *runs*, without being one of
+the gateway's own concerns organizationally).
 
 Layers (see ``docs/code-agent-memory-design.md``):
     - Layer 1 (this package's ``schema``/``store``/``stance``/``retrieval``/

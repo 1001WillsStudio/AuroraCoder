@@ -22,9 +22,9 @@ import logging
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple
 
-from gateway.memory.schema import MemoryItem
-from gateway.memory.store import MemoryRepository, get_repository
-from gateway.memory.ops.similarity import similarity as _similarity
+from memory.schema import MemoryItem
+from memory.store import MemoryRepository, get_repository
+from memory.ops.similarity import similarity as _similarity
 
 logger = logging.getLogger(__name__)
 

@@ -44,11 +44,11 @@ from openai import OpenAI
 
 from gateway.provider_registry import get_memory_extraction_config
 from gateway.settings_store import get_other_settings
-from gateway.memory.schema import MemoryItem, MEMORY_PLANES, MEMORY_TYPES
-from gateway.memory.store import get_repository
-from gateway.memory.ops.prompts import EXTRACTION_SYSTEM_PROMPT, build_extraction_user_prompt
-from gateway.memory.ops.similarity import find_similar_existing
-from gateway.memory.ops.conversation_search import search_conversations
+from memory.schema import MemoryItem, MEMORY_PLANES, MEMORY_TYPES
+from memory.store import get_repository
+from memory.ops.prompts import EXTRACTION_SYSTEM_PROMPT, build_extraction_user_prompt
+from memory.ops.similarity import find_similar_existing
+from memory.ops.conversation_search import search_conversations
 
 logger = logging.getLogger(__name__)
 
