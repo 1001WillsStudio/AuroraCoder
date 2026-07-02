@@ -65,6 +65,10 @@ from gateway.streaming import (
     _subscriber_sse,
     _format_sse,
 )
+from gateway.memory.store import get_repository as get_memory_repository
+from gateway.memory.schema import MemoryItem, MEMORY_PLANES, MEMORY_TYPES
+from gateway.memory.stance import build_stance_block
+from gateway.memory.retrieval import rank_candidates
 
 # Import app after stream deps are resolved — app already exists in api.py's
 # namespace by the time api.py does ``from gateway import routes``.
@@ -100,6 +104,21 @@ class _SettingsUpdate(BaseModel):
 class DeleteRequest(BaseModel):
     """Request body for deleting a file or folder."""
     path: str = Field(..., description="Relative path within the workspace")
+
+
+class RememberRequest(BaseModel):
+    """Payload for the ``remember`` tool — one typed memory write."""
+    content: str = Field(..., description="The memory itself, in the agent's own words")
+    description: str = Field(..., description="One-liner used for relevance ranking")
+    plane: str = Field("world", description="'stance' (always injected) or 'world' (retrieved)")
+    type: str = Field("project", description="See MEMORY_TYPES")
+    scope: str = Field("project", description="'user' (global) or 'project'")
+    confidence: str = Field("medium", description="'high' | 'medium' | 'low'")
+    provenance: str = Field("agent-stated", description="How this was learned")
+    volatile: bool = Field(False, description="True if this fact can go stale")
+    ttl_days: Optional[int] = Field(None, description="Re-verify after this many days if volatile")
+    supersedes: Optional[str] = Field(None, description="ID of an existing memory this replaces/updates")
+    memory_id: Optional[str] = Field(None, description="Reuse this id to update an existing memory in place")
 
 
 def _get_workspace() -> Optional[Path]:
@@ -453,6 +472,111 @@ async def refresh_toolstore():
         return {"ok": True, "output": result.stdout[-2000:], "errors": result.stderr[-500:] if result.returncode != 0 else None}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+# ============================================================================
+# Endpoints — Agent Memory
+# ============================================================================
+# Gateway is the sole owner/writer of the memory store (files + SQLite index
+# in DATA_DIR/memory), mirroring how it already exclusively owns the
+# conversation store above. The backend (src/) is a thin HTTP client — see
+# src/core_tools/memory_client.py — so there is never more than one process
+# writing the on-disk store. See docs/code-agent-memory-design.md.
+
+def _memory_enabled() -> bool:
+    settings = get_all_settings()
+    return bool(settings.get("other", {}).get("memory", {}).get("enabled", True))
+
+
+@app.get("/api/memory/stance")
+async def get_memory_stance(scope: Optional[str] = None):
+    """Return the always-injected Stance block for the system prompt.
+
+    Called once per new conversation (session start) by the backend —
+    NOT per turn — so this can afford to do real work without hurting
+    hot-path latency. Fails open: returns an empty block on any error
+    rather than blocking the agent's turn loop.
+    """
+    if not _memory_enabled():
+        return {"stance": ""}
+    try:
+        repo = get_memory_repository()
+        return {"stance": build_stance_block(repo, scope=scope)}
+    except Exception:
+        logger.exception("[memory] Stance assembly failed — failing open")
+        return {"stance": ""}
+
+
+@app.post("/api/memory/remember")
+async def remember_memory(body: RememberRequest):
+    """Write (or update, via ``memory_id``) one typed memory.
+
+    Only ever called by the agent's ``remember`` tool — memory writes are
+    agent-authored by construction (design doc §7.1 item 4 / §18).
+    """
+    if not _memory_enabled():
+        return {"ok": False, "reason": "memory disabled in settings"}
+
+    if body.plane not in MEMORY_PLANES:
+        raise HTTPException(status_code=400, detail=f"invalid plane: {body.plane}")
+    if body.type not in MEMORY_TYPES:
+        raise HTTPException(status_code=400, detail=f"invalid type: {body.type}")
+
+    kwargs = dict(
+        content=body.content,
+        description=body.description,
+        plane=body.plane,
+        type=body.type,
+        scope=body.scope,
+        confidence=body.confidence,
+        provenance=body.provenance,
+        volatile=body.volatile,
+        ttl_days=body.ttl_days,
+        supersedes=body.supersedes,
+    )
+    if body.memory_id:
+        kwargs["id"] = body.memory_id
+
+    try:
+        item = MemoryItem(**kwargs)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    repo = get_memory_repository()
+    saved = repo.upsert(item)
+    return {"ok": True, "id": saved.id}
+
+
+@app.get("/api/memory/recall")
+async def recall_memory(query: str = "", plane: str = "world", scope: Optional[str] = None, k: int = 5):
+    """Query-aware retrieval over the World Model (design doc §12)."""
+    if not _memory_enabled():
+        return {"results": []}
+    if plane not in MEMORY_PLANES:
+        raise HTTPException(status_code=400, detail=f"invalid plane: {plane}")
+
+    repo = get_memory_repository()
+    results = rank_candidates(repo, query=query, plane=plane, scope=scope, k=max(1, min(k, 20)))
+    if results:
+        repo.bump_usage([r["id"] for r in results])
+    return {"results": results}
+
+
+@app.get("/api/memory")
+async def list_memory(plane: Optional[str] = None, scope: Optional[str] = None, limit: int = 200):
+    """List memory metadata (no content) — for a future Memory browser UI / debugging."""
+    repo = get_memory_repository()
+    return {"memories": repo.list(plane=plane, scope=scope, limit=limit)}
+
+
+@app.delete("/api/memory/{memory_id}")
+async def delete_memory(memory_id: str):
+    """Delete a memory (human-editable escape hatch — memory files are also
+    plain markdown files a user can hand-edit directly on disk)."""
+    repo = get_memory_repository()
+    if not repo.delete(memory_id):
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return {"deleted": memory_id}
 
 
 # ============================================================================

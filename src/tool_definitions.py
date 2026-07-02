@@ -30,6 +30,7 @@ from .core_tools.tool_store_client import (
 )
 from .core_tools.subagent import run_subagent
 from .core_tools.continue_chat import continue_as_new_chat
+from .core_tools.memory_tools import remember_tool, recall_tool
 
 
 
@@ -374,6 +375,101 @@ NATIVE_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "remember",
+            "description": (
+                "Save a durable fact to long-term memory so future sessions don't need "
+                "to be told again. Use SPARINGLY — only for facts that (a) are NOT "
+                "derivable from the code/git/AGENTS.md, and (b) would concretely change "
+                "how you or a future agent should act. Good candidates: a stated "
+                "preference or correction, project context (goals/ownership/deadlines/"
+                "incidents), a pointer to an external system (ticket tracker, dashboard), "
+                "or a non-obvious convention/gotcha. Do NOT save: anything re-derivable by "
+                "reading the code, ephemeral task state, secrets/credentials, or anything "
+                "already in AGENTS.md. When in doubt, don't call this tool — silence is the "
+                "correct default (most turns should not call `remember`)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": "The memory itself, written so a future agent can act on it directly."
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "One-line summary used to decide relevance later — be specific (mention identifiers/names)."
+                    },
+                    "plane": {
+                        "type": "string",
+                        "enum": ["stance", "world"],
+                        "description": "'stance' = always shown to you every turn (use only for preference/feedback/communication/autonomy — keep these SHORT). 'world' = retrieved on demand when relevant (use for everything else). Default 'world'."
+                    },
+                    "type": {
+                        "type": "string",
+                        "enum": ["preference", "feedback", "communication", "autonomy", "project", "reference", "convention", "landmine"],
+                        "description": "preference/feedback/communication/autonomy → stance plane. project/reference/convention/landmine → world plane."
+                    },
+                    "scope": {
+                        "type": "string",
+                        "enum": ["user", "project"],
+                        "description": "'user' = applies to this person across all projects. 'project' = specific to the current workspace. Default 'project'."
+                    },
+                    "confidence": {
+                        "type": "string",
+                        "enum": ["high", "medium", "low"],
+                        "description": "'high' if the user stated it directly, 'medium' if inferred, 'low' if guessed."
+                    },
+                    "provenance": {
+                        "type": "string",
+                        "description": "How you learned this, e.g. 'user stated 2026-07-01' or 'inferred from git blame src/pipe/*'."
+                    },
+                    "volatile": {
+                        "type": "boolean",
+                        "description": "True if this fact can go stale (e.g. a deadline, a status) and should be re-verified later. Default false."
+                    },
+                    "memory_id": {
+                        "type": "string",
+                        "description": "Pass the id of an existing memory (from a prior `recall`) to UPDATE it in place instead of creating a duplicate. Prefer this over creating a near-duplicate memory."
+                    }
+                },
+                "required": ["content", "description"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "recall",
+            "description": (
+                "Search long-term memory for facts relevant to the current task "
+                "(preferences, project context, conventions, past gotchas). Use when "
+                "you suspect something was already established in a previous session, "
+                "or the user references prior work you don't have in this conversation."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "What you're trying to find out, in natural language."
+                    },
+                    "plane": {
+                        "type": "string",
+                        "enum": ["stance", "world"],
+                        "description": "Almost always 'world' (default) — 'stance' is already shown to you every turn so rarely needs an explicit recall."
+                    },
+                    "k": {
+                        "type": "integer",
+                        "description": "Max number of results (default 5)."
+                    }
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "continue_as_new_chat",
             "description": (
                 "Continue the current task in a fresh conversation. "
@@ -407,7 +503,7 @@ NATIVE_TOOL_DEFINITIONS = [
 PARALLEL_SAFE_TOOLS = {
     "read_file", "list_directory",  # "search_files", "grep_search",  # COMMENTED OUT
     "google_search", "web_browser", "tool_store",
-    "subagent",
+    "subagent", "recall",
 }
 
 # Tools available to subagents in "read_only" mode.
@@ -417,6 +513,7 @@ PARALLEL_SAFE_TOOLS = {
 SUBAGENT_READ_ONLY_TOOLS = {
     "read_file", "list_directory",  # "search_files", "grep_search",  # COMMENTED OUT
     "google_search", "web_browser", "close_file",
+    "recall",  # read-only memory query — safe; "remember" is deliberately excluded
     # "tool_store",  # TODO: candidate — needs review.  Many external APIs
     #                 # are write-capable, so this can bypass subagent safety.
 }
@@ -441,6 +538,8 @@ TOOL_FUNCTION_MAP = {
     "tool_store": tool_store_tool,
     "subagent": run_subagent,
     "continue_as_new_chat": continue_as_new_chat,
+    "remember": remember_tool,
+    "recall": recall_tool,
 }
 
 

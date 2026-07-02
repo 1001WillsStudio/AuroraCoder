@@ -28,10 +28,13 @@ from .code_tools.panel_manager import get_all as get_panels
 from .code_tools.panel_manager import register
 from .code_tools.code_interpreter_panel import CodeInterpreterPanel
 from .code_tools.tool_store_panel import ToolStorePanel
+from .code_tools.memory_panel import MemoryPanel
+from .core_tools import memory_client
 
 # ── Register all Living Tool State panels ──────────────────────────
 register(CodeInterpreterPanel())
 register(ToolStorePanel())
+register(MemoryPanel())
 from .tool_executor import execute_tool_calls
 from .training_log import record_api_call, load_save_training_flag
 
@@ -126,20 +129,25 @@ def generate_chat_responses_stream_native(
     # Per-provider context window (falls back to global default)
     context_window = config.get("context_window", CONTEXT_WINDOW_TOKENS)
     
-    system_message = SYSTEM_MESSAGE_TEMPLATE.format(
-        current_time=datetime.datetime.now().isoformat(),
-        vnc_instructions=VNC_INSTRUCTIONS,
-        terminal_env_note=TERMINAL_ENV_NOTE,
-        toolstore_tools=get_toolstore_tools_prompt(),
-        workspace_tree=workspace_tree,
-    )
-
     # Eagerly load primary tool schemas once at startup so the LLM's
     # tools[] array includes them from the very first turn.
     prefetch_primary_tools()
-    
+
     # Add system message if not already present.
     if not messages or messages[0].get("role") != "system":
+        # Stance is fetched once here, at session start — NOT per turn.
+        # Subsequent turns reuse the already-inserted system message, so
+        # this network call only ever happens on the first turn of a
+        # conversation (fails open to "" on any error — see memory_client).
+        memory_stance = memory_client.get_stance()
+        system_message = SYSTEM_MESSAGE_TEMPLATE.format(
+            current_time=datetime.datetime.now().isoformat(),
+            vnc_instructions=VNC_INSTRUCTIONS,
+            terminal_env_note=TERMINAL_ENV_NOTE,
+            toolstore_tools=get_toolstore_tools_prompt(),
+            workspace_tree=workspace_tree,
+            memory_stance=memory_stance,
+        )
         messages.insert(0, {"role": "system", "content": system_message})
     
     iteration_count = 0
