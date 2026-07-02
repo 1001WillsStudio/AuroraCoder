@@ -377,8 +377,8 @@ NATIVE_TOOL_DEFINITIONS = [
         "function": {
             "name": "remember",
             "description": (
-                "Save a durable fact to long-term memory so future sessions don't need "
-                "to be told again. Use SPARINGLY — only for facts that (a) are NOT "
+                "Nominate a durable fact to be saved to long-term memory so future sessions "
+                "don't need to be told again. Use SPARINGLY — only for facts that (a) are NOT "
                 "derivable from the code/git/AGENTS.md, and (b) would concretely change "
                 "how you or a future agent should act. Good candidates: a stated "
                 "preference or correction, project context (goals/ownership/deadlines/"
@@ -386,10 +386,11 @@ NATIVE_TOOL_DEFINITIONS = [
                 "or a non-obvious convention/gotcha. Do NOT save: anything re-derivable by "
                 "reading the code, ephemeral task state, secrets/credentials, or anything "
                 "already in AGENTS.md. When in doubt, don't call this tool — silence is the "
-                "correct default (most turns should not call `remember`). Note: every call "
-                "is checked by an automatic review step before being saved and can be "
-                "rejected (e.g. as low-value, ephemeral, or a duplicate) or have its plane/"
-                "confidence adjusted — this is expected and not an error to work around."
+                "correct default (most turns should not call `remember`). Note: this does NOT "
+                "write anything immediately — it's judged (and possibly rejected, merged into "
+                "an existing memory, or adjusted) together with the rest of this session's "
+                "transcript at session end, so it will NOT be visible to `recall` later in this "
+                "same session."
             ),
             "parameters": {
                 "type": "object",

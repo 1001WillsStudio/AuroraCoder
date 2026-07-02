@@ -19,32 +19,18 @@ a human editing the file directly.
 from __future__ import annotations
 
 import logging
-import re
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple
 
 from gateway.memory.schema import MemoryItem
 from gateway.memory.store import MemoryRepository, get_repository
+from gateway.memory.ops.similarity import similarity as _similarity
 
 logger = logging.getLogger(__name__)
 
 # Starting priors (see module docstring) — not tuned, intentionally conservative.
 DECAY_MAX_UNUSED_DAYS = 90
 DEDUPE_SIMILARITY_THRESHOLD = 0.82
-
-
-_WORD_RE = re.compile(r"[a-z0-9]+")
-
-
-def _tokens(text: str) -> set:
-    return set(w for w in _WORD_RE.findall(text.lower()) if len(w) > 2)
-
-
-def _similarity(a: str, b: str) -> float:
-    ta, tb = _tokens(a), _tokens(b)
-    if not ta or not tb:
-        return 0.0
-    return len(ta & tb) / len(ta | tb)
 
 
 def _age_days(iso_ts: str) -> float:

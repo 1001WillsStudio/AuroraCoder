@@ -1,7 +1,11 @@
 # Agent Memory — Implementation Summary
 
-Branch: `feature/agent-memory` (3 commits, one per milestone). Design source:
-`docs/code-agent-memory-design.md`.
+Branch: `feature/agent-memory`. Design source: `docs/code-agent-memory-design.md`.
+
+Note: the original M1/M2 split had `remember` write immediately (after its
+own synchronous review) and a separate passive pass mine the transcript
+afterward. That's since been unified into a single end-of-session pass —
+see "The unified write pass" below for why and what changed.
 
 This implements the design doc's layering exactly:
 
@@ -22,9 +26,10 @@ gateway/memory/
   stance.py       build_stance_block() — assembles the always-injected prefix block
   gap_store.py    GapLedger — SQLite work-queue for open knowledge gaps
   ops/
-    prompts.py       Extraction + review system prompts (no-op gate, "what NOT to save")
-    reviewer.py       Layer 1: synchronous, fail-closed review gate for `remember`
-    extractor.py      Layer 2a: one structured LLM call per finished session
+    prompts.py       Unified write-pass system prompt (no-op gate, "what NOT to save")
+    similarity.py    Shared keyword-overlap helper (used by extractor + consolidator)
+    extractor.py      Layer 2a: ONE structured LLM call per finished session, judges
+                      both agent-nominated (`remember`) and discovered candidates
     consolidator.py   Layer 2a: dedupe + unused-decay heuristics (no LLM)
     dispatcher.py     Layer 2b: DooD worker spawn/teardown — gated, unexercised
 
@@ -40,9 +45,9 @@ docker/
 
 tests/
   test_memory_layer1.py    schema round-trip, store CRUD, gateway routes (TestClient)
-  test_memory_layer2.py    extractor (fake LLM client) + consolidator heuristics
+  test_memory_layer2.py    unified extractor (nominated + discovered, fake LLM client),
+                           remember_tool no-op, consolidator heuristics
   test_memory_layer3.py    gap ledger dedupe/escalation, dispatcher gate + docker-arg build
-  test_memory_reviewer.py  remember review gate: approve/reject/demote/duplicate/fail-closed
 ```
 
 Gateway is the **sole owner** of all memory state (files + `index.sqlite` +
@@ -57,19 +62,30 @@ than raising, so a memory outage can never break the agent's turn loop.
 - **Every turn**: Stance block is fetched once (session start only) and
   baked into the cached system-prompt prefix — never busts prompt cache on
   later turns.
-- **In a turn**: the agent may call `remember` (write), `recall` (read,
-  parallel/subagent-safe), or `log_gap` (flag an unresolved unknown, also a
-  write). `remember` and `log_gap` are sequential-only and excluded from
+- **In a turn**: the agent may call `remember` (nominate, no I/O — see
+  below), `recall` (read, parallel/subagent-safe), or `log_gap` (flag an
+  unresolved unknown, a real synchronous write to the Gap Ledger).
+  `remember` and `log_gap` are sequential-only and excluded from
   subagents; `recall` is read-only and safe for both.
-- **Every `remember` call** is checked synchronously by an LLM review gate
-  (`ops/reviewer.py`) *before* anything is persisted — see "Review gate for
-  `remember`" below. `log_gap` is not reviewed (it's a work-queue note, not
-  a fact injected into future context, so the risk profile is much lower).
-- **At session end** (`gateway/streaming.py`, top-level `user_chat` only,
-  terminal status): passive extraction runs off the hot path in a small
-  dedicated thread pool, never awaited. No-op is the expected common case —
-  most sessions should write nothing. If something was written,
-  consolidation (dedupe + decay) runs immediately after, also cheap/local.
+- **`remember` writes nothing at call time.** It's a purely local no-op
+  (`src/core_tools/memory_tools.py`) that returns an acknowledgment and
+  leaves its arguments as a tool call in the transcript — no network call,
+  no dependency on the gateway being reachable. `log_gap` is unaffected by
+  this and still writes immediately (it's a work-queue note, not a fact
+  injected into future context, so the risk profile is much lower and
+  there's no discovery step to unify it with).
+- **At session end** (`gateway/streaming.py`, top-level `user_chat`,
+  terminal status — **or** the moment a conversation hands off via
+  `continue_as_new_chat`, since that segment's transcript would otherwise
+  never be mined): the unified write pass runs off the hot path in a small
+  dedicated thread pool, never awaited. It parses the transcript for
+  `remember` calls (nominated candidates) and independently scans for
+  anything else memory-worthy (discovered candidates), judges both in ONE
+  LLM call under the same rules, and writes only what's approved — see
+  "The unified write pass" below. No-op is the expected common case, for
+  nominated candidates too, not just discovered ones. If something was
+  written, consolidation (dedupe + decay) runs immediately after, also
+  cheap/local.
 - **Gap investigation** (`/api/memory/gaps/{id}/investigate`): always
   callable, but no-ops with a clear reason string unless
   `settings.other.memory.heavy_ops_enabled` is explicitly set. When enabled,
@@ -82,42 +98,54 @@ than raising, so a memory outage can never break the agent's turn loop.
 | Key | Default | Effect |
 |---|---|---|
 | `enabled` | `true` | Master switch for Layer 1 (stance/remember/recall/log_gap) |
-| `remember_review_enabled` | `true` | Review-gate every `remember` call before persisting |
-| `passive_enabled` | `true` | Layer 2a extraction after each session |
-| `extraction_provider` | *(default provider)* | Which provider/model runs extraction *and* review |
+| `passive_enabled` | `true` | The unified write pass, run at session end |
+| `extraction_provider` | *(default provider)* | Which provider/model runs the write pass |
 | `heavy_ops_enabled` | `false` | Layer 2b — spawn worker containers |
 | `worker_image` | `"auroracoder"` | Image tag used for `memory-worker` containers |
 
-## Review gate for `remember` (design doc §11 "Active, high precision")
+## The unified write pass (design doc §11 "Active" + "Passive", merged)
 
-Passive extraction (§2a) gets to review a whole finished transcript in
-hindsight, with an explicit no-op bias, before writing anything. A live
-`remember` call has no such luxury: it fires immediately, mid-session, on
-the model's own in-the-moment judgment. The design doc frames active
-writes as needing *higher* precision than passive ones for exactly this
-reason — so `remember` doesn't get a lighter touch just because it's the
-agent's own explicit choice.
+Originally this repo had two separate write paths: `remember` wrote (after
+a synchronous review) immediately, mid-session; a passive pass separately
+scanned the finished transcript for anything else. That synchronous
+reviewer had a structural problem: judging a candidate against a handful of
+recent messages could only catch surface-level issues (obviously ephemeral,
+obviously a duplicate of something just shown to it) — it had no way to
+verify the candidate was actually *grounded* in what happened earlier in
+the session, because it never saw the full conversation.
 
-Every `remember` call now runs through `ops/reviewer.py` before the store
-is touched:
+The fix was to stop trying to review in the moment at all. `remember` now
+only leaves a marker; **the only place memory is ever written is the
+end-of-session pass** (`ops/extractor.py`), and it handles both kinds of
+candidate in one call:
 
-1. Cheap keyword-overlap search (`find_similar_existing`) surfaces existing
-   memories that might be duplicates.
-2. A single structured-output LLM call (reusing the extraction system's
-   no-op-gate philosophy — see `REVIEW_SYSTEM_PROMPT`) sees the candidate
-   plus those similar memories and returns `approve` or `reject`, plus
-   optional overrides: merge into an existing memory (`duplicate_of`),
-   demote plane (e.g. an overreaching "stance" claim → "world"), or adjust
-   confidence.
-3. Only on `approve` does the write happen at all.
+1. Parse the transcript for `remember` tool calls → "nominated" candidates.
+   These skip *discovery* (they don't need to be found, they're given) but
+   not *judgment* — same rules, same no-op bias, no free pass.
+2. For each nominated candidate, a cheap keyword-overlap search
+   (`ops/similarity.py`) surfaces existing memories that might be
+   duplicates (an explicit `memory_id` from the agent is honored as a
+   strong duplicate signal even if the keyword search misses it).
+3. One structured-output LLM call sees the full transcript, the nominated
+   candidates, and their possible duplicates, and returns a single
+   `{"memories": [...]}` list — nominated items it approved (optionally
+   merged into an existing memory via `duplicate_of`, or with plane/
+   confidence adjusted), plus anything it discovered on its own.
+4. Everything in that list gets written; everything left out doesn't —
+   there's no separate accept/reject step afterward.
 
-This is the **one deliberate exception** to this system's fail-open
-default: if the reviewer call itself errors (bad provider config, network
-failure, unparsable output), the candidate is **rejected**, not written
-unchecked — a moderation gate that quietly disables itself on error isn't
-a gate. A missed memory can usually be re-established later (the user can
-restate it, or passive extraction may catch it at session end); a bad one
-persists and gets shown to every future session.
+Consequences worth being explicit about:
+- A memory from `remember` is **not visible to `recall` later in the same
+  session** — it only exists once the session ends (or hands off). This
+  is a real behavior change from the original synchronous design, judged
+  acceptable since memory here is about cross-session continuity, not a
+  same-session scratchpad (the agent already has full context of the
+  current session).
+- If the write pass itself fails for a session (provider outage, etc.),
+  that session's nominations are not retried — consistent with the rest
+  of this system being fail-open by default, and there's no user-facing
+  tool result left to surface a failure through by the time this runs
+  anyway. A missed memory can usually be re-established next session.
 
 ## What was deliberately left unfinished (and why)
 

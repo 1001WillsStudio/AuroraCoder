@@ -16,23 +16,26 @@ from . import memory_client
 
 
 def remember_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
-    result = memory_client.remember(
-        content=arguments["content"],
-        description=arguments["description"],
-        plane=arguments.get("plane", "world"),
-        type=arguments.get("type", "project"),
-        scope=arguments.get("scope", "project"),
-        confidence=arguments.get("confidence", "medium"),
-        provenance=arguments.get("provenance", "agent-stated"),
-        volatile=arguments.get("volatile", False),
-        ttl_days=arguments.get("ttl_days"),
-        supersedes=arguments.get("supersedes"),
-        memory_id=arguments.get("memory_id"),
-    )
-    if result.get("ok"):
-        verb = "Updated" if arguments.get("memory_id") else "Remembered"
-        return f"{verb} (id={result['id']}): {arguments['description']}", arguments
-    return f"Failed to write memory: {result.get('error') or result.get('reason', 'unknown error')}", arguments
+    """Purely local — does no I/O at call time.
+
+    Memory is no longer written synchronously. This call just leaves a
+    marker in the conversation transcript; the gateway's unified
+    end-of-session pass (gateway/memory/ops/extractor.py) parses it back
+    out and judges it with full transcript context, alongside anything
+    it discovers on its own. See that module's docstring for why: a
+    synchronous mid-session review could only ever judge structural
+    plausibility, never verify the claim was actually grounded in what
+    happened, because it never saw the conversation.
+
+    This means the memory is NOT immediately visible to `recall` in the
+    same session, and it is not guaranteed to be kept — the same no-op
+    bias applies to nominated candidates as to anything else.
+    """
+    description = arguments.get("description", "this")
+    return (
+        f'Noted — "{description}" will be judged and possibly saved to long-term memory at the '
+        f"end of this session (not immediately available via `recall` in this session)."
+    ), arguments
 
 
 def recall_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:

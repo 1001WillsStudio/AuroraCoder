@@ -1,7 +1,9 @@
 """
-Sanity checks for Memory Layer 2a (passive pipeline): extraction prompt
-plumbing (with a fake OpenAI client, no network) and the consolidator's
-dedupe/decay heuristics.
+Sanity checks for Memory Layer 2a — the unified end-of-session pass that
+now handles BOTH agent-nominated candidates (from mid-session `remember`
+calls, which do no I/O at call time — see src/core_tools/memory_tools.py)
+and discovered candidates, in one pipeline (with a fake OpenAI client, no
+network), plus the consolidator's dedupe/decay heuristics.
 
 Run with (host, conda env with gateway deps):
     python tests/test_memory_layer2.py
@@ -95,6 +97,112 @@ def test_extraction_skips_short_transcripts_without_calling_model():
     extractor.OpenAI = lambda base_url, api_key: calls.append(1) or _FakeClient('{"memories":[]}')
     result = extractor.run_extraction("conv-short", _SAMPLE_MSGS[:2])
     assert result == [] and not calls, "must not call the model for trivially short transcripts"
+
+
+# ---------------------------------------------------------------------------
+# Agent-nominated candidates (from mid-session `remember` calls, which do no
+# I/O — this pass is the only place they actually get judged and written).
+# ---------------------------------------------------------------------------
+
+_REMEMBER_ARGS = {
+    "content": "User wants ruff run before declaring any task done.",
+    "description": "User preference: run ruff before finishing",
+    "plane": "stance", "type": "preference", "scope": "user", "confidence": "high",
+}
+
+_MSGS_WITH_REMEMBER_CALL = [
+    {"role": "user", "content": "Always run ruff before you say you're done."},
+    {
+        "role": "assistant", "content": "Got it.",
+        "tool_calls": [{
+            "id": "call_1",
+            "function": {"name": "remember", "arguments": json.dumps(_REMEMBER_ARGS)},
+        }],
+    },
+    {"role": "tool", "content": "Noted", "tool_call_id": "call_1"},
+]
+
+
+def test_nominated_candidates_parsed_from_transcript():
+    nominated = extractor._extract_nominated_candidates(_MSGS_WITH_REMEMBER_CALL)
+    assert len(nominated) == 1
+    assert nominated[0]["description"] == _REMEMBER_ARGS["description"]
+    assert nominated[0]["plane"] == "stance"
+
+
+def test_nominated_candidates_skip_malformed_calls():
+    bad_msgs = [{
+        "role": "assistant", "content": "",
+        "tool_calls": [{"id": "c1", "function": {"name": "remember", "arguments": "not json"}}],
+    }]
+    assert extractor._extract_nominated_candidates(bad_msgs) == []
+
+    missing_fields_msgs = [{
+        "role": "assistant", "content": "",
+        "tool_calls": [{"id": "c1", "function": {"name": "remember", "arguments": json.dumps({"content": "x"})}}],
+    }]
+    assert extractor._extract_nominated_candidates(missing_fields_msgs) == [], \
+        "a candidate missing 'description' must be dropped, not passed through with a placeholder"
+
+
+def test_nomination_bypasses_min_messages_gate():
+    """A single short exchange that ends in a `remember` call must still be
+    sent to the model — the min-messages gate exists to skip trivial
+    transcripts with nothing to mine, not to drop an explicit nomination."""
+    payload = json.dumps({"memories": [{
+        "plane": "stance", "type": "preference", "scope": "user", "source": "nominated",
+        "content": _REMEMBER_ARGS["content"], "description": _REMEMBER_ARGS["description"], "confidence": "high",
+    }]})
+    _patch_extractor(payload)
+    result = extractor.run_extraction("conv-nom", _MSGS_WITH_REMEMBER_CALL)
+    assert len(result) == 1, result
+
+
+def test_nominated_candidate_can_be_rejected_by_the_model():
+    """Nomination is a request to consider, not an instruction to save —
+    the no-op default still applies to nominated candidates."""
+    _patch_extractor('{"memories": []}')
+    result = extractor.run_extraction("conv-nom-reject", _MSGS_WITH_REMEMBER_CALL)
+    assert result == [], result
+
+
+def test_nominated_duplicate_of_updates_existing_memory_in_place():
+    repo = extractor.get_repository()
+    existing = MemoryItem(content="Old wording", description="User preference: run ruff before finishing",
+                           plane="stance", type="preference", scope="user", confidence="medium")
+    repo.upsert(existing)
+
+    payload = json.dumps({"memories": [{
+        "plane": "stance", "type": "preference", "scope": "user", "source": "nominated",
+        "content": "Updated wording — run ruff before finishing, always.",
+        "description": "User preference: run ruff before finishing",
+        "confidence": "high", "duplicate_of": existing.id,
+    }]})
+    _patch_extractor(payload)
+    result = extractor.run_extraction("conv-nom-dup", _MSGS_WITH_REMEMBER_CALL)
+    assert result == [existing.id], result
+    updated = repo.get(existing.id)
+    assert updated.content.startswith("Updated wording")
+
+
+def test_remember_tool_is_a_pure_local_noop():
+    """The agent-facing `remember` tool must never touch the network — it
+    only leaves a marker in the transcript for the pass above to parse."""
+    import requests
+    from src.core_tools import memory_tools
+
+    def _fail_if_called(*a, **kw):
+        raise AssertionError("remember_tool must not perform any HTTP call")
+
+    orig_get, orig_post = requests.get, requests.post
+    requests.get, requests.post = _fail_if_called, _fail_if_called
+    try:
+        msg, echoed = memory_tools.remember_tool(_REMEMBER_ARGS)
+    finally:
+        requests.get, requests.post = orig_get, orig_post
+
+    assert "end of this session" in msg
+    assert echoed is _REMEMBER_ARGS
 
 
 def _fresh_repo() -> MemoryRepository:
