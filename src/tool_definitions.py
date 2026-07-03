@@ -30,7 +30,7 @@ from .core_tools.tool_store_client import (
 )
 from .core_tools.subagent import run_subagent
 from .core_tools.continue_chat import continue_as_new_chat
-from .core_tools.memory_tools import remember_tool, recall_tool, log_gap_tool
+from .core_tools.memory_tools import remember_tool, recall_tool, log_gap_tool, forget_tool
 from .core_tools.memory_client import memory_enabled
 
 
@@ -516,6 +516,31 @@ NATIVE_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "forget",
+            "description": (
+                "Permanently delete one memory, right now — no judgment pass, unlike "
+                "`remember`. Use ONLY when the user explicitly says a remembered fact is "
+                "wrong, outdated, or asks you to forget/remove/delete something specific. "
+                "You MUST `recall` first to get the real id — never guess or invent one. "
+                "If the user's correction should instead be REPLACED with a corrected "
+                "fact (not just removed), prefer `remember` with `memory_id` set to update "
+                "it in place."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "memory_id": {
+                        "type": "string",
+                        "description": "The exact id of the memory to delete, from a prior `recall` result."
+                    }
+                },
+                "required": ["memory_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "continue_as_new_chat",
             "description": (
                 "Continue the current task in a fresh conversation. "
@@ -571,7 +596,7 @@ READ_ONLY_TOOLS = PARALLEL_SAFE_TOOLS
 # list (not just no-op'd) when ``settings.other.memory.enabled`` is False, so
 # a disabled agent looks and behaves exactly like a build with no memory
 # module: the LLM never even sees these schemas. See memory_filter_tools().
-MEMORY_TOOL_NAMES = {"remember", "recall", "log_gap"}
+MEMORY_TOOL_NAMES = {"remember", "recall", "log_gap", "forget"}
 
 
 def memory_filter_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -606,6 +631,7 @@ TOOL_FUNCTION_MAP = {
     "remember": remember_tool,
     "recall": recall_tool,
     "log_gap": log_gap_tool,
+    "forget": forget_tool,
 }
 
 

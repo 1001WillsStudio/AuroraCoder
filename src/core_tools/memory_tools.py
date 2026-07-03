@@ -47,11 +47,28 @@ def recall_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     if not results:
         return f'No memories found for "{query}".', arguments
 
+    # id is included so a follow-up `forget` call (if the user says one of
+    # these is wrong) can target the exact memory instead of guessing.
     lines = [f'{len(results)} memor{"y" if len(results) == 1 else "ies"} found for "{query}":', ""]
     for r in results:
-        lines.append(f"- [{r['type']}] {r['description']} (confidence={r['confidence']})")
+        lines.append(f"- id={r['id']} [{r['type']}] {r['description']} (confidence={r['confidence']})")
         lines.append(f"  {r['content']}")
     return "\n".join(lines), arguments
+
+
+def forget_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    """Immediately, permanently delete one memory by id.
+
+    Unlike `remember`, this does real I/O at call time — an explicit
+    "that's wrong / forget it" from the user is a direct instruction, not
+    a claim that needs post-hoc judgment. Always `recall` first to get a
+    real id; never guess one.
+    """
+    memory_id = arguments["memory_id"]
+    result = memory_client.forget(memory_id)
+    if result.get("ok"):
+        return f"Forgot memory {memory_id}.", arguments
+    return f"Could not forget memory {memory_id}: {result.get('error') or result.get('reason', 'not found')}", arguments
 
 
 def log_gap_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:

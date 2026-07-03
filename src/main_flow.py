@@ -154,7 +154,9 @@ def generate_chat_responses_stream_native(
                 "across sessions. Use `remember` sparingly — only for facts that are NOT derivable "
                 "from the code/git and would concretely change future behavior (preferences, "
                 "corrections, project context, external-system pointers, non-obvious conventions). "
-                "Silence is the correct default; most turns should not call it.\n"
+                "Silence is the correct default; most turns should not call it. If the user says a "
+                "remembered fact is wrong, `recall` it to get its id, then use `forget` to delete it "
+                "(or `remember` with `memory_id` set, if it should be replaced rather than removed).\n"
                 f"{memory_stance}\n"
             )
         system_message = SYSTEM_MESSAGE_TEMPLATE.format(

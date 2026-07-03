@@ -92,6 +92,27 @@ def recall(query: str, plane: str = "world", scope: Optional[str] = None, k: int
         return []
 
 
+def forget(memory_id: str) -> Dict[str, Any]:
+    """Permanently delete one memory by id (real synchronous write, like
+    ``log_gap`` — the user/agent is explicitly saying "this is wrong right
+    now", which needs no hindsight judgment the way `remember` does).
+
+    Returns {"ok": bool, "error": ...} on failure.
+    """
+    try:
+        resp = requests.delete(f"{GATEWAY_URL}/api/memory/{memory_id}", timeout=_TIMEOUT)
+        if resp.status_code == 404:
+            return {"ok": False, "error": "no memory with that id"}
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("ok") is False:
+            return data  # e.g. {"ok": False, "reason": "memory disabled in settings"}
+        return {"ok": True, **data}
+    except Exception as e:
+        logger.warning("[memory_client] forget failed: %s", e)
+        return {"ok": False, "error": str(e)}
+
+
 def log_gap(
     question: str,
     scope: str = "project",

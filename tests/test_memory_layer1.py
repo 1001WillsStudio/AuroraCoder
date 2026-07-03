@@ -104,12 +104,76 @@ def test_gateway_routes():
     assert r.status_code == 400
 
     r = client.get("/api/memory")
-    ids = [m["id"] for m in r.json()["memories"]]
-    assert mem_id in ids
+    by_id = {m["id"]: m for m in r.json()["memories"]}
+    assert mem_id in by_id
+    assert by_id[mem_id]["content"] == "Always run ruff before committing."  # full content, not just metadata
+
     r = client.delete(f"/api/memory/{mem_id}")
-    assert r.status_code == 200
+    assert r.status_code == 200 and r.json()["ok"] is True
     r = client.delete(f"/api/memory/{mem_id}")
     assert r.status_code == 404
+
+
+def test_forget_tool_success_and_failure_messages():
+    """Unit-level: forget_tool formats memory_client.forget()'s result
+    correctly, for both the happy path and a not-found id."""
+    from src.core_tools import memory_client
+    from src.core_tools.memory_tools import forget_tool
+
+    orig_forget = memory_client.forget
+    try:
+        memory_client.forget = lambda memory_id: {"ok": True, "deleted": memory_id}
+        text, _ = forget_tool({"memory_id": "mem_abc123"})
+        assert "Forgot memory mem_abc123" in text
+
+        memory_client.forget = lambda memory_id: {"ok": False, "error": "no memory with that id"}
+        text, _ = forget_tool({"memory_id": "mem_nope"})
+        assert "Could not forget" in text and "no memory with that id" in text
+    finally:
+        memory_client.forget = orig_forget
+
+
+def test_recall_tool_output_includes_memory_id():
+    """recall's formatted text must expose ids so a follow-up `forget`
+    call can target the exact memory instead of guessing."""
+    from src.core_tools import memory_client
+    from src.core_tools.memory_tools import recall_tool
+
+    orig_recall = memory_client.recall
+    try:
+        memory_client.recall = lambda **kw: [
+            {"id": "mem_xyz789", "type": "preference", "description": "desc", "confidence": "high", "content": "content"}
+        ]
+        text, _ = recall_tool({"query": "anything"})
+        assert "id=mem_xyz789" in text
+    finally:
+        memory_client.recall = orig_recall
+
+
+def test_forget_route_disabled_when_memory_disabled():
+    from fastapi.testclient import TestClient
+    from gateway.api import app
+
+    client = TestClient(app)
+    r = client.post("/api/memory/remember", json={
+        "content": "x", "description": "y", "plane": "world", "type": "reference", "scope": "project",
+    })
+    memory_id = r.json()["id"]
+
+    settings_path = pathlib.Path(os.environ["AURORACODER_DATA_DIR"]) / "settings.json"
+    orig_settings = settings_path.read_text(encoding="utf-8")
+    try:
+        settings_path.write_text(json.dumps({"other": {"memory": {"enabled": False}}}), encoding="utf-8")
+        r = client.delete(f"/api/memory/{memory_id}")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["ok"] is False and "disabled" in body["reason"]
+    finally:
+        settings_path.write_text(orig_settings, encoding="utf-8")
+
+    # Re-enabled: deletion works again, and the memory from before is still there.
+    r = client.delete(f"/api/memory/{memory_id}")
+    assert r.status_code == 200 and r.json()["ok"] is True
 
 
 def _run_all():

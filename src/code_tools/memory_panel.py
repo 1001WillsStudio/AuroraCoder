@@ -49,6 +49,32 @@ def _discover_remembered(messages: List[Dict]) -> List[Dict]:
     return remembered
 
 
+def _discover_forgotten(messages: List[Dict]) -> List[str]:
+    """Scan history for successful ``forget`` calls (paired with their tool
+    result so we only show ones that actually deleted something)."""
+    forgotten: List[str] = []
+
+    for msg in messages:
+        if msg.get("role") != "assistant":
+            continue
+        for tc in msg.get("tool_calls", []) or []:
+            fn = tc.get("function")
+            if not fn or fn.get("name") != "forget":
+                continue
+            try:
+                args = json.loads(fn.get("arguments", "{}"))
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+            result_text = _find_tool_result(messages, tc.get("id"))
+            if not result_text.startswith("Forgot memory"):
+                continue
+
+            forgotten.append(args.get("memory_id", "?"))
+
+    return forgotten
+
+
 def _find_tool_result(messages: List[Dict], tool_call_id: str) -> str:
     for msg in messages:
         if msg.get("role") == "tool" and msg.get("tool_call_id") == tool_call_id:
@@ -57,22 +83,35 @@ def _find_tool_result(messages: List[Dict], tool_call_id: str) -> str:
 
 
 class MemoryPanel(Panel):
-    """Living Tool State panel for the memory system's ``remember`` tool."""
+    """Living Tool State panel for the memory system's ``remember``/``forget`` tools."""
 
     name = "memory"
-    trigger_tools = {"remember", "recall"}
+    trigger_tools = {"remember", "recall", "forget"}
     block_start = MEMORY_START
     block_end = MEMORY_END
 
     def discover(self, messages):
-        return _discover_remembered(messages)
+        return {
+            "remembered": _discover_remembered(messages),
+            "forgotten": _discover_forgotten(messages),
+        }
 
     def render(self, state):
-        if not state:
+        remembered = state.get("remembered", [])
+        forgotten = state.get("forgotten", [])
+        if not remembered and not forgotten:
             return ""
 
-        lines = [f"🧠 Remembered {len(state)} fact{'s' if len(state) != 1 else ''} this session:"]
-        for item in state:
-            lines.append(f"- [{item['plane']}/{item['type']}] {item['description']}")
+        lines = []
+        if remembered:
+            lines.append(f"🧠 Remembered {len(remembered)} fact{'s' if len(remembered) != 1 else ''} this session:")
+            for item in remembered:
+                lines.append(f"- [{item['plane']}/{item['type']}] {item['description']}")
+        if forgotten:
+            if lines:
+                lines.append("")
+            lines.append(f"🗑️ Forgot {len(forgotten)} memor{'y' if len(forgotten) == 1 else 'ies'} this session:")
+            for memory_id in forgotten:
+                lines.append(f"- {memory_id}")
 
         return f"{self.block_start}\n" + "\n".join(lines) + f"\n{self.block_end}"

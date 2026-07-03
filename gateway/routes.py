@@ -578,19 +578,31 @@ async def recall_memory(query: str = "", plane: str = "world", scope: Optional[s
 
 @app.get("/api/memory")
 async def list_memory(plane: Optional[str] = None, scope: Optional[str] = None, limit: int = 200):
-    """List memory metadata (no content) — for a future Memory browser UI / debugging."""
+    """List full memory items (including content) for the Memory browser in
+    Settings, and for debugging.
+
+    Deliberately NOT gated on ``memory_enabled()`` — this is a read-only
+    view, useful to review what's stored even while the toggle is off
+    (e.g. before deciding whether to clear it out or re-enable).
+    """
     repo = get_memory_repository()
-    return {"memories": repo.list(plane=plane, scope=scope, limit=limit)}
+    items = repo.all_items(plane=plane, scope=scope)
+    items.sort(key=lambda it: it.created, reverse=True)
+    return {"memories": [it.to_dict() for it in items[:limit]]}
 
 
 @app.delete("/api/memory/{memory_id}")
 async def delete_memory(memory_id: str):
-    """Delete a memory (human-editable escape hatch — memory files are also
-    plain markdown files a user can hand-edit directly on disk)."""
+    """Delete a memory — used by both the Settings Memory browser and the
+    agent's ``forget`` tool. Memory files are also plain markdown a user
+    can hand-edit/delete directly on disk; this is the API equivalent.
+    """
+    if not memory_enabled():
+        return {"ok": False, "reason": "memory disabled in settings"}
     repo = get_memory_repository()
     if not repo.delete(memory_id):
         raise HTTPException(status_code=404, detail="Memory not found")
-    return {"deleted": memory_id}
+    return {"ok": True, "deleted": memory_id}
 
 
 # ============================================================================

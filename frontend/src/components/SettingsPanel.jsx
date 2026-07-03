@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { X, Plus, Trash2, Save, RefreshCw, Shield, Globe, LogOut, ExternalLink, Wrench, ChevronDown, ChevronRight } from 'lucide-react'
-import { getSettings, updateSettings, getProviders, getToolStoreStatus, refreshToolStore } from '../services/api'
+import { getSettings, updateSettings, getProviders, getToolStoreStatus, refreshToolStore, getMemories, deleteMemory } from '../services/api'
 import { isAuthRequired, isAuthenticated, logout as authLogout, clearToken } from '../utils/auth.js'
 import useLanguage from '../hooks/useLanguage'
 import { LANG_LABELS } from '../i18n/translations'
@@ -32,6 +32,10 @@ export default function SettingsPanel({ isOpen, onClose }) {
   const [toolStoreStatus, setToolStoreStatus] = useState(null)
   const [providersCollapsed, setProvidersCollapsed] = useState(true)
   const [webSecondaryCollapsed, setWebSecondaryCollapsed] = useState(true)
+  const [memoryBrowserCollapsed, setMemoryBrowserCollapsed] = useState(true)
+  const [memories, setMemories] = useState([])
+  const [memoriesLoading, setMemoriesLoading] = useState(false)
+  const [memoriesError, setMemoriesError] = useState(false)
 
   /** Hardcoded fallback provider list — used when the backend is unreachable.
    *  Must be kept in sync with MODEL_PROVIDERS in src/config.py. */
@@ -98,6 +102,30 @@ export default function SettingsPanel({ isOpen, onClose }) {
     if (!isOpen) return
     getToolStoreStatus().then(s => setToolStoreStatus(s)).catch(() => setToolStoreStatus(null))
   }, [isOpen])
+
+  // Load the memory list lazily — only once the browser section is expanded.
+  const loadMemories = () => {
+    setMemoriesLoading(true)
+    setMemoriesError(false)
+    getMemories()
+      .then(r => setMemories(r.memories || []))
+      .catch(() => setMemoriesError(true))
+      .finally(() => setMemoriesLoading(false))
+  }
+
+  useEffect(() => {
+    if (!isOpen || memoryBrowserCollapsed) return
+    loadMemories()
+  }, [isOpen, memoryBrowserCollapsed])
+
+  const handleDeleteMemory = async (memoryId) => {
+    try {
+      await deleteMemory(memoryId)
+      setMemories(prev => prev.filter(m => m.id !== memoryId))
+    } catch {
+      setMemoriesError(true)
+    }
+  }
 
   if (!isOpen) return null
 
@@ -405,6 +433,46 @@ export default function SettingsPanel({ isOpen, onClose }) {
                     </span>
                   </div>
                 </div>
+
+                <h3 className="settings-section-title settings-collapse-title" style={{ marginTop: 16 }}
+                  onClick={() => setMemoryBrowserCollapsed(!memoryBrowserCollapsed)}>
+                  {memoryBrowserCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                  {t('memory.browserTitle')}{memories.length > 0 ? ` (${memories.length})` : ''}
+                </h3>
+                {!memoryBrowserCollapsed && (
+                  <>
+                    <p className="settings-section-desc">{t('memory.browserDesc')}</p>
+                    {memoriesLoading ? (
+                      <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>{t('memory.browserLoading')}</p>
+                    ) : memoriesError ? (
+                      <p style={{ fontSize: 12, color: 'var(--danger, #e05252)' }}>{t('memory.browserError')}</p>
+                    ) : memories.length === 0 ? (
+                      <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>{t('memory.browserEmpty')}</p>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 320, overflowY: 'auto' }}>
+                        {memories.map(m => (
+                          <div key={m.id} style={{ border: '1px solid var(--border-color)', borderRadius: 6, padding: '8px 10px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                  {m.plane}/{m.type} · {m.scope} · {m.confidence}
+                                </div>
+                                <div style={{ fontWeight: 500, fontSize: 13, marginTop: 2 }}>{m.description}</div>
+                                <div style={{ fontSize: 12, color: 'var(--text-secondary, var(--text-muted))', marginTop: 4, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                                  {m.content}
+                                </div>
+                              </div>
+                              <button className="settings-icon-btn settings-danger-btn"
+                                onClick={() => handleDeleteMemory(m.id)} title={t('memory.browserDelete')}>
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
               </section>
 
               {/* ── Models ───────────────────────────────────────────────── */}

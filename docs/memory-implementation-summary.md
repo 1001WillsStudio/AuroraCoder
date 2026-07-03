@@ -43,7 +43,7 @@ memory/
 
 src/core_tools/
   memory_client.py  Backend's only bridge to gateway memory API (fail-open)
-  memory_tools.py   remember_tool / recall_tool / log_gap_tool implementations
+  memory_tools.py   remember_tool / recall_tool / forget_tool / log_gap_tool implementations
 
 src/code_tools/memory_panel.py   "Living Tool State" panel showing what got remembered
 
@@ -109,10 +109,29 @@ just import from `memory.*` instead of owning it.
   start only) and baked into the cached system-prompt prefix — never busts
   prompt cache on later turns.
 - **In a turn**: the agent may call `remember` (nominate, no I/O — see
-  below), `recall` (read, parallel/subagent-safe), or `log_gap` (flag an
-  unresolved unknown, a real synchronous write to the Gap Ledger).
-  `remember` and `log_gap` are sequential-only and excluded from
-  subagents; `recall` is read-only and safe for both.
+  below), `recall` (read, parallel/subagent-safe — its output includes each
+  result's `id` so a correction can target it precisely), `forget` (delete
+  one memory by id immediately — a real synchronous write, no judgment
+  pass, since an explicit "that's wrong" from the user needs no hindsight
+  the way a `remember` nomination does), or `log_gap` (flag an unresolved
+  unknown, a real synchronous write to the Gap Ledger). `remember`,
+  `forget`, and `log_gap` are sequential-only and excluded from subagents;
+  `recall` is read-only and safe for both.
+- **Fixing/removing a wrong memory**: three ways, from lightest to
+  heaviest. (1) `DELETE /api/memory/{id}` — the agent's `forget` tool, or
+  a human via the Settings → Memory browser (`GET /api/memory` now
+  returns full content, not just metadata, so the browser can render it).
+  (2) Hand-edit or delete the plain markdown file directly under
+  `DATA_DIR/memory/{plane}/{id}.md` — reads go straight to the file on
+  every call (no cache to bust), so this takes effect immediately; the one
+  rough edge is a stale SQLite index row if you delete the file without
+  going through the API (harmless — reads of a missing file just return
+  `None` — but not auto-cleaned). (3) `remember` with `memory_id` set (or
+  `duplicate_of` returned by the write-pass judge) to overwrite an
+  existing memory in place instead of creating a duplicate. Note
+  `supersedes` is descriptive lineage metadata only — it does NOT delete
+  or hide the memory it points to; only same-id reuse actually replaces
+  content.
 - **`remember` writes nothing at call time.** It's a purely local no-op
   (`src/core_tools/memory_tools.py`) that returns an acknowledgment and
   leaves its arguments as a tool call in the transcript — no network call,
@@ -141,8 +160,9 @@ just import from `memory.*` instead of owning it.
 
 ## Settings (all under `settings.json` → `other.memory`, all optional)
 
-Toggleable from the frontend Settings panel ("Memory" section — currently
-just the one checkbox; the sub-flags below are settings.json-only for now).
+Toggleable from the frontend Settings panel ("Memory" section — the master
+switch plus a Stored Memories browser with per-item delete; the sub-flags
+below are settings.json-only for now).
 
 | Key | Default | Effect |
 |---|---|---|

@@ -76,6 +76,12 @@ const LANG = {
     'memory.desc': 'Let the agent remember durable facts (preferences, conventions, corrections) across sessions.',
     'memory.enabled': 'Enable Memory',
     'memory.enabledDesc': 'When off, the agent behaves exactly as it does without the memory module — no remember/recall tools, no cross-session context.',
+    'memory.browserTitle': 'Stored Memories',
+    'memory.browserDesc': 'Review and delete individual memories. Works even while memory is disabled above.',
+    'memory.browserLoading': 'Loading…',
+    'memory.browserError': 'Failed to load memories.',
+    'memory.browserEmpty': 'No memories stored yet.',
+    'memory.browserDelete': 'Delete this memory',
 
     // ── Persistence note ──────────────────────────────────────────
     'persistence.note':
@@ -311,6 +317,12 @@ const LANG = {
     'memory.desc': '让智能体在跨会话之间记住持久性事实（偏好、约定、更正）。',
     'memory.enabled': '启用记忆',
     'memory.enabledDesc': '关闭时，智能体的行为与没有记忆模块时完全一致 — 没有 remember/recall 工具，没有跨会话上下文。',
+    'memory.browserTitle': '已存储的记忆',
+    'memory.browserDesc': '查看并删除单条记忆。即使上方的记忆功能已关闭，此处仍可使用。',
+    'memory.browserLoading': '加载中…',
+    'memory.browserError': '加载记忆失败。',
+    'memory.browserEmpty': '尚无已存储的记忆。',
+    'memory.browserDelete': '删除此记忆',
 
     // ── Persistence note ──────────────────────────────────────────
     'persistence.note':
