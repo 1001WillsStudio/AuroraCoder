@@ -190,6 +190,8 @@ def test_nominated_duplicate_of_updates_existing_memory_in_place():
     repo = extractor.get_repository()
     existing = MemoryItem(content="Old wording", description="User preference: run ruff before finishing",
                            plane="stance", type="preference", scope="user", confidence="medium")
+    existing.usage_count = 4
+    existing.last_used = "2024-01-01T00:00:00+00:00"
     repo.upsert(existing)
 
     payload = json.dumps({"memories": [{
@@ -203,6 +205,13 @@ def test_nominated_duplicate_of_updates_existing_memory_in_place():
     assert result == [existing.id], result
     updated = repo.get(existing.id)
     assert updated.content.startswith("Updated wording")
+    # Reinforcing an existing memory must not erase the usage history that
+    # decay/retention judges it by, and must bump corroboration_count — a
+    # deterministic, code-computed signal (see ops/consolidator.py) that a
+    # self-reported confidence field can't fake.
+    assert updated.usage_count == 4, updated.usage_count
+    assert updated.last_used == "2024-01-01T00:00:00+00:00"
+    assert updated.corroboration_count == 1, updated.corroboration_count
 
 
 # ---------------------------------------------------------------------------
@@ -283,6 +292,11 @@ def _fresh_repo() -> MemoryRepository:
     return MemoryRepository(storage_dir=pathlib.Path(tempfile.mkdtemp()))
 
 
+def _iso_days_ago(days: int) -> str:
+    from datetime import datetime, timedelta, timezone
+    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+
 def test_dedupe_keeps_higher_usage_duplicate():
     repo = _fresh_repo()
     a = MemoryItem(content="A", description="Pipeline bugs tracked in Linear INGEST project",
@@ -301,22 +315,104 @@ def test_dedupe_keeps_higher_usage_duplicate():
     assert b.id in remaining and a.id not in remaining and c.id in remaining
 
 
-def test_decay_drops_stale_low_confidence_only():
+def test_decay_low_confidence_drops_faster_than_medium():
+    """Self-reported confidence is only trusted to shorten life (low ->
+    0.5x grace), never to lengthen it — see consolidator module docstring.
+    At age=60d with a 90d base grace: low's effective grace is 45d (decays),
+    medium's stays 90d (survives)."""
     repo = _fresh_repo()
-    stale = MemoryItem(content="stale", description="stale fact nobody used",
+    stale = MemoryItem(content="stale", description="a shaky fact nobody used",
                         plane="world", type="reference", scope="project", confidence="low")
-    stale.created = "2020-01-01T00:00:00+00:00"
+    stale.created = _iso_days_ago(60)
     repo.upsert(stale)
 
-    important = MemoryItem(content="important", description="important old fact",
-                            plane="world", type="reference", scope="project", confidence="high")
-    important.created = "2020-01-01T00:00:00+00:00"
-    repo.upsert(important)
+    ok = MemoryItem(content="ok", description="an ordinary fact nobody used",
+                     plane="world", type="reference", scope="project", confidence="medium")
+    ok.created = _iso_days_ago(60)
+    repo.upsert(ok)
 
     decayed = C.decay_unused_world_memories(repo, max_unused_days=90)
     assert decayed == 1, decayed
     assert repo.get(stale.id) is None
-    assert repo.get(important.id) is not None
+    assert repo.get(ok.id) is not None
+
+
+def test_decay_high_confidence_alone_does_not_grant_immunity():
+    """The exact regression this rework targets: a self-rated 'high'
+    confidence memory with zero corroboration and zero usage is NOT
+    special-cased anymore — it decays on the same schedule as 'medium'."""
+    repo = _fresh_repo()
+    item = MemoryItem(content="important-sounding", description="an old 'high confidence' fact",
+                       plane="world", type="reference", scope="project", confidence="high")
+    item.created = "2020-01-01T00:00:00+00:00"
+    repo.upsert(item)
+
+    decayed = C.decay_unused_world_memories(repo, max_unused_days=90)
+    assert decayed == 1, decayed
+    assert repo.get(item.id) is None
+
+
+def test_decay_corroboration_extends_grace_period():
+    """corroboration_count — a deterministic, code-computed signal (see
+    ops/extractor.py's duplicate_of handling), not a self-report — is the
+    only thing allowed to buy a memory extra life."""
+    repo = _fresh_repo()
+    corroborated = MemoryItem(content="reaffirmed", description="a fact seen again independently",
+                               plane="world", type="reference", scope="project", confidence="medium",
+                               corroboration_count=2)
+    corroborated.created = _iso_days_ago(200)  # > base 90d, but grace = 90 * min(1+2,6) = 270d
+    repo.upsert(corroborated)
+
+    decayed = C.decay_unused_world_memories(repo, max_unused_days=90)
+    assert decayed == 0, decayed
+    assert repo.get(corroborated.id) is not None
+
+
+def test_decay_previously_used_memory_eventually_goes_stale():
+    """Closes the old 'retrieved once, immortal forever' gap: usage_count>0
+    still decays once long enough has passed since last_used."""
+    repo = _fresh_repo()
+    item = MemoryItem(content="once useful", description="was retrieved a long time ago",
+                       plane="world", type="reference", scope="project", confidence="medium",
+                       usage_count=1)
+    item.created = _iso_days_ago(1000)
+    item.last_used = _iso_days_ago(1000)  # grace(90) * STALE_USED_MULTIPLIER(3) = 270d — well past
+    repo.upsert(item)
+
+    decayed = C.decay_unused_world_memories(repo, max_unused_days=90)
+    assert decayed == 1, decayed
+    assert repo.get(item.id) is None
+
+
+def test_decay_recently_used_memory_survives():
+    repo = _fresh_repo()
+    item = MemoryItem(content="still useful", description="was retrieved recently",
+                       plane="world", type="reference", scope="project", confidence="medium",
+                       usage_count=1)
+    item.created = _iso_days_ago(1000)
+    item.last_used = _iso_days_ago(5)
+    repo.upsert(item)
+
+    decayed = C.decay_unused_world_memories(repo, max_unused_days=90)
+    assert decayed == 0, decayed
+    assert repo.get(item.id) is not None
+
+
+def test_decay_expires_volatile_memory_past_its_ttl_regardless_of_usage():
+    """Volatile facts are time-bound by design (design doc §10) — ttl
+    expiry applies even to a memory with usage_count>0, since there's no
+    re-verify-on-read mechanism yet to keep it honestly alive."""
+    repo = _fresh_repo()
+    item = MemoryItem(content="sprint ends March 5", description="current sprint deadline",
+                       plane="world", type="project", scope="project", confidence="high",
+                       volatile=True, ttl_days=30, usage_count=5)
+    item.created = _iso_days_ago(40)
+    item.last_used = _iso_days_ago(1)
+    repo.upsert(item)
+
+    decayed = C.decay_unused_world_memories(repo, max_unused_days=90)
+    assert decayed == 1, decayed
+    assert repo.get(item.id) is None
 
 
 def test_decay_never_touches_stance_plane():

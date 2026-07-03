@@ -99,6 +99,25 @@ it (the user may have changed their mind — prefer the more recent statement, o
 unclear which should win), or reveal it's really a one-off from this session rather than a durable
 pattern? Do not go out of your way to invent connections that aren't clearly there.
 
+## Confidence — judge this against the checklist below, not a gut feeling
+Self-rated confidence with no anchor tends to cluster at "high" regardless of actual reliability —
+you have no external ground truth to calibrate against, so an unanchored gut rating is close to
+meaningless. Instead, classify against these concrete criteria (pick the HIGHEST tier whose
+requirements are actually met — do not round up):
+- **high**: the user stated this directly, in their own words, unambiguously, with no hedging
+  ("maybe", "I think", "probably") — AND it is either a correction/explicit instruction (feedback,
+  preference, autonomy) or independently corroborated by another past conversation shown to you.
+  Expect this tier to be rare.
+- **medium**: everything else that still clears the "would a future agent act differently" bar —
+  stated once with no corroboration, or reasonably inferred from behavior/context rather than a
+  direct quote. This should be the majority of what you write.
+- **low**: a weak or single ambiguous signal, something you are including cautiously, or something
+  in mild tension with another source you saw.
+Note: confidence alone does NOT protect a memory from ever being cleaned up later — that decision
+is made separately from real usage/corroboration evidence over time, precisely because a one-shot
+self-rating like this one isn't trustworthy enough to grant permanence by itself. So there is no
+incentive to inflate this — rate it honestly against the checklist.
+
 ## Output format
 Return ONLY a JSON object: {"memories": [...]}. Each item:
 {

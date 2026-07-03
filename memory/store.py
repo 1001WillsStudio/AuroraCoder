@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS memories (
     last_used TEXT,
     created TEXT NOT NULL,
     supersedes TEXT,
+    corroboration_count INTEGER NOT NULL DEFAULT 0,
     file_path TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_memories_plane ON memories(plane);
@@ -106,6 +107,13 @@ class MemoryRepository:
     def _init_db(self) -> None:
         with self._lock, self._connect() as conn:
             conn.executescript(_SCHEMA)
+            # Lightweight migration for installs from before `corroboration_count`
+            # existed — CREATE TABLE IF NOT EXISTS above is a no-op on an already-
+            # created table, so an existing index.sqlite needs the column added
+            # explicitly. Cheap enough to check unconditionally on every startup.
+            cols = {row["name"] for row in conn.execute("PRAGMA table_info(memories)")}
+            if "corroboration_count" not in cols:
+                conn.execute("ALTER TABLE memories ADD COLUMN corroboration_count INTEGER NOT NULL DEFAULT 0")
 
     def _file_path(self, item: MemoryItem) -> Path:
         return self._dir / item.plane / f"{item.id}.md"
@@ -137,21 +145,23 @@ class MemoryRepository:
                     """
                     INSERT INTO memories
                         (id, plane, type, scope, description, confidence, provenance,
-                         volatile, ttl_days, usage_count, last_used, created, supersedes, file_path)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         volatile, ttl_days, usage_count, last_used, created, supersedes,
+                         corroboration_count, file_path)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         plane=excluded.plane, type=excluded.type, scope=excluded.scope,
                         description=excluded.description, confidence=excluded.confidence,
                         provenance=excluded.provenance, volatile=excluded.volatile,
                         ttl_days=excluded.ttl_days, usage_count=excluded.usage_count,
                         last_used=excluded.last_used, created=excluded.created,
-                        supersedes=excluded.supersedes, file_path=excluded.file_path
+                        supersedes=excluded.supersedes, corroboration_count=excluded.corroboration_count,
+                        file_path=excluded.file_path
                     """,
                     (
                         item.id, item.plane, item.type, item.scope, item.description,
                         item.confidence, item.provenance, int(item.volatile), item.ttl_days,
                         item.usage_count, item.last_used, item.created, item.supersedes,
-                        rel_path,
+                        item.corroboration_count, rel_path,
                     ),
                 )
         logger.info("[memory] Upserted %s (%s/%s, scope=%s)", item.id, item.plane, item.type, item.scope)

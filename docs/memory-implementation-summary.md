@@ -38,7 +38,7 @@ memory/
                            reachable over HTTP for the future Layer 2b worker too)
     extractor.py            Layer 2a: ONE structured LLM call per finished session, judges
                             both agent-nominated (`remember`) and discovered candidates
-    consolidator.py         Layer 2a: dedupe + unused-decay heuristics (no LLM)
+    consolidator.py         Layer 2a: dedupe + evidence-based decay heuristics (no LLM)
     dispatcher.py           Layer 2b: DooD worker spawn/teardown — gated, unexercised
 
 src/core_tools/
@@ -215,6 +215,64 @@ Consequences worth being explicit about:
   of this system being fail-open by default, and there's no user-facing
   tool result left to surface a failure through by the time this runs
   anyway. A missed memory can usually be re-established next session.
+
+## Confidence is self-reported — and deliberately not trusted alone (§17)
+
+The write-pass LLM still emits a `confidence: high|medium|low` field per
+candidate (`ops/prompts.py`), but two things changed once we recognized a
+model asked to self-rate its own certainty has no external anchor and
+tends to skew toward "high" regardless of actual reliability:
+
+1. **The prompt gives concrete anchors instead of three bare words** —
+   "high" now requires an unambiguous, unhedged, direct user statement
+   that's either a correction/instruction or independently corroborated
+   by another past conversation; everything else defaults to "medium" or
+   "low". The prompt states outright that confidence carries no decay
+   benefit (see next point), removing any incentive to inflate it.
+2. **`confidence` alone no longer buys a memory anything in the decay
+   pass** (`ops/consolidator.py`). The old logic gave `confidence="high"`
+   permanent decay immunity — if the model over-reports "high" (the
+   expected failure mode), that mechanism goes silently toothless
+   forever. The new rule is asymmetric: self-reported confidence is only
+   trusted to make a memory decay **faster** (`low` → half the grace
+   period — a safe, recoverable direction to trust a self-report in),
+   never to grant it longer life on its own.
+
+Longer life is earned only through evidence the model can't fabricate by
+picking a word:
+- **`corroboration_count`** (new field on `MemoryItem`) — incremented in
+  `ops/extractor.py`, purely in code, every time a *later, separate*
+  session's candidate independently resolves back to this same memory via
+  `duplicate_of`. Each corroboration multiplies the decay grace period
+  (capped at 6x) — real, repeated reinforcement, not a one-shot rating.
+- **Actual retrieval usage** (`usage_count` / `last_used`) — but this
+  isn't permanent immunity either anymore (see below).
+
+Reinforcing an existing memory (`duplicate_of`) now also preserves its
+`usage_count`/`last_used`/`created` instead of resetting them to
+defaults, which the original implementation did by accident — decay
+judges a memory by its whole history, so an in-place update can't be
+allowed to erase it.
+
+### Decay pass rework (`ops/consolidator.py`)
+
+Three independent, evidence-based checks (any one removes the item; still
+world-plane only, stance is never touched automatically):
+
+1. **Volatile + past its `ttl_days`** → expires on schedule regardless of
+   usage. The schema has always carried `volatile`/`ttl_days` (design doc
+   §10: "carries ttl, re-verify on read") but the consolidator never
+   actually read them before this — now it does. There's no
+   re-verify-on-read mechanism yet, so honest behavior is to expire
+   rather than let an un-reverified volatile fact linger indefinitely.
+2. **Never retrieved, past its confidence/corroboration-scaled grace
+   period** (`_effective_grace_days`) — the reworked version of the
+   original "unused > 90 days" check.
+3. **Retrieved before, but not recently enough** — closes a real gap in
+   the original logic, where `usage_count > 0` granted permanent immunity
+   from a single hit, ever. Now measured from `last_used` with a longer
+   (3x) allowance relative to the item's own grace period — a track
+   record of usefulness earns more time, not forever.
 
 ## Why the write pass isn't an agent (and where cross-conversation context comes from instead)
 

@@ -265,6 +265,19 @@ def run_extraction(conversation_id: str, messages: List[Dict[str, Any]]) -> List
                 )
                 if cand.get("duplicate_of"):
                     kwargs2["id"] = cand["duplicate_of"]
+                    existing = repo.get(cand["duplicate_of"])
+                    if existing:
+                        # An in-place update must not reset the very history that
+                        # decay/retention judges it by (see ops/consolidator.py) —
+                        # only content/description/confidence/provenance actually
+                        # change here. corroboration_count is bumped because this
+                        # candidate independently resolved back to the same memory
+                        # from a SEPARATE session — a deterministic, code-computed
+                        # signal that a self-reported confidence can't fake.
+                        kwargs2["usage_count"] = existing.usage_count
+                        kwargs2["last_used"] = existing.last_used
+                        kwargs2["created"] = existing.created
+                        kwargs2["corroboration_count"] = existing.corroboration_count + 1
                 item = MemoryItem(**kwargs2)
                 repo.upsert(item)
                 written.append(item.id)

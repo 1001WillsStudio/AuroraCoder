@@ -60,7 +60,12 @@ class MemoryItem:
     type: str = "project"         # see MEMORY_TYPES
     scope: str = "project"        # "user" | "project"
     id: str = field(default_factory=new_memory_id)
-    confidence: str = "medium"    # "high" | "medium" | "low"
+    confidence: str = "medium"    # "high" | "medium" | "low" — self-reported by the write-pass
+                                   # LLM at creation time; see ops/prompts.py for the calibration
+                                   # rubric. Deliberately NOT trusted alone for decay-exemption
+                                   # (models asked to self-rate confidence skew high with no
+                                   # external anchor) — see corroboration_count below and
+                                   # ops/consolidator.py for how decay actually weighs this.
     provenance: str = "agent-stated"
     volatile: bool = False
     ttl_days: Optional[int] = None
@@ -68,6 +73,13 @@ class MemoryItem:
     last_used: Optional[str] = None
     created: str = field(default_factory=_now_iso)
     supersedes: Optional[str] = None
+    corroboration_count: int = 0  # independent reinforcements: incremented by the write-pass
+                                   # each time a LATER, separate session's candidate resolves to
+                                   # `duplicate_of` this id — i.e. the fact got independently
+                                   # re-surfaced, not just self-rated confidently once. This is a
+                                   # deterministic, code-computed signal (never LLM-self-reported)
+                                   # and is what actually earns a memory a longer decay grace
+                                   # period; see ops/consolidator.py.
 
     def __post_init__(self):
         if self.plane not in MEMORY_PLANES:
