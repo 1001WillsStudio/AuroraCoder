@@ -71,6 +71,12 @@ const LANG = {
     'agent.saveTrainingData': 'Save Training Data',
     'agent.saveTrainingDataDesc': 'Log each API request/response pair for fine-tuning. Disable to save disk space and reduce I/O overhead.',
 
+    // ── Memory section ──────────────────────────────────────────
+    'memory.title': 'Memory',
+    'memory.desc': 'Let the agent remember durable facts (preferences, conventions, corrections) across sessions.',
+    'memory.enabled': 'Enable Memory',
+    'memory.enabledDesc': 'When off, the agent behaves exactly as it does without the memory module — no remember/recall tools, no cross-session context.',
+
     // ── Persistence note ──────────────────────────────────────────
     'persistence.note':
       'Stored in <code>/app/data/settings.json</code> (volume-mounted) — survives restarts & rebuilds.',
@@ -299,6 +305,12 @@ const LANG = {
     'agent.terminalMaxOutput': '终端最大输出',
     'agent.saveTrainingData': '保存训练数据',
     'agent.saveTrainingDataDesc': '记录每次 API 请求/响应用于微调。关闭可节省磁盘空间和 I/O 开销。',
+
+    // ── Memory section ──────────────────────────────────────────
+    'memory.title': '记忆',
+    'memory.desc': '让智能体在跨会话之间记住持久性事实（偏好、约定、更正）。',
+    'memory.enabled': '启用记忆',
+    'memory.enabledDesc': '关闭时，智能体的行为与没有记忆模块时完全一致 — 没有 remember/recall 工具，没有跨会话上下文。',
 
     // ── Persistence note ──────────────────────────────────────────
     'persistence.note':

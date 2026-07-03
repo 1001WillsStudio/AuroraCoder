@@ -19,6 +19,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("AURORACODER_DATA_DIR", tempfile.mkdtemp())
 os.environ.setdefault("AURORACODER_DOCKER", "0")
 
+# Memory is opt-in (settings.other.memory.enabled defaults to False — see
+# memory/settings.py). This suite specifically exercises the enabled path,
+# so seed settings.json before any gateway module is imported. The
+# disabled/no-op path is covered separately in test_memory_toggle.py.
+pathlib.Path(os.environ["AURORACODER_DATA_DIR"]).mkdir(parents=True, exist_ok=True)
+pathlib.Path(os.environ["AURORACODER_DATA_DIR"], "settings.json").write_text(
+    json.dumps({"other": {"memory": {"enabled": True}}}), encoding="utf-8"
+)
+
 from memory.schema import MemoryItem
 from memory.store import MemoryRepository
 from memory.ops import extractor, consolidator as C

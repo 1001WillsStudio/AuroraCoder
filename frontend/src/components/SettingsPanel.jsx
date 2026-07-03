@@ -72,11 +72,12 @@ export default function SettingsPanel({ isOpen, onClose }) {
         other.agent = other.agent || {}
         other.google_search = other.google_search || {}
         other.github = other.github || {}
+        other.memory = other.memory || {}
         setSettings({ ...s, other })
         setProviders(p.providers || [])
       } catch {
         // Backend unavailable — set safe defaults so the UI still works
-        setSettings({ api_keys: {}, provider_overrides: {}, custom_providers: [], other: { web_secondary: {}, agent: {} } })
+        setSettings({ api_keys: {}, provider_overrides: {}, custom_providers: [], other: { web_secondary: {}, agent: {}, memory: {} } })
         setProviders(BUILT_IN_FALLBACK)
         setMessage({ type: 'error', text: t('settings.loadError') })
       } finally {
@@ -381,6 +382,26 @@ export default function SettingsPanel({ isOpen, onClose }) {
                     </label>
                     <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 4 }}>
                       {t('agent.saveTrainingDataDesc')}
+                    </span>
+                  </div>
+                </div>
+              </section>
+
+              {/* ── Memory ───────────────────────────────────────────────── */}
+              <section className="settings-section">
+                <h3 className="settings-section-title">{t('memory.title')}</h3>
+                <p className="settings-section-desc">{t('memory.desc')}</p>
+                <div className="settings-field-row">
+                  <div className="settings-field-col settings-field-col-checkbox" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <label className="settings-checkbox-label">
+                      <input type="checkbox"
+                        checked={other.memory?.enabled === true}
+                        onChange={e => setOther('memory', 'enabled', e.target.checked)}
+                      />
+                      {t('memory.enabled')}
+                    </label>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 4 }}>
+                      {t('memory.enabledDesc')}
                     </span>
                   </div>
                 </div>

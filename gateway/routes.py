@@ -65,6 +65,7 @@ from gateway.streaming import (
     _subscriber_sse,
     _format_sse,
 )
+from memory.settings import memory_enabled
 from memory.store import get_repository as get_memory_repository
 from memory.schema import MemoryItem, MEMORY_PLANES, MEMORY_TYPES
 from memory.stance import build_stance_block
@@ -494,11 +495,6 @@ async def refresh_toolstore():
 # src/core_tools/memory_client.py — so there is never more than one process
 # writing the on-disk store. See docs/code-agent-memory-design.md.
 
-def _memory_enabled() -> bool:
-    settings = get_all_settings()
-    return bool(settings.get("other", {}).get("memory", {}).get("enabled", True))
-
-
 @app.get("/api/memory/stance")
 async def get_memory_stance(scope: Optional[str] = None):
     """Return the always-injected Stance block for the system prompt.
@@ -508,7 +504,7 @@ async def get_memory_stance(scope: Optional[str] = None):
     hot-path latency. Fails open: returns an empty block on any error
     rather than blocking the agent's turn loop.
     """
-    if not _memory_enabled():
+    if not memory_enabled():
         return {"stance": ""}
     try:
         repo = get_memory_repository()
@@ -532,7 +528,7 @@ async def remember_memory(body: RememberRequest):
     manually" UI, tests, or any other trusted caller that doesn't need
     the LLM judgment pass a live agent tool call does.
     """
-    if not _memory_enabled():
+    if not memory_enabled():
         return {"ok": False, "reason": "memory disabled in settings"}
 
     if body.plane not in MEMORY_PLANES:
@@ -568,7 +564,7 @@ async def remember_memory(body: RememberRequest):
 @app.get("/api/memory/recall")
 async def recall_memory(query: str = "", plane: str = "world", scope: Optional[str] = None, k: int = 5):
     """Query-aware retrieval over the World Model (design doc §12)."""
-    if not _memory_enabled():
+    if not memory_enabled():
         return {"results": []}
     if plane not in MEMORY_PLANES:
         raise HTTPException(status_code=400, detail=f"invalid plane: {plane}")
@@ -611,7 +607,7 @@ async def log_gap(body: LogGapRequest):
     Recurring gaps on the same scope (similar question already open) are
     escalated in priority rather than duplicated — see GapLedger.log_gap.
     """
-    if not _memory_enabled():
+    if not memory_enabled():
         return {"ok": False, "reason": "memory disabled in settings"}
     if body.priority not in GAP_PRIORITIES or body.strategy not in GAP_STRATEGIES:
         raise HTTPException(status_code=400, detail="Invalid priority or strategy")

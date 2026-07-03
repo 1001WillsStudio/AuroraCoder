@@ -43,7 +43,7 @@ from typing import Any, Dict, List, Optional
 from openai import OpenAI
 
 from gateway.provider_registry import get_memory_extraction_config
-from gateway.settings_store import get_other_settings
+from memory.settings import passive_extraction_enabled
 from memory.schema import MemoryItem, MEMORY_PLANES, MEMORY_TYPES
 from memory.store import get_repository
 from memory.ops.prompts import EXTRACTION_SYSTEM_PROMPT, build_extraction_user_prompt
@@ -57,11 +57,6 @@ MIN_MESSAGES_TO_BOTHER = 4  # skip trivial 1-2 turn conversations, UNLESS someth
 EXTRACTION_MAX_TOKENS = 3072
 SIMILAR_PER_NOMINATION_LIMIT = 5
 OTHER_CONVERSATIONS_PER_NOMINATION_LIMIT = 3
-
-
-def extraction_enabled() -> bool:
-    mem = get_other_settings().get("memory", {})
-    return bool(mem.get("passive_enabled", True))
 
 
 def _transcript_to_text(messages: List[Dict[str, Any]], max_chars: int = MAX_TRANSCRIPT_CHARS) -> str:
@@ -175,7 +170,7 @@ def run_extraction(conversation_id: str, messages: List[Dict[str, Any]]) -> List
     synchronous review gate, this pass has no user-facing tool-call
     result to report failure through anyway).
     """
-    if not extraction_enabled():
+    if not passive_extraction_enabled():
         return []
 
     nominated = _extract_nominated_candidates(messages)

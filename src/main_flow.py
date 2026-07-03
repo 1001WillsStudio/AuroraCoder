@@ -135,18 +135,35 @@ def generate_chat_responses_stream_native(
 
     # Add system message if not already present.
     if not messages or messages[0].get("role") != "system":
-        # Stance is fetched once here, at session start — NOT per turn.
-        # Subsequent turns reuse the already-inserted system message, so
-        # this network call only ever happens on the first turn of a
-        # conversation (fails open to "" on any error — see memory_client).
-        memory_stance = memory_client.get_stance()
+        # Memory is opt-in (settings.other.memory.enabled, default False).
+        # When disabled, skip the stance fetch entirely (no gateway round
+        # trip) and drop the whole memory section from the prompt — with
+        # the remember/recall/log_gap tool schemas also filtered out
+        # (tool_definitions.memory_filter_tools), a disabled agent sees no
+        # mention of memory anywhere and behaves like a build with no
+        # memory module at all.
+        memory_section = ""
+        if memory_client.memory_enabled():
+            # Stance is fetched once here, at session start — NOT per turn.
+            # Subsequent turns reuse the already-inserted system message, so
+            # this network call only ever happens on the first turn of a
+            # conversation (fails open to "" on any error — see memory_client).
+            memory_stance = memory_client.get_stance()
+            memory_section = (
+                "- **Memory**: you have `remember`/`recall` tools for durable facts that persist "
+                "across sessions. Use `remember` sparingly — only for facts that are NOT derivable "
+                "from the code/git and would concretely change future behavior (preferences, "
+                "corrections, project context, external-system pointers, non-obvious conventions). "
+                "Silence is the correct default; most turns should not call it.\n"
+                f"{memory_stance}\n"
+            )
         system_message = SYSTEM_MESSAGE_TEMPLATE.format(
             current_time=datetime.datetime.now().isoformat(),
             vnc_instructions=VNC_INSTRUCTIONS,
             terminal_env_note=TERMINAL_ENV_NOTE,
             toolstore_tools=get_toolstore_tools_prompt(),
             workspace_tree=workspace_tree,
-            memory_stance=memory_stance,
+            memory_section=memory_section,
         )
         messages.insert(0, {"role": "system", "content": system_message})
     

@@ -24,6 +24,7 @@ own concerns like conversation/settings persistence are.
 
 ```
 memory/
+  settings.py     Central other.memory.* flag reader (master switch + sub-flags)
   schema.py       MemoryItem dataclass, markdown+frontmatter (de)serialization
   store.py        MemoryRepository — file-backed store + SQLite ranking index
   redact.py       Secret redaction applied on every write
@@ -55,6 +56,8 @@ tests/
   test_memory_layer2.py    unified extractor (nominated + discovered, fake LLM client),
                            remember_tool no-op, consolidator heuristics
   test_memory_layer3.py    gap ledger dedupe/escalation, dispatcher gate + docker-arg build
+  test_memory_toggle.py    master switch: tool-list filtering, route no-ops, extraction
+                           short-circuit, system-prompt substitution, gateway/backend agreement
 ```
 
 The gateway process is the **sole owner** of all memory state at runtime
@@ -83,9 +86,28 @@ just import from `memory.*` instead of owning it.
 
 ## Runtime behavior
 
-- **Every turn**: Stance block is fetched once (session start only) and
-  baked into the cached system-prompt prefix — never busts prompt cache on
-  later turns.
+- **Master switch** (`settings.other.memory.enabled`, default **`false`**):
+  everything below is inert unless this is explicitly turned on. When off,
+  the agent behaves exactly as it would with no memory module at all — the
+  `remember`/`recall`/`log_gap` tool schemas are filtered out of the tool
+  list before it ever reaches the LLM (`src/tool_definitions.py`'s
+  `memory_filter_tools`, applied in both `get_tool_definitions()` and the
+  subagent-filtered `get_filtered_tools()`), the static "Memory" guideline
+  bullet + stance block are dropped from the system prompt entirely
+  (`src/main_flow.py`), the stance HTTP call is skipped rather than made
+  and discarded, and every `/api/memory/*` gateway route (including gap
+  logging) short-circuits to a safe no-op. `passive_enabled` and
+  `heavy_ops_enabled` below are `memory_enabled() AND <their own flag>` —
+  see `memory/settings.py` — so a disabled master also disables passive
+  extraction and gap investigation without needing to flip those
+  separately. Read from two places (`memory/settings.py` on the gateway
+  side, `src/core_tools/memory_client.memory_enabled()` on the backend
+  side, both reading the same `settings.json`) since tool-list filtering
+  happens in the backend process and route gating happens in the gateway
+  process — see `tests/test_memory_toggle.py`.
+- **Every turn** (when enabled): Stance block is fetched once (session
+  start only) and baked into the cached system-prompt prefix — never busts
+  prompt cache on later turns.
 - **In a turn**: the agent may call `remember` (nominate, no I/O — see
   below), `recall` (read, parallel/subagent-safe), or `log_gap` (flag an
   unresolved unknown, a real synchronous write to the Gap Ledger).
@@ -119,12 +141,15 @@ just import from `memory.*` instead of owning it.
 
 ## Settings (all under `settings.json` → `other.memory`, all optional)
 
+Toggleable from the frontend Settings panel ("Memory" section — currently
+just the one checkbox; the sub-flags below are settings.json-only for now).
+
 | Key | Default | Effect |
 |---|---|---|
-| `enabled` | `true` | Master switch for Layer 1 (stance/remember/recall/log_gap) |
-| `passive_enabled` | `true` | The unified write pass, run at session end |
+| `enabled` | **`false`** | Master switch for the whole subsystem — see "Runtime behavior" above |
+| `passive_enabled` | `true` | The unified write pass, run at session end (requires `enabled`) |
 | `extraction_provider` | *(default provider)* | Which provider/model runs the write pass |
-| `heavy_ops_enabled` | `false` | Layer 2b — spawn worker containers |
+| `heavy_ops_enabled` | `false` | Layer 2b — spawn worker containers (requires `enabled`) |
 | `worker_image` | `"auroracoder"` | Image tag used for `memory-worker` containers |
 
 ## The unified write pass (design doc §11 "Active" + "Passive", merged)

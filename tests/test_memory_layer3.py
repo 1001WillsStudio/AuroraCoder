@@ -11,12 +11,23 @@ Run with (host, conda env with gateway deps):
 """
 import os
 import sys
+import json
 import pathlib
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("AURORACODER_DATA_DIR", tempfile.mkdtemp())
 os.environ.setdefault("AURORACODER_DOCKER", "0")
+
+# Memory is opt-in (settings.other.memory.enabled defaults to False — see
+# memory/settings.py). Gap logging/listing is gated on the master switch
+# too, so this suite needs it on; heavy_ops_enabled is left unset/False so
+# the dispatcher gate tests below still exercise that specific sub-flag.
+# The disabled/no-op path is covered separately in test_memory_toggle.py.
+pathlib.Path(os.environ["AURORACODER_DATA_DIR"]).mkdir(parents=True, exist_ok=True)
+pathlib.Path(os.environ["AURORACODER_DATA_DIR"], "settings.json").write_text(
+    json.dumps({"other": {"memory": {"enabled": True}}}), encoding="utf-8"
+)
 
 from memory.gap_store import GapLedger
 from memory.ops import dispatcher

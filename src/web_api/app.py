@@ -27,7 +27,7 @@ from ..code_sandbox import shell, get_workspace, WORKSPACE
 from ..core_tools.subagent import cancel_active_subagents
 from ..config import DEFAULT_PROVIDER
 from ..providers import provider_manager
-from ..tool_definitions import NATIVE_TOOL_DEFINITIONS, SUBAGENT_READ_ONLY_TOOLS
+from ..tool_definitions import NATIVE_TOOL_DEFINITIONS, SUBAGENT_READ_ONLY_TOOLS, memory_filter_tools
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +101,7 @@ def get_filtered_tools(mode: str):
         if mode == "read_only" and name not in SUBAGENT_READ_ONLY_TOOLS:
             continue
         defs.append(td)
-    return defs
+    return memory_filter_tools(defs)
 
 
 def convert_messages_for_frontend(messages: list) -> list:

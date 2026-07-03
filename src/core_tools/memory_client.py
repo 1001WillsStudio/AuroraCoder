@@ -24,17 +24,40 @@ the agent's turn loop (design doc §18 "fail-open").
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from typing import Any, Dict, List, Optional
 
 import requests
 
+from ..config import DATA_DIR
+
 logger = logging.getLogger(__name__)
 
 GATEWAY_URL = os.environ.get("GATEWAY_URL", "http://localhost:8081")
 
 _TIMEOUT = 5.0  # seconds — memory calls must never be allowed to stall a turn
+
+
+def memory_enabled() -> bool:
+    """Read ``other.memory.enabled`` from settings.json directly — no gateway
+    round trip needed just to decide whether the agent should even see
+    memory tools / pay for a stance fetch this turn.
+
+    Same direct-read pattern as ``training_log.load_save_training_flag()``.
+    Mirrors ``memory.settings.memory_enabled()`` on the gateway side; the
+    two must agree since they gate the same feature from two processes.
+    Defaults to ``False`` — memory is opt-in.
+    """
+    try:
+        settings_path = DATA_DIR / "settings.json"
+        if settings_path.exists():
+            settings = json.loads(settings_path.read_text(encoding="utf-8"))
+            return bool(settings.get("other", {}).get("memory", {}).get("enabled", False))
+    except Exception:
+        pass
+    return False
 
 
 def get_stance(scope: Optional[str] = None) -> str:

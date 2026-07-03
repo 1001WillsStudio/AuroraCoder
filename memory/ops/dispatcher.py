@@ -1,8 +1,10 @@
 """
 Memory-worker dispatcher — Layer 2b (Gap Engine heavy ops), scaffolding.
 
-**Disabled by default and inert unless explicitly turned on** via
-``settings.other.memory.heavy_ops_enabled``. This module intentionally
+**Disabled by default and inert unless explicitly turned on** via both
+``settings.other.memory.enabled`` (master switch) and
+``settings.other.memory.heavy_ops_enabled`` (this layer specifically —
+see ``memory/settings.py``). This module intentionally
 does two different things with two different confidence levels:
 
 1. Container lifecycle (spawn / snapshot / teardown) — real,
@@ -40,17 +42,13 @@ from typing import Any, Dict, List, Optional
 
 from gateway.settings_store import get_other_settings
 from memory.gap_store import get_gap_ledger
+from memory.settings import memory_enabled, heavy_ops_enabled
 
 logger = logging.getLogger(__name__)
 
 WORKER_ROLE = "memory-worker"
 DEFAULT_WORKER_IMAGE = "auroracoder"
 CONTAINER_NAME_PREFIX = "auroracoder-memory-worker-"
-
-
-def heavy_ops_enabled() -> bool:
-    mem = get_other_settings().get("memory", {})
-    return bool(mem.get("heavy_ops_enabled", False))
 
 
 def _worker_image() -> str:
@@ -158,6 +156,8 @@ def dispatch_gap_investigation(gap_id: str) -> Dict[str, Any]:
     if gap is None:
         return {"ok": False, "reason": "gap not found"}
 
+    if not memory_enabled():
+        return {"ok": False, "reason": "memory disabled (settings.other.memory.enabled)"}
     if not heavy_ops_enabled():
         return {"ok": False, "reason": "heavy_ops disabled (settings.other.memory.heavy_ops_enabled)"}
 

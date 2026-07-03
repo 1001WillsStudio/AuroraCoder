@@ -31,6 +31,7 @@ from .core_tools.tool_store_client import (
 from .core_tools.subagent import run_subagent
 from .core_tools.continue_chat import continue_as_new_chat
 from .core_tools.memory_tools import remember_tool, recall_tool, log_gap_tool
+from .core_tools.memory_client import memory_enabled
 
 
 
@@ -566,6 +567,25 @@ SUBAGENT_READ_ONLY_TOOLS = {
 # Backward-compatible alias — kept so any external references don't break immediately.
 READ_ONLY_TOOLS = PARALLEL_SAFE_TOOLS
 
+# Tool names owned by the memory subsystem — excluded entirely from the tool
+# list (not just no-op'd) when ``settings.other.memory.enabled`` is False, so
+# a disabled agent looks and behaves exactly like a build with no memory
+# module: the LLM never even sees these schemas. See memory_filter_tools().
+MEMORY_TOOL_NAMES = {"remember", "recall", "log_gap"}
+
+
+def memory_filter_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Drop memory tool schemas from *tools* unless memory is enabled.
+
+    Applied everywhere a tool list reaches the LLM — the default set
+    (get_tool_definitions) and the subagent-filtered set
+    (web_api.app.get_filtered_tools) — so a disabled subagent run can't
+    see ``recall`` either.
+    """
+    if memory_enabled():
+        return tools
+    return [t for t in tools if t["function"]["name"] not in MEMORY_TOOL_NAMES]
+
 
 # Tool function mappings - maps tool names to their actual functions
 TOOL_FUNCTION_MAP = {
@@ -597,6 +617,7 @@ def get_tool_definitions() -> List[Dict[str, Any]]:
     like any other native tool.
     """
     tools = copy.deepcopy(NATIVE_TOOL_DEFINITIONS)
+    tools = memory_filter_tools(tools)
     try:
         tools.extend(get_primary_tool_schemas())
     except Exception:
