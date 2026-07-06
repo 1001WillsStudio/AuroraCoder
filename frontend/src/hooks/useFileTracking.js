@@ -133,6 +133,7 @@ export function useFileTracking(conversationId, messages, isStreaming) {
     return () => clearTimeout(timer)
   }, [showCodePanel, editedFiles.length, conversationId, fetchFileDiffs])
 
+
   // ── Auto‑close panel when no files and streaming ends ───────────────────
 
   useEffect(() => {

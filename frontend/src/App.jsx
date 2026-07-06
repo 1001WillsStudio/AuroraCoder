@@ -300,6 +300,7 @@ function App() {
         pendingInterruptRef, continuationNavigatedRef, abortControllerRef,
         withInterrupt: true,
         withRetry: true,
+        onMessagesRefresh: handleRefreshFiles,
         onFirstSse: () => setSseReceived(true),
         onStreamEnd: () => { setPendingInterrupt(null); pendingInterruptRef.current = null },
         onInterruptFired: () => setPendingInterrupt(null),
@@ -339,6 +340,7 @@ function App() {
         pendingInterruptRef: null, continuationNavigatedRef, abortControllerRef: null,
         withInterrupt: false,
         withRetry: false,
+        onMessagesRefresh: handleRefreshFiles,
         onFirstSse: () => setSseReceived(true),
         ensureAssistantTail: true,
       })
@@ -500,6 +502,7 @@ function App() {
             pendingInterruptRef: null, continuationNavigatedRef, abortControllerRef: null,
             withInterrupt: false,
             withRetry: false,
+            onMessagesRefresh: handleRefreshFiles,
             onFirstSse: () => setSseReceived(true),
             onStreamEnd: () => { setPendingInterrupt(null); pendingInterruptRef.current = null },
             ensureAssistantTail: true,

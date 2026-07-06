@@ -14,6 +14,7 @@ export function createStreamCallbacks({
   withInterrupt = false,
   withRetry = false,
   overrides = {},
+  onMessagesRefresh = null,
   onFirstSse = null,
   onStreamEnd = null,
   onInterruptFired = null,
@@ -44,6 +45,9 @@ export function createStreamCallbacks({
       continuationNavigatedRef?.current.add(data.new_conversation_id)
       setTimeout(() => handleLoadConversation?.(data.new_conversation_id), 500)
     }
+    // Trigger a diff refresh on every full-state messages event so the
+    // code panel always reflects the latest file state after a round.
+    onMessagesRefresh?.()
   }
 
   const onDone = (data) => {

@@ -206,6 +206,25 @@ CODE_PANEL_WARN_ITEMS  = 3        # Max open items before mild warning
 INTERPRETER_MAX_FILE_CHARS = 150_000  # Per-file char limit; larger files get truncated
 INTERPRETER_TRUNCATE_PREVIEW_LINES = 20  # Lines shown when a file is truncated
 
+# =============================================================================
+# File Read Safety — shared across gateway + code tools
+# =============================================================================
+# Files larger than this are never fully loaded into memory.  The gateway
+# skips snapshotting/diffing them; the code tools use buffered I/O instead.
+MAX_FILE_READ_SIZE = 5_000_000  # 5 MB
+
+def count_lines_buffered(file_path, chunk_size: int = 64 * 1024) -> int:
+    """Count lines in *file_path* without loading the entire file into memory.
+
+    Reads in *chunk_size* blocks in binary mode and counts ``\n`` bytes.
+    Safe for arbitrarily large files (e.g. 4 GB logs).
+    """
+    count = 0
+    with open(file_path, 'rb') as f:
+        while chunk := f.read(chunk_size):
+            count += chunk.count(b'\n')
+    return count
+
 # Severe warning thresholds — triggers a stronger, more urgent warning
 # when the agent has too many files open or the combined display is huge.
 CODE_PANEL_CRITICAL_ITEMS = 7        # >= this many files → severe warning

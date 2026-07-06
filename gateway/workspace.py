@@ -16,6 +16,8 @@ from typing import Dict, Any, Optional, List
 
 import difflib
 
+from src.config import MAX_FILE_READ_SIZE
+
 logger = logging.getLogger(__name__)
 
 # ============================================================================
@@ -121,6 +123,7 @@ def compute_unified_diff(original: str, current: str) -> list:
     return result
 
 
+
 def get_file_diffs_for_conversation(
     conversation_id: str, work_dir: Path
 ) -> Dict[str, Any]:
@@ -141,16 +144,23 @@ def get_file_diffs_for_conversation(
         try:
             full_path = work_dir / file_path
 
-            # Get current content
+            # Get current content — skip files too large to safely read.
+            current_content = ""
             if full_path.exists() and full_path.is_file():
                 try:
+                    size = full_path.stat().st_size
+                    if size > MAX_FILE_READ_SIZE:
+                        logger.warning(
+                            f"Skipping diff for {file_path} ({size:,} bytes — too large)"
+                        )
+                        continue
                     current_content = full_path.read_text(
                         encoding="utf-8", errors="replace"
                     )
                 except Exception as e:
                     logger.warning(f"Could not read file {file_path}: {e}")
                     continue
-            else:
+            elif not full_path.exists():
                 current_content = ""
 
             original_content = snapshots.get(file_path, "")
@@ -341,63 +351,122 @@ _TREE_SKIP_NAMES = {
 def generate_workspace_tree_text(
     workspace_root: Path,
     max_depth: int = 3,
-    max_files_per_dir: int = 3,
+    max_files_per_dir: int = 2,
 ) -> str:
     """Generate a compact text tree of the workspace for the system message.
 
-    - All directories are always shown (up to *max_depth* levels deep).
-    - Up to *max_files_per_dir* files are shown per directory.
-      When there are more, a ``... and N more file(s)`` line is appended.
-    - Hidden items (dot-prefixed) and common noise directories
-      (``__pycache__``, ``node_modules``, ``.git``, etc.) are skipped.
-    """
-    lines = [f"📁 {workspace_root.name}/"]
+    Plain-indentation style (no emoji / box-drawing characters):
 
-    def _walk(path: Path, indent_prefix: str, depth: int):
+        workspace/\n          src/\n            app.py\n            utils.py\n          ... and 5 more file(s)
+
+    - All directories up to *max_depth* are shown.
+    - Up to *max_files_per_dir* files per directory, sorted by modification
+      time (most recent first).  Excess files get an ``... and N more`` line.
+    - Hidden items (dot-prefixed) and noise directories are skipped.
+    - Empty directories (zero files after filtering) are omitted.
+    - Single-child directory chains are collapsed into a single entry
+      (e.g. ``a/b/`` instead of two nested levels when *a* contains
+      only the subdirectory *b*).
+    """
+    SKIP = _TREE_SKIP_NAMES
+    INDENT = "  "
+    lines = [f"{workspace_root.name}/"]
+
+    def _walk(path: Path, prefix: str, depth: int) -> bool:
+        """Walk *path*, appending lines under *prefix*.
+
+        Returns ``True`` when at least one entry was rendered (so the parent
+        knows the directory is non-empty).
+        """
         if depth > max_depth:
-            return
+            return False
         try:
-            entries = sorted(
-                path.iterdir(),
-                key=lambda e: (not e.is_dir(), e.name.lower()),
-            )
+            entries = list(path.iterdir())
         except (PermissionError, OSError):
-            return
+            return False
 
         visible = [
             e for e in entries
-            if not e.name.startswith(".") and e.name not in _TREE_SKIP_NAMES
+            if not e.name.startswith(".") and e.name not in SKIP
         ]
-        dirs = [e for e in visible if e.is_dir()]
-        files = [e for e in visible if e.is_file()]
+        dirs = sorted(
+            [e for e in visible if e.is_dir()],
+            key=lambda e: e.name.lower(),
+        )
+        files = sorted(
+            [e for e in visible if e.is_file()],
+            key=lambda e: (-_safe_mtime(e), e.name.lower()),
+        )
+
+        # --- Collapse single-child directory chains --------------------------
+        collapsed = []
+        while len(dirs) == 1 and len(files) == 0 and depth + len(collapsed) <= max_depth:
+            solo = dirs[0]
+            try:
+                next_entries = list(solo.iterdir())
+            except (PermissionError, OSError):
+                return bool(collapsed)
+            next_visible = [
+                e for e in next_entries
+                if not e.name.startswith(".") and e.name not in SKIP
+            ]
+            next_dirs = [e for e in next_visible if e.is_dir()]
+            next_files = [e for e in next_visible if e.is_file()]
+
+            if not next_dirs and not next_files:
+                return bool(collapsed)  # chain ends empty → skip
+            if len(next_dirs) == 1 and not next_files:
+                # Still a single-dir chain — accumulate the name.
+                collapsed.append(solo.name)
+                path = solo
+                dirs = next_dirs
+                files = next_files
+                continue
+            # Chain ends here — capture the final directory's real state.
+            collapsed.append(solo.name)
+            path = solo
+            dirs = sorted(next_dirs, key=lambda e: e.name.lower())
+            files = sorted(
+                next_files,
+                key=lambda e: (-_safe_mtime(e), e.name.lower()),
+            )
+            break
+
+        if collapsed:
+            lines.append(f"{prefix}{'/'.join(collapsed)}/")
+        # --------------------------------------------------------------------
 
         show_files = files[:max_files_per_dir]
         remaining = len(files) - max_files_per_dir
 
-        # Show all dirs, then up to max_files_per_dir files, then a
-        # "... and N more" line if files were truncated.
-        all_to_show = dirs + show_files
-        has_remaining = remaining > 0
-        total_shown = len(all_to_show) + (1 if has_remaining else 0)
+        all_entries = dirs + show_files
+        total_shown = len(all_entries) + (1 if remaining > 0 else 0)
 
-        for i, entry in enumerate(all_to_show):
-            is_last = (i == total_shown - 1)
-            branch = "└── " if is_last else "├── "
+        if total_shown == 0:
+            return False
 
+        for entry in all_entries:
             if entry.is_dir():
-                lines.append(f"{indent_prefix}{branch}📁 {entry.name}/")
+                lines.append(f"{prefix}{entry.name}/")
                 if depth < max_depth:
-                    next_indent = indent_prefix + ("    " if is_last else "│   ")
-                    _walk(entry, next_indent, depth + 1)
+                    _walk(entry, prefix + INDENT, depth + 1)
             else:
-                lines.append(f"{indent_prefix}{branch}📄 {entry.name}")
+                lines.append(f"{prefix}{entry.name}")
 
-        if has_remaining:
-            lines.append(
-                f"{indent_prefix}└── ... and {remaining} more file(s)"
-            )
+        if remaining > 0:
+            lines.append(f"{prefix}... and {remaining} more file(s)")
+
+        return True
 
     _walk(workspace_root, "", 0)
     return "\n".join(lines)
+
+
+def _safe_mtime(entry: Path) -> float:
+    """Return *entry*'s mtime, or 0 on any OS error."""
+    try:
+        return entry.stat().st_mtime
+    except OSError:
+        return 0.0
 
 

@@ -141,11 +141,30 @@ class TerminalRunner:
 
 
 def run_terminal_cmd_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
-    """Run terminal command tool wrapper."""
+    """Run terminal command tool wrapper.
+
+    Foreground calls with ``timeout > 30`` are automatically converted to
+    background execution so the agent loop is never blocked for long.
+    """
     runner = TerminalRunner(workspace_root=arguments.get("workspace_root"))
-    return runner.run_command(
+    timeout = arguments.get("timeout", 30)
+    blocking = arguments.get("blocking", True)
+
+    # Automatically convert foreground calls with timeout > 30s to background.
+    was_converted = False
+    if timeout > 30 and blocking:
+        blocking = False
+        was_converted = True
+
+    result = runner.run_command(
         command=arguments["command"],
-        timeout=arguments.get("timeout", 30),
-        blocking=arguments.get("blocking", True),
+        timeout=timeout,
+        blocking=blocking,
         new_terminal=arguments.get("new_terminal", False),
-    ), arguments
+    )
+
+    # Tell the agent that the call was re-routed to background.
+    if was_converted:
+        result = f"[Auto-background: timeout={timeout}s > 30s, converted to background.]\n{result}"
+
+    return result, arguments
