@@ -138,6 +138,10 @@ def generate_chat_responses_stream_native(
     # Eagerly load primary tool schemas once at startup so the LLM's
     # tools[] array includes them from the very first turn.
     prefetch_primary_tools()
+
+    # Resolve tool definitions — use override if provided, else defaults
+    tools = tools_override or get_tool_definitions()
+    filter_continuation = tools_override is None  # only filter for default tools
     
     # Add system message if not already present.
     if not messages or messages[0].get("role") != "system":
