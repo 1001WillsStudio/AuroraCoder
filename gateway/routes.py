@@ -473,7 +473,10 @@ async def discover_models(base_url: str = "", api_key: str = "", provider_id: st
         base_url = base_url or r.get("base_url", "")
         api_key = api_key or r.get("api_key", "")
 
-    url = base_url.rstrip("/") + "/v1/models"
+    url = base_url.rstrip("/")
+    if not url.endswith("/v1"):
+        url += "/v1"
+    url += "/models"
     headers = {"Authorization": f"Bearer {api_key}"}
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
