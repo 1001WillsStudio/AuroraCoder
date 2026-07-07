@@ -288,6 +288,12 @@ function App() {
       messagesToSend = rawMessages
     }
 
+    const selectedEntry = providers.find(p => p.id === selectedProvider)
+    const opts = {
+      ...options,
+      provider_id: selectedEntry?.provider_id || null,
+      model: selectedEntry?.model || null,
+    }
     setLastRequest({ message: userMessageText, conversationId, provider: selectedProvider, existingMessages: messagesToSend })
 
     log('about to call streamChat()')
@@ -306,7 +312,7 @@ function App() {
         onInterruptFired: () => setPendingInterrupt(null),
         ensureAssistantTail: true,
       })
-      await streamChat(apiMessage, conversationId, callbacks, abortControllerRef.current.signal, messagesToSend, selectedProvider, options)
+      await streamChat(apiMessage, conversationId, callbacks, abortControllerRef.current.signal, messagesToSend, selectedProvider, opts)
     } catch (error) {
       if (error.name !== 'AbortError') console.error('Chat error:', error)
       setIsStreaming(false)

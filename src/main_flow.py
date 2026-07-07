@@ -91,6 +91,7 @@ def generate_chat_responses_stream_native(
     messages: list,
     max_iterations: int = MAX_ITERATIONS,
     provider_id: Optional[str] = None,
+    model: Optional[str] = None,
     tools_override: Optional[List[Dict]] = None,
     conversation_id: str | None = None,
     workspace_tree: str = "",
@@ -112,17 +113,13 @@ def generate_chat_responses_stream_native(
     if provider_id is None:
         provider_id = DEFAULT_PROVIDER
     
-    # Parse composite provider_id::model_id (from sidebar model selector)
-    explicit_model = None
-    if "::" in provider_id:
-        provider_id, explicit_model = provider_id.split("::", 1)
 
     # Get client and config for the resolved provider
     client = provider_manager.get_client(provider_id)
     config = provider_manager.get_config(provider_id)
 
-    # Model name: explicit (from sidebar) → config → PROVIDER_DEFAULT_MODELS
-    model_name = explicit_model or config.get("model") or ""
+    # Model name: explicit param → config → PROVIDER_DEFAULT_MODELS
+    model_name = model or config.get("model") or ""
     if not model_name:
         defaults = PROVIDER_DEFAULT_MODELS.get(provider_id, [])
         model_name = defaults[0]["id"] if defaults else "deepseek-chat"
