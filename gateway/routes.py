@@ -94,6 +94,7 @@ class _SettingsUpdate(BaseModel):
     api_keys: Optional[dict] = None
     provider_overrides: Optional[dict] = None
     custom_providers: Optional[list] = None
+    provider_models: Optional[dict] = None
     other: Optional[dict] = None
 
 
@@ -369,6 +370,8 @@ async def update_settings(update: _SettingsUpdate):
         payload["provider_overrides"] = update.provider_overrides
     if update.custom_providers is not None:
         payload["custom_providers"] = update.custom_providers
+    if update.provider_models is not None:
+        payload["provider_models"] = update.provider_models
     if update.other is not None:
         payload["other"] = update.other
     result = _store_update_settings(payload)

@@ -93,6 +93,8 @@ const LANG = {
     'msg.apiKeyRequired': 'API key required',
     'msg.modelRequired': 'Model required',
     'msg.fillFieldsFirst': 'Fill in Base URL and API Key first',
+    'msg.fillProviderFirst': 'Fill in the API key first, then click Discover',
+    'providers.untitled': 'Unnamed',
     // ── App‑wide translations (not just settings) ────────────────
     // ═══════════════════════════════════════════════════════════════
 
@@ -325,6 +327,8 @@ const LANG = {
     'msg.apiKeyRequired': 'API 密钥不能为空',
     'msg.modelRequired': '模型不能为空',
     'msg.fillFieldsFirst': '请先填写基础 URL 和 API 密钥',
+    'msg.fillProviderFirst': '请先填写 API 密钥，然后点击发现',
+    'providers.untitled': '未命名',
 
     // ═══════════════════════════════════════════════════════════════
     // ── App‑wide translations ─────────────────────────────────────
