@@ -109,12 +109,30 @@ def get_available_providers() -> List[dict]:
     for provider_id in MODEL_PROVIDERS:
         seen.add(provider_id)
         r = resolve_provider(provider_id)
-        result.append({
-            "id": r["id"],
-            "name": r["name"],
-            "description": r["description"],
-            "api_key_configured": r["api_key_configured"],
-        })
+        settings = get_all_settings()
+        pm = settings.get("provider_models", {}).get(provider_id, [])
+
+        if pm:
+            for m in pm:
+                mid = m["id"] if isinstance(m, dict) else m
+                result.append({
+                    "id": f"{provider_id}::{mid}",
+                    "name": f"{r['name']} / {mid}",
+                    "description": r["description"],
+                    "api_key_configured": r["api_key_configured"],
+                    "provider_id": provider_id,
+                    "model": mid,
+                })
+        else:
+            for d in PROVIDER_DEFAULT_MODELS.get(provider_id, []):
+                result.append({
+                    "id": f"{provider_id}::{d['id']}",
+                    "name": f"{r['name']} / {d['id']}",
+                    "description": r["description"],
+                    "api_key_configured": r["api_key_configured"],
+                    "provider_id": provider_id,
+                    "model": d["id"],
+                })
 
     for cp in get_custom_providers():
         cpid = cp.get("id")
@@ -122,13 +140,29 @@ def get_available_providers() -> List[dict]:
             continue
         seen.add(cpid)
         r = resolve_provider(cpid)
-        result.append({
-            "id": r["id"],
-            "name": r["name"],
-            "description": r["description"],
-            "api_key_configured": r["api_key_configured"],
-            "custom": True,
-        })
+        settings = get_all_settings()
+        pm = settings.get("provider_models", {}).get(cpid, [])
+
+        if pm:
+            for m in pm:
+                mid = m["id"] if isinstance(m, dict) else m
+                result.append({
+                    "id": f"{cpid}::{mid}",
+                    "name": f"{r['name']} / {mid}",
+                    "description": r["description"],
+                    "api_key_configured": r["api_key_configured"],
+                    "provider_id": cpid,
+                    "model": mid,
+                    "custom": True,
+                })
+        else:
+            result.append({
+                "id": r["id"],
+                "name": r["name"],
+                "description": r["description"],
+                "api_key_configured": r["api_key_configured"],
+                "custom": True,
+            })
 
     return result
 

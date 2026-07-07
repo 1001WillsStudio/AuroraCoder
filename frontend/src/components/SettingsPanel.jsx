@@ -392,9 +392,9 @@ export default function SettingsPanel({ isOpen, onClose }) {
                 <div className="settings-field-row">
                   <div className="settings-field-col settings-field-col-wide">
                     <input className="settings-input settings-input-deepseek-key" type="text"
-                      value={apiKeys['opencode-ds-v4-pro'] || ''}
-                      onChange={e => setApiKey('opencode-ds-v4-pro', e.target.value)}
-                      placeholder={apiKeysConfigured['opencode-ds-v4-pro'] || apiKeysConfigured['opencode-ds-v4-flash']
+                      value={apiKeys['opencode'] || ''}
+                      onChange={e => setApiKey('opencode', e.target.value)}
+                      placeholder={apiKeysConfigured['opencode'] || apiKeysConfigured['opencode-ds-v4-pro']
                         ? 'OpenCode API key has been set — enter a new key to override'
                         : 'sk-…'}
                     />
