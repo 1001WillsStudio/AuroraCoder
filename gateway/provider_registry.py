@@ -44,7 +44,7 @@ def resolve_provider(provider_id: str) -> dict:
 
     Returns a dict with **every** field consumers need:
         id, name, description, base_url, api_key, model,
-        supports_thinking, extra_body, context_window, custom,
+        extra_body, context_window, custom,
         api_key_configured
 
     For unknown provider IDs the default provider is returned as a fallback.
@@ -86,7 +86,6 @@ def resolve_provider(provider_id: str) -> dict:
     # Ensure all expected keys exist
     prov.setdefault("name", prov.get("id", provider_id))
     prov.setdefault("description", "Custom provider" if custom else "")
-    prov.setdefault("supports_thinking", True)
     prov.setdefault("extra_body", None)
     prov.setdefault("context_window", 128_000)
 
@@ -113,7 +112,6 @@ def get_available_providers() -> List[dict]:
             "id": r["id"],
             "name": r["name"],
             "description": r["description"],
-            "supports_thinking": r["supports_thinking"],
             "api_key_configured": r["api_key_configured"],
         })
 
@@ -127,7 +125,6 @@ def get_available_providers() -> List[dict]:
             "id": r["id"],
             "name": r["name"],
             "description": r["description"],
-            "supports_thinking": r["supports_thinking"],
             "api_key_configured": r["api_key_configured"],
             "custom": True,
         })

@@ -271,7 +271,7 @@ class ProviderManager:
             default = {
                 k: v
                 for k, v in custom.items()
-                if k not in ("supports_thinking", "id")
+                if k != "id"
             }
             default["provider_id"] = provider_id
         else:
