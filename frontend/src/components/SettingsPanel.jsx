@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { X, Plus, Trash2, Save, RefreshCw, Shield, Globe, LogOut, ExternalLink, Wrench, ChevronDown, ChevronRight } from 'lucide-react'
+import { X, Plus, Trash2, Save, RefreshCw, Shield, Globe, LogOut, ExternalLink, Wrench, ChevronDown, ChevronRight, Search } from 'lucide-react'
 import { getSettings, updateSettings, getProviders, getToolStoreStatus, refreshToolStore } from '../services/api'
 import { isAuthRequired, isAuthenticated, logout as authLogout, clearToken } from '../utils/auth.js'
 import useLanguage from '../hooks/useLanguage'
@@ -32,6 +32,9 @@ export default function SettingsPanel({ isOpen, onClose }) {
   const [toolStoreStatus, setToolStoreStatus] = useState(null)
   const [providersCollapsed, setProvidersCollapsed] = useState(true)
   const [webSecondaryCollapsed, setWebSecondaryCollapsed] = useState(true)
+  const [discovering, setDiscovering] = useState({})       // { customIndex: true }
+  const [discoveredModels, setDiscoveredModels] = useState({})  // { customIndex: ["gpt-4", ...] }
+  const [discoverError, setDiscoverError] = useState({})     // { customIndex: "error msg" }
 
   /** Hardcoded fallback provider list — used when the backend is unreachable.
    *  Must be kept in sync with MODEL_PROVIDERS in src/config.py. */
@@ -166,6 +169,39 @@ export default function SettingsPanel({ isOpen, onClose }) {
     setSettings(prev => ({ ...prev, custom_providers: (prev.custom_providers || []).filter((_, i) => i !== idx) }))
   }
 
+
+  // ── Discover models from custom endpoint ────────────────────────────────
+  const discoverModels = async (ci) => {
+    const cp = custom[ci] || {}
+    const base_url = cp.base_url?.trim()
+    const api_key = cp.api_key?.trim()
+    if (!base_url || !api_key) {
+      setDiscoverError(prev => ({ ...prev, [ci]: t('msg.fillFieldsFirst') }))
+      return
+    }
+    setDiscovering(prev => ({ ...prev, [ci]: true }))
+    setDiscoverError(prev => ({ ...prev, [ci]: '' }))
+    setDiscoveredModels(prev => ({ ...prev, [ci]: [] }))
+    try {
+      const params = new URLSearchParams({ base_url, api_key })
+      const resp = await fetch(`/api/discover-models?${params}`)
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}))
+        throw new Error(data.detail || `HTTP ${resp.status}`)
+      }
+      const data = await resp.json()
+      setDiscoveredModels(prev => ({ ...prev, [ci]: data.models || [] }))
+    } catch (err) {
+      setDiscoverError(prev => ({ ...prev, [ci]: err.message }))
+    } finally {
+      setDiscovering(prev => ({ ...prev, [ci]: false }))
+    }
+  }
+
+  const selectDiscoveredModel = (ci, model) => {
+    updateCustomProvider(ci, 'model', model)
+    setDiscoveredModels(prev => ({ ...prev, [ci]: [] }))
+  }
 
   // ── Validation ──────────────────────────────────────────────────────────
   const validate = () => {
@@ -452,13 +488,6 @@ export default function SettingsPanel({ isOpen, onClose }) {
                               onChange={e => updateCustomProvider(ci, 'name', e.target.value)}
                               placeholder={t('field.displayNamePlaceholder')} />
                           </div>
-                          <div className="settings-field-col">
-                            <label>{t('field.providerId')}</label>
-                            <input className="settings-input" type="text"
-                              value={custom[ci]?.id || ''}
-                              onChange={e => updateCustomProvider(ci, 'id', e.target.value)}
-                              placeholder={t('field.providerIdPlaceholder')} />
-                          </div>
                         </div>
                         <div className="settings-field-row" style={{ marginTop: 10 }}>
                           <div className="settings-field-col settings-field-col-wide">
@@ -472,10 +501,49 @@ export default function SettingsPanel({ isOpen, onClose }) {
                         <div className="settings-field-row" style={{ marginTop: 10 }}>
                           <div className="settings-field-col">
                             <label>{t('field.model')}</label>
-                            <input className="settings-input" type="text"
-                              value={custom[ci]?.model || ''}
-                              onChange={e => updateCustomProvider(ci, 'model', e.target.value)}
-                              placeholder={t('field.modelPlaceholderCustom')} />
+                            <div className="settings-model-discover-row">
+                              <input className="settings-input" type="text"
+                                value={custom[ci]?.model || ''}
+                                onChange={e => updateCustomProvider(ci, 'model', e.target.value)}
+                                placeholder={t('field.modelPlaceholderCustom')} />
+                              <button
+                                className="settings-btn-discover"
+                                onClick={() => discoverModels(ci)}
+                                disabled={discovering[ci]}
+                                title={t('field.discover')}
+                              >
+                                {discovering[ci] ? (
+                                  <><RefreshCw size={14} className="spin" /> {t('field.discovering')}</>
+                                ) : (
+                                  <><Search size={14} /> {t('field.discover')}</>
+                                )}
+                              </button>
+                            </div>
+                            {discoverError[ci] && (
+                              <div className="settings-field-error" style={{ marginTop: 4 }}>{discoverError[ci]}</div>
+                            )}
+                            {discoveredModels[ci] && discoveredModels[ci].length > 0 && (
+                              <div className="settings-discovered-models">
+                                <div className="settings-discovered-models-header">
+                                  {t('field.foundModels')} ({discoveredModels[ci].length})
+                                </div>
+                                <div className="settings-discovered-models-list">
+                                  {discoveredModels[ci].slice(0, 30).map(m => (
+                                    <button
+                                      key={m}
+                                      className={`settings-discovered-model-item${custom[ci]?.model === m ? ' selected' : ''}`}
+                                      onClick={() => selectDiscoveredModel(ci, m)}
+                                      title={m}
+                                    >
+                                      {m}
+                                    </button>
+                                  ))}
+                                  {discoveredModels[ci].length > 30 && (
+                                    <span className="settings-discovered-more">… and {discoveredModels[ci].length - 30} more</span>
+                                  )}
+                                </div>
+                              </div>
+                            )}
                           </div>
                           <div className="settings-field-col">
                             <label>{t('field.apiKey')}</label>

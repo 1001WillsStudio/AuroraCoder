@@ -39,8 +39,6 @@ const LANG = {
     'field.apiKeyPlaceholderSet': '{provider} API key has been set, enter another to override',
     'field.displayName': 'Display Name',
     'field.displayNamePlaceholder': 'My OpenRouter',
-    'field.providerId': 'Provider ID',
-    'field.providerIdPlaceholder': 'my-openrouter',
     'field.baseUrl': 'Base URL',
     'field.baseUrlPlaceholderBuiltin': 'Defaults to built-in endpoint',
     'field.baseUrlPlaceholderCustom': 'https://openrouter.ai/api/v1',
@@ -49,6 +47,9 @@ const LANG = {
     'field.modelPlaceholderCustom': 'anthropic/claude-sonnet-4',
     'field.thinking': 'Thinking',
     'field.addProvider': 'Add Provider',
+    'field.discover': 'Discover',
+    'field.discovering': 'Discovering…',
+    'field.foundModels': 'Found models',
 
     // ── Web Secondary Model section ───────────────────────────────
     'webSecondary.title': 'Web Secondary Model',
@@ -88,8 +89,7 @@ const LANG = {
     'msg.baseUrlRequired': 'Base URL required',
     'msg.apiKeyRequired': 'API key required',
     'msg.modelRequired': 'Model required',
-
-    // ═══════════════════════════════════════════════════════════════
+    'msg.fillFieldsFirst': 'Fill in Base URL and API Key first',
     // ── App‑wide translations (not just settings) ────────────────
     // ═══════════════════════════════════════════════════════════════
 
@@ -269,8 +269,6 @@ const LANG = {
     'field.apiKeyPlaceholderSet': '{provider} API 密钥已设置，输入新密钥以覆盖',
     'field.displayName': '显示名称',
     'field.displayNamePlaceholder': '我的 OpenRouter',
-    'field.providerId': '提供者 ID',
-    'field.providerIdPlaceholder': 'my-openrouter',
     'field.baseUrl': '基础 URL',
     'field.baseUrlPlaceholderBuiltin': '默认使用内置端点',
     'field.baseUrlPlaceholderCustom': 'https://openrouter.ai/api/v1',
@@ -279,6 +277,9 @@ const LANG = {
     'field.modelPlaceholderCustom': 'anthropic/claude-sonnet-4',
     'field.thinking': '思考模式',
     'field.addProvider': '添加提供者',
+    'field.discover': '发现模型',
+    'field.discovering': '发现中…',
+    'field.foundModels': '已发现的模型',
 
     // ── Web Secondary Model section ───────────────────────────────
     'webSecondary.title': '网页辅助模型',
@@ -317,6 +318,7 @@ const LANG = {
     'msg.baseUrlRequired': '基础 URL 不能为空',
     'msg.apiKeyRequired': 'API 密钥不能为空',
     'msg.modelRequired': '模型不能为空',
+    'msg.fillFieldsFirst': '请先填写基础 URL 和 API 密钥',
 
     // ═══════════════════════════════════════════════════════════════
     // ── App‑wide translations ─────────────────────────────────────

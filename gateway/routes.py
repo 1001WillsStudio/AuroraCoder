@@ -455,6 +455,33 @@ async def refresh_toolstore():
         return {"ok": False, "error": str(e)}
 
 
+@app.get("/api/discover-models")
+async def discover_models(base_url: str, api_key: str):
+    """Call {base_url}/v1/models and return the sorted list of model IDs.
+
+    This lets users discover what models are available at a custom endpoint
+    without having to look them up manually.
+    """
+    url = base_url.rstrip("/") + "/v1/models"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(url, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+            models = sorted(
+                [m["id"] for m in data.get("data", []) if isinstance(m, dict) and m.get("id")]
+            )
+            return {"models": models, "total": len(models)}
+    except httpx.HTTPStatusError as e:
+        detail = e.response.text[:500] if e.response else str(e)
+        raise HTTPException(status_code=502, detail=f"Upstream returned {e.response.status_code}: {detail}")
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Upstream timed out after 15 s")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
 # ============================================================================
 # Endpoints — Workspace info + Conversation CRUD
 # ============================================================================
