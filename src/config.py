@@ -68,10 +68,12 @@ MODEL_PROVIDERS = {
 # Each entry: {"id": "model-api-name", "name": "display label"}
 PROVIDER_DEFAULT_MODELS = {
     "deepseek": [
-        {"id": "deepseek-chat", "name": "DeepSeek V4 Pro"},
+        {"id": "deepseek-v4-pro", "name": "DeepSeek V4 Pro"},
+        {"id": "deepseek-v4-flash", "name": "DeepSeek V4 Flash"},
     ],
     "opencode": [
-        {"id": "deepseek-chat", "name": "OpenCode DS V4 Pro"},
+        {"id": "deepseek-v4-pro", "name": "OpenCode DS V4 Pro"},
+        {"id": "deepseek-v4-flash", "name": "OpenCode DS V4 Flash"},
     ],
     "nvidia": [
         {"id": "deepseek-ai/DeepSeek-V4-Pro", "name": "NVIDIA DS V4 Pro"},
