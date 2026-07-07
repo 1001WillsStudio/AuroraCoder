@@ -336,7 +336,6 @@ export default function SettingsPanel({ isOpen, onClose }) {
               <section className="settings-section">
                 <h3 className="settings-section-title">⚙ {t('providers.title')}</h3>
                 <p className="settings-section-desc">{t('providers.desc')}</p>
-                <>
                   {/* ── Built-in provider families ──────────────────────── */}
                   {BUILTIN_PROVIDERS.map(prov => {
                     const pid = prov.id
