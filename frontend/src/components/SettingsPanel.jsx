@@ -164,35 +164,12 @@ export default function SettingsPanel({ isOpen, onClose }) {
 
   // ── Discover models from a provider's endpoint ──────────────────────────
   const discoverModels = async (providerId) => {
-    let base_url, api_key, query
-    const builtin = BUILTIN_PROVIDERS.find(p => p.id === providerId)
-    if (builtin) {
-      // Built-in providers: let the gateway resolve the key server-side.
-      // The frontend only sees 'true' (sentinel) when a key is set.
-      const keyVal = (settings?.api_keys || {})[providerId]
-      // keyVal is '' (normalized from sentinel true) when key is set but hidden
-      if (!keyVal && !apiKeysConfigured[providerId]) {
-        setDiscoverError(prev => ({ ...prev, [providerId]: t('msg.fillProviderFirst') }))
-        return
-      }
-      query = new URLSearchParams({ provider_id: providerId, base_url: builtin.base_url })
-    } else {
-      const cpList = settings?.custom_providers || []
-      const cp = cpList.find(c => c.id === providerId)
-      if (!cp) return
-      base_url = cp.base_url?.trim()
-      api_key = cp.api_key?.trim()
-      if (!base_url || !api_key) {
-        setDiscoverError(prev => ({ ...prev, [providerId]: t('msg.fillProviderFirst') }))
-        return
-      }
-      query = new URLSearchParams({ base_url, api_key })
-    }
+    // Frontend never sees the API key — the gateway resolves it server-side.
     setDiscovering(prev => ({ ...prev, [providerId]: true }))
     setDiscoverError(prev => ({ ...prev, [providerId]: '' }))
     setDiscoveredModels(prev => ({ ...prev, [providerId]: [] }))
     try {
-      const resp = await fetch(`/api/discover-models?${query}`)
+      const resp = await fetch(`/api/discover-models?provider_id=${encodeURIComponent(providerId)}`)
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}))
         throw new Error(data.detail || `HTTP ${resp.status}`)
