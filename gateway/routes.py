@@ -459,12 +459,20 @@ async def refresh_toolstore():
 
 
 @app.get("/api/discover-models")
-async def discover_models(base_url: str, api_key: str):
+async def discover_models(base_url: str = "", api_key: str = "", provider_id: str = ""):
     """Call {base_url}/v1/models and return the sorted list of model IDs.
 
-    This lets users discover what models are available at a custom endpoint
-    without having to look them up manually.
+    If *provider_id* is given, the gateway resolves the API key from settings
+    — no need for the frontend to send it in the clear.  For custom providers
+    (where the key is stored inline), pass *base_url* and *api_key* directly.
     """
+    # Resolve API key server-side when provider_id is given
+    if provider_id:
+        from gateway.provider_registry import resolve_provider
+        r = resolve_provider(provider_id)
+        base_url = base_url or r.get("base_url", "")
+        api_key = api_key or r.get("api_key", "")
+
     url = base_url.rstrip("/") + "/v1/models"
     headers = {"Authorization": f"Bearer {api_key}"}
     try:
