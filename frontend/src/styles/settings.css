@@ -523,6 +523,33 @@ select.settings-input {
   background: var(--bg-tertiary);
 }
 
+/* ── Filter bar inside discovered models ────────────── */
+
+.settings-discovered-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+}
+
+.settings-discovered-filter-icon {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.settings-discovered-filter-input {
+  flex: 1;
+  font-size: 12px !important;
+  padding: 4px 8px !important;
+}
+
+.settings-discovered-filter .settings-icon-btn {
+  flex-shrink: 0;
+  padding: 2px;
+}
+
 .settings-discovered-models-list {
   display: flex;
   flex-wrap: wrap;

@@ -35,6 +35,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
   const [discovering, setDiscovering] = useState({})       // { customIndex: true }
   const [discoveredModels, setDiscoveredModels] = useState({})  // { customIndex: ["gpt-4", ...] }
   const [discoverError, setDiscoverError] = useState({})     // { customIndex: "error msg" }
+  const [discoverFilter, setDiscoverFilter] = useState({})   // { customIndex: "search str" }
 
   /** Hardcoded fallback provider list — used when the backend is unreachable.
    *  Must be kept in sync with MODEL_PROVIDERS in src/config.py. */
@@ -527,20 +528,55 @@ export default function SettingsPanel({ isOpen, onClose }) {
                                 <div className="settings-discovered-models-header">
                                   {t('field.foundModels')} ({discoveredModels[ci].length})
                                 </div>
-                                <div className="settings-discovered-models-list">
-                                  {discoveredModels[ci].slice(0, 30).map(m => (
+                                <div className="settings-discovered-filter">
+                                  <Search size={12} className="settings-discovered-filter-icon" />
+                                  <input
+                                    className="settings-input settings-discovered-filter-input"
+                                    type="text"
+                                    value={discoverFilter[ci] || ''}
+                                    onChange={e => setDiscoverFilter(prev => ({ ...prev, [ci]: e.target.value }))}
+                                    placeholder={t('field.filterModels')}
+                                  />
+                                  {(discoverFilter[ci] || '') && (
                                     <button
-                                      key={m}
-                                      className={`settings-discovered-model-item${custom[ci]?.model === m ? ' selected' : ''}`}
-                                      onClick={() => selectDiscoveredModel(ci, m)}
-                                      title={m}
+                                      className="settings-icon-btn"
+                                      onClick={() => setDiscoverFilter(prev => ({ ...prev, [ci]: '' }))}
+                                      title={t('field.clearFilter')}
                                     >
-                                      {m}
+                                      <X size={14} />
                                     </button>
-                                  ))}
-                                  {discoveredModels[ci].length > 30 && (
-                                    <span className="settings-discovered-more">… and {discoveredModels[ci].length - 30} more</span>
                                   )}
+                                </div>
+                                <div className="settings-discovered-models-list">
+                                  {(() => {
+                                    const filter = (discoverFilter[ci] || '').toLowerCase()
+                                    const filtered = filter
+                                      ? discoveredModels[ci].filter(m => m.toLowerCase().includes(filter))
+                                      : discoveredModels[ci]
+                                    const shown = filtered.slice(0, 50)
+                                    return (
+                                      <>
+                                        {shown.map(m => (
+                                          <button
+                                            key={m}
+                                            className={`settings-discovered-model-item${custom[ci]?.model === m ? ' selected' : ''}`}
+                                            onClick={() => selectDiscoveredModel(ci, m)}
+                                            title={m}
+                                          >
+                                            {m}
+                                          </button>
+                                        ))}
+                                        {filtered.length > 50 && (
+                                          <span className="settings-discovered-more">
+                                            … and {filtered.length - 50} more{filter ? ' matching' : ''}
+                                          </span>
+                                        )}
+                                        {filter && shown.length === 0 && (
+                                          <span className="settings-discovered-more">{t('field.noMatches')}</span>
+                                        )}
+                                      </>
+                                    )
+                                  })()}
                                 </div>
                               </div>
                             )}

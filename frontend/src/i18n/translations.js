@@ -50,6 +50,9 @@ const LANG = {
     'field.discover': 'Discover',
     'field.discovering': 'Discovering…',
     'field.foundModels': 'Found models',
+    'field.filterModels': 'Filter models…',
+    'field.clearFilter': 'Clear filter',
+    'field.noMatches': 'No models match',
 
     // ── Web Secondary Model section ───────────────────────────────
     'webSecondary.title': 'Web Secondary Model',
@@ -280,6 +283,9 @@ const LANG = {
     'field.discover': '发现模型',
     'field.discovering': '发现中…',
     'field.foundModels': '已发现的模型',
+    'field.filterModels': '筛选模型…',
+    'field.clearFilter': '清除筛选',
+    'field.noMatches': '无匹配模型',
 
     // ── Web Secondary Model section ───────────────────────────────
     'webSecondary.title': '网页辅助模型',
