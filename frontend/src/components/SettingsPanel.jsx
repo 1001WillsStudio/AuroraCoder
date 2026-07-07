@@ -42,7 +42,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
    *  Must be kept in sync with MODEL_PROVIDERS in src/config.py. */
   const BUILTIN_PROVIDERS = [
     { id: 'deepseek', name: 'DeepSeek', base_url: 'https://api.deepseek.com/v1', builtin: true },
-    { id: 'opencode', name: 'OpenCode', base_url: 'https://api.opencode.ai/v1', builtin: true },
+    { id: 'opencode', name: 'OpenCode', base_url: 'https://opencode.ai/zen/go/v1', builtin: true },
     { id: 'nvidia',  name: 'NVIDIA NIM', base_url: 'https://integrate.api.nvidia.com/v1', builtin: true },
   ]
 
