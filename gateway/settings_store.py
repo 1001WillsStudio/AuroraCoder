@@ -72,6 +72,8 @@ def get_all_settings() -> Dict[str, Any]:
     """
     with _lock:
         raw = _load_raw()
+    # Normalize old variant keys → family keys so the frontend sees them
+    _normalize_api_keys()
     data = _deep_copy(raw)
     # Replace api_key strings with booleans: True = configured, absent = not
     for k in list(data.get("api_keys", {})):
@@ -145,6 +147,43 @@ def update_settings(partial: Dict[str, Any]) -> Dict[str, Any]:
         return data
 
 
+# Provider-family mapping for backward compatibility.
+# Old per-variant keys (deepseek-flash, opencode-ds-v4-pro, etc.)
+# get merged into the three families.
+_PROVIDER_FAMILIES = {
+    "deepseek": ["deepseek", "deepseek-flash"],
+    "opencode": ["opencode", "opencode-ds-v4-pro", "opencode-ds-v4-flash"],
+    "nvidia":   ["nvidia", "nvidia-fast", "nvidia-glm5", "nvidia-glm5-fast"],
+}
+# Reverse: variant → family
+_VARIANT_TO_FAMILY = {
+    v: f for f, variants in _PROVIDER_FAMILIES.items() for v in variants
+}
+
+
+def _normalize_api_keys():
+    """Migrate old per-variant api_keys → new per-family format.
+
+    Called on every read so old settings are transparently upgraded.
+    The on-disk file is only mutated when a new key is persisted.
+    """
+    raw = _load_raw()
+    api_keys = raw.get("api_keys", {})
+    changed = False
+    for family, variants in _PROVIDER_FAMILIES.items():
+        # If the family key is already set, skip — user has the new format
+        if family in api_keys and api_keys[family]:
+            continue
+        # Collect from old variant keys
+        for v in variants:
+            if v in api_keys and api_keys[v]:
+                api_keys[family] = api_keys[v]
+                changed = True
+                break
+    if changed:
+        _save_raw(raw)
+
+
 def get_api_key(provider_id: str) -> str:
     """
     Return the API key for *provider_id*.
@@ -152,9 +191,12 @@ def get_api_key(provider_id: str) -> str:
     Checks (in order):
         1. settings.json → custom_providers → <provider_id>
         2. settings.json → api_keys → <provider_id>  (Settings UI wins)
-        3. Environment variable (uppercase, e.g. DEEPSEEK_API_KEY)
-        4. Empty string
+        3. settings.json → api_keys → family-mapped variants (backward compat)
+        4. Environment variable (uppercase, e.g. DEEPSEEK_API_KEY)
+        5. Empty string
     """
+    _normalize_api_keys()
+
     with _lock:
         raw = _load_raw()
 
@@ -168,8 +210,17 @@ def get_api_key(provider_id: str) -> str:
     # 2) Settings UI api_keys takes priority over environment variables
     api_keys = raw.get("api_keys", {})
     settings_val = api_keys.get(provider_id, "")
-    if settings_val:
+    if settings_val and settings_val is not True:
         return settings_val
+
+    # 2b) Backward compat: check old variant names mapped to this family
+    family = _VARIANT_TO_FAMILY.get(provider_id)
+    if family:
+        for v in _PROVIDER_FAMILIES.get(family, []):
+            if v != provider_id:
+                val = api_keys.get(v, "")
+                if val and val is not True:
+                    return val
 
     # 3) Fall back to environment variable (supports _API_KEY and GitHub's _TOKEN convention)
     env_var = f"{provider_id.upper()}_API_KEY"

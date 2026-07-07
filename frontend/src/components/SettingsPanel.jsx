@@ -104,23 +104,10 @@ export default function SettingsPanel({ isOpen, onClose }) {
   const setApiKey = (providerId, value) => {
     setSettings(prev => {
       const next = { ...prev.api_keys, [providerId]: value }
-      // DeepSeek V4 Pro and V4 Flash share the same key — keep in sync
-      if (providerId === 'deepseek' || providerId === 'deepseek-flash') {
-        next['deepseek'] = value
-        next['deepseek-flash'] = value
-      }
-      // All OpenCode-hosted providers share OPENCODE_API_KEY — keep in sync
-      if (providerId === 'opencode-ds-v4-pro' || providerId === 'opencode-ds-v4-flash') {
-        next['opencode-ds-v4-pro'] = value
-        next['opencode-ds-v4-flash'] = value
-      }
-      // All NVIDIA-hosted providers share NVIDIA_API_KEY — keep in sync
-      if (['nvidia', 'nvidia-fast', 'nvidia-glm5', 'nvidia-glm5-fast'].includes(providerId)) {
-        next['nvidia'] = value
-        next['nvidia-fast'] = value
-        next['nvidia-glm5'] = value
-        next['nvidia-glm5-fast'] = value
-      }
+      // Sync to legacy variant keys for backward compat
+      if (providerId === 'deepseek')  { next['deepseek-flash'] = value }
+      if (providerId === 'opencode') { next['opencode-ds-v4-pro'] = value; next['opencode-ds-v4-flash'] = value }
+      if (providerId === 'nvidia')   { next['nvidia-fast'] = value; next['nvidia-glm5'] = value; next['nvidia-glm5-fast'] = value }
       return { ...prev, api_keys: next }
     })
     setErrorFields(prev => ({ ...prev, [providerId]: false }))
