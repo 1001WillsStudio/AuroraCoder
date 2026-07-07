@@ -18,7 +18,7 @@ from typing import List
 import httpx
 from openai import OpenAI
 
-from src.config import MODEL_PROVIDERS, DEFAULT_PROVIDER
+from src.config import MODEL_PROVIDERS, DEFAULT_PROVIDER, PROVIDER_DESCRIPTIONS, PROVIDER_DEFAULT_MODELS
 from gateway.settings_store import (
     get_api_key,
     get_custom_providers,
@@ -85,7 +85,8 @@ def resolve_provider(provider_id: str) -> dict:
 
     # Ensure all expected keys exist
     prov.setdefault("name", prov.get("id", provider_id))
-    prov.setdefault("description", "Custom provider" if custom else "")
+    prov.setdefault("description",
+        PROVIDER_DESCRIPTIONS.get(provider_id, "") if not custom else "Custom provider")
     prov.setdefault("extra_body", None)
     prov.setdefault("context_window", 128_000)
 
@@ -166,7 +167,7 @@ def get_web_secondary_config() -> dict:
             "provider_id": provider_id,
             "base_url": r["base_url"],
             "api_key": r["api_key"],
-            "model": ws.get("model", "") or r.get("model", ""),
+            "model": ws.get("model", "") or (PROVIDER_DEFAULT_MODELS.get(provider_id, [{}])[0].get("id", "") if PROVIDER_DEFAULT_MODELS.get(provider_id) else ""),
         }
     return {"provider_id": "", "base_url": "", "api_key": "", "model": ""}
 

@@ -15,7 +15,7 @@ from typing import Dict, List, Generator, Optional
 from .tool_definitions import get_tool_definitions
 from .core_tools.tool_store_client import get_toolstore_tools_prompt
 from .config import (
-    DEFAULT_PROVIDER,
+    DEFAULT_PROVIDER, PROVIDER_DEFAULT_MODELS,
     MAX_TOKENS, MAX_ITERATIONS,
     MAX_STREAMING_RETRIES,
     SYSTEM_MESSAGE_TEMPLATE, VNC_INSTRUCTIONS, TERMINAL_ENV_NOTE,
@@ -115,16 +115,17 @@ def generate_chat_responses_stream_native(
     # Get client and config for the selected provider
     client = provider_manager.get_client(provider_id)
     config = provider_manager.get_config(provider_id)
-    model_name = config["model"]
+
+    # Model name: config first, then first default model for this provider family
+    model_name = config.get("model") or ""
+    if not model_name:
+        defaults = PROVIDER_DEFAULT_MODELS.get(provider_id, [])
+        model_name = defaults[0]["id"] if defaults else "deepseek-chat"
+
     extra_body = config.get("extra_body")
-    
-    
-    # Get tool definitions (or use override for subagents / force_continuation)
-    tools = tools_override if tools_override is not None else get_tool_definitions()
-    filter_continuation = tools_override is None  # only filter the default set
-    
-    # Per-provider context window (falls back to global default)
-    context_window = config.get("context_window", CONTEXT_WINDOW_TOKENS)
+
+    # Context window — generous fixed default (1M tokens covers all modern models)
+    context_window = CONTEXT_WINDOW_TOKENS
     
     system_message = SYSTEM_MESSAGE_TEMPLATE.format(
         current_time=datetime.datetime.now().isoformat(),

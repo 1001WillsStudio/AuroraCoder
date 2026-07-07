@@ -39,88 +39,50 @@ proxy_port = int(_proxy_port) if _proxy_port else None
 # and make API calls. Users can switch between providers on the frontend.
 
 MODEL_PROVIDERS = {
+    # ── 3 provider *families* (base_url + api_key).  Models are selected
+    #     per-family via provider_models in settings.json (or defaults below).
     "deepseek": {
         "id": "deepseek",
-        "name": "DeepSeek V4 Pro",
-        "description": "Flagship reasoning model",
+        "name": "DeepSeek",
         "base_url": "https://api.deepseek.com/v1",
         "api_key": os.environ.get("DEEPSEEK_API_KEY", ""),
-        "model": "deepseek-v4-pro",
         "extra_body": None,
-        "context_window": 1_048_576,
     },
-    "deepseek-flash": {
-        "id": "deepseek-flash",
-        "name": "DeepSeek V4 Flash",
-        "description": "Fast reasoning model",
-        "base_url": "https://api.deepseek.com/v1",
-        "api_key": os.environ.get("DEEPSEEK_API_KEY", ""),
-        "model": "deepseek-v4-flash",
-        "extra_body": None,
-        "context_window": 1_048_576,
-    },
-    "opencode-ds-v4-pro": {
-        "id": "opencode-ds-v4-pro",
-        "name": "OpenCode DS V4 Pro",
-        "description": "OpenCode Go hosted",
+    "opencode": {
+        "id": "opencode",
+        "name": "OpenCode",
         "base_url": "https://opencode.ai/zen/go/v1",
         "api_key": os.environ.get("OPENCODE_API_KEY", ""),
-        "model": "deepseek-v4-pro",
         "extra_body": None,
-        "context_window": 1_048_576,
-    },
-    "opencode-ds-v4-flash": {
-        "id": "opencode-ds-v4-flash",
-        "name": "OpenCode DS V4 Flash",
-        "description": "OpenCode Go hosted",
-        "base_url": "https://opencode.ai/zen/go/v1",
-        "api_key": os.environ.get("OPENCODE_API_KEY", ""),
-        "model": "deepseek-v4-flash",
-        "extra_body": None,
-        "context_window": 1_048_576,
     },
     "nvidia": {
         "id": "nvidia",
-        "name": "NVIDIA DS V4 Pro",
-        "description": "NVIDIA hosted",
+        "name": "NVIDIA NIM",
         "base_url": "https://integrate.api.nvidia.com/v1",
         "api_key": os.environ.get("NVIDIA_API_KEY", ""),
-        "model": "deepseek-ai/deepseek-v4-pro",
         "extra_body": {"chat_template_kwargs": {"thinking": True}},
-        "context_window": 1_048_576,
     },
-    "nvidia-fast": {
-        "id": "nvidia-fast",
-        "name": "NVIDIA DS V4 Pro (No Reasoning)",
-        "description": "NVIDIA hosted, no reasoning",
-        "base_url": "https://integrate.api.nvidia.com/v1",
-        "api_key": os.environ.get("NVIDIA_API_KEY", ""),
-        "model": "deepseek-ai/deepseek-v4-pro",
-        "extra_body": None,
-        "context_window": 1_048_576,
-    },
-    "nvidia-glm5": {
-        "id": "nvidia-glm5",
-        "name": "NVIDIA GLM-5.1",
-        "description": "NVIDIA hosted",
-        "base_url": "https://integrate.api.nvidia.com/v1",
-        "api_key": os.environ.get("NVIDIA_API_KEY", ""),
-        "model": "z-ai/glm-5.1",
-        "extra_body": {
-            "chat_template_kwargs": {"enable_thinking": True, "clear_thinking": False}
-        },
-        "context_window": 128_000,
-    },
-    "nvidia-glm5-fast": {
-        "id": "nvidia-glm5-fast",
-        "name": "NVIDIA GLM-5.1 (No Reasoning)",
-        "description": "NVIDIA hosted, no reasoning",
-        "base_url": "https://integrate.api.nvidia.com/v1",
-        "api_key": os.environ.get("NVIDIA_API_KEY", ""),
-        "model": "z-ai/glm-5.1",
-        "extra_body": None,
-        "context_window": 128_000,
-    },
+}
+
+# Default models per provider family — used when provider_models is empty.
+# Each entry: {"id": "model-api-name", "name": "display label"}
+PROVIDER_DEFAULT_MODELS = {
+    "deepseek": [
+        {"id": "deepseek-chat", "name": "DeepSeek V4 Pro"},
+    ],
+    "opencode": [
+        {"id": "deepseek-chat", "name": "OpenCode DS V4 Pro"},
+    ],
+    "nvidia": [
+        {"id": "deepseek-ai/DeepSeek-V4-Pro", "name": "NVIDIA DS V4 Pro"},
+    ],
+}
+
+# Provider descriptions for the sidebar
+PROVIDER_DESCRIPTIONS = {
+    "deepseek": "Flagship reasoning model",
+    "opencode": "OpenCode hosted",
+    "nvidia": "NVIDIA NIM hosted",
 }
 
 # Default provider to use

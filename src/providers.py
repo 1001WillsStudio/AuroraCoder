@@ -18,7 +18,7 @@ from typing import Dict
 import httpx
 from openai import OpenAI
 
-from .config import MODEL_PROVIDERS, DEFAULT_PROVIDER
+from .config import MODEL_PROVIDERS, DEFAULT_PROVIDER, PROVIDER_DEFAULT_MODELS
 
 logger = logging.getLogger(__name__)
 
@@ -82,15 +82,26 @@ def _resolve_base_url(provider_id: str, default_val: str) -> str:
 
 
 def _resolve_model(provider_id: str, default_val: str) -> str:
-    """Resolve model: custom_providers → settings override → default."""
-    # 1) Check custom_providers first
+    """Resolve model: custom_providers → provider_overrides → provider_models → PROVIDER_DEFAULT_MODELS → default."""
+    # 1) Check custom_providers
     cp = _get_custom_provider(provider_id)
     if cp and cp.get("model", "").strip():
         return cp["model"].strip()
     # 2) Check provider_overrides
     settings = _load_settings()
     override = settings.get("provider_overrides", {}).get(provider_id, {}).get("model", "")
-    return override or default_val
+    if override:
+        return override
+    # 3) Check provider_models — first enabled model
+    pm = settings.get("provider_models", {}).get(provider_id, [])
+    if pm:
+        first = pm[0]
+        return first["id"] if isinstance(first, dict) else first
+    # 4) Check PROVIDER_DEFAULT_MODELS
+    defaults = PROVIDER_DEFAULT_MODELS.get(provider_id, [])
+    if defaults:
+        return defaults[0]["id"]
+    return default_val
 
 
 # =============================================================================
@@ -211,13 +222,13 @@ class ProviderManager:
                 default = MODEL_PROVIDERS.get(provider_id, MODEL_PROVIDERS.get(DEFAULT_PROVIDER, {}))
             base_url = _resolve_base_url(provider_id, default.get("base_url", ""))
             api_key = _resolve_api_key(provider_id, default.get("api_key", ""))
-            model = ws.get("model", "") or _resolve_model(provider_id, default.get("model", ""))
+            model = ws.get("model", "") or _resolve_model(provider_id, "")
         else:
             # No provider selected — use defaults from env or config
             default_prov = MODEL_PROVIDERS.get(DEFAULT_PROVIDER, {})
             base_url = default_prov.get("base_url", "")
             api_key = os.environ.get("DEEPSEEK_API_KEY", default_prov.get("api_key", ""))
-            model = default_prov.get("model", "")
+            model = _resolve_model(DEFAULT_PROVIDER, "")
 
         if base_url:
             os.environ["WEB_SECONDARY_BASE_URL"] = base_url
