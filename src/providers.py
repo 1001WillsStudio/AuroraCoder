@@ -37,34 +37,60 @@ def _load_settings() -> dict:
     return {}
 
 
+def _get_custom_providers() -> list:
+    """Read custom providers from settings.json."""
+    return _load_settings().get("custom_providers", [])
+
+
+def _get_custom_provider(provider_id: str) -> dict | None:
+    """Return the custom provider dict for *provider_id*, or None."""
+    for cp in _get_custom_providers():
+        if cp.get("id") == provider_id:
+            return cp
+    return None
+
+
 def _resolve_api_key(provider_id: str, default_val: str) -> str:
-    """Resolve an API key: settings.json → env var → default."""
+    """Resolve an API key: custom_providers → settings.json api_keys → default."""
+    # 1) Check custom_providers first
+    cp = _get_custom_provider(provider_id)
+    if cp:
+        key = cp.get("api_key", "")
+        if key and key is not True and "YOUR_" not in str(key):
+            return key
+    # 2) Check settings.json api_keys
     settings = _load_settings()
     key = settings.get("api_keys", {}).get(provider_id, "")
     if key and key is not True and "YOUR_" not in str(key):
         return key
+    # 3) Fall back to default
     if default_val and "YOUR_" not in str(default_val):
         return default_val
     return ""
 
 
 def _resolve_base_url(provider_id: str, default_val: str) -> str:
-    """Resolve base_url: settings override → default."""
+    """Resolve base_url: custom_providers → settings override → default."""
+    # 1) Check custom_providers first
+    cp = _get_custom_provider(provider_id)
+    if cp and cp.get("base_url", "").strip():
+        return cp["base_url"].strip()
+    # 2) Check provider_overrides
     settings = _load_settings()
     override = settings.get("provider_overrides", {}).get(provider_id, {}).get("base_url", "")
     return override or default_val
 
 
 def _resolve_model(provider_id: str, default_val: str) -> str:
-    """Resolve model: settings override → default."""
+    """Resolve model: custom_providers → settings override → default."""
+    # 1) Check custom_providers first
+    cp = _get_custom_provider(provider_id)
+    if cp and cp.get("model", "").strip():
+        return cp["model"].strip()
+    # 2) Check provider_overrides
     settings = _load_settings()
     override = settings.get("provider_overrides", {}).get(provider_id, {}).get("model", "")
     return override or default_val
-
-
-def _get_custom_providers() -> list:
-    """Read custom providers from settings.json."""
-    return _load_settings().get("custom_providers", [])
 
 
 # =============================================================================
@@ -109,7 +135,20 @@ class ProviderManager:
 
         for provider_id in all_ids:
             try:
-                default = MODEL_PROVIDERS.get(provider_id, {})
+                # Look up custom provider first — its data overrides built-in defaults
+                custom = _get_custom_provider(provider_id)
+                if custom:
+                    provider_info = dict(custom)
+                    default = {
+                        "api_key": custom.get("api_key", ""),
+                        "base_url": custom.get("base_url", ""),
+                        "model": custom.get("model", ""),
+                        "name": custom.get("name", provider_id),
+                    }
+                else:
+                    provider_info = MODEL_PROVIDERS.get(provider_id, {})
+                    default = dict(provider_info)
+
                 api_key = _resolve_api_key(provider_id, default.get("api_key", ""))
                 base_url = _resolve_base_url(provider_id, default.get("base_url", ""))
                 if not api_key or "YOUR_" in str(api_key) or not base_url:
@@ -165,7 +204,11 @@ class ProviderManager:
 
         if provider_id:
             # Resolve provider config for the secondary model
-            default = MODEL_PROVIDERS.get(provider_id, MODEL_PROVIDERS.get(DEFAULT_PROVIDER, {}))
+            custom = _get_custom_provider(provider_id)
+            if custom:
+                default = dict(custom)
+            else:
+                default = MODEL_PROVIDERS.get(provider_id, MODEL_PROVIDERS.get(DEFAULT_PROVIDER, {}))
             base_url = _resolve_base_url(provider_id, default.get("base_url", ""))
             api_key = _resolve_api_key(provider_id, default.get("api_key", ""))
             model = ws.get("model", "") or _resolve_model(provider_id, default.get("model", ""))
@@ -220,8 +263,21 @@ class ProviderManager:
         """Return resolved provider config for *main_flow*.
 
         Resolves from settings.json + MODEL_PROVIDERS.
+        For custom providers, the custom-provider entry serves as the default
+        instead of falling back to the built-in DEFAULT_PROVIDER.
         """
-        default = MODEL_PROVIDERS.get(provider_id, MODEL_PROVIDERS.get(DEFAULT_PROVIDER, {}))
+        custom = _get_custom_provider(provider_id)
+        if custom:
+            default = {
+                k: v
+                for k, v in custom.items()
+                if k not in ("supports_thinking", "id")
+            }
+            default["provider_id"] = provider_id
+        else:
+            default = MODEL_PROVIDERS.get(
+                provider_id, MODEL_PROVIDERS.get(DEFAULT_PROVIDER, {})
+            )
         resolved = dict(default)
         resolved["api_key"] = _resolve_api_key(provider_id, default.get("api_key", ""))
         resolved["base_url"] = _resolve_base_url(provider_id, default.get("base_url", ""))

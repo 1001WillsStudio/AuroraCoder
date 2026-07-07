@@ -150,19 +150,28 @@ def get_api_key(provider_id: str) -> str:
     Return the API key for *provider_id*.
 
     Checks (in order):
-        1. settings.json → api_keys → <provider_id>  (Settings UI wins)
-        2. Environment variable (uppercase, e.g. DEEPSEEK_API_KEY)
-        3. Empty string
+        1. settings.json → custom_providers → <provider_id>
+        2. settings.json → api_keys → <provider_id>  (Settings UI wins)
+        3. Environment variable (uppercase, e.g. DEEPSEEK_API_KEY)
+        4. Empty string
     """
-    # Settings UI takes priority over environment variables
     with _lock:
         raw = _load_raw()
+
+    # 1) Check custom_providers first
+    for cp in raw.get("custom_providers", []):
+        if isinstance(cp, dict) and cp.get("id") == provider_id:
+            key = cp.get("api_key", "")
+            if key and key is not True:
+                return key
+
+    # 2) Settings UI api_keys takes priority over environment variables
     api_keys = raw.get("api_keys", {})
     settings_val = api_keys.get(provider_id, "")
     if settings_val:
         return settings_val
 
-    # Fall back to environment variable (supports _API_KEY and GitHub's _TOKEN convention)
+    # 3) Fall back to environment variable (supports _API_KEY and GitHub's _TOKEN convention)
     env_var = f"{provider_id.upper()}_API_KEY"
     env_val = os.environ.get(env_var, "")
     if env_val:
