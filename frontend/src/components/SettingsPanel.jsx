@@ -30,7 +30,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
   const [authEnabled, setAuthEnabled] = useState(null)
   const [isAuthed, setIsAuthed] = useState(isAuthenticated())
   const [toolStoreStatus, setToolStoreStatus] = useState(null)
-  const [providersCollapsed, setProvidersCollapsed] = useState(false)
+  const [providersCollapsed, setProvidersCollapsed] = useState(false)  // false = always open
   const [webSecondaryCollapsed, setWebSecondaryCollapsed] = useState(true)
   const [discovering, setDiscovering] = useState({})         // { providerId: true }
   const [discoveredModels, setDiscoveredModels] = useState({})// { providerId: ["gpt-4",...] }
@@ -345,75 +345,10 @@ export default function SettingsPanel({ isOpen, onClose }) {
           ) : (
             <>
 
-              {/* ── Agent Behavior ──────────────────────────────────────── */}
+              {/* ── Providers ────────────────────────────────────────── */}
               <section className="settings-section">
-                <h3 className="settings-section-title">{t('agent.title')}</h3>
-                <p className="settings-section-desc">{t('agent.desc')}</p>
-                <div className="settings-field-row">
-                  <div className="settings-field-col">
-                    <label>{t('agent.defaultProvider')}</label>
-                    <select className="settings-input"
-                      value={other.agent?.default_provider || ''}
-                      onChange={e => setOther('agent', 'default_provider', e.target.value)}>
-                      <option value="">{t('agent.systemDefault')}</option>
-                      {allProviders.map(p => (
-                        <option key={p.id} value={p.id}>{p.name}{p.custom ? t('agent.customSuffix') : ''}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="settings-field-col">
-                    <label>{t('agent.maxIterations')}</label>
-                    <input className="settings-input" type="number"
-                      value={other.agent?.max_iterations || ''}
-                      onChange={e => setOther('agent', 'max_iterations', e.target.value)}
-                      placeholder="30" min="5" max="200"
-                    />
-                  </div>
-                </div>
-                <div className="settings-field-row" style={{ marginTop: 12 }}>
-                  <div className="settings-field-col">
-                    <label>{t('agent.maxToolConcurrency')}</label>
-                    <input className="settings-input" type="number"
-                      value={other.agent?.max_tool_concurrency || ''}
-                      onChange={e => setOther('agent', 'max_tool_concurrency', e.target.value)}
-                      placeholder="5" min="1" max="20"
-                    />
-                  </div>
-                  <div className="settings-field-col">
-                    <label>{t('agent.terminalMaxOutput')}</label>
-                    <input className="settings-input" type="number"
-                      value={other.agent?.terminal_max_output || ''}
-                      onChange={e => setOther('agent', 'terminal_max_output', e.target.value)}
-                      placeholder="15000" min="1000" max="100000"
-                    />
-                  </div>
-                </div>
-                <div className="settings-field-row" style={{ marginTop: 12 }}>
-                  <div className="settings-field-col settings-field-col-checkbox" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <label className="settings-checkbox-label">
-                      <input type="checkbox"
-                        checked={other.agent?.save_training_data !== false}
-                        onChange={e => setOther('agent', 'save_training_data', e.target.checked)}
-                      />
-                      {t('agent.saveTrainingData')}
-                    </label>
-                    <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 4 }}>
-                      {t('agent.saveTrainingDataDesc')}
-                    </span>
-                  </div>
-                </div>
-              </section>
-
-              {/* ── Models ───────────────────────────────────────────────── */}
-              <section className="settings-section">
-                <h3 className="settings-section-title settings-collapse-title"
-                  onClick={() => setProvidersCollapsed(!providersCollapsed)}>
-                  {providersCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
-                  ⚙ {t('providers.title')}
-                </h3>
-                {!providersCollapsed && <p className="settings-section-desc">{t('providers.desc')}</p>}
-
-                {!providersCollapsed && (
+                <h3 className="settings-section-title">⚙ {t('providers.title')}</h3>
+                <p className="settings-section-desc">{t('providers.desc')}</p>
                 <>
                   {/* ── Built-in provider families ──────────────────────── */}
                   {BUILTIN_PROVIDERS.map(prov => {
@@ -712,8 +647,65 @@ export default function SettingsPanel({ isOpen, onClose }) {
                   <button className="settings-add-btn" onClick={addCustomProvider}>
                     <Plus size={16} /><span>{t('field.addProvider')}</span>
                   </button>
-                </>
-                )}
+              </section>
+
+              {/* ── Agent Behavior ──────────────────────────────────────── */}
+              <section className="settings-section">
+                <h3 className="settings-section-title">{t('agent.title')}</h3>
+                <p className="settings-section-desc">{t('agent.desc')}</p>
+                <div className="settings-field-row">
+                  <div className="settings-field-col">
+                    <label>{t('agent.defaultProvider')}</label>
+                    <select className="settings-input"
+                      value={other.agent?.default_provider || ''}
+                      onChange={e => setOther('agent', 'default_provider', e.target.value)}>
+                      <option value="">{t('agent.systemDefault')}</option>
+                      {allProviders.map(p => (
+                        <option key={p.id} value={p.id}>{p.name}{p.custom ? t('agent.customSuffix') : ''}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="settings-field-col">
+                    <label>{t('agent.maxIterations')}</label>
+                    <input className="settings-input" type="number"
+                      value={other.agent?.max_iterations || ''}
+                      onChange={e => setOther('agent', 'max_iterations', e.target.value)}
+                      placeholder="30" min="5" max="200"
+                    />
+                  </div>
+                </div>
+                <div className="settings-field-row" style={{ marginTop: 12 }}>
+                  <div className="settings-field-col">
+                    <label>{t('agent.maxToolConcurrency')}</label>
+                    <input className="settings-input" type="number"
+                      value={other.agent?.max_tool_concurrency || ''}
+                      onChange={e => setOther('agent', 'max_tool_concurrency', e.target.value)}
+                      placeholder="5" min="1" max="20"
+                    />
+                  </div>
+                  <div className="settings-field-col">
+                    <label>{t('agent.terminalMaxOutput')}</label>
+                    <input className="settings-input" type="number"
+                      value={other.agent?.terminal_max_output || ''}
+                      onChange={e => setOther('agent', 'terminal_max_output', e.target.value)}
+                      placeholder="15000" min="1000" max="100000"
+                    />
+                  </div>
+                </div>
+                <div className="settings-field-row" style={{ marginTop: 12 }}>
+                  <div className="settings-field-col settings-field-col-checkbox" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <label className="settings-checkbox-label">
+                      <input type="checkbox"
+                        checked={other.agent?.save_training_data !== false}
+                        onChange={e => setOther('agent', 'save_training_data', e.target.checked)}
+                      />
+                      {t('agent.saveTrainingData')}
+                    </label>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 4 }}>
+                      {t('agent.saveTrainingDataDesc')}
+                    </span>
+                  </div>
+                </div>
               </section>
 
               {/* ── Google Search ──────────────────────────────────────── */}
