@@ -344,63 +344,6 @@ export default function SettingsPanel({ isOpen, onClose }) {
             <div className="settings-loading">{t('settings.loading')}</div>
           ) : (
             <>
-              {/* ── DeepSeek API Key (primary) ────────────────────────── */}
-              <section className="settings-section settings-section-deepseek">
-                <h3 className="settings-section-title">🔑 DeepSeek API Key</h3>
-                <p className="settings-section-desc">
-                  One key for all DeepSeek models — DeepSeek V4 Pro (thinking) and DeepSeek V4 Flash (fast).
-                </p>
-                <div className="settings-field-row">
-                  <div className="settings-field-col settings-field-col-wide">
-                    <input className="settings-input settings-input-deepseek-key" type="text"
-                      value={apiKeys['deepseek'] || ''}
-                      onChange={e => setApiKey('deepseek', e.target.value)}
-                      placeholder={apiKeysConfigured['deepseek'] || apiKeysConfigured['deepseek-flash']
-                        ? 'DeepSeek API key has been set — enter a new key to override'
-                        : 'sk-…'}
-                    />
-                  </div>
-                </div>
-              </section>
-
-              {/* ── NVIDIA API Key ─────────────────────────────────────── */}
-              <section className="settings-section settings-section-key">
-                <h3 className="settings-section-title">🔑 NVIDIA API Key</h3>
-                <p className="settings-section-desc">
-                  One key for all NVIDIA-hosted models — DeepSeek V4 Pro, V4 Pro No-Thinking, GLM-5.1, and GLM-5.1 No-Thinking.
-                </p>
-                <div className="settings-field-row">
-                  <div className="settings-field-col settings-field-col-wide">
-                    <input className="settings-input settings-input-deepseek-key" type="text"
-                      value={apiKeys['nvidia'] || ''}
-                      onChange={e => setApiKey('nvidia', e.target.value)}
-                      placeholder={apiKeysConfigured['nvidia'] || apiKeysConfigured['nvidia-fast']
-                        || apiKeysConfigured['nvidia-glm5'] || apiKeysConfigured['nvidia-glm5-fast']
-                        ? 'NVIDIA API key has been set — enter a new key to override'
-                        : 'nvapi-…'}
-                    />
-                  </div>
-                </div>
-              </section>
-
-              {/* ── OpenCode API Key ───────────────────────────────────── */}
-              <section className="settings-section settings-section-key">
-                <h3 className="settings-section-title">🔑 OpenCode API Key</h3>
-                <p className="settings-section-desc">
-                  One key for all OpenCode-hosted models — DeepSeek V4 Pro (reasoning) and DeepSeek V4 Flash (fast).
-                </p>
-                <div className="settings-field-row">
-                  <div className="settings-field-col settings-field-col-wide">
-                    <input className="settings-input settings-input-deepseek-key" type="text"
-                      value={apiKeys['opencode'] || ''}
-                      onChange={e => setApiKey('opencode', e.target.value)}
-                      placeholder={apiKeysConfigured['opencode'] || apiKeysConfigured['opencode-ds-v4-pro']
-                        ? 'OpenCode API key has been set — enter a new key to override'
-                        : 'sk-…'}
-                    />
-                  </div>
-                </div>
-              </section>
 
               {/* ── Agent Behavior ──────────────────────────────────────── */}
               <section className="settings-section">
