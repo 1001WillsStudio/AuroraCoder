@@ -176,8 +176,13 @@ function App() {
     }
     loadProviders()
 
+    // Listen for provider changes after settings save
+    const onProvidersChanged = () => { loadProviders() }
+    window.addEventListener('providers-changed', onProvidersChanged)
+
     return () => {
       cancelled = true
+      window.removeEventListener('providers-changed', onProvidersChanged)
       if (retryTimer) clearTimeout(retryTimer)
     }
   }, [])

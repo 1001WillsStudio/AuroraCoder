@@ -254,7 +254,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
         provider_models: settings.provider_models || {},
       })
       setMessage({ type: 'success', text: t('msg.saved') })
-      setTimeout(async () => { try { setProviders((await getProviders()).providers || []) } catch {} }, 800)
+      setTimeout(async () => { try { const p = await getProviders(); setProviders(p.providers || []); window.dispatchEvent(new Event('providers-changed')) } catch {} }, 800)
     } catch { setMessage({ type: 'error', text: t('msg.saveFailed') }) }
     finally { setSaving(false) }
   }

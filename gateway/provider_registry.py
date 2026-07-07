@@ -94,11 +94,21 @@ def resolve_provider(provider_id: str) -> dict:
 
 
 def get_default_provider() -> str:
-    """Return the settings-aware default provider ID."""
+    """Return the settings-aware default provider ID.
+
+    Maps old per-variant IDs (opencode-ds-v4-pro, etc.) to new family IDs
+    so stale settings don't cause 'provider not configured' errors."""
     settings = get_all_settings()
-    return settings.get("other", {}).get("agent", {}).get(
+    dp = settings.get("other", {}).get("agent", {}).get(
         "default_provider", DEFAULT_PROVIDER
     )
+    # Backward compat: old variant → new family
+    _variant_to_family = {
+        "deepseek-flash": "deepseek",
+        "opencode-ds-v4-pro": "opencode", "opencode-ds-v4-flash": "opencode",
+        "nvidia-fast": "nvidia", "nvidia-glm5": "nvidia", "nvidia-glm5-fast": "nvidia",
+    }
+    return _variant_to_family.get(dp, dp)
 
 
 def get_available_providers() -> List[dict]:
@@ -118,21 +128,19 @@ def get_available_providers() -> List[dict]:
                 result.append({
                     "id": f"{provider_id}::{mid}",
                     "name": f"{r['name']} / {mid}",
-                    "description": r["description"],
                     "api_key_configured": r["api_key_configured"],
                     "provider_id": provider_id,
                     "model": mid,
                 })
+        # If no user-selected models, show the provider as a single entry
+        # so the sidebar has something to click — chat will use default model.
         else:
-            for d in PROVIDER_DEFAULT_MODELS.get(provider_id, []):
-                result.append({
-                    "id": f"{provider_id}::{d['id']}",
-                    "name": f"{r['name']} / {d['id']}",
-                    "description": r["description"],
-                    "api_key_configured": r["api_key_configured"],
-                    "provider_id": provider_id,
-                    "model": d["id"],
-                })
+            result.append({
+                "id": provider_id,
+                "name": r["name"],
+                "api_key_configured": r["api_key_configured"],
+                "provider_id": provider_id,
+            })
 
     for cp in get_custom_providers():
         cpid = cp.get("id")
@@ -149,7 +157,6 @@ def get_available_providers() -> List[dict]:
                 result.append({
                     "id": f"{cpid}::{mid}",
                     "name": f"{r['name']} / {mid}",
-                    "description": r["description"],
                     "api_key_configured": r["api_key_configured"],
                     "provider_id": cpid,
                     "model": mid,
@@ -159,7 +166,6 @@ def get_available_providers() -> List[dict]:
             result.append({
                 "id": r["id"],
                 "name": r["name"],
-                "description": r["description"],
                 "api_key_configured": r["api_key_configured"],
                 "custom": True,
             })
