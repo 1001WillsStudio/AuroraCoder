@@ -104,10 +104,6 @@ export default function SettingsPanel({ isOpen, onClose }) {
   const setApiKey = (providerId, value) => {
     setSettings(prev => {
       const next = { ...prev.api_keys, [providerId]: value }
-      // Sync to legacy variant keys for backward compat
-      if (providerId === 'deepseek')  { next['deepseek-flash'] = value }
-      if (providerId === 'opencode') { next['opencode-ds-v4-pro'] = value; next['opencode-ds-v4-flash'] = value }
-      if (providerId === 'nvidia')   { next['nvidia-fast'] = value; next['nvidia-glm5'] = value; next['nvidia-glm5-fast'] = value }
       return { ...prev, api_keys: next }
     })
     setErrorFields(prev => ({ ...prev, [providerId]: false }))

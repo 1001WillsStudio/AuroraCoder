@@ -143,9 +143,10 @@ TERMINAL_MAX_OUTPUT_CHARS = 15_000
 # Web Browser (secondary model summarization)
 # =============================================================================
 # A cheap/fast model processes raw web pages so only a concise summary
-# enters the main agent's context window.
-# The provider ID references one of MODEL_PROVIDERS (or a custom provider).
-WEB_SECONDARY_PROVIDER = "deepseek"
+# enters the main agent's context window.  The selected provider/model is
+# configured at runtime via settings.json (other.web_secondary.model) and
+# synced into WEB_SECONDARY_* env vars — see src/providers.py and
+# gateway/provider_registry.py.  The fallback is the DEFAULT_PROVIDER.
 WEB_SECONDARY_MODEL_MAX_TOKENS = 4096
 
 # Max characters of page markdown fed to the secondary model

@@ -176,15 +176,21 @@ def _normalize_api_keys():
     api_keys = raw.get("api_keys", {})
     changed = False
     for family, variants in _PROVIDER_FAMILIES.items():
-        # If the family key is already set, skip — user has the new format
-        if family in api_keys and api_keys[family]:
-            continue
-        # Collect from old variant keys
+        # Promote the first non-empty legacy variant key to the family key
+        # (only if the family key is not already set — the family key wins).
+        if not (family in api_keys and api_keys[family]):
+            for v in variants:
+                if v != family and v in api_keys and api_keys[v]:
+                    api_keys[family] = api_keys[v]
+                    changed = True
+                    break
+        # The family key is now canonical — delete the legacy variant keys so
+        # the on-disk file is cleanly migrated and no runtime fallback is
+        # needed to read them later.
         for v in variants:
-            if v in api_keys and api_keys[v]:
-                api_keys[family] = api_keys[v]
+            if v != family and v in api_keys:
+                del api_keys[v]
                 changed = True
-                break
     if changed:
         _save_raw(raw)
 
@@ -236,9 +242,8 @@ def get_api_key(provider_id: str) -> str:
     Checks (in order):
         1. settings.json → custom_providers → <provider_id>
         2. settings.json → api_keys → <provider_id>  (Settings UI wins)
-        3. settings.json → api_keys → family-mapped variants (backward compat)
-        4. Environment variable (uppercase, e.g. DEEPSEEK_API_KEY)
-        5. Empty string
+        3. Environment variable (uppercase, e.g. DEEPSEEK_API_KEY)
+        4. Empty string
     """
     _normalize_api_keys()
 
@@ -258,14 +263,6 @@ def get_api_key(provider_id: str) -> str:
     if settings_val and settings_val is not True:
         return settings_val
 
-    # 2b) Backward compat: check old variant names mapped to this family
-    family = _VARIANT_TO_FAMILY.get(provider_id)
-    if family:
-        for v in _PROVIDER_FAMILIES.get(family, []):
-            if v != provider_id:
-                val = api_keys.get(v, "")
-                if val and val is not True:
-                    return val
 
     # 3) Fall back to environment variable (supports _API_KEY and GitHub's _TOKEN convention)
     env_var = f"{provider_id.upper()}_API_KEY"
