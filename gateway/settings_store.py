@@ -196,41 +196,73 @@ def _normalize_api_keys():
 
 
 def _normalize_model_selections():
-    """Migrate legacy per-family provider keys to model-selection keys.
+    """Migrate model-selection settings to the structured form.
 
-    The model-management refactor renamed two settings keys:
+    Canonical on-disk form (no composite-string parsing needed by readers):
 
-        other.agent.default_provider  →  other.agent.default_model
-        other.web_secondary.provider    →  other.web_secondary.model
+        other.agent.default_model   = {"provider": "<family>", "model": "<id>"}
+        other.web_secondary.model  = {"provider": "<family>", "model": "<id>"}
 
-    Both stored a provider *family* id (or, pre-refactor, a per-variant id
-    such as ``deepseek-flash``).  We rename the key and normalize any old
-    variant id to its family.  A bare family id is a valid model-selection
-    value — the reader resolves it to a concrete model at access time
-    (providers with enabled models expand to ``provider::model_id``;
-    others stay bare).  Idempotent; the on-disk file is only rewritten
-    when a rename actually occurs.
+    ``model`` ("" or the key absent) ⇒ "auto / first enabled model" for the
+    provider.  An absent or empty-structured value ⇒ system default (agent)
+    or "same as agent" (web secondary).
+
+    Absorbs every prior representation so readers only ever see the structured
+    dict:
+        • already-structured dict   → keys normalized ("provider", "model")
+        • composite "a::b" string  → {"provider":"a","model":"b"}
+        • bare family/variant str  → {"provider": <family>, "model": ""}
+        • legacy default_provider / web_secondary.provider → structured
+
+    Idempotent; the on-disk file is only rewritten when a change occurs.
     """
+    def _to_structured(value):
+        if isinstance(value, dict):
+            prov = (value.get("provider") or "").strip()
+            if not prov:
+                return {}
+            return {"provider": prov, "model": (value.get("model") or "").strip()}
+        if isinstance(value, str):
+            s = value.strip()
+            if not s:
+                return {}
+            if "::" in s:
+                prov, mid = s.split("::", 1)
+                prov = prov.strip(); mid = mid.strip()
+                if not prov:
+                    return {}
+                return {"provider": _VARIANT_TO_FAMILY.get(prov, prov), "model": mid}
+            return {"provider": _VARIANT_TO_FAMILY.get(s, s), "model": ""}
+        return {}
+
     raw = _load_raw()
     other = raw.get("other")
     if not isinstance(other, dict):
         return
     changed = False
 
-    agent = other.get("agent")
-    if isinstance(agent, dict) and "default_provider" in agent:
-        legacy = agent.pop("default_provider")
-        if not agent.get("default_model") and isinstance(legacy, str) and legacy:
-            agent["default_model"] = _VARIANT_TO_FAMILY.get(legacy, legacy)
-        changed = True
+    def _migrate(block, key, legacy_key):
+        nonlocal changed
+        if not isinstance(block, dict):
+            return
+        value = block.get(key) if key in block else None
+        if legacy_key and legacy_key in block:
+            legacy = block.pop(legacy_key)
+            changed = True
+            if value in (None, "", {}):
+                value = legacy
+        structured = _to_structured(value)
+        if structured:
+            if block.get(key) != structured:
+                block[key] = structured
+                changed = True
+        else:
+            if key in block:
+                del block[key]
+                changed = True
 
-    ws = other.get("web_secondary")
-    if isinstance(ws, dict) and "provider" in ws:
-        legacy = ws.pop("provider")
-        if not ws.get("model") and isinstance(legacy, str) and legacy:
-            ws["model"] = _VARIANT_TO_FAMILY.get(legacy, legacy)
-        changed = True
-
+    _migrate(other.get("agent"), "default_model", "default_provider")
+    _migrate(other.get("web_secondary"), "model", "provider")
     if changed:
         _save_raw(raw)
 

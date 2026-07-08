@@ -96,12 +96,12 @@ def resolve_provider(provider_id: str) -> dict:
 def get_default_model_entry() -> str:
     """Return the id of the default *model* entry shown in the sidebar.
 
-    Providers now manage individual models, so the agent's "default" is a
-    model selection — a composite ``provider::model_id`` (or a bare
-    provider family id when a provider has no enabled models) taken from
-    ``get_available_providers()``.  This replaces the old per-family
-    "default provider" setting.  Legacy ``default_provider`` keys are
-    migrated to ``default_model`` by the settings store on read.
+    The agent's default is a *model selection* stored structurally as
+    ``other.agent.default_model = {"provider": ..., "model": ...}`` (the
+    settings store normalizes any legacy form to this on read).  We map that
+    to a single entry id from ``get_available_providers()`` (a composite
+    ``provider::model_id`` when the provider has enabled models, else a bare
+    family id) so the frontend can use it as a scalar selection.
     """
     settings = get_all_settings()
     avail = get_available_providers()
@@ -109,19 +109,20 @@ def get_default_model_entry() -> str:
         return DEFAULT_PROVIDER
 
     agent = settings.get("other", {}).get("agent", {})
+    dm = agent.get("default_model")
+    if isinstance(dm, dict):
+        provider_id = dm.get("provider", "")
+        model_id = dm.get("model", "")
+        if provider_id:
+            if model_id:
+                for e in avail:
+                    if e.get("provider_id") == provider_id and e.get("model") == model_id:
+                        return e["id"]
+            m = next((e for e in avail if e.get("provider_id") == provider_id), None)
+            if m:
+                return m["id"]
 
-    # 1) New model-level setting (composite `provider::model_id` or bare id)
-    dm = agent.get("default_model", "")
-    if dm:
-        for e in avail:
-            if e["id"] == dm:
-                return dm
-        # A bare family id stored under default_model → first entry for it
-        match = next((e for e in avail if e.get("provider_id") == dm), None)
-        if match:
-            return match["id"]
-
-    # 2) System default: first entry belonging to DEFAULT_PROVIDER, else first
+    # System default: first entry belonging to DEFAULT_PROVIDER, else first
     m = next((e for e in avail if e.get("provider_id") == DEFAULT_PROVIDER), None)
     return m["id"] if m else avail[0]["id"]
 
@@ -213,27 +214,26 @@ def get_max_concurrent_tools() -> int:
 def get_web_secondary_config() -> dict:
     """Resolve the web secondary model configuration.
 
-    ``other.web_secondary.model`` is now a *model* selection — a composite
-    ``provider::model_id`` (or a bare provider family id) taken from the
-    available providers list, matching how the agent default is chosen.
-    Legacy ``provider`` keys are migrated to ``model`` by the settings store
-    on read.
+    Reads the structured selection
+    ``other.web_secondary.model = {"provider": ..., "model": ...}``
+    (normalized on read by the settings store).  ``model`` ("") ⇒ auto-select
+    the provider's first enabled model (else its default model).  Returns
+    ``{provider_id, base_url, api_key, model}`` ready for the OpenAI client.
     """
     settings = get_all_settings()
     ws = settings.get("other", {}).get("web_secondary", {})
 
-    model_entry = ws.get("model", "")
+    sel = ws.get("model")
     provider_id = ""
     model_id = ""
-    if "::" in model_entry:
-        provider_id, model_id = model_entry.split("::", 1)
-    elif model_entry:
-        provider_id = model_entry
+    if isinstance(sel, dict):
+        provider_id = sel.get("provider", "")
+        model_id = sel.get("model", "")
 
     if provider_id:
         r = resolve_provider(provider_id)
         if not model_id:
-            # Use the provider's first enabled model, else its default model
+            # Auto-select: first enabled model, else the provider's default model
             pm = settings.get("provider_models", {}).get(provider_id, [])
             if pm:
                 first = pm[0]

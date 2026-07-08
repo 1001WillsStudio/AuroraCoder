@@ -105,6 +105,28 @@ def _resolve_model(provider_id: str, default_val: str) -> str:
     return default_val
 
 
+def _coerce_model_selection(value) -> tuple:
+    """Coerce a model-selection value to ``(provider_id, model_id)``.
+
+    Readers prefer the structured ``{"provider", "model"}`` form (the
+    canonical on-disk shape written by the settings store).  This shim also
+    absorbs legacy representations so the chat path never breaks on a
+    settings.json that has not yet been migrated:
+        • dict    → ("provider", "model")
+        • "a::b"  → ("a", "b")
+        • "a"     → ("a", "")
+    """
+    if isinstance(value, dict):
+        return (value.get("provider") or "", value.get("model") or "")
+    if isinstance(value, str) and value.strip():
+        s = value.strip()
+        if "::" in s:
+            p, m = s.split("::", 1)
+            return (p.strip(), m.strip())
+        return (s, "")
+    return ("", "")
+
+
 # =============================================================================
 # Provider Manager
 # =============================================================================
@@ -211,18 +233,11 @@ class ProviderManager:
             cse_id = os.environ.get("GOOGLE_CSE_ID", "")
 
         # ── Web Secondary Model ──
-        # ``model`` is a model selection (composite `provider::model_id` or a
-        # bare provider family id) taken from the available providers list —
-        # matching the agent's default-model setting.  Legacy ``provider``
-        # keys are migrated to ``model`` by the settings store on read.
+        # Structured selection: {"provider": ..., "model": ...}.  ``model`` ("")
+        # ⇒ auto-select the provider's first enabled model (matching the agent
+        # default).  _coerce_model_selection absorbs any legacy on-disk form.
         ws = other.get("web_secondary", {})
-        model_entry = ws.get("model", "")
-        provider_id = ""
-        model_id = ""
-        if "::" in model_entry:
-            provider_id, model_id = model_entry.split("::", 1)
-        elif model_entry:
-            provider_id = model_entry
+        provider_id, model_id = _coerce_model_selection(ws.get("model"))
 
         if provider_id:
             # Resolve provider config for the secondary model

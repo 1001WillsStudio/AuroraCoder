@@ -261,6 +261,24 @@ export default function SettingsPanel({ isOpen, onClose }) {
   const apiKeys = settings?.api_keys || {}
   const other = settings?.other || {}
 
+  // ── Structured model-selection (de)serialization ───────────────────
+  // The on-disk form is { provider, model } (not a composite "provider::model"
+  // string), but a <select> needs a scalar value. The flat providers[] list
+  // carries a composite `id` ("provider::model" or bare family id) that we
+  // use as that scalar — converting to/from the structured form here.
+  const selectionToId = (sel) => {
+    if (!sel || typeof sel !== 'object') return ''
+    const exact = providers.find(p => p.provider_id === sel.provider
+      && (p.model || '') === (sel.model || ''))
+    if (exact) return exact.id
+    const byProv = providers.find(p => p.provider_id === sel.provider)
+    return byProv?.id || ''
+  }
+  const idToSelection = (id) => {
+    const entry = providers.find(p => p.id === id)
+    return entry ? { provider: entry.provider_id, model: entry.model || '' } : ''
+  }
+
   // Merge built-in + custom into one list for rendering
   const allProviders = [
     ...builtIn.map(p => ({ ...p, _builtin: true })),
@@ -616,8 +634,8 @@ export default function SettingsPanel({ isOpen, onClose }) {
                   <div className="settings-field-col">
                     <label>{t('agent.defaultModel')}</label>
                     <select className="settings-input"
-                      value={other.agent?.default_model || ''}
-                      onChange={e => setOther('agent', 'default_model', e.target.value)}>
+                      value={selectionToId(other.agent?.default_model)}
+                      onChange={e => setOther('agent', 'default_model', idToSelection(e.target.value))}>
                       <option value="">{t('agent.systemDefault')}</option>
                       {providers.map(p => (
                         <option key={p.id} value={p.id}>{p.name}{p.custom ? t('agent.customSuffix') : ''}</option>
@@ -857,8 +875,8 @@ placeholder="abc123..."
                     <div className="settings-field-col">
                       <label>{t('webSecondary.model')}</label>
                       <select className="settings-input"
-                        value={other.web_secondary?.model || ''}
-                        onChange={e => setOther('web_secondary', 'model', e.target.value)}>
+                        value={selectionToId(other.web_secondary?.model)}
+                        onChange={e => setOther('web_secondary', 'model', idToSelection(e.target.value))}>
                         <option value="">{t('webSecondary.modelDefault')}</option>
                         {providers.map(p => (
                           <option key={p.id} value={p.id}>{p.name}{p.custom ? t('agent.customSuffix') : ''}</option>
