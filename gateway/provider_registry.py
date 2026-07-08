@@ -93,22 +93,37 @@ def resolve_provider(provider_id: str) -> dict:
     return prov
 
 
-def get_default_provider() -> str:
-    """Return the settings-aware default provider ID.
+def get_default_model_entry() -> str:
+    """Return the id of the default *model* entry shown in the sidebar.
 
-    Maps old per-variant IDs (opencode-ds-v4-pro, etc.) to new family IDs
-    so stale settings don't cause 'provider not configured' errors."""
+    Providers now manage individual models, so the agent's "default" is a
+    model selection — a composite ``provider::model_id`` (or a bare
+    provider family id when a provider has no enabled models) taken from
+    ``get_available_providers()``.  This replaces the old per-family
+    "default provider" setting.  Legacy ``default_provider`` keys are
+    migrated to ``default_model`` by the settings store on read.
+    """
     settings = get_all_settings()
-    dp = settings.get("other", {}).get("agent", {}).get(
-        "default_provider", DEFAULT_PROVIDER
-    )
-    # Backward compat: old variant → new family
-    _variant_to_family = {
-        "deepseek-flash": "deepseek",
-        "opencode-ds-v4-pro": "opencode", "opencode-ds-v4-flash": "opencode",
-        "nvidia-fast": "nvidia", "nvidia-glm5": "nvidia", "nvidia-glm5-fast": "nvidia",
-    }
-    return _variant_to_family.get(dp, dp)
+    avail = get_available_providers()
+    if not avail:
+        return DEFAULT_PROVIDER
+
+    agent = settings.get("other", {}).get("agent", {})
+
+    # 1) New model-level setting (composite `provider::model_id` or bare id)
+    dm = agent.get("default_model", "")
+    if dm:
+        for e in avail:
+            if e["id"] == dm:
+                return dm
+        # A bare family id stored under default_model → first entry for it
+        match = next((e for e in avail if e.get("provider_id") == dm), None)
+        if match:
+            return match["id"]
+
+    # 2) System default: first entry belonging to DEFAULT_PROVIDER, else first
+    m = next((e for e in avail if e.get("provider_id") == DEFAULT_PROVIDER), None)
+    return m["id"] if m else avail[0]["id"]
 
 
 def get_available_providers() -> List[dict]:
@@ -196,18 +211,40 @@ def get_max_concurrent_tools() -> int:
 
 
 def get_web_secondary_config() -> dict:
-    """Resolve the web secondary model configuration."""
+    """Resolve the web secondary model configuration.
+
+    ``other.web_secondary.model`` is now a *model* selection — a composite
+    ``provider::model_id`` (or a bare provider family id) taken from the
+    available providers list, matching how the agent default is chosen.
+    Legacy ``provider`` keys are migrated to ``model`` by the settings store
+    on read.
+    """
     settings = get_all_settings()
     ws = settings.get("other", {}).get("web_secondary", {})
-    provider_id = ws.get("provider", "")
+
+    model_entry = ws.get("model", "")
+    provider_id = ""
+    model_id = ""
+    if "::" in model_entry:
+        provider_id, model_id = model_entry.split("::", 1)
+    elif model_entry:
+        provider_id = model_entry
 
     if provider_id:
         r = resolve_provider(provider_id)
+        if not model_id:
+            # Use the provider's first enabled model, else its default model
+            pm = settings.get("provider_models", {}).get(provider_id, [])
+            if pm:
+                first = pm[0]
+                model_id = first["id"] if isinstance(first, dict) else first
+            elif PROVIDER_DEFAULT_MODELS.get(provider_id):
+                model_id = PROVIDER_DEFAULT_MODELS[provider_id][0]["id"]
         return {
             "provider_id": provider_id,
             "base_url": r["base_url"],
             "api_key": r["api_key"],
-            "model": ws.get("model", "") or (PROVIDER_DEFAULT_MODELS.get(provider_id, [{}])[0].get("id", "") if PROVIDER_DEFAULT_MODELS.get(provider_id) else ""),
+            "model": model_id,
         }
     return {"provider_id": "", "base_url": "", "api_key": "", "model": ""}
 

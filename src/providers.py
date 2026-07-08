@@ -210,8 +210,18 @@ class ProviderManager:
             cse_id = os.environ.get("GOOGLE_CSE_ID", "")
 
         # ── Web Secondary Model ──
+        # ``model`` is a model selection (composite `provider::model_id` or a
+        # bare provider family id) taken from the available providers list —
+        # matching the agent's default-model setting.  Legacy ``provider``
+        # keys are migrated to ``model`` by the settings store on read.
         ws = other.get("web_secondary", {})
-        provider_id = ws.get("provider", "")
+        model_entry = ws.get("model", "")
+        provider_id = ""
+        model_id = ""
+        if "::" in model_entry:
+            provider_id, model_id = model_entry.split("::", 1)
+        elif model_entry:
+            provider_id = model_entry
 
         if provider_id:
             # Resolve provider config for the secondary model
@@ -222,7 +232,7 @@ class ProviderManager:
                 default = MODEL_PROVIDERS.get(provider_id, MODEL_PROVIDERS.get(DEFAULT_PROVIDER, {}))
             base_url = _resolve_base_url(provider_id, default.get("base_url", ""))
             api_key = _resolve_api_key(provider_id, default.get("api_key", ""))
-            model = ws.get("model", "") or _resolve_model(provider_id, "")
+            model = model_id or _resolve_model(provider_id, "")
         else:
             # No provider selected — use defaults from env or config
             default_prov = MODEL_PROVIDERS.get(DEFAULT_PROVIDER, {})

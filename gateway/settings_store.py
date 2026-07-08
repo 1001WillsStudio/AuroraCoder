@@ -74,6 +74,11 @@ def get_all_settings() -> Dict[str, Any]:
         raw = _load_raw()
     # Normalize old variant keys → family keys so the frontend sees them
     _normalize_api_keys()
+    # Rename legacy per-family provider keys → model-selection keys
+    _normalize_model_selections()
+    # Re-read after migrations so callers see the renamed keys
+    with _lock:
+        raw = _load_raw()
     data = _deep_copy(raw)
     # Replace api_key strings with booleans: True = configured, absent = not
     for k in list(data.get("api_keys", {})):
@@ -180,6 +185,46 @@ def _normalize_api_keys():
                 api_keys[family] = api_keys[v]
                 changed = True
                 break
+    if changed:
+        _save_raw(raw)
+
+
+def _normalize_model_selections():
+    """Migrate legacy per-family provider keys to model-selection keys.
+
+    The model-management refactor renamed two settings keys:
+
+        other.agent.default_provider  →  other.agent.default_model
+        other.web_secondary.provider    →  other.web_secondary.model
+
+    Both stored a provider *family* id (or, pre-refactor, a per-variant id
+    such as ``deepseek-flash``).  We rename the key and normalize any old
+    variant id to its family.  A bare family id is a valid model-selection
+    value — the reader resolves it to a concrete model at access time
+    (providers with enabled models expand to ``provider::model_id``;
+    others stay bare).  Idempotent; the on-disk file is only rewritten
+    when a rename actually occurs.
+    """
+    raw = _load_raw()
+    other = raw.get("other")
+    if not isinstance(other, dict):
+        return
+    changed = False
+
+    agent = other.get("agent")
+    if isinstance(agent, dict) and "default_provider" in agent:
+        legacy = agent.pop("default_provider")
+        if not agent.get("default_model") and isinstance(legacy, str) and legacy:
+            agent["default_model"] = _VARIANT_TO_FAMILY.get(legacy, legacy)
+        changed = True
+
+    ws = other.get("web_secondary")
+    if isinstance(ws, dict) and "provider" in ws:
+        legacy = ws.pop("provider")
+        if not ws.get("model") and isinstance(legacy, str) and legacy:
+            ws["model"] = _VARIANT_TO_FAMILY.get(legacy, legacy)
+        changed = True
+
     if changed:
         _save_raw(raw)
 

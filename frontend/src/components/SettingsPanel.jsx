@@ -618,12 +618,12 @@ export default function SettingsPanel({ isOpen, onClose }) {
                 <p className="settings-section-desc">{t('agent.desc')}</p>
                 <div className="settings-field-row">
                   <div className="settings-field-col">
-                    <label>{t('agent.defaultProvider')}</label>
+                    <label>{t('agent.defaultModel')}</label>
                     <select className="settings-input"
-                      value={other.agent?.default_provider || ''}
-                      onChange={e => setOther('agent', 'default_provider', e.target.value)}>
+                      value={other.agent?.default_model || ''}
+                      onChange={e => setOther('agent', 'default_model', e.target.value)}>
                       <option value="">{t('agent.systemDefault')}</option>
-                      {allProviders.map(p => (
+                      {providers.map(p => (
                         <option key={p.id} value={p.id}>{p.name}{p.custom ? t('agent.customSuffix') : ''}</option>
                       ))}
                     </select>
@@ -859,12 +859,12 @@ placeholder="abc123..."
                 {!webSecondaryCollapsed && <>
                   <div className="settings-field-row">
                     <div className="settings-field-col">
-                      <label>{t('webSecondary.provider')}</label>
+                      <label>{t('webSecondary.model')}</label>
                       <select className="settings-input"
-                        value={other.web_secondary?.provider || ''}
-                        onChange={e => setOther('web_secondary', 'provider', e.target.value)}>
-                        <option value="">{t('webSecondary.providerDefault')}</option>
-                        {allProviders.map(p => (
+                        value={other.web_secondary?.model || ''}
+                        onChange={e => setOther('web_secondary', 'model', e.target.value)}>
+                        <option value="">{t('webSecondary.modelDefault')}</option>
+                        {providers.map(p => (
                           <option key={p.id} value={p.id}>{p.name}{p.custom ? t('agent.customSuffix') : ''}</option>
                         ))}
                       </select>

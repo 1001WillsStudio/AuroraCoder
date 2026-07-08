@@ -43,7 +43,7 @@ from gateway.settings_store import (
 )
 from gateway.provider_registry import (
     get_available_providers,
-    get_default_provider,
+    get_default_model_entry,
     get_max_iterations,
     sync_tool_env_vars,
 )
@@ -346,7 +346,7 @@ async def list_active_streams():
 @app.get("/api/providers")
 async def list_providers():
     """Return available model providers (built-in + custom)."""
-    return {"providers": get_available_providers(), "default": get_default_provider()}
+    return {"providers": get_available_providers(), "default": get_default_model_entry()}
 
 
 @app.get("/api/settings")
