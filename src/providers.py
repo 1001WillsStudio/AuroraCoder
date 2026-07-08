@@ -12,18 +12,19 @@ endpoint after settings changes.
 import json
 import logging
 import os
-from pathlib import Path
 from typing import Dict
 
 import httpx
 from openai import OpenAI
 
-from .config import MODEL_PROVIDERS, DEFAULT_PROVIDER, PROVIDER_DEFAULT_MODELS
+from .config import MODEL_PROVIDERS, DEFAULT_PROVIDER, PROVIDER_DEFAULT_MODELS, DATA_DIR
 
 logger = logging.getLogger(__name__)
 
 
-DATA_DIR = Path(os.environ.get("DATA_DIR", "/app/data"))
+# Use the SAME data dir as config.py / settings_store (single source of truth)
+# so the chat path reads the same settings.json keyed by AURORACODER_DOCKER /
+# AURORACODER_DATA_DIR — never a split-brain /app/data default.
 SETTINGS_PATH = DATA_DIR / "settings.json"
 
 
