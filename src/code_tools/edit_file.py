@@ -211,10 +211,9 @@ class RangeReplaceEditor:
     Uses the tolerant anchor-matching engine (find_anchor_tolerant,
     find_anchor_anywhere) to resolve edit specifications and applies them
     atomically.  Handles auto-correction of line numbers, indent fixes,
-    [TO] normalisation, and edit truncation.
+    [TO] normalisation.
     """
 
-    MAX_EDITS_PER_CALL = 3
 
     def __init__(self, workspace_root: str | Path):
         self.workspace_root = Path(workspace_root)
@@ -595,16 +594,3 @@ class RangeReplaceEditor:
         return result
 
 
-# ── Pre-processing helper (used by tool_executor before execution) ──
-
-def maybe_truncate_edits(tc: dict) -> None:
-    """If a tool call has > MAX_EDITS_PER_CALL edits, truncate to the max."""
-    if tc["function"]["name"] != "edit_file":
-        return
-    import json
-    args = json.loads(tc["function"]["arguments"])
-    edits = args.get("edits")
-    if len(edits) <= RangeReplaceEditor.MAX_EDITS_PER_CALL:
-        return
-    args["edits"] = edits[:RangeReplaceEditor.MAX_EDITS_PER_CALL]
-    tc["function"]["arguments"] = json.dumps(args, ensure_ascii=False)

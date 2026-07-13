@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from ..code_sandbox import WORKSPACE
 from ..config import MAX_FILE_READ_SIZE, count_lines_buffered
-from .edit_file import RangeReplaceEditor, maybe_truncate_edits
+from .edit_file import RangeReplaceEditor
 
 logger = logging.getLogger(__name__)
 
