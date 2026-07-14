@@ -152,7 +152,7 @@ def run_terminal_cmd_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any
 
     # Automatically convert foreground calls with timeout > 30s to background.
     was_converted = False
-    if timeout > 30 and blocking:
+    if timeout > 30 and blocking and "sleep" not in arguments["command"]:
         blocking = False
         was_converted = True
 
