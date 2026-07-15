@@ -42,7 +42,7 @@ class TerminalRunner:
         self.workspace_root = WORKSPACE
     
     def run_command(
-        self, command: str, timeout: int = 30, blocking: bool = True, cwd: str = None, new_terminal: bool = False
+        self, command: str, timeout: int = 10, blocking: bool = True, cwd: str = None, new_terminal: bool = False
     ) -> str:
         """
         Run a terminal command in the persistent session shell.
@@ -143,28 +143,34 @@ class TerminalRunner:
 def run_terminal_cmd_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     """Run terminal command tool wrapper.
 
-    Foreground calls with ``timeout > 30`` are automatically converted to
-    background execution so the agent loop is never blocked for long.
+    The default timeout is 10s and the maximum effective timeout is 30s. Any
+    request above 30s is silently clamped to 30s — the command runs in the
+    foreground for up to 30s, and if it is not done by then the existing
+    shell-timeout path moves it to the background and writes its full output to
+    a log file the agent can read later. Commands that contain ``sleep`` honor
+    the agent-supplied timeout in full so deliberate waits are not cut short.
     """
     runner = TerminalRunner(workspace_root=arguments.get("workspace_root"))
-    timeout = arguments.get("timeout", 30)
+    DEFAULT_TIMEOUT = 10
+    MAX_TIMEOUT = 30
+    timeout = arguments.get("timeout", DEFAULT_TIMEOUT)
     blocking = arguments.get("blocking", True)
+    command = arguments["command"]
 
-    # Automatically convert foreground calls with timeout > 30s to background.
-    was_converted = False
-    if timeout > 30 and blocking and "sleep" not in arguments["command"]:
-        blocking = False
-        was_converted = True
+    # 30s is the maximum configurable timeout. Treat anything above as 30,
+    # silently — unless the command contains a `sleep`, in which case honor
+    # the agent-supplied timeout in full. The existing foreground-timeout path
+    # already backgrounds an unfinished command (writing its complete output to
+    # a readable log file), so clamping here is sufficient: no relaunch, no
+    # double-run.
+    if timeout > MAX_TIMEOUT and "sleep" not in command:
+        timeout = MAX_TIMEOUT
 
     result = runner.run_command(
-        command=arguments["command"],
+        command=command,
         timeout=timeout,
         blocking=blocking,
         new_terminal=arguments.get("new_terminal", False),
     )
-
-    # Tell the agent that the call was re-routed to background.
-    if was_converted:
-        result = f"[Auto-background: timeout={timeout}s > 30s, converted to background.]\n{result}"
 
     return result, arguments
