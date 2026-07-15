@@ -27,7 +27,9 @@ from ..code_sandbox import shell, get_workspace, WORKSPACE
 from ..core_tools.subagent import cancel_active_subagents
 from ..config import DEFAULT_PROVIDER
 from ..providers import provider_manager
-from ..tool_definitions import NATIVE_TOOL_DEFINITIONS, SUBAGENT_READ_ONLY_TOOLS, memory_filter_tools
+from ..tool_definitions import (
+    NATIVE_TOOL_DEFINITIONS, SUBAGENT_READ_ONLY_TOOLS, GAP_INVESTIGATION_TOOLS, memory_filter_tools,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +101,12 @@ def get_filtered_tools(mode: str):
         if name == "subagent":
             continue
         if mode == "read_only" and name not in SUBAGENT_READ_ONLY_TOOLS:
+            continue
+        # Used only for the one-shot /api/chat call the gap-investigation
+        # dispatcher makes against an isolated memory-worker (see
+        # memory/ops/dispatcher.py) — a minimal read-oriented set plus the
+        # tool that ends the task. Not reachable from a normal chat.
+        if mode == "gap_investigation" and name not in GAP_INVESTIGATION_TOOLS:
             continue
         defs.append(td)
     return memory_filter_tools(defs)

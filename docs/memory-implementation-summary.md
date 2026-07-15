@@ -13,7 +13,7 @@ This implements the design doc's layering exactly:
 |---|---|---|
 | 1 — Light runtime | Sync CRUD, retrieval, redaction, Stance assembly | **Done, always on** |
 | 2a — Passive pipeline | Async, structured-output-only extraction + consolidation | **Done, on by default, toggleable** |
-| 2b — Heavy ops (Gap Engine) | Tool-using investigation in an isolated worker | **Scaffolding only, off by default** |
+| 2b — Heavy ops (Gap Engine) | Tool-using investigation in an isolated worker | **Done, off by default** |
 
 ## Where everything lives
 
@@ -321,21 +321,51 @@ workspace filter is needed here: AuroraCoder runs exactly one workspace
 per gateway instance, so every conversation this gateway has ever stored
 already belongs to the same project.
 
-## What was deliberately left unfinished (and why)
+## The Gap Engine investigation protocol
 
-- **Gap Engine investigation protocol.** `dispatcher.py` can spawn/snapshot/
-  teardown a worker container **and reach it** (see "DooD infrastructure"
-  below — that part used to be broken, now isn't), but doesn't yet drive it
-  through a "here's the gap, investigate with tools, report findings"
-  exchange — that needs a defined one-shot task contract against
-  `src/web_api` (likely a dedicated `report_findings` tool the worker's
-  agent calls, parsed by the dispatcher). Building that without a live
-  Docker integration-test loop risked shipping a plausible-looking but
-  untested fake. The container lifecycle + networking plumbing it will sit
-  on top of is real and tested. `GET /api/memory/conversations/search` is
-  already there and tested for when this gets built, so the worker doesn't
-  need its own separate path into conversation history (see "Why the write
-  pass isn't an agent" above).
+`dispatch_gap_investigation` now drives the full lifecycle end-to-end:
+spawn a worker on an isolated workspace snapshot, wait for it to actually
+be reachable (`_wait_for_worker_ready` polls `GET /api/health` — a
+container reaching "running" says nothing about the FastAPI app inside
+having finished booting), drive a one-shot investigate-and-report task
+over its bare `POST /api/chat` (`investigate_gap_via_worker`), then hand
+whatever transcript comes back — even a partial one from a mid-stream
+error, in case `report_findings` was already called on an earlier turn —
+to the write pass for judgment, and only resolve the gap if that pass
+actually wrote/updated a memory. Every other outcome (spawn failure,
+worker never came up, HTTP failure, the investigator honestly reporting
+"could not resolve", or the write pass rejecting the finding) defers the
+gap instead of guessing; nothing here is allowed to leave a gap stuck in
+"investigating" forever.
+
+The task contract is a new tool, `report_findings` (`src/tool_definitions.py`,
+`src/core_tools/memory_tools.py`), exposed to the worker via a dedicated
+`tools: "gap_investigation"` mode on `get_filtered_tools()`
+(`src/web_api/app.py`) — a minimal read-oriented set (`read_file`,
+`list_directory`, `run_terminal_command`) plus the one tool that ends the
+task. `report_findings` does no I/O at call time, exactly like `remember`
+— see the next paragraph for why that's the important part.
+
+**This is deliberately "another source of memory candidates", not a
+second write path.** `report_findings`'s call is parsed out of the
+worker's transcript by the exact same `_extract_nominated_candidates` that
+already handles `remember`, and judged by the exact same shared core
+(`memory/ops/extractor.py`'s `_run_write_pass`) — dedup search,
+cross-conversation search, the calibrated confidence rubric, the no-op
+default, all of it, unchanged. `run_gap_investigation_extraction` is a
+thin wrapper around that shared core that also returns which specific
+write (if any) was the nominated one, so `dispatch_gap_investigation` can
+resolve the gap to that memory's id without guessing at list positions.
+Nothing is written from inside the isolated worker itself, and the worker
+has no `remember`/`recall`/`forget`/`log_gap` tools at all (it has no
+gateway to reach that HTTP API through anyway) — findings only ever flow
+back through `report_findings` → the dispatcher → this one write pass.
+
+The confidence the investigator self-reports on `report_findings` is
+judged by the write pass exactly like any other self-reported confidence
+(§17 above) — it is a starting point for the LLM judge to sanity-check,
+not something trusted at face value, and it plays no role in decay
+immunity either way (only `corroboration_count` and usage/recency do).
 
 ### DooD infrastructure (fixed — was silently broken before)
 
@@ -375,11 +405,14 @@ boundary:
    an additional network after creation, unlike a volume mount) every
    time a worker is spawned, tolerating "already exists"/"already
    connected" as success.
+
+## What was deliberately left unfinished (and why)
+
 - **Reflection / lesson learning (design doc §14).** Not started. This is
   additive on top of the same extraction pass (a second prompt variant keyed
-  off error/retry/correction signals) — natural next milestone once the Gap
-  Engine investigation loop exists, since lessons and gap-resolutions share
-  the "self-authored, lower-trust" provenance handling.
+  off error/retry/correction signals) — lessons and gap-resolutions share
+  the same "self-authored, lower-trust" provenance handling the Gap Engine
+  already established.
 - **Volatile/TTL re-verification on read.** Schema supports
   `volatile`/`ttl_days`/`reverify_at` fields, but nothing currently acts on
   a stale volatile memory at read time (design doc §12) — retrieval returns
@@ -389,10 +422,17 @@ boundary:
   design doc (§12 calls it "optional") — current ranking is
   keyword+recency+usage only, which is enough for identifiers/paths but
   will miss fuzzy/paraphrased recall queries.
-- **Frontend UI.** No Memory/Gaps browser panel yet — routes exist
-  (`GET /api/memory`, `GET /api/memory/gaps`) specifically so a UI can be
-  added without backend changes, and memory files are plain
-  human-editable markdown in the meantime.
+- **Gap Ledger browser UI.** The Settings panel has a Memory browser (see
+  "Fixing/removing a wrong memory" above) but no equivalent for the Gap
+  Ledger yet — routes exist (`GET /api/memory/gaps`,
+  `POST /api/memory/gaps/{id}/investigate`) specifically so a UI can be
+  added without backend changes.
+- **Live Docker integration test of the Gap Engine.** Everything above the
+  `docker` CLI boundary is unit-tested with subprocess/`requests` mocked
+  out (this repo's working agreement is to never invoke real docker from
+  an automated session) — the container lifecycle, networking, and HTTP
+  protocol logic are exercised, but nobody has yet run this against a real
+  spawned worker container end-to-end.
 
 ## Testing notes
 

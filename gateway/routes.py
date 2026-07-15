@@ -660,9 +660,16 @@ async def investigate_gap(gap_id: str):
     """Dispatch active (heavy-ops) investigation of an open gap.
 
     No-ops with a clear reason unless ``settings.other.memory.heavy_ops_enabled``
-    is explicitly set — this is scaffolding, not a working feature yet.
+    is explicitly set. When it is, this can take a while — spawning a
+    container, waiting for it to boot, and driving a real multi-turn
+    investigation is not a sub-second operation like the rest of this
+    file's routes. Run off the event loop thread (``asyncio.to_thread``,
+    NOT the fire-and-forget ``_memory_ops_executor`` in
+    ``gateway/streaming.py`` — this route's caller needs the actual
+    result, so it awaits completion, it just must not block every other
+    concurrent gateway request while doing so.
     """
-    result = dispatch_gap_investigation(gap_id)
+    result = await asyncio.to_thread(dispatch_gap_investigation, gap_id)
     if not result.get("ok") and result.get("reason") == "gap not found":
         raise HTTPException(status_code=404, detail="Gap not found")
     return result

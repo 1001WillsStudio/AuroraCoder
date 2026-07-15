@@ -268,6 +268,140 @@ def test_extraction_calls_conversation_search_per_nomination():
     assert excluded == "conv-current"
 
 
+# ---------------------------------------------------------------------------
+# Gap-investigation findings (`report_findings`, from an isolated Layer 2b
+# worker transcript) — nominated exactly like `remember`, through the same
+# gate. See ops/extractor.py module docstring "Layer 2b reuses this same
+# gate" and memory/ops/dispatcher.py.
+# ---------------------------------------------------------------------------
+
+_REPORT_FINDINGS_ARGS_RESOLVED = {
+    "resolved": True,
+    "answer": "Pipeline bugs are tracked in the Linear INGEST project.",
+    "description": "Where pipeline bugs are tracked",
+    "confidence": "high",
+}
+
+_MSGS_WITH_REPORT_FINDINGS_CALL = [
+    {"role": "user", "content": "Investigate this: where are pipeline bugs tracked?"},
+    {
+        "role": "assistant", "content": "Found it.",
+        "tool_calls": [{
+            "id": "call_1",
+            "function": {"name": "report_findings", "arguments": json.dumps(_REPORT_FINDINGS_ARGS_RESOLVED)},
+        }],
+    },
+    {"role": "tool", "content": "Findings recorded", "tool_call_id": "call_1"},
+]
+
+
+def test_report_findings_nominated_when_resolved():
+    nominated = extractor._extract_nominated_candidates(_MSGS_WITH_REPORT_FINDINGS_CALL)
+    assert len(nominated) == 1
+    assert nominated[0]["content"] == _REPORT_FINDINGS_ARGS_RESOLVED["answer"]
+    assert nominated[0]["type"] == "gap_resolution", "default type for report_findings must be gap_resolution"
+
+
+def test_report_findings_not_nominated_when_unresolved():
+    unresolved_msgs = [{
+        "role": "assistant", "content": "",
+        "tool_calls": [{
+            "id": "c1",
+            "function": {"name": "report_findings", "arguments": json.dumps({"resolved": False, "notes": "no evidence found"})},
+        }],
+    }]
+    assert extractor._extract_nominated_candidates(unresolved_msgs) == [], \
+        "an honest 'could not resolve' must never become a memory candidate"
+
+
+def test_report_findings_missing_answer_is_skipped_defensively():
+    bad_msgs = [{
+        "role": "assistant", "content": "",
+        "tool_calls": [{
+            "id": "c1",
+            "function": {"name": "report_findings", "arguments": json.dumps({"resolved": True, "description": "x"})},
+        }],
+    }]
+    assert extractor._extract_nominated_candidates(bad_msgs) == []
+
+
+def test_report_findings_multiple_calls_only_last_one_wins():
+    """The investigator is told to call this exactly once, but if it
+    disobeys, only its FINAL answer should be nominated — not two
+    competing candidates for the same gap."""
+    msgs = [{
+        "role": "assistant", "content": "",
+        "tool_calls": [
+            {"id": "c1", "function": {"name": "report_findings", "arguments": json.dumps({
+                "resolved": True, "answer": "first guess", "description": "first"})}},
+            {"id": "c2", "function": {"name": "report_findings", "arguments": json.dumps({
+                "resolved": True, "answer": "final answer", "description": "final"})}},
+        ],
+    }]
+    nominated = extractor._extract_nominated_candidates(msgs)
+    assert len(nominated) == 1
+    assert nominated[0]["content"] == "final answer"
+
+
+def test_run_gap_investigation_extraction_writes_and_returns_id_and_confidence():
+    payload = json.dumps({"memories": [{
+        "plane": "world", "type": "gap_resolution", "scope": "project", "source": "nominated",
+        "content": _REPORT_FINDINGS_ARGS_RESOLVED["answer"],
+        "description": _REPORT_FINDINGS_ARGS_RESOLVED["description"],
+        "confidence": "high",
+    }]})
+    _patch_extractor(payload)
+    result = extractor.run_gap_investigation_extraction("gap_abc123", _MSGS_WITH_REPORT_FINDINGS_CALL)
+    assert result is not None
+    memory_id, confidence = result
+    saved = extractor.get_repository().get(memory_id)
+    assert saved is not None and saved.content == _REPORT_FINDINGS_ARGS_RESOLVED["answer"]
+    assert confidence == "high"
+    assert "report_findings" in saved.provenance
+
+
+def test_run_gap_investigation_extraction_returns_none_when_rejected():
+    _patch_extractor('{"memories": []}')
+    result = extractor.run_gap_investigation_extraction("gap_reject", _MSGS_WITH_REPORT_FINDINGS_CALL)
+    assert result is None
+
+
+def test_run_gap_investigation_extraction_returns_none_when_nothing_to_nominate():
+    """No report_findings call (or an unresolved one) with an otherwise
+    trivial transcript must short-circuit before even calling the model —
+    same MIN_MESSAGES_TO_BOTHER gate as the normal path."""
+    calls = []
+    extractor.get_memory_extraction_config = lambda: {
+        "provider_id": "fake", "base_url": "http://fake", "api_key": "fake-key", "model": "fake-model",
+    }
+    extractor.OpenAI = lambda base_url, api_key: calls.append(1) or _FakeClient('{"memories":[]}')
+    result = extractor.run_gap_investigation_extraction("gap_empty", [{"role": "user", "content": "hi"}])
+    assert result is None and not calls
+
+
+def test_report_findings_tool_is_a_pure_local_noop():
+    """Mirrors remember_tool: must never touch the network, only leaves a
+    transcript marker for the dispatcher/extractor to read afterward."""
+    import requests
+    from src.core_tools import memory_tools
+
+    def _fail_if_called(*a, **kw):
+        raise AssertionError("report_findings_tool must not perform any HTTP call")
+
+    orig_get, orig_post = requests.get, requests.post
+    requests.get, requests.post = _fail_if_called, _fail_if_called
+    try:
+        msg, echoed = memory_tools.report_findings_tool(_REPORT_FINDINGS_ARGS_RESOLVED)
+        msg2, echoed2 = memory_tools.report_findings_tool({"resolved": False, "notes": "nothing found"})
+    finally:
+        requests.get, requests.post = orig_get, orig_post
+
+    assert "recorded" in msg.lower()
+    assert echoed is _REPORT_FINDINGS_ARGS_RESOLVED
+    assert "could not resolve" in msg2.lower()
+    assert "nothing found" in msg2
+
+
 def test_remember_tool_is_a_pure_local_noop():
     """The agent-facing `remember` tool must never touch the network — it
     only leaves a marker in the transcript for the pass above to parse."""

@@ -14,6 +14,9 @@ import sys
 import json
 import pathlib
 import tempfile
+from contextlib import contextmanager
+
+import requests
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("AURORACODER_DATA_DIR", tempfile.mkdtemp())
@@ -254,6 +257,226 @@ def test_spawn_worker_skips_run_when_network_setup_fails():
     finally:
         dispatcher.ensure_memory_network = orig_ensure
         dispatcher._run_docker = orig_run_docker
+
+
+# ---------------------------------------------------------------------------
+# The investigation protocol itself: driving an already-spawned, already-
+# ready worker through /api/chat, and the end-to-end dispatch flow. All
+# HTTP is mocked -- these tests never make a real network call.
+# ---------------------------------------------------------------------------
+
+@contextmanager
+def _patched(module, **attrs):
+    """Patch *attrs* onto *module*, restoring the originals on exit --
+    used below to avoid repeating the same manual save/restore
+    boilerplate the earlier tests in this file use, now that several
+    tests need to patch many attributes (possibly across two modules) at
+    once."""
+    originals = {name: getattr(module, name) for name in attrs}
+    for name, value in attrs.items():
+        setattr(module, name, value)
+    try:
+        yield
+    finally:
+        for name, value in originals.items():
+            setattr(module, name, value)
+
+
+class _FakeSSEResponse:
+    def __init__(self, status_code=200, lines=None, text=""):
+        self.status_code = status_code
+        self._lines = lines or []
+        self.text = text
+
+    def iter_lines(self, decode_unicode=True):
+        return iter(self._lines)
+
+    def close(self):
+        pass
+
+
+def _sse_line(payload: dict) -> str:
+    return f"data: {json.dumps(payload)}"
+
+
+def test_wait_for_worker_ready_succeeds_once_health_responds():
+    class _FakeHealthResp:
+        status_code = 200
+
+    with _patched(dispatcher.requests, get=lambda url, timeout=3: _FakeHealthResp()):
+        assert dispatcher._wait_for_worker_ready("http://fake-worker:8080", timeout=5) is True
+
+
+def test_wait_for_worker_ready_times_out_when_unreachable():
+    def _raise(*a, **kw):
+        raise requests.exceptions.ConnectionError("connection refused")
+
+    with _patched(dispatcher.requests, get=_raise), _patched(dispatcher.time, sleep=lambda s: None):
+        assert dispatcher._wait_for_worker_ready("http://fake-worker:8080", timeout=0.01) is False
+
+
+def test_investigate_gap_via_worker_returns_transcript_on_success():
+    final_messages = [{"role": "assistant", "tool_calls": [
+        {"function": {"name": "report_findings", "arguments": json.dumps({"resolved": True})}}
+    ]}]
+    lines = [
+        _sse_line({"status": "running", "raw_messages": []}),
+        _sse_line({"status": "completed", "raw_messages": final_messages}),
+    ]
+    with _patched(dispatcher.requests, post=lambda *a, **kw: _FakeSSEResponse(200, lines)):
+        result = dispatcher.investigate_gap_via_worker("http://fake-worker:8080", "some question")
+    assert result == final_messages
+
+
+def test_investigate_gap_via_worker_returns_none_on_non_200():
+    with _patched(dispatcher.requests, post=lambda *a, **kw: _FakeSSEResponse(500, [], text="boom")):
+        result = dispatcher.investigate_gap_via_worker("http://fake-worker:8080", "q")
+    assert result is None
+
+
+def test_investigate_gap_via_worker_returns_none_on_connection_error():
+    def _raise(*a, **kw):
+        raise requests.exceptions.ConnectionError("nope")
+
+    with _patched(dispatcher.requests, post=_raise):
+        result = dispatcher.investigate_gap_via_worker("http://fake-worker:8080", "q")
+    assert result is None
+
+
+def test_investigate_gap_via_worker_salvages_transcript_on_mid_stream_error():
+    """A worker that errors out mid-stream (e.g. hit a provider hiccup)
+    should still hand back whatever transcript we saw before that -- the
+    investigator may have already called report_findings on an earlier
+    turn."""
+    partial_messages = [{"role": "assistant", "tool_calls": [
+        {"function": {"name": "report_findings", "arguments": json.dumps({"resolved": True})}}
+    ]}]
+    lines = [_sse_line({"status": "running", "raw_messages": partial_messages})]
+
+    class _DiesPartway(_FakeSSEResponse):
+        def iter_lines(self, decode_unicode=True):
+            yield from self._lines
+            raise requests.exceptions.ChunkedEncodingError("connection dropped")
+
+    with _patched(dispatcher.requests, post=lambda *a, **kw: _DiesPartway(200, lines)):
+        result = dispatcher.investigate_gap_via_worker("http://fake-worker:8080", "q")
+    assert result == partial_messages
+
+
+def _fresh_singleton_ledger():
+    """dispatch_gap_investigation always goes through the process-wide
+    get_gap_ledger() singleton (unlike the standalone-ledger tests above),
+    so these flow tests use it too rather than a throwaway instance."""
+    from memory.gap_store import get_gap_ledger
+    return get_gap_ledger()
+
+
+def test_dispatch_gap_investigation_full_success_path():
+    """The whole pipeline, everything mocked: spawn -> wait-ready ->
+    investigate -> judged write pass -> ledger.resolve -> teardown."""
+    calls = []
+    import memory.ops.extractor as extractor_module
+
+    with _patched(
+        dispatcher,
+        heavy_ops_enabled=lambda: True,
+        snapshot_workspace=lambda gap_id: (calls.append("snapshot") or pathlib.Path(tempfile.mkdtemp())),
+        spawn_worker=lambda gap_id, snap: (calls.append("spawn") or f"auroracoder-memory-worker-{gap_id}"),
+        teardown_worker=lambda name: calls.append(("teardown", name)),
+        cleanup_snapshot=lambda gap_id: calls.append("cleanup"),
+        _wait_for_worker_ready=lambda base_url, timeout=30: calls.append("ready") or True,
+        investigate_gap_via_worker=lambda base_url, question, max_iterations=20: (
+            calls.append("investigate") or [{"role": "assistant", "tool_calls": []}]
+        ),
+    ), _patched(
+        extractor_module,
+        run_gap_investigation_extraction=lambda gap_id, msgs: (calls.append("extract") or ("mem_fake123", "high")),
+    ):
+        ledger = _fresh_singleton_ledger()
+        gap = ledger.log_gap("Where are pipeline bugs tracked (full-flow test)?")
+
+        result = dispatcher.dispatch_gap_investigation(gap["gap_id"])
+
+        assert result == {"ok": True, "gap_id": gap["gap_id"], "memory_id": "mem_fake123", "confidence": "high"}
+        resolved = ledger.get(gap["gap_id"])
+        assert resolved["status"] == "resolved" and resolved["resolved_memory_id"] == "mem_fake123"
+        assert calls == ["snapshot", "spawn", "ready", "investigate", "extract", ("teardown", f"auroracoder-memory-worker-{gap['gap_id']}"), "cleanup"]
+
+
+def test_dispatch_gap_investigation_defers_when_worker_never_becomes_ready():
+    with _patched(
+        dispatcher,
+        heavy_ops_enabled=lambda: True,
+        snapshot_workspace=lambda gap_id: pathlib.Path(tempfile.mkdtemp()),
+        spawn_worker=lambda gap_id, snap: f"auroracoder-memory-worker-{gap_id}",
+        teardown_worker=lambda name: None,
+        cleanup_snapshot=lambda gap_id: None,
+        _wait_for_worker_ready=lambda base_url, timeout=30: False,
+    ):
+        ledger = _fresh_singleton_ledger()
+        gap = ledger.log_gap("A gap whose worker never comes up")
+        result = dispatcher.dispatch_gap_investigation(gap["gap_id"])
+        assert result["ok"] is False and "ready" in result["reason"]
+        assert ledger.get(gap["gap_id"])["status"] == "deferred"
+
+
+def test_dispatch_gap_investigation_defers_when_investigation_yields_no_transcript():
+    with _patched(
+        dispatcher,
+        heavy_ops_enabled=lambda: True,
+        snapshot_workspace=lambda gap_id: pathlib.Path(tempfile.mkdtemp()),
+        spawn_worker=lambda gap_id, snap: f"auroracoder-memory-worker-{gap_id}",
+        teardown_worker=lambda name: None,
+        cleanup_snapshot=lambda gap_id: None,
+        _wait_for_worker_ready=lambda base_url, timeout=30: True,
+        investigate_gap_via_worker=lambda base_url, question, max_iterations=20: None,
+    ):
+        ledger = _fresh_singleton_ledger()
+        gap = ledger.log_gap("A gap whose HTTP exchange fails outright")
+        result = dispatcher.dispatch_gap_investigation(gap["gap_id"])
+        assert result["ok"] is False and "transcript" in result["reason"]
+        assert ledger.get(gap["gap_id"])["status"] == "deferred"
+
+
+def test_dispatch_gap_investigation_defers_when_finding_is_rejected_by_write_pass():
+    """Mirrors the normal path's no-op default: the investigator reporting
+    (or the judge rejecting) is not a bug to route around -- it's the
+    fail-open, prefer-silence default working as intended."""
+    import memory.ops.extractor as extractor_module
+
+    with _patched(
+        dispatcher,
+        heavy_ops_enabled=lambda: True,
+        snapshot_workspace=lambda gap_id: pathlib.Path(tempfile.mkdtemp()),
+        spawn_worker=lambda gap_id, snap: f"auroracoder-memory-worker-{gap_id}",
+        teardown_worker=lambda name: None,
+        cleanup_snapshot=lambda gap_id: None,
+        _wait_for_worker_ready=lambda base_url, timeout=30: True,
+        investigate_gap_via_worker=lambda base_url, question, max_iterations=20: [
+            {"role": "assistant", "tool_calls": [
+                {"function": {"name": "report_findings", "arguments": json.dumps({"resolved": False, "notes": "no evidence"})}}
+            ]}
+        ],
+    ), _patched(extractor_module, run_gap_investigation_extraction=lambda gap_id, msgs: None):
+        ledger = _fresh_singleton_ledger()
+        gap = ledger.log_gap("A gap the investigator honestly could not resolve")
+        result = dispatcher.dispatch_gap_investigation(gap["gap_id"])
+        assert result["ok"] is False and "judgment" in result["reason"]
+        assert ledger.get(gap["gap_id"])["status"] == "deferred"
+
+
+def test_gap_investigation_tool_mode_is_minimal_and_ends_with_report_findings():
+    """The one-shot HTTP call the dispatcher makes uses tools='gap_investigation'
+    (see get_filtered_tools in src/web_api/app.py) -- assert that mode
+    resolves to exactly the minimal read-oriented set plus report_findings,
+    never remember/recall/forget/log_gap/subagent/write_file/edit_file."""
+    from src.web_api.app import get_filtered_tools
+    from src.tool_definitions import GAP_INVESTIGATION_TOOLS
+
+    names = {td["function"]["name"] for td in get_filtered_tools("gap_investigation")}
+    assert names == GAP_INVESTIGATION_TOOLS
+    assert "report_findings" in names
+    assert not names & {"remember", "recall", "log_gap", "forget", "subagent", "write_file", "edit_file", "delete_file"}
 
 
 def _run_all():

@@ -18,14 +18,17 @@ does two different things with two different confidence levels:
    the live one, per the design doc's isolation requirement for
    tool-using ops the user isn't watching.
 
-2. The actual investigation protocol (drive the worker's backend through
-   a self-investigation task, parse structured findings, resolve the
-   gap) — **not implemented yet**. ``dispatch_gap_investigation`` spawns
-   the worker and immediately tears it down / defers the gap with a
-   clear log message. Wiring up a real one-shot "investigate and report
-   findings" tool + parsing contract against ``src/web_api`` is future
-   work; this module exists so that work has somewhere to go without
-   redesigning the container lifecycle plumbing.
+2. The actual investigation protocol: drive the worker's backend through
+   a one-shot "investigate with tools, then report findings" task over
+   its bare ``POST /api/chat`` (the worker has no gateway of its own —
+   see ``src/web_api/app.py``), then hand the resulting transcript to
+   ``memory/ops/extractor.py``'s ``run_gap_investigation_extraction`` —
+   the SAME judged write pass a normal session goes through, treating
+   the worker's ``report_findings`` tool call as a nomination exactly
+   like `remember` (see that module's docstring "Layer 2b reuses this
+   same gate"). ``investigate_gap_via_worker`` below owns the HTTP/SSE
+   side; it does no parsing of its own, it only returns whatever final
+   transcript it managed to get.
 
 ## Reaching the worker: shared user-defined network, not published ports
 
@@ -58,17 +61,22 @@ behavior this is scaffolding toward.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
 import subprocess
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import requests
+
 from gateway.settings_store import get_other_settings
 from memory.gap_store import get_gap_ledger
 from memory.settings import memory_enabled, heavy_ops_enabled
+from memory.ops.prompts import GAP_INVESTIGATION_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +84,24 @@ WORKER_ROLE = "memory-worker"
 DEFAULT_WORKER_IMAGE = "auroracoder"
 CONTAINER_NAME_PREFIX = "auroracoder-memory-worker-"
 WORKER_PORT = 8080
+
+# How many agent-loop iterations the worker gets for one investigation —
+# generous enough for a handful of read_file/grep/git log calls, capped so
+# a confused investigation can't spin forever.
+INVESTIGATION_MAX_ITERATIONS = 20
+
+# Per-HTTP-call timeouts (connect, read-per-chunk) and an overall wall-clock
+# budget for the whole SSE exchange — belt-and-suspenders: a single stalled
+# read is caught by the read timeout, a slow-but-still-trickling stream is
+# caught by the wall-clock deadline.
+WORKER_CONNECT_TIMEOUT = 10
+WORKER_READ_TIMEOUT = 120
+INVESTIGATION_WALL_CLOCK_BUDGET = 600
+
+# How long to wait for a freshly-spawned worker's FastAPI app to come up
+# before giving up on this gap for now (it gets re-investigated next pass).
+WORKER_READY_TIMEOUT = 30
+WORKER_READY_POLL_INTERVAL = 1.0
 
 # User-defined bridge network shared by the main container and every
 # memory-worker it spawns — see module docstring "Reaching the worker".
@@ -233,15 +259,120 @@ def teardown_worker(container_name: str) -> None:
         logger.warning("[memory-worker] Failed to stop %s: %s", container_name, e)
 
 
+def _wait_for_worker_ready(base_url: str, timeout: float = WORKER_READY_TIMEOUT) -> bool:
+    """Poll the freshly-spawned worker's health endpoint until its FastAPI
+    app (uvicorn, started by ``docker/supervisord.memory-worker.conf``) is
+    actually accepting connections, or *timeout* elapses.
+
+    A container reaching "running" state (``spawn_worker`` returning a
+    name) says nothing about whether the process inside has finished
+    booting yet — without this, the first ``/api/chat`` call would race
+    the app's startup and likely fail with a connection error.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            resp = requests.get(f"{base_url}/api/health", timeout=3)
+            if resp.status_code == 200:
+                return True
+        except (requests.RequestException, OSError):
+            pass
+        time.sleep(WORKER_READY_POLL_INTERVAL)
+    return False
+
+
+def investigate_gap_via_worker(
+    base_url: str,
+    question: str,
+    max_iterations: int = INVESTIGATION_MAX_ITERATIONS,
+) -> Optional[List[Dict[str, Any]]]:
+    """Drive a one-shot "investigate, then report_findings" task on an
+    already-running, already-ready memory-worker over its bare
+    ``POST /api/chat`` SSE endpoint.
+
+    Returns the final raw message transcript — whatever the stream gave
+    us, even from a non-clean terminal status (``max_iterations_reached``
+    or a mid-stream error) — so the caller can still hand it to
+    ``memory/ops/extractor.run_gap_investigation_extraction`` in case
+    ``report_findings`` was already called on an earlier turn before
+    things went wrong. Returns ``None`` only when we got NOTHING usable
+    at all: the request itself failed, the worker responded with a
+    non-200, or the stream produced not a single message snapshot.
+
+    This function does no parsing of ``report_findings`` itself — see
+    ``memory/ops/extractor.py``'s module docstring for why that judgment
+    logic lives in exactly one place shared with the normal write pass.
+    """
+    body = {
+        "messages": [{"role": "system", "content": GAP_INVESTIGATION_SYSTEM_PROMPT}],
+        "message": (
+            "Investigate this and call `report_findings` when you're done "
+            f"(exactly once, as your last action):\n\n{question}"
+        ),
+        "tools": "gap_investigation",
+        "max_iterations": max_iterations,
+    }
+
+    try:
+        resp = requests.post(
+            f"{base_url}/api/chat", json=body, stream=True,
+            timeout=(WORKER_CONNECT_TIMEOUT, WORKER_READ_TIMEOUT),
+        )
+    except (requests.RequestException, OSError) as e:
+        logger.error("[memory-worker] Could not reach worker at %s: %s", base_url, e)
+        return None
+
+    if resp.status_code != 200:
+        logger.error(
+            "[memory-worker] Worker at %s returned %s: %s",
+            base_url, resp.status_code, resp.text[:500],
+        )
+        resp.close()
+        return None
+
+    raw_messages: Optional[List[Dict[str, Any]]] = None
+    deadline = time.monotonic() + INVESTIGATION_WALL_CLOCK_BUDGET
+    try:
+        for line in resp.iter_lines(decode_unicode=True):
+            if time.monotonic() > deadline:
+                logger.warning(
+                    "[memory-worker] Investigation at %s exceeded its %ss wall-clock budget — "
+                    "using whatever transcript we have so far.",
+                    base_url, INVESTIGATION_WALL_CLOCK_BUDGET,
+                )
+                break
+            if not line or not line.startswith("data:"):
+                continue
+            try:
+                data = json.loads(line[5:].strip())
+            except json.JSONDecodeError:
+                continue
+            if "raw_messages" in data:
+                raw_messages = data["raw_messages"]
+    except (requests.RequestException, OSError) as e:
+        logger.warning("[memory-worker] Stream from %s interrupted: %s", base_url, e)
+    finally:
+        resp.close()
+
+    return raw_messages
+
+
 def dispatch_gap_investigation(gap_id: str) -> Dict[str, Any]:
     """Entry point for actively investigating one open gap.
 
     Fail-open and inert by default: returns immediately without touching
     docker/filesystem unless ``heavy_ops_enabled()`` is true. When
-    enabled, spawns an isolated worker, then — since the investigation
-    protocol itself isn't implemented yet (see module docstring) — tears
-    it back down and defers the gap rather than pretending to resolve
-    it. Never raises.
+    enabled: spawns an isolated worker on a snapshot of the workspace,
+    waits for it to come up, drives it through the investigate/report
+    protocol, and hands whatever transcript comes back to the shared
+    write pass (``run_gap_investigation_extraction``). The gap is
+    resolved only if that pass actually wrote/updated a memory; any other
+    outcome (spawn failure, worker never came up, HTTP failure, the
+    investigator reporting "could not resolve", or the write pass itself
+    rejecting the finding) defers the gap instead of guessing. Never
+    raises — every failure path is caught, logged, and turned into a
+    deferral so a broken worker can never leave a gap stuck in
+    "investigating" forever.
     """
     ledger = get_gap_ledger()
     gap = ledger.get(gap_id)
@@ -262,14 +393,30 @@ def dispatch_gap_investigation(gap_id: str) -> Dict[str, Any]:
             ledger.defer(gap_id)
             return {"ok": False, "reason": "failed to spawn memory-worker container"}
 
-        logger.warning(
-            "[memory-worker] Spawned %s for gap %s, but the investigation protocol "
-            "is not implemented yet — deferring gap instead of investigating. "
-            "See memory/ops/dispatcher.py module docstring.",
-            container_name, gap_id,
-        )
-        ledger.defer(gap_id)
-        return {"ok": False, "reason": "investigation protocol not implemented (scaffolding only)", "container": container_name}
+        base_url = worker_base_url(gap_id)
+        if not _wait_for_worker_ready(base_url):
+            logger.error("[memory-worker] %s never became ready for gap %s", container_name, gap_id)
+            ledger.defer(gap_id)
+            return {"ok": False, "reason": "worker did not become ready in time", "container": container_name}
+
+        raw_messages = investigate_gap_via_worker(base_url, gap["question"])
+        if raw_messages is None:
+            ledger.defer(gap_id)
+            return {"ok": False, "reason": "investigation produced no usable transcript", "container": container_name}
+
+        # Same judged write pass a normal session goes through — see
+        # memory/ops/extractor.py's module docstring "Layer 2b reuses this
+        # same gate". Rejects just as readily as it accepts; that's by
+        # design, not a bug to work around here.
+        from memory.ops.extractor import run_gap_investigation_extraction
+        result = run_gap_investigation_extraction(gap_id, raw_messages)
+        if result is None:
+            ledger.defer(gap_id)
+            return {"ok": False, "reason": "no resolved finding survived judgment", "container": container_name}
+
+        memory_id, confidence = result
+        ledger.resolve(gap_id, resolved_memory_id=memory_id, confidence=confidence)
+        return {"ok": True, "gap_id": gap_id, "memory_id": memory_id, "confidence": confidence}
     except Exception:
         logger.exception("[memory-worker] Dispatch failed for gap %s", gap_id)
         ledger.defer(gap_id)

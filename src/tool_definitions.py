@@ -30,7 +30,7 @@ from .core_tools.tool_store_client import (
 )
 from .core_tools.subagent import run_subagent
 from .core_tools.continue_chat import continue_as_new_chat
-from .core_tools.memory_tools import remember_tool, recall_tool, log_gap_tool, forget_tool
+from .core_tools.memory_tools import remember_tool, recall_tool, log_gap_tool, forget_tool, report_findings_tool
 from .core_tools.memory_client import memory_enabled
 
 
@@ -541,6 +541,60 @@ NATIVE_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "report_findings",
+            "description": (
+                "Report the outcome of your investigation and end the task. Call this EXACTLY "
+                "ONCE, as your final action — do not call any tool after it. Only meaningful "
+                "inside an isolated gap-investigation session (see your system prompt); calling "
+                "it anywhere else is harmless but pointless."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "resolved": {
+                        "type": "boolean",
+                        "description": "True if you found a real, evidence-backed answer. False if you genuinely could not — that is a normal, acceptable outcome, not a failure."
+                    },
+                    "answer": {
+                        "type": "string",
+                        "description": "The fact/answer you found, written so a future agent can act on it directly. Required if resolved=true."
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "One-line summary of the finding, used for relevance ranking later. Required if resolved=true."
+                    },
+                    "plane": {
+                        "type": "string",
+                        "enum": ["stance", "world"],
+                        "description": "Almost always 'world' for investigation findings. Default 'world'."
+                    },
+                    "type": {
+                        "type": "string",
+                        "enum": ["project", "reference", "convention", "landmine", "gap_resolution"],
+                        "description": "Default 'gap_resolution'."
+                    },
+                    "scope": {
+                        "type": "string",
+                        "enum": ["user", "project"],
+                        "description": "Default 'project'."
+                    },
+                    "confidence": {
+                        "type": "string",
+                        "enum": ["high", "medium", "low"],
+                        "description": "Judge honestly against the checklist in your instructions — do not default to high."
+                    },
+                    "notes": {
+                        "type": "string",
+                        "description": "If resolved=false, briefly explain what you tried and why it came up empty."
+                    }
+                },
+                "required": ["resolved"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "continue_as_new_chat",
             "description": (
                 "Continue the current task in a fresh conversation. "
@@ -596,7 +650,21 @@ READ_ONLY_TOOLS = PARALLEL_SAFE_TOOLS
 # list (not just no-op'd) when ``settings.other.memory.enabled`` is False, so
 # a disabled agent looks and behaves exactly like a build with no memory
 # module: the LLM never even sees these schemas. See memory_filter_tools().
-MEMORY_TOOL_NAMES = {"remember", "recall", "log_gap", "forget"}
+# report_findings is included here too even though it only ever actually
+# reaches an LLM via the "gap_investigation" tools mode (get_filtered_tools
+# in src/web_api/app.py) — heavy_ops_enabled() already implies
+# memory_enabled(), so this is belt-and-suspenders, not load-bearing.
+MEMORY_TOOL_NAMES = {"remember", "recall", "log_gap", "forget", "report_findings"}
+
+# Tools available to an isolated gap-investigation worker (see
+# memory/ops/dispatcher.py) — read-oriented plus the one tool that ends the
+# task. Used by get_filtered_tools() in web_api/app.py via the "tools":
+# "gap_investigation" mode on that one-shot /api/chat call. Deliberately
+# does NOT include remember/recall/log_gap/forget: the worker has no
+# gateway to reach the memory HTTP API through anyway, and findings are
+# meant to flow back through report_findings -> the dispatcher -> the
+# normal write pass, not through the worker calling memory tools directly.
+GAP_INVESTIGATION_TOOLS = {"read_file", "list_directory", "run_terminal_command", "report_findings"}
 
 
 def memory_filter_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -632,6 +700,7 @@ TOOL_FUNCTION_MAP = {
     "recall": recall_tool,
     "log_gap": log_gap_tool,
     "forget": forget_tool,
+    "report_findings": report_findings_tool,
 }
 
 
