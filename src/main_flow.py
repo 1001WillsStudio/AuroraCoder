@@ -188,7 +188,15 @@ def generate_chat_responses_stream_native(
         current_usage = None
 
         t_api_start = time.time()
-        completion_stream = client.chat.completions.create(**api_kwargs)
+        try:
+            completion_stream = client.chat.completions.create(**api_kwargs)
+        except Exception as exc:
+            import json as _j, datetime as _dt
+            _p = (Path(__file__).resolve().parent.parent / "data" / "diagnostics" / "llm_failures.jsonl")
+            _p.parent.mkdir(parents=True, exist_ok=True)
+            with open(_p, "a", encoding="utf-8") as _f:
+                _f.write(_j.dumps({"ts": _dt.datetime.now().isoformat(), "conversation_id": conversation_id, "provider": provider_id, "model": model_name, "error": f"{type(exc).__name__}: {exc}", "status": getattr(exc, "status_code", None), "upstream": getattr(getattr(exc, "response", None), "text", None), "api_kwargs": api_kwargs}, ensure_ascii=False, default=str) + "\n")
+            raise
 
         yield {
             "messages": messages + [assistant_message],
