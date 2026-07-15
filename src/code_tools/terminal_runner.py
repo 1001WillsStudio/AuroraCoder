@@ -8,7 +8,11 @@ from typing import Dict, Any, Optional, List, Tuple
 import json
 
 from ..code_sandbox import shell, WORKSPACE
-from ..config import TERMINAL_MAX_OUTPUT_CHARS
+from ..config import (
+    TERMINAL_MAX_OUTPUT_CHARS,
+    TERMINAL_DEFAULT_TIMEOUT,
+    TERMINAL_MAX_TIMEOUT,
+)
 
 
 def _get_terminal_max_output_chars() -> int:
@@ -42,7 +46,7 @@ class TerminalRunner:
         self.workspace_root = WORKSPACE
     
     def run_command(
-        self, command: str, timeout: int = 10, blocking: bool = True, cwd: str = None, new_terminal: bool = False
+        self, command: str, timeout: int = TERMINAL_DEFAULT_TIMEOUT, blocking: bool = True, cwd: str = None, new_terminal: bool = False
     ) -> str:
         """
         Run a terminal command in the persistent session shell.
@@ -143,28 +147,29 @@ class TerminalRunner:
 def run_terminal_cmd_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     """Run terminal command tool wrapper.
 
-    The default timeout is 10s and the maximum effective timeout is 30s. Any
-    request above 30s is silently clamped to 30s — the command runs in the
-    foreground for up to 30s, and if it is not done by then the existing
-    shell-timeout path moves it to the background and writes its full output to
-    a log file the agent can read later. Commands that contain ``sleep`` honor
-    the agent-supplied timeout in full so deliberate waits are not cut short.
+    Timeout policy (values live in config.py): the default is
+    ``TERMINAL_DEFAULT_TIMEOUT`` (10s) and the maximum effective timeout is
+    ``TERMINAL_MAX_TIMEOUT`` (30s).  Any request above the maximum is silently
+    clamped down to it — the command runs in the foreground for at most that
+    long, and if it is not done by then the existing PersistentShell
+    foreground-timeout path moves it to the background and writes its full
+    output to a log file the agent can read later.  Commands that contain
+    ``sleep`` honor the agent-supplied timeout in full so deliberate waits are
+    not cut short.
     """
     runner = TerminalRunner(workspace_root=arguments.get("workspace_root"))
-    DEFAULT_TIMEOUT = 10
-    MAX_TIMEOUT = 30
-    timeout = arguments.get("timeout", DEFAULT_TIMEOUT)
+    timeout = arguments.get("timeout", TERMINAL_DEFAULT_TIMEOUT)
     blocking = arguments.get("blocking", True)
     command = arguments["command"]
 
-    # 30s is the maximum configurable timeout. Treat anything above as 30,
-    # silently — unless the command contains a `sleep`, in which case honor
-    # the agent-supplied timeout in full. The existing foreground-timeout path
-    # already backgrounds an unfinished command (writing its complete output to
-    # a readable log file), so clamping here is sufficient: no relaunch, no
-    # double-run.
-    if timeout > MAX_TIMEOUT and "sleep" not in command:
-        timeout = MAX_TIMEOUT
+    # Enforce the configured maximum timeout.  Treat anything above it as the
+    # maximum, silently — unless the command contains a `sleep`, in which case
+    # honor the agent-supplied timeout in full.  The existing
+    # foreground-timeout path already backgrounds an unfinished command
+    # (writing its complete output to a readable log file), so clamping here is
+    # sufficient: no relaunch, no double-run.
+    if timeout > TERMINAL_MAX_TIMEOUT and "sleep" not in command:
+        timeout = TERMINAL_MAX_TIMEOUT
 
     result = runner.run_command(
         command=command,

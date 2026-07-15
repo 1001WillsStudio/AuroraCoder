@@ -139,6 +139,18 @@ DEFAULT_BASE_ENV_NAME = os.environ.get("DEFAULT_BASE_ENV_NAME", "agent" if DOCKE
 # Long command outputs are truncated to this limit (keeps head + tail).
 TERMINAL_MAX_OUTPUT_CHARS = 15_000
 
+# Default foreground timeout (seconds) for run_terminal_command.  10s is
+# enough for the large majority of commands, so agents should rarely need
+# to pass an explicit timeout.
+TERMINAL_DEFAULT_TIMEOUT = 10
+
+# Maximum configurable timeout (seconds).  Requests above this are silently
+# clamped down to it: the command then runs in the foreground for at most
+# this long before the existing PersistentShell timeout path moves it to the
+# background (writing its full output to a readable log file).  Commands that
+# contain a `sleep` are exempt and honor the agent-supplied timeout in full.
+TERMINAL_MAX_TIMEOUT = 30
+
 # =============================================================================
 # Web Browser (secondary model summarization)
 # =============================================================================
