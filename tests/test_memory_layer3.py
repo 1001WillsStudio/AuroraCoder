@@ -156,6 +156,71 @@ def test_docker_run_args_construction_uses_expected_conventions():
     assert "AURORACODER_ROLE=memory-worker" in args
     assert any(a.endswith(":/workspace") for a in args)
     assert args[-1] == dispatcher.DEFAULT_WORKER_IMAGE
+    # No host port publishing — the worker is reached over the shared
+    # user-defined network by container name (see module docstring
+    # "Reaching the worker"), never via localhost/docker port discovery.
+    assert "-p" not in args
+    assert "--network" in args
+    network_idx = args.index("--network")
+    assert args[network_idx + 1] == dispatcher.MEMORY_NETWORK_NAME
+
+
+def test_worker_base_url_uses_container_dns_name():
+    url = dispatcher.worker_base_url("gap_test123")
+    assert url == "http://auroracoder-memory-worker-gap_test123:8080"
+
+
+def test_own_container_name_reads_env_with_fallback():
+    orig = os.environ.pop("AURORACODER_CONTAINER_NAME", None)
+    try:
+        assert dispatcher._own_container_name() == dispatcher.DEFAULT_CONTAINER_NAME
+        os.environ["AURORACODER_CONTAINER_NAME"] = "some-custom-name"
+        assert dispatcher._own_container_name() == "some-custom-name"
+    finally:
+        if orig is None:
+            os.environ.pop("AURORACODER_CONTAINER_NAME", None)
+        else:
+            os.environ["AURORACODER_CONTAINER_NAME"] = orig
+
+
+def test_ensure_memory_network_tolerates_already_exists():
+    """Idempotent by design — a network that already exists (or a
+    container that's already connected) is success, not failure, since
+    both calls are re-run on every spawn (see ensure_memory_network doc)."""
+    orig_run_docker = dispatcher._run_docker
+    calls = []
+
+    class _FakeResult:
+        def __init__(self, stderr):
+            self.returncode = 1
+            self.stderr = stderr
+
+    def fake_run_docker(args):
+        calls.append(args)
+        if args[:2] == ["network", "create"]:
+            return _FakeResult(f"Error: network with name {dispatcher.MEMORY_NETWORK_NAME} already exists")
+        return _FakeResult("Error: endpoint already connected")
+
+    dispatcher._run_docker = fake_run_docker
+    try:
+        assert dispatcher.ensure_memory_network() is True
+        assert len(calls) == 2
+    finally:
+        dispatcher._run_docker = orig_run_docker
+
+
+def test_ensure_memory_network_reports_real_failures():
+    orig_run_docker = dispatcher._run_docker
+
+    class _FakeResult:
+        returncode = 1
+        stderr = "docker: command not found"
+
+    dispatcher._run_docker = lambda args: _FakeResult()
+    try:
+        assert dispatcher.ensure_memory_network() is False
+    finally:
+        dispatcher._run_docker = orig_run_docker
 
 
 def test_spawn_worker_handles_docker_failure_gracefully():
@@ -170,6 +235,24 @@ def test_spawn_worker_handles_docker_failure_gracefully():
         result = dispatcher.spawn_worker("gap_x", pathlib.Path("/tmp/snap"))
         assert result is None
     finally:
+        dispatcher._run_docker = orig_run_docker
+
+
+def test_spawn_worker_skips_run_when_network_setup_fails():
+    """spawn_worker must not even attempt `docker run` for the worker
+    itself if ensure_memory_network() failed — there'd be no way to
+    reach it anyway."""
+    orig_ensure = dispatcher.ensure_memory_network
+    orig_run_docker = dispatcher._run_docker
+    calls = []
+    dispatcher.ensure_memory_network = lambda: False
+    dispatcher._run_docker = lambda args: calls.append(args)
+    try:
+        result = dispatcher.spawn_worker("gap_y", pathlib.Path("/tmp/snap"))
+        assert result is None
+        assert calls == [], "must not call docker run at all when network setup failed"
+    finally:
+        dispatcher.ensure_memory_network = orig_ensure
         dispatcher._run_docker = orig_run_docker
 
 

@@ -169,7 +169,7 @@ below are settings.json-only for now).
 | `enabled` | **`false`** | Master switch for the whole subsystem — see "Runtime behavior" above |
 | `passive_enabled` | `true` | The unified write pass, run at session end (requires `enabled`) |
 | `extraction_provider` | *(default provider)* | Which provider/model runs the write pass |
-| `heavy_ops_enabled` | `false` | Layer 2b — spawn worker containers (requires `enabled`) |
+| `heavy_ops_enabled` | `false` | Layer 2b — spawn worker containers (requires `enabled`). **Also controls whether the Docker socket gets mounted into the main container** (`launcher/docker.go`) — flipping this on requires relaunching the container, since a bind mount can't be added to one already running. |
 | `worker_image` | `"auroracoder"` | Image tag used for `memory-worker` containers |
 
 ## The unified write pass (design doc §11 "Active" + "Passive", merged)
@@ -324,16 +324,57 @@ already belongs to the same project.
 ## What was deliberately left unfinished (and why)
 
 - **Gap Engine investigation protocol.** `dispatcher.py` can spawn/snapshot/
-  teardown a worker container, but doesn't yet drive it through a "here's
-  the gap, investigate with tools, report findings" exchange — that needs a
-  defined one-shot task contract against `src/web_api` (likely a dedicated
-  `report_findings` tool the worker's agent calls, parsed by the
-  dispatcher). Building that without a live Docker integration-test loop
-  risked shipping a plausible-looking but untested fake. The container
-  lifecycle plumbing it will sit on top of is real and tested.
-  `GET /api/memory/conversations/search` is already there and tested for
-  when this gets built, so the worker doesn't need its own separate path
-  into conversation history (see "Why the write pass isn't an agent" above).
+  teardown a worker container **and reach it** (see "DooD infrastructure"
+  below — that part used to be broken, now isn't), but doesn't yet drive it
+  through a "here's the gap, investigate with tools, report findings"
+  exchange — that needs a defined one-shot task contract against
+  `src/web_api` (likely a dedicated `report_findings` tool the worker's
+  agent calls, parsed by the dispatcher). Building that without a live
+  Docker integration-test loop risked shipping a plausible-looking but
+  untested fake. The container lifecycle + networking plumbing it will sit
+  on top of is real and tested. `GET /api/memory/conversations/search` is
+  already there and tested for when this gets built, so the worker doesn't
+  need its own separate path into conversation history (see "Why the write
+  pass isn't an agent" above).
+
+### DooD infrastructure (fixed — was silently broken before)
+
+Three real infra gaps were found when actually tracing through what
+`dispatch_gap_investigation` would need to work end-to-end, none of which
+any test caught since everything was mocked at the `docker`-binary
+boundary:
+
+1. **Docker CLI in the image** — turned out to already be installed
+   (`docker-ce-cli` in `docker/Dockerfile.base`, added earlier for
+   ToolStore's own DinD support), so no change needed here.
+2. **Docker socket never mounted into the main container** —
+   `launcher/docker.go`'s `startContainer`/`startGpuContainer` had no
+   `-v /var/run/docker.sock:/var/run/docker.sock`, so the CLI being
+   present didn't matter; there was no daemon to talk to. Fixed, but
+   gated: `memoryDockerSocketArgs()` only adds the mount when
+   `settings.other.memory.heavy_ops_enabled` is on in `settings.json`,
+   checked at container-creation time (a bind mount can't be retrofitted
+   onto a running container, so this requires a relaunch after flipping
+   the setting). Mounting the host's Docker socket is root-equivalent
+   host access, so this fails closed on any read/parse error and stays
+   off for the overwhelming majority of installs that never touch heavy
+   ops.
+3. **Wrong networking model** — the original plan was to publish the
+   worker's port (`-p 0:8080`) and reach it via `localhost:<port>` +
+   `docker port` discovery. That only works for host→container, not
+   container→container: the main container and the worker are *sibling*
+   containers on the host's Docker daemon (DooD, not nested), so
+   `localhost` inside the main container never reaches a sibling no
+   matter what it publishes. Fixed by putting both containers on a
+   shared **user-defined** bridge network (`MEMORY_NETWORK_NAME` —
+   Docker's embedded DNS/name resolution only works on user-defined
+   networks, never the default `bridge`) and addressing the worker by
+   container name (`worker_base_url()`) instead of a discovered port.
+   `ensure_memory_network()` creates the network and self-connects the
+   already-running main container to it (containers CAN be attached to
+   an additional network after creation, unlike a volume mount) every
+   time a worker is spawned, tolerating "already exists"/"already
+   connected" as success.
 - **Reflection / lesson learning (design doc §14).** Not started. This is
   additive on top of the same extraction pass (a second prompt variant keyed
   off error/retry/correction signals) — natural next milestone once the Gap

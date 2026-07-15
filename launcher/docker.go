@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -284,13 +285,70 @@ func startGpuContainer(cacheDir string, ps *progressServer) (PortsConfig, error)
 		"-p", fmt.Sprintf("%d:6080", ports.VNC),
 		"-p", fmt.Sprintf("%d:8765", ports.ToolStore),
 		"-p", fmt.Sprintf("%d-%d:8900-8902", ports.DevPortStart, ports.DevPortEnd),
-		gpuAppImageName,
 	)
+	if socketArgs := memoryDockerSocketArgs(dataDir, gpuContainerName); socketArgs != nil {
+		ps.logLine("Memory heavy-ops enabled — mounting Docker socket for Gap Engine worker spawning.")
+		args = append(args, socketArgs...)
+	}
+	args = append(args, gpuAppImageName)
 
 	cmd := exec.Command("docker", args...)
 	cmd.Dir = cacheDir
 
 	return ports, streamCommand(cmd, ps)
+}
+
+// ─── Memory Gap Engine (Layer 2b) socket mount gate ───────────────────────
+
+// memoryHeavyOpsEnabled peeks at settings.json in the (host-side) data
+// directory to decide whether the container needs the Docker socket
+// mounted for the Gap Engine's memory-worker (memory/ops/dispatcher.py).
+//
+// This has to happen here, at container-creation time, rather than being
+// read from inside the running container: a bind mount can only be added
+// when a container is created, never to one already running (see
+// memory/ops/dispatcher.py's module docstring). Mirrors
+// memory/settings.py's heavy_ops_enabled() logic exactly (master switch
+// AND the sub-flag) so the two layers agree on what "enabled" means.
+//
+// Fails closed on any error (missing file, malformed JSON, wrong types)
+// — mounting the host's Docker socket grants root-equivalent control
+// over the host, so an unreadable/ambiguous settings file must never be
+// treated as "yes, mount it".
+func memoryHeavyOpsEnabled(dataDir string) bool {
+	data, err := os.ReadFile(filepath.Join(dataDir, "settings.json"))
+	if err != nil {
+		return false
+	}
+	var parsed struct {
+		Other struct {
+			Memory struct {
+				Enabled         bool `json:"enabled"`
+				HeavyOpsEnabled bool `json:"heavy_ops_enabled"`
+			} `json:"memory"`
+		} `json:"other"`
+	}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return false
+	}
+	return parsed.Other.Memory.Enabled && parsed.Other.Memory.HeavyOpsEnabled
+}
+
+// memoryDockerSocketArgs returns the extra `docker run` args needed for
+// the Gap Engine to spawn sibling memory-worker containers (DooD): the
+// mounted socket itself, and this container's own fixed name so
+// memory/ops/dispatcher.py can self-connect to the shared network
+// without needing to guess its own identity. Empty when disabled — most
+// installs never opt into heavy_ops, and should get a container with NO
+// Docker socket exposure at all (see memoryHeavyOpsEnabled doc).
+func memoryDockerSocketArgs(dataDir string, ownContainerName string) []string {
+	if !memoryHeavyOpsEnabled(dataDir) {
+		return nil
+	}
+	return []string{
+		"-v", "/var/run/docker.sock:/var/run/docker.sock",
+		"-e", "AURORACODER_CONTAINER_NAME=" + ownContainerName,
+	}
 }
 
 // ─── Stop old container ──────────────────────────────────────────────────
@@ -350,8 +408,12 @@ func startContainer(cacheDir string, ps *progressServer) (PortsConfig, error) {
 		"-p", fmt.Sprintf("%d:6080", ports.VNC),
 		"-p", fmt.Sprintf("%d:8765", ports.ToolStore),
 		"-p", fmt.Sprintf("%d-%d:8900-8902", ports.DevPortStart, ports.DevPortEnd),
-		appImageName,
 	)
+	if socketArgs := memoryDockerSocketArgs(dataDir, containerName); socketArgs != nil {
+		ps.logLine("Memory heavy-ops enabled — mounting Docker socket for Gap Engine worker spawning.")
+		args = append(args, socketArgs...)
+	}
+	args = append(args, appImageName)
 
 	cmd := exec.Command("docker", args...)
 	cmd.Dir = cacheDir
