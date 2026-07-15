@@ -155,6 +155,27 @@ def cleanup_snapshot(gap_id: str) -> None:
     shutil.rmtree(dest, ignore_errors=True)
 
 
+# Provider API keys, kept in sync with src/config.py's MODEL_PROVIDERS (each
+# entry there reads its "api_key" from exactly one of these env vars). The
+# main container gets these from the launcher's --env-file at startup (see
+# launcher/docker.go); a freshly-spawned worker starts with a bare
+# environment and no settings.json of its own (deliberate isolation — see
+# module docstring), so without forwarding these explicitly the worker could
+# never reach any provider at all and every investigation would silently
+# dead-end on "not configured". Passed as -e values straight through to the
+# child process, never written to a file on either side.
+PROVIDER_API_KEY_ENV_VARS = ("DEEPSEEK_API_KEY", "OPENCODE_API_KEY", "NVIDIA_API_KEY")
+
+
+def _provider_env_passthrough() -> List[str]:
+    args: List[str] = []
+    for name in PROVIDER_API_KEY_ENV_VARS:
+        value = os.environ.get(name)
+        if value:
+            args += ["-e", f"{name}={value}"]
+    return args
+
+
 def build_docker_run_args(gap_id: str, snapshot_dir: Path) -> List[str]:
     """Construct the ``docker run`` argv for a one-off memory-worker.
 
@@ -176,6 +197,7 @@ def build_docker_run_args(gap_id: str, snapshot_dir: Path) -> List[str]:
         "--network", MEMORY_NETWORK_NAME,
         "-e", "AURORACODER_DOCKER=1",
         "-e", f"AURORACODER_ROLE={WORKER_ROLE}",
+        *_provider_env_passthrough(),
         "-v", f"{snapshot_dir}:/workspace",
         _worker_image(),
     ]

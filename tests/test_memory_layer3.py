@@ -479,6 +479,51 @@ def test_gap_investigation_tool_mode_is_minimal_and_ends_with_report_findings():
     assert not names & {"remember", "recall", "log_gap", "forget", "subagent", "write_file", "edit_file", "delete_file"}
 
 
+def test_build_docker_run_args_forwards_configured_provider_keys_only():
+    """Regression test for a real bug caught by manual Docker validation: a
+    freshly-spawned worker has no settings.json of its own, so unless the
+    main container's own already-configured provider keys are forwarded as
+    -e values, the worker can never reach any LLM and every investigation
+    dead-ends on 'not configured'. Only keys actually set get forwarded;
+    unset ones are silently skipped rather than passed through empty."""
+    originals = {name: os.environ.get(name) for name in dispatcher.PROVIDER_API_KEY_ENV_VARS}
+    try:
+        os.environ["DEEPSEEK_API_KEY"] = "sk-fake-deepseek"
+        os.environ.pop("OPENCODE_API_KEY", None)
+        os.environ.pop("NVIDIA_API_KEY", None)
+        args = dispatcher.build_docker_run_args("gap_xyz", pathlib.Path("/tmp/empty"))
+    finally:
+        for name, value in originals.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+    assert "-e" in args and "DEEPSEEK_API_KEY=sk-fake-deepseek" in args
+    assert not any(a.startswith("OPENCODE_API_KEY=") for a in args)
+    assert not any(a.startswith("NVIDIA_API_KEY=") for a in args)
+
+
+def test_gap_investigation_tool_mode_survives_worker_own_memory_being_disabled():
+    """Regression test for a real bug caught by manual Docker validation: a
+    freshly-spawned memory-worker container never shares the main
+    container's settings.json (deliberate isolation -- see
+    dispatcher.py's module docstring), so its OWN memory_enabled() reads
+    back False by default no matter what the dispatching side decided.
+    get_filtered_tools("gap_investigation") must not let the master-switch
+    filter (memory_filter_tools) strip report_findings in that case --
+    the allowlist for this mode is already fixed and deliberate, decided
+    by the caller before the worker was even spawned."""
+    import src.tool_definitions as tool_definitions
+    from src.tool_definitions import GAP_INVESTIGATION_TOOLS
+    from src.web_api.app import get_filtered_tools
+
+    with _patched(tool_definitions, memory_enabled=lambda: False):
+        names = {td["function"]["name"] for td in get_filtered_tools("gap_investigation")}
+    assert "report_findings" in names, "master switch filter leaked into gap_investigation mode and stripped report_findings"
+    assert names == GAP_INVESTIGATION_TOOLS
+
+
 def _run_all():
     tests = [v for k, v in list(globals().items()) if k.startswith("test_") and callable(v)]
     for t in tests:

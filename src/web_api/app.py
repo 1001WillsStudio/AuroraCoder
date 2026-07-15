@@ -109,6 +109,16 @@ def get_filtered_tools(mode: str):
         if mode == "gap_investigation" and name not in GAP_INVESTIGATION_TOOLS:
             continue
         defs.append(td)
+    if mode == "gap_investigation":
+        # Skip the master-switch filter here: the worker is a fresh,
+        # isolated container with no settings.json of its own (never gets
+        # one — see dispatcher.py's isolation requirement), so its LOCAL
+        # memory_enabled() always reads back False regardless of what the
+        # dispatching main container decided. That decision (heavy_ops_enabled,
+        # which already implies memory_enabled — see memory/settings.py) was
+        # made before this worker was even spawned; re-checking it here would
+        # just silently strip report_findings and brick every investigation.
+        return defs
     return memory_filter_tools(defs)
 
 
