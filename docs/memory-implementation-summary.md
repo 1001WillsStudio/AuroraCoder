@@ -151,12 +151,17 @@ just import from `memory.*` instead of owning it.
   nominated candidates too, not just discovered ones. If something was
   written, consolidation (dedupe + decay) runs immediately after, also
   cheap/local.
-- **Gap investigation** (`/api/memory/gaps/{id}/investigate`): always
-  callable, but no-ops with a clear reason string unless
-  `settings.other.memory.heavy_ops_enabled` is explicitly set. When enabled,
-  it spawns an isolated worker container (workspace **copy**, never the live
-  one) and — since the investigate-and-report protocol isn't built yet —
-  immediately tears it down and defers the gap rather than faking a result.
+- **Gap investigation**: two ways in — the manual route
+  (`/api/memory/gaps/{id}/investigate`, always callable, no-ops with a
+  clear reason string unless `heavy_ops_enabled` is set) and a periodic
+  scheduler that auto-dispatches `priority="high"` open gaps on a fixed
+  interval (`gap_auto_sweep_enabled`, its own sub-flag under
+  `heavy_ops_enabled`). Either way, when it runs: spawns an isolated
+  worker container on a workspace **copy** (never the live one), drives
+  the full investigate-and-report protocol, and resolves the gap only if
+  the shared write pass actually approved a finding — see "The Gap Engine
+  investigation protocol" and "Triggering an investigation" below for the
+  full details.
 
 ## Settings (all under `settings.json` → `other.memory`, all optional)
 
@@ -171,6 +176,10 @@ below are settings.json-only for now).
 | `extraction_provider` | *(default provider)* | Which provider/model runs the write pass |
 | `heavy_ops_enabled` | `false` | Layer 2b — spawn worker containers (requires `enabled`). **Also controls whether the Docker socket gets mounted into the main container** (`launcher/docker.go`) — flipping this on requires relaunching the container, since a bind mount can't be added to one already running. |
 | `worker_image` | `"auroracoder"` | Image tag used for `memory-worker` containers |
+| `gap_auto_sweep_enabled` | `true` | The periodic scheduler specifically (requires `heavy_ops_enabled`) — see "Triggering an investigation" below |
+| `gap_sweep_interval_hours` | `24` | How often the periodic scheduler wakes up |
+| `gap_sweep_max_concurrent` | `1` | Max worker containers the scheduler runs at once |
+| `gap_sweep_batch_size` | `1` | Max new gaps the scheduler dispatches per tick |
 
 ## The unified write pass (design doc §11 "Active" + "Passive", merged)
 
@@ -367,6 +376,43 @@ judged by the write pass exactly like any other self-reported confidence
 not something trusted at face value, and it plays no role in decay
 immunity either way (only `corroboration_count` and usage/recency do).
 
+### Triggering an investigation (`memory/ops/gap_scheduler.py`)
+
+`dispatch_gap_investigation` always needs a specific `gap_id` handed to
+it — it never decides on its own which gap to work on. Originally the
+only caller was the manual route
+(`POST /api/memory/gaps/{gap_id}/investigate`), and since no Gap Ledger
+browser UI exists yet, that route had no real caller in normal operation
+at all. Added a second, automatic path: a periodic, session-independent
+sweep (`run_periodic_gap_sweep`, started once from `gateway/api.py`'s
+startup hook), gated behind its own `gap_auto_sweep_enabled` sub-flag
+under `heavy_ops_enabled` — so heavy ops can be turned on for manual
+investigation only, without also opting into unattended background
+container spawns.
+
+Deliberately narrow in scope, matching the design doc's §13 resolution
+policy ("cheap + locally answerable → self-investigate, preferred;
+expensive/subjective → ask the user"): the sweep only ever considers
+`status="open"` gaps that are ALSO `priority="high"` — which today only
+happens via the recurrence escalation already in `GapLedger.log_gap`
+(a real, code-computed "this keeps coming up" signal, not a self-report).
+Medium/low-priority gaps are unaffected and stay manual-only. Bounded by
+`gap_sweep_batch_size` (new dispatches per tick) and
+`gap_sweep_max_concurrent` (worker containers running at once); each
+dispatch runs via its own `asyncio.to_thread` task so the sweep loop
+itself never blocks.
+
+No new cooldown/backoff bookkeeping was needed: every failure path in
+`dispatch_gap_investigation` already calls `ledger.defer(gap_id)`, which
+permanently drops that gap out of every future `status="open"` query — a
+gap that failed once simply never gets automatically retried. The one
+state that could otherwise get stuck forever is `investigating`, if the
+whole gateway process died mid-investigation (every ordinary exception is
+already caught and deferred) — `recover_stale_investigating_gaps()` sweeps
+any gap still at `status="investigating"` back to `open` once, at startup,
+since a fresh process means nothing from a prior incarnation can still be
+running it.
+
 ### DooD infrastructure (fixed — was silently broken before)
 
 Three real infra gaps were found when actually tracing through what
@@ -427,12 +473,20 @@ boundary:
   Ledger yet — routes exist (`GET /api/memory/gaps`,
   `POST /api/memory/gaps/{id}/investigate`) specifically so a UI can be
   added without backend changes.
-- **Live Docker integration test of the Gap Engine.** Everything above the
-  `docker` CLI boundary is unit-tested with subprocess/`requests` mocked
-  out (this repo's working agreement is to never invoke real docker from
-  an automated session) — the container lifecycle, networking, and HTTP
-  protocol logic are exercised, but nobody has yet run this against a real
-  spawned worker container end-to-end.
+- ~~Live Docker integration test of the Gap Engine.~~ **Done manually** —
+  the automated suites still mock `docker`/`requests` at the subprocess
+  boundary (per this repo's working agreement to never invoke real docker
+  from an automated session), but the full protocol has since been run by
+  hand end-to-end against a real Docker daemon and a real LLM provider, in
+  disposable containers with no bindings to the live workspace. That pass
+  caught and fixed two real bugs — the `gap_investigation` tool-mode
+  master-switch leak and the missing provider-key passthrough to the
+  worker — both documented above and now covered by regression tests in
+  `tests/test_memory_layer3.py`. Same manual validation was also done for
+  the main-agent-facing Layer 1/2a path (remember/recall/forget/log_gap
+  through a real gateway + real LLM). See
+  `docs/memory-module-structure.md` for the current-state reference this
+  produced.
 
 ## Testing notes
 

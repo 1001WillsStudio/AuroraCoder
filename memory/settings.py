@@ -3,7 +3,8 @@ Central feature-flag reader for the memory subsystem.
 
 Single source of truth for ``settings.other.memory.*`` so every consumer —
 gateway routes, the session-end trigger in ``gateway/streaming.py``, the
-extractor, and the gap dispatcher — agrees on what "disabled" means.
+extractor, the gap dispatcher, and the periodic gap scheduler
+(``memory/ops/gap_scheduler.py``) — agrees on what "disabled" means.
 Reads fresh on every call rather than caching (settings can change at any
 time via the Settings panel + ``POST /api/reload``), same pattern as
 ``gateway/settings_store.get_other_settings()`` elsewhere.
@@ -45,3 +46,33 @@ def passive_extraction_enabled() -> bool:
 def heavy_ops_enabled() -> bool:
     """Layer 2b — spawn an isolated worker container to investigate a gap."""
     return memory_enabled() and bool(_memory_settings().get("heavy_ops_enabled", False))
+
+
+def gap_auto_sweep_enabled() -> bool:
+    """Layer 2b's periodic, unattended sweep (memory/ops/gap_scheduler.py).
+
+    A separate opt-out from ``heavy_ops_enabled`` itself: turning heavy ops
+    on is what lets investigation happen AT ALL (manually, via
+    ``POST /api/memory/gaps/{id}/investigate``); this flag additionally
+    gates whether the gateway spawns worker containers on its OWN schedule,
+    unattended, without a human/UI asking for it each time. Defaults to
+    True once heavy_ops is on — see memory/ops/gap_scheduler.py's module
+    docstring for why that's judged safe (only ever touches
+    recurrence-escalated ``priority="high"`` gaps, bounded concurrency).
+    """
+    return heavy_ops_enabled() and bool(_memory_settings().get("gap_auto_sweep_enabled", True))
+
+
+def gap_sweep_interval_hours() -> float:
+    """How often the periodic sweep wakes up to check the Gap Ledger."""
+    return float(_memory_settings().get("gap_sweep_interval_hours", 24))
+
+
+def gap_sweep_max_concurrent() -> int:
+    """Max worker containers the periodic sweep will have running at once."""
+    return max(1, int(_memory_settings().get("gap_sweep_max_concurrent", 1)))
+
+
+def gap_sweep_batch_size() -> int:
+    """Max NEW gaps the periodic sweep will dispatch in a single tick."""
+    return max(1, int(_memory_settings().get("gap_sweep_batch_size", 1)))

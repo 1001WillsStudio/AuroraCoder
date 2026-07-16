@@ -9,6 +9,7 @@ all monkeypatched. Safe to run alongside a live AuroraCoder container.
 Run with (host, conda env with gateway deps):
     python tests/test_memory_layer3.py
 """
+import asyncio
 import os
 import sys
 import json
@@ -522,6 +523,279 @@ def test_gap_investigation_tool_mode_survives_worker_own_memory_being_disabled()
         names = {td["function"]["name"] for td in get_filtered_tools("gap_investigation")}
     assert "report_findings" in names, "master switch filter leaked into gap_investigation mode and stripped report_findings"
     assert names == GAP_INVESTIGATION_TOOLS
+
+
+# ---------------------------------------------------------------------------
+# The periodic gap scheduler (memory/ops/gap_scheduler.py) -- the automatic
+# trigger path alongside the manual /investigate route. Always uses its own
+# throwaway ledger (via get_gap_ledger monkeypatched onto the module), never
+# the process-wide singleton, so these are fully isolated from the dispatch-
+# flow tests above and from each other regardless of run order.
+# ---------------------------------------------------------------------------
+
+def _drain_pending_tasks():
+    """Await every task the code under test fired with asyncio.create_task
+    (sweep_once dispatches are fire-and-forget) before a test's assertions
+    run, and before the event loop closes -- otherwise asyncio.run() would
+    just cancel them silently."""
+    async def _drain():
+        pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        if pending:
+            await asyncio.gather(*pending)
+    return _drain()
+
+
+def test_gap_sweep_settings_defaults_and_gating():
+    from memory import settings as memory_settings
+
+    data_dir = pathlib.Path(os.environ["AURORACODER_DATA_DIR"])
+    settings_path = data_dir / "settings.json"
+    original = settings_path.read_text(encoding="utf-8")
+    try:
+        settings_path.write_text(
+            json.dumps({"other": {"memory": {"enabled": True}}}), encoding="utf-8"
+        )
+        assert memory_settings.gap_sweep_interval_hours() == 24
+        assert memory_settings.gap_sweep_max_concurrent() == 1
+        assert memory_settings.gap_sweep_batch_size() == 1
+        # heavy_ops_enabled is off in this settings.json -> gap_auto_sweep_enabled
+        # must be False too regardless of its own default, same "master gates
+        # sub-flag" pattern as passive_extraction_enabled/heavy_ops_enabled.
+        assert memory_settings.gap_auto_sweep_enabled() is False
+
+        settings_path.write_text(
+            json.dumps({"other": {"memory": {
+                "enabled": True, "heavy_ops_enabled": True,
+                "gap_sweep_interval_hours": 6, "gap_sweep_max_concurrent": 3, "gap_sweep_batch_size": 2,
+            }}}), encoding="utf-8",
+        )
+        assert memory_settings.gap_auto_sweep_enabled() is True  # default True once heavy_ops is on
+        assert memory_settings.gap_sweep_interval_hours() == 6
+        assert memory_settings.gap_sweep_max_concurrent() == 3
+        assert memory_settings.gap_sweep_batch_size() == 2
+
+        settings_path.write_text(
+            json.dumps({"other": {"memory": {
+                "enabled": True, "heavy_ops_enabled": True, "gap_auto_sweep_enabled": False,
+            }}}), encoding="utf-8",
+        )
+        assert memory_settings.gap_auto_sweep_enabled() is False, (
+            "explicit opt-out of the automatic sweep must hold even with heavy_ops on"
+        )
+    finally:
+        settings_path.write_text(original, encoding="utf-8")
+
+
+def test_recover_stale_investigating_gaps_resets_to_open():
+    from memory.ops import gap_scheduler
+
+    ledger = _fresh_ledger()
+    stuck = ledger.log_gap("A gap stuck mid-investigation from a crashed process")
+    ledger.set_status(stuck["gap_id"], "investigating")
+    # Deliberately unrelated wording (no shared words with each other or with
+    # `stuck` above) so GapLedger.log_gap's recurring-gap dedup never merges
+    # any of these three rows together.
+    already_open = ledger.log_gap("Which payment gateway integration handles refunds?")
+    resolved = ledger.log_gap("Does the CI pipeline run on GitHub Actions or Jenkins?")
+    ledger.resolve(resolved["gap_id"], "mem_unrelated")
+
+    with _patched(gap_scheduler, get_gap_ledger=lambda: ledger):
+        recovered = gap_scheduler.recover_stale_investigating_gaps()
+
+    assert recovered == 1
+    assert ledger.get(stuck["gap_id"])["status"] == "open"
+    assert ledger.get(already_open["gap_id"])["status"] == "open"
+    assert ledger.get(resolved["gap_id"])["status"] == "resolved", "must not touch non-investigating gaps"
+
+
+def test_sweep_once_dispatches_only_priority_high_open_gaps():
+    from memory.ops import gap_scheduler
+    import memory.ops.dispatcher as dispatcher_module
+
+    # Deliberately unrelated wording across all three -- GapLedger.log_gap's
+    # recurring-gap dedup operates on keyword overlap, so anything sharing
+    # too many words (even just "priority gap") could silently collapse
+    # these into one row instead of three, which would defeat the point of
+    # this test.
+    ledger = _fresh_ledger()
+    high_gap = ledger.log_gap("Which message queue broker does the order service use?", priority="high")
+    ledger.log_gap("Where is the staging environment's database hosted?", priority="medium")
+    ledger.log_gap("Who owns the mobile app's release process?", priority="low")
+
+    dispatched = []
+
+    def fake_dispatch(gap_id):
+        dispatched.append(gap_id)
+        return {"ok": True, "gap_id": gap_id}
+
+    async def _run():
+        with _patched(
+            gap_scheduler,
+            get_gap_ledger=lambda: ledger,
+            gap_auto_sweep_enabled=lambda: True,
+            gap_sweep_batch_size=lambda: 5,
+            gap_sweep_max_concurrent=lambda: 5,
+        ), _patched(dispatcher_module, dispatch_gap_investigation=fake_dispatch):
+            summary = await gap_scheduler.sweep_once()
+            await _drain_pending_tasks()
+        return summary
+
+    summary = asyncio.run(_run())
+    assert summary == {"eligible": 1, "dispatched": 1, "skipped": 0}
+    assert dispatched == [high_gap["gap_id"]], "medium/low priority gaps must never be auto-dispatched"
+    assert gap_scheduler._running_gap_ids == set(), "must always release the gap id once its dispatch completes"
+
+
+def test_sweep_once_respects_batch_size_and_concurrency_cap():
+    from memory.ops import gap_scheduler
+    import memory.ops.dispatcher as dispatcher_module
+
+    # Same "keep questions unrelated" note as the test above -- these must
+    # stay three distinct rows, not collapse into one recurring gap.
+    ledger = _fresh_ledger()
+    questions = [
+        "Which database connection pooling library does this service use?",
+        "Where are feature flags configured for the checkout flow?",
+        "What retry policy does the payment webhook handler use?",
+    ]
+    gaps = [ledger.log_gap(q, priority="high") for q in questions]
+
+    dispatched = []
+
+    def fake_dispatch(gap_id):
+        dispatched.append(gap_id)
+        return {"ok": True, "gap_id": gap_id}
+
+    async def _run():
+        with _patched(
+            gap_scheduler,
+            get_gap_ledger=lambda: ledger,
+            gap_auto_sweep_enabled=lambda: True,
+            gap_sweep_batch_size=lambda: 5,   # batch would allow all 3...
+            gap_sweep_max_concurrent=lambda: 1,  # ...but concurrency caps it to 1
+        ), _patched(dispatcher_module, dispatch_gap_investigation=fake_dispatch):
+            summary = await gap_scheduler.sweep_once()
+            await _drain_pending_tasks()
+        return summary
+
+    summary = asyncio.run(_run())
+    assert summary["eligible"] == 3
+    assert summary["dispatched"] == 1
+    assert summary["skipped"] == 2
+    assert len(dispatched) == 1 and dispatched[0] in {g["gap_id"] for g in gaps}
+    assert gap_scheduler._running_gap_ids == set()
+
+
+def test_sweep_once_is_a_noop_when_auto_sweep_disabled():
+    from memory.ops import gap_scheduler
+    import memory.ops.dispatcher as dispatcher_module
+
+    ledger = _fresh_ledger()
+    ledger.log_gap("A high-priority gap that must NOT be touched", priority="high")
+
+    dispatched = []
+
+    async def _run():
+        with _patched(gap_scheduler, get_gap_ledger=lambda: ledger, gap_auto_sweep_enabled=lambda: False), \
+             _patched(dispatcher_module, dispatch_gap_investigation=lambda gap_id: dispatched.append(gap_id)):
+            summary = await gap_scheduler.sweep_once()
+            await _drain_pending_tasks()
+        return summary
+
+    summary = asyncio.run(_run())
+    assert summary == {"eligible": 0, "dispatched": 0, "skipped": 0}
+    assert dispatched == []
+
+
+def test_sweep_once_never_raises_even_if_ledger_lookup_fails():
+    """A failed sweep tick must never take down the long-running scheduler
+    loop -- see run_periodic_gap_sweep's try/except around each tick."""
+    from memory.ops import gap_scheduler
+
+    def _boom():
+        raise RuntimeError("ledger unavailable")
+
+    async def _run():
+        with _patched(gap_scheduler, get_gap_ledger=_boom, gap_auto_sweep_enabled=lambda: True):
+            return await gap_scheduler.sweep_once()
+
+    summary = asyncio.run(_run())
+    assert summary == {"eligible": 0, "dispatched": 0, "skipped": 0}
+
+
+def test_run_periodic_gap_sweep_recovers_once_then_sweeps_on_the_configured_interval():
+    from memory.ops import gap_scheduler
+
+    class _StopLoop(Exception):
+        pass
+
+    calls = []
+
+    def fake_recover():
+        calls.append(("recover",))
+        return 0
+
+    async def fake_sweep_once():
+        calls.append(("sweep",))
+        return {"eligible": 0, "dispatched": 0, "skipped": 0}
+
+    async def fake_sleep(seconds):
+        calls.append(("sleep", seconds))
+        raise _StopLoop()
+
+    async def _run():
+        with _patched(
+            gap_scheduler,
+            recover_stale_investigating_gaps=fake_recover,
+            sweep_once=fake_sweep_once,
+            heavy_ops_enabled=lambda: True,
+            gap_sweep_interval_hours=lambda: 6,
+        ), _patched(asyncio, sleep=fake_sleep):
+            try:
+                await gap_scheduler.run_periodic_gap_sweep()
+            except _StopLoop:
+                pass
+
+    asyncio.run(_run())
+    assert calls == [("recover",), ("sweep",), ("sleep", 6 * 3600)]
+
+
+def test_run_periodic_gap_sweep_skips_sweep_tick_when_heavy_ops_disabled():
+    """The loop itself always runs (started unconditionally at gateway
+    startup); it's each TICK that no-ops when heavy ops is off for this
+    install -- confirms sweep_once is never even called in that case,
+    not just that it would no-op internally."""
+    from memory.ops import gap_scheduler
+
+    class _StopLoop(Exception):
+        pass
+
+    calls = []
+
+    async def fake_sweep_once():
+        calls.append("sweep")
+        return {"eligible": 0, "dispatched": 0, "skipped": 0}
+
+    async def fake_sleep(seconds):
+        calls.append(("sleep", seconds))
+        raise _StopLoop()
+
+    async def _run():
+        with _patched(
+            gap_scheduler,
+            recover_stale_investigating_gaps=lambda: 0,
+            sweep_once=fake_sweep_once,
+            heavy_ops_enabled=lambda: False,
+            gap_sweep_interval_hours=lambda: 24,
+        ), _patched(asyncio, sleep=fake_sleep):
+            try:
+                await gap_scheduler.run_periodic_gap_sweep()
+            except _StopLoop:
+                pass
+
+    asyncio.run(_run())
+    assert "sweep" not in calls
+    assert ("sleep", 24 * 3600) in calls
 
 
 def _run_all():
