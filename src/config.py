@@ -39,96 +39,52 @@ proxy_port = int(_proxy_port) if _proxy_port else None
 # and make API calls. Users can switch between providers on the frontend.
 
 MODEL_PROVIDERS = {
+    # ── 3 provider *families* (base_url + api_key).  Models are selected
+    #     per-family via provider_models in settings.json (or defaults below).
     "deepseek": {
         "id": "deepseek",
-        "name": "DeepSeek V4 Pro",
-        "description": "Flagship reasoning model",
+        "name": "DeepSeek",
         "base_url": "https://api.deepseek.com/v1",
         "api_key": os.environ.get("DEEPSEEK_API_KEY", ""),
-        "model": "deepseek-v4-pro",
-        "supports_thinking": True,
         "extra_body": None,
-        "context_window": 1_048_576,
     },
-    "deepseek-flash": {
-        "id": "deepseek-flash",
-        "name": "DeepSeek V4 Flash",
-        "description": "Fast reasoning model",
-        "base_url": "https://api.deepseek.com/v1",
-        "api_key": os.environ.get("DEEPSEEK_API_KEY", ""),
-        "model": "deepseek-v4-flash",
-        "supports_thinking": True,
-        "extra_body": None,
-        "context_window": 1_048_576,
-    },
-    "opencode-ds-v4-pro": {
-        "id": "opencode-ds-v4-pro",
-        "name": "OpenCode DS V4 Pro",
-        "description": "OpenCode Go hosted",
+    "opencode": {
+        "id": "opencode",
+        "name": "OpenCode",
         "base_url": "https://opencode.ai/zen/go/v1",
         "api_key": os.environ.get("OPENCODE_API_KEY", ""),
-        "model": "deepseek-v4-pro",
-        "supports_thinking": True,
         "extra_body": None,
-        "context_window": 1_048_576,
-    },
-    "opencode-ds-v4-flash": {
-        "id": "opencode-ds-v4-flash",
-        "name": "OpenCode DS V4 Flash",
-        "description": "OpenCode Go hosted",
-        "base_url": "https://opencode.ai/zen/go/v1",
-        "api_key": os.environ.get("OPENCODE_API_KEY", ""),
-        "model": "deepseek-v4-flash",
-        "supports_thinking": True,
-        "extra_body": None,
-        "context_window": 1_048_576,
     },
     "nvidia": {
         "id": "nvidia",
-        "name": "NVIDIA DS V4 Pro",
-        "description": "NVIDIA hosted",
+        "name": "NVIDIA NIM",
         "base_url": "https://integrate.api.nvidia.com/v1",
         "api_key": os.environ.get("NVIDIA_API_KEY", ""),
-        "model": "deepseek-ai/deepseek-v4-pro",
-        "supports_thinking": True,
         "extra_body": {"chat_template_kwargs": {"thinking": True}},
-        "context_window": 1_048_576,
     },
-    "nvidia-fast": {
-        "id": "nvidia-fast",
-        "name": "NVIDIA DS V4 Pro (No Reasoning)",
-        "description": "NVIDIA hosted, no reasoning",
-        "base_url": "https://integrate.api.nvidia.com/v1",
-        "api_key": os.environ.get("NVIDIA_API_KEY", ""),
-        "model": "deepseek-ai/deepseek-v4-pro",
-        "supports_thinking": False,
-        "extra_body": None,
-        "context_window": 1_048_576,
-    },
-    "nvidia-glm5": {
-        "id": "nvidia-glm5",
-        "name": "NVIDIA GLM-5.1",
-        "description": "NVIDIA hosted",
-        "base_url": "https://integrate.api.nvidia.com/v1",
-        "api_key": os.environ.get("NVIDIA_API_KEY", ""),
-        "model": "z-ai/glm-5.1",
-        "supports_thinking": True,
-        "extra_body": {
-            "chat_template_kwargs": {"enable_thinking": True, "clear_thinking": False}
-        },
-        "context_window": 128_000,
-    },
-    "nvidia-glm5-fast": {
-        "id": "nvidia-glm5-fast",
-        "name": "NVIDIA GLM-5.1 (No Reasoning)",
-        "description": "NVIDIA hosted, no reasoning",
-        "base_url": "https://integrate.api.nvidia.com/v1",
-        "api_key": os.environ.get("NVIDIA_API_KEY", ""),
-        "model": "z-ai/glm-5.1",
-        "supports_thinking": False,
-        "extra_body": None,
-        "context_window": 128_000,
-    },
+}
+
+# Default models per provider family — used when provider_models is empty.
+# Each entry: {"id": "model-api-name", "name": "display label"}
+PROVIDER_DEFAULT_MODELS = {
+    "deepseek": [
+        {"id": "deepseek-v4-pro", "name": "DeepSeek V4 Pro"},
+        {"id": "deepseek-v4-flash", "name": "DeepSeek V4 Flash"},
+    ],
+    "opencode": [
+        {"id": "deepseek-v4-pro", "name": "OpenCode DS V4 Pro"},
+        {"id": "deepseek-v4-flash", "name": "OpenCode DS V4 Flash"},
+    ],
+    "nvidia": [
+        {"id": "deepseek-ai/DeepSeek-V4-Pro", "name": "NVIDIA DS V4 Pro"},
+    ],
+}
+
+# Provider descriptions for the sidebar
+PROVIDER_DESCRIPTIONS = {
+    "deepseek": "Flagship reasoning model",
+    "opencode": "OpenCode hosted",
+    "nvidia": "NVIDIA NIM hosted",
 }
 
 # Default provider to use
@@ -183,13 +139,26 @@ DEFAULT_BASE_ENV_NAME = os.environ.get("DEFAULT_BASE_ENV_NAME", "agent" if DOCKE
 # Long command outputs are truncated to this limit (keeps head + tail).
 TERMINAL_MAX_OUTPUT_CHARS = 15_000
 
+# Default foreground timeout (seconds) for run_terminal_command.  10s is
+# enough for the large majority of commands, so agents should rarely need
+# to pass an explicit timeout.
+TERMINAL_DEFAULT_TIMEOUT = 10
+
+# Maximum configurable timeout (seconds).  Requests above this are silently
+# clamped down to it: the command then runs in the foreground for at most
+# this long before the existing PersistentShell timeout path moves it to the
+# background (writing its full output to a readable log file).  Commands that
+# contain a `sleep` are exempt and honor the agent-supplied timeout in full.
+TERMINAL_MAX_TIMEOUT = 30
+
 # =============================================================================
 # Web Browser (secondary model summarization)
 # =============================================================================
 # A cheap/fast model processes raw web pages so only a concise summary
-# enters the main agent's context window.
-# The provider ID references one of MODEL_PROVIDERS (or a custom provider).
-WEB_SECONDARY_PROVIDER = "deepseek"
+# enters the main agent's context window.  The selected provider/model is
+# configured at runtime via settings.json (other.web_secondary.model) and
+# synced into WEB_SECONDARY_* env vars — see src/providers.py and
+# gateway/provider_registry.py.  The fallback is the DEFAULT_PROVIDER.
 WEB_SECONDARY_MODEL_MAX_TOKENS = 4096
 
 # Max characters of page markdown fed to the secondary model
@@ -205,6 +174,25 @@ CODE_PANEL_WARN_CHARS = 150_000  # Total display chars before mild warning
 CODE_PANEL_WARN_ITEMS  = 3        # Max open items before mild warning
 INTERPRETER_MAX_FILE_CHARS = 150_000  # Per-file char limit; larger files get truncated
 INTERPRETER_TRUNCATE_PREVIEW_LINES = 20  # Lines shown when a file is truncated
+
+# =============================================================================
+# File Read Safety — shared across gateway + code tools
+# =============================================================================
+# Files larger than this are never fully loaded into memory.  The gateway
+# skips snapshotting/diffing them; the code tools use buffered I/O instead.
+MAX_FILE_READ_SIZE = 5_000_000  # 5 MB
+
+def count_lines_buffered(file_path, chunk_size: int = 64 * 1024) -> int:
+    """Count lines in *file_path* without loading the entire file into memory.
+
+    Reads in *chunk_size* blocks in binary mode and counts ``\n`` bytes.
+    Safe for arbitrarily large files (e.g. 4 GB logs).
+    """
+    count = 0
+    with open(file_path, 'rb') as f:
+        while chunk := f.read(chunk_size):
+            count += chunk.count(b'\n')
+    return count
 
 # Severe warning thresholds — triggers a stronger, more urgent warning
 # when the agent has too many files open or the combined display is huge.

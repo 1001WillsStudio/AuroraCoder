@@ -402,7 +402,7 @@ decide whether to show the tools.
 |---|---|---|
 | `enabled` | `false` | Master switch |
 | `passive_enabled` | `true` | Layer 2a write pass at session end (requires `enabled`) |
-| `extraction_provider` | *(default provider)* | Which provider/model runs the write pass judge |
+| `extraction_provider` | *(default provider)* | Provider **family** id (`deepseek`/`opencode`/`nvidia`/a custom provider's id) that runs the write pass judge — always uses that family's default model, never a specific model id |
 | `heavy_ops_enabled` | `false` | Layer 2b — spawn worker containers (requires `enabled`). Also gates whether the Docker socket gets mounted into the main container (`launcher/docker.go`) — flipping this on requires relaunching, since a bind mount can't be added to an already-running container. |
 | `worker_image` | `"auroracoder"` | Image tag used for `memory-worker` containers |
 | `gap_auto_sweep_enabled` | `true` | The periodic scheduler specifically (requires `heavy_ops_enabled`) — lets someone enable heavy ops for manual/API-triggered investigation only, without opting into unattended background container spawns |

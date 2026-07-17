@@ -12,18 +12,19 @@ endpoint after settings changes.
 import json
 import logging
 import os
-from pathlib import Path
 from typing import Dict
 
 import httpx
 from openai import OpenAI
 
-from .config import MODEL_PROVIDERS, DEFAULT_PROVIDER
+from .config import MODEL_PROVIDERS, DEFAULT_PROVIDER, PROVIDER_DEFAULT_MODELS, DATA_DIR
 
 logger = logging.getLogger(__name__)
 
 
-DATA_DIR = Path(os.environ.get("DATA_DIR", "/app/data"))
+# Use the SAME data dir as config.py / settings_store (single source of truth)
+# so the chat path reads the same settings.json keyed by AURORACODER_DOCKER /
+# AURORACODER_DATA_DIR — never a split-brain /app/data default.
 SETTINGS_PATH = DATA_DIR / "settings.json"
 
 
@@ -37,34 +38,93 @@ def _load_settings() -> dict:
     return {}
 
 
+def _get_custom_providers() -> list:
+    """Read custom providers from settings.json."""
+    return _load_settings().get("custom_providers", [])
+
+
+def _get_custom_provider(provider_id: str) -> dict | None:
+    """Return the custom provider dict for *provider_id*, or None."""
+    for cp in _get_custom_providers():
+        if cp.get("id") == provider_id:
+            return cp
+    return None
+
+
 def _resolve_api_key(provider_id: str, default_val: str) -> str:
-    """Resolve an API key: settings.json → env var → default."""
+    """Resolve an API key: custom_providers → settings.json api_keys → default."""
+    # 1) Check custom_providers first
+    cp = _get_custom_provider(provider_id)
+    if cp:
+        key = cp.get("api_key", "")
+        if key and key is not True and "YOUR_" not in str(key):
+            return key
+    # 2) Check settings.json api_keys
     settings = _load_settings()
     key = settings.get("api_keys", {}).get(provider_id, "")
     if key and key is not True and "YOUR_" not in str(key):
         return key
+    # 3) Fall back to default
     if default_val and "YOUR_" not in str(default_val):
         return default_val
     return ""
 
 
 def _resolve_base_url(provider_id: str, default_val: str) -> str:
-    """Resolve base_url: settings override → default."""
+    """Resolve base_url: custom_providers → settings override → default."""
+    # 1) Check custom_providers first
+    cp = _get_custom_provider(provider_id)
+    if cp and cp.get("base_url", "").strip():
+        return cp["base_url"].strip()
+    # 2) Check provider_overrides
     settings = _load_settings()
     override = settings.get("provider_overrides", {}).get(provider_id, {}).get("base_url", "")
     return override or default_val
 
 
 def _resolve_model(provider_id: str, default_val: str) -> str:
-    """Resolve model: settings override → default."""
+    """Resolve model: custom_providers → provider_overrides → provider_models → PROVIDER_DEFAULT_MODELS → default."""
+    # 1) Check custom_providers
+    cp = _get_custom_provider(provider_id)
+    if cp and cp.get("model", "").strip():
+        return cp["model"].strip()
+    # 2) Check provider_overrides
     settings = _load_settings()
     override = settings.get("provider_overrides", {}).get(provider_id, {}).get("model", "")
-    return override or default_val
+    if override:
+        return override
+    # 3) Check provider_models — first enabled model
+    pm = settings.get("provider_models", {}).get(provider_id, [])
+    if pm:
+        first = pm[0]
+        return first["id"] if isinstance(first, dict) else first
+    # 4) Check PROVIDER_DEFAULT_MODELS
+    defaults = PROVIDER_DEFAULT_MODELS.get(provider_id, [])
+    if defaults:
+        return defaults[0]["id"]
+    return default_val
 
 
-def _get_custom_providers() -> list:
-    """Read custom providers from settings.json."""
-    return _load_settings().get("custom_providers", [])
+def _coerce_model_selection(value) -> tuple:
+    """Coerce a model-selection value to ``(provider_id, model_id)``.
+
+    Readers prefer the structured ``{"provider", "model"}`` form (the
+    canonical on-disk shape written by the settings store).  This shim also
+    absorbs legacy representations so the chat path never breaks on a
+    settings.json that has not yet been migrated:
+        • dict    → ("provider", "model")
+        • "a::b"  → ("a", "b")
+        • "a"     → ("a", "")
+    """
+    if isinstance(value, dict):
+        return (value.get("provider") or "", value.get("model") or "")
+    if isinstance(value, str) and value.strip():
+        s = value.strip()
+        if "::" in s:
+            p, m = s.split("::", 1)
+            return (p.strip(), m.strip())
+        return (s, "")
+    return ("", "")
 
 
 # =============================================================================
@@ -109,7 +169,20 @@ class ProviderManager:
 
         for provider_id in all_ids:
             try:
-                default = MODEL_PROVIDERS.get(provider_id, {})
+                # Look up custom provider first — its data overrides built-in defaults
+                custom = _get_custom_provider(provider_id)
+                if custom:
+                    provider_info = dict(custom)
+                    default = {
+                        "api_key": custom.get("api_key", ""),
+                        "base_url": custom.get("base_url", ""),
+                        "model": custom.get("model", ""),
+                        "name": custom.get("name", provider_id),
+                    }
+                else:
+                    provider_info = MODEL_PROVIDERS.get(provider_id, {})
+                    default = dict(provider_info)
+
                 api_key = _resolve_api_key(provider_id, default.get("api_key", ""))
                 base_url = _resolve_base_url(provider_id, default.get("base_url", ""))
                 if not api_key or "YOUR_" in str(api_key) or not base_url:
@@ -160,21 +233,28 @@ class ProviderManager:
             cse_id = os.environ.get("GOOGLE_CSE_ID", "")
 
         # ── Web Secondary Model ──
+        # Structured selection: {"provider": ..., "model": ...}.  ``model`` ("")
+        # ⇒ auto-select the provider's first enabled model (matching the agent
+        # default).  _coerce_model_selection absorbs any legacy on-disk form.
         ws = other.get("web_secondary", {})
-        provider_id = ws.get("provider", "")
+        provider_id, model_id = _coerce_model_selection(ws.get("model"))
 
         if provider_id:
             # Resolve provider config for the secondary model
-            default = MODEL_PROVIDERS.get(provider_id, MODEL_PROVIDERS.get(DEFAULT_PROVIDER, {}))
+            custom = _get_custom_provider(provider_id)
+            if custom:
+                default = dict(custom)
+            else:
+                default = MODEL_PROVIDERS.get(provider_id, MODEL_PROVIDERS.get(DEFAULT_PROVIDER, {}))
             base_url = _resolve_base_url(provider_id, default.get("base_url", ""))
             api_key = _resolve_api_key(provider_id, default.get("api_key", ""))
-            model = ws.get("model", "") or _resolve_model(provider_id, default.get("model", ""))
+            model = model_id or _resolve_model(provider_id, "")
         else:
             # No provider selected — use defaults from env or config
             default_prov = MODEL_PROVIDERS.get(DEFAULT_PROVIDER, {})
             base_url = default_prov.get("base_url", "")
             api_key = os.environ.get("DEEPSEEK_API_KEY", default_prov.get("api_key", ""))
-            model = default_prov.get("model", "")
+            model = _resolve_model(DEFAULT_PROVIDER, "")
 
         if base_url:
             os.environ["WEB_SECONDARY_BASE_URL"] = base_url
@@ -220,8 +300,21 @@ class ProviderManager:
         """Return resolved provider config for *main_flow*.
 
         Resolves from settings.json + MODEL_PROVIDERS.
+        For custom providers, the custom-provider entry serves as the default
+        instead of falling back to the built-in DEFAULT_PROVIDER.
         """
-        default = MODEL_PROVIDERS.get(provider_id, MODEL_PROVIDERS.get(DEFAULT_PROVIDER, {}))
+        custom = _get_custom_provider(provider_id)
+        if custom:
+            default = {
+                k: v
+                for k, v in custom.items()
+                if k != "id"
+            }
+            default["provider_id"] = provider_id
+        else:
+            default = MODEL_PROVIDERS.get(
+                provider_id, MODEL_PROVIDERS.get(DEFAULT_PROVIDER, {})
+            )
         resolved = dict(default)
         resolved["api_key"] = _resolve_api_key(provider_id, default.get("api_key", ""))
         resolved["base_url"] = _resolve_base_url(provider_id, default.get("base_url", ""))

@@ -72,6 +72,13 @@ def get_all_settings() -> Dict[str, Any]:
     """
     with _lock:
         raw = _load_raw()
+    # Normalize old variant keys → family keys so the frontend sees them
+    _normalize_api_keys()
+    # Rename legacy per-family provider keys → model-selection keys
+    _normalize_model_selections()
+    # Re-read after migrations so callers see the renamed keys
+    with _lock:
+        raw = _load_raw()
     data = _deep_copy(raw)
     # Replace api_key strings with booleans: True = configured, absent = not
     for k in list(data.get("api_keys", {})):
@@ -145,24 +152,151 @@ def update_settings(partial: Dict[str, Any]) -> Dict[str, Any]:
         return data
 
 
+# Provider-family mapping for backward compatibility.
+# Old per-variant keys (deepseek-flash, opencode-ds-v4-pro, etc.)
+# get merged into the three families.
+_PROVIDER_FAMILIES = {
+    "deepseek": ["deepseek", "deepseek-flash"],
+    "opencode": ["opencode", "opencode-ds-v4-pro", "opencode-ds-v4-flash"],
+    "nvidia":   ["nvidia", "nvidia-fast", "nvidia-glm5", "nvidia-glm5-fast"],
+}
+# Reverse: variant → family
+_VARIANT_TO_FAMILY = {
+    v: f for f, variants in _PROVIDER_FAMILIES.items() for v in variants
+}
+
+
+def _normalize_api_keys():
+    """Migrate old per-variant api_keys → new per-family format.
+
+    Called on every read so old settings are transparently upgraded.
+    The on-disk file is only mutated when a new key is persisted.
+    """
+    raw = _load_raw()
+    api_keys = raw.get("api_keys", {})
+    changed = False
+    for family, variants in _PROVIDER_FAMILIES.items():
+        # Promote the first non-empty legacy variant key to the family key
+        # (only if the family key is not already set — the family key wins).
+        if not (family in api_keys and api_keys[family]):
+            for v in variants:
+                if v != family and v in api_keys and api_keys[v]:
+                    api_keys[family] = api_keys[v]
+                    changed = True
+                    break
+        # The family key is now canonical — delete the legacy variant keys so
+        # the on-disk file is cleanly migrated and no runtime fallback is
+        # needed to read them later.
+        for v in variants:
+            if v != family and v in api_keys:
+                del api_keys[v]
+                changed = True
+    if changed:
+        _save_raw(raw)
+
+
+def _normalize_model_selections():
+    """Migrate model-selection settings to the structured form.
+
+    Canonical on-disk form (no composite-string parsing needed by readers):
+
+        other.agent.default_model   = {"provider": "<family>", "model": "<id>"}
+        other.web_secondary.model  = {"provider": "<family>", "model": "<id>"}
+
+    ``model`` ("" or the key absent) ⇒ "auto / first enabled model" for the
+    provider.  An absent or empty-structured value ⇒ system default (agent)
+    or "same as agent" (web secondary).
+
+    Absorbs every prior representation so readers only ever see the structured
+    dict:
+        • already-structured dict   → keys normalized ("provider", "model")
+        • composite "a::b" string  → {"provider":"a","model":"b"}
+        • bare family/variant str  → {"provider": <family>, "model": ""}
+        • legacy default_provider / web_secondary.provider → structured
+
+    Idempotent; the on-disk file is only rewritten when a change occurs.
+    """
+    def _to_structured(value):
+        if isinstance(value, dict):
+            prov = (value.get("provider") or "").strip()
+            if not prov:
+                return {}
+            return {"provider": prov, "model": (value.get("model") or "").strip()}
+        if isinstance(value, str):
+            s = value.strip()
+            if not s:
+                return {}
+            if "::" in s:
+                prov, mid = s.split("::", 1)
+                prov = prov.strip(); mid = mid.strip()
+                if not prov:
+                    return {}
+                return {"provider": _VARIANT_TO_FAMILY.get(prov, prov), "model": mid}
+            return {"provider": _VARIANT_TO_FAMILY.get(s, s), "model": ""}
+        return {}
+
+    raw = _load_raw()
+    other = raw.get("other")
+    if not isinstance(other, dict):
+        return
+    changed = False
+
+    def _migrate(block, key, legacy_key):
+        nonlocal changed
+        if not isinstance(block, dict):
+            return
+        value = block.get(key) if key in block else None
+        if legacy_key and legacy_key in block:
+            legacy = block.pop(legacy_key)
+            changed = True
+            if value in (None, "", {}):
+                value = legacy
+        structured = _to_structured(value)
+        if structured:
+            if block.get(key) != structured:
+                block[key] = structured
+                changed = True
+        else:
+            if key in block:
+                del block[key]
+                changed = True
+
+    _migrate(other.get("agent"), "default_model", "default_provider")
+    _migrate(other.get("web_secondary"), "model", "provider")
+    if changed:
+        _save_raw(raw)
+
+
 def get_api_key(provider_id: str) -> str:
     """
     Return the API key for *provider_id*.
 
     Checks (in order):
-        1. settings.json → api_keys → <provider_id>  (Settings UI wins)
-        2. Environment variable (uppercase, e.g. DEEPSEEK_API_KEY)
-        3. Empty string
+        1. settings.json → custom_providers → <provider_id>
+        2. settings.json → api_keys → <provider_id>  (Settings UI wins)
+        3. Environment variable (uppercase, e.g. DEEPSEEK_API_KEY)
+        4. Empty string
     """
-    # Settings UI takes priority over environment variables
+    _normalize_api_keys()
+
     with _lock:
         raw = _load_raw()
+
+    # 1) Check custom_providers first
+    for cp in raw.get("custom_providers", []):
+        if isinstance(cp, dict) and cp.get("id") == provider_id:
+            key = cp.get("api_key", "")
+            if key and key is not True:
+                return key
+
+    # 2) Settings UI api_keys takes priority over environment variables
     api_keys = raw.get("api_keys", {})
     settings_val = api_keys.get(provider_id, "")
-    if settings_val:
+    if settings_val and settings_val is not True:
         return settings_val
 
-    # Fall back to environment variable (supports _API_KEY and GitHub's _TOKEN convention)
+
+    # 3) Fall back to environment variable (supports _API_KEY and GitHub's _TOKEN convention)
     env_var = f"{provider_id.upper()}_API_KEY"
     env_val = os.environ.get(env_var, "")
     if env_val:

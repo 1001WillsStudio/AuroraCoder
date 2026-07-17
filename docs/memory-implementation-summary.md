@@ -173,7 +173,7 @@ below are settings.json-only for now).
 |---|---|---|
 | `enabled` | **`false`** | Master switch for the whole subsystem — see "Runtime behavior" above |
 | `passive_enabled` | `true` | The unified write pass, run at session end (requires `enabled`) |
-| `extraction_provider` | *(default provider)* | Which provider/model runs the write pass |
+| `extraction_provider` | *(default provider)* | Provider **family** id (`deepseek`/`opencode`/`nvidia`/a custom provider's id) that runs the write pass — always uses that family's default model, never a specific model id |
 | `heavy_ops_enabled` | `false` | Layer 2b — spawn worker containers (requires `enabled`). **Also controls whether the Docker socket gets mounted into the main container** (`launcher/docker.go`) — flipping this on requires relaunching the container, since a bind mount can't be added to one already running. |
 | `worker_image` | `"auroracoder"` | Image tag used for `memory-worker` containers |
 | `gap_auto_sweep_enabled` | `true` | The periodic scheduler specifically (requires `heavy_ops_enabled`) — see "Triggering an investigation" below |

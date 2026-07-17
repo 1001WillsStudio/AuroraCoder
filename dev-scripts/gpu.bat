@@ -101,6 +101,7 @@ if not exist "%STORAGE_BASE%\workspace" mkdir "%STORAGE_BASE%\workspace"
 docker run --rm -d --name auroracoder-agent-gpu --gpus all %ENV_FILE_ARG% ^
     -e AURORACODER_DOCKER=1 -e AURORACODER_VNC=1 -e AURORACODER_GPU=1 ^
     -v "%STORAGE_BASE%\data:/app/data" -v "%STORAGE_BASE%\workspace:/workspace" ^
+    -v //var/run/docker.sock:/var/run/docker.sock ^
     -p %BACKEND_PORT%:8080 -p %FRONTEND_PORT%:3000 -p %VNC_PORT%:6080 ^
     -p %TOOLSTORE_PORT%:8765 -p %DEV_PORT_START%-%DEV_PORT_END%:8900-8902 ^
     auroracoder-gpu

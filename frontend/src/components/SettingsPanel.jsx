@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { X, Plus, Trash2, Save, RefreshCw, Shield, Globe, LogOut, ExternalLink, Wrench, ChevronDown, ChevronRight } from 'lucide-react'
+import { X, Plus, Trash2, Save, RefreshCw, Shield, Globe, LogOut, ExternalLink, Wrench, ChevronDown, ChevronRight, Search } from 'lucide-react'
 import { getSettings, updateSettings, getProviders, getToolStoreStatus, refreshToolStore, getMemories, deleteMemory } from '../services/api'
 import { isAuthRequired, isAuthenticated, logout as authLogout, clearToken } from '../utils/auth.js'
 import useLanguage from '../hooks/useLanguage'
@@ -30,24 +30,23 @@ export default function SettingsPanel({ isOpen, onClose }) {
   const [authEnabled, setAuthEnabled] = useState(null)
   const [isAuthed, setIsAuthed] = useState(isAuthenticated())
   const [toolStoreStatus, setToolStoreStatus] = useState(null)
-  const [providersCollapsed, setProvidersCollapsed] = useState(true)
   const [webSecondaryCollapsed, setWebSecondaryCollapsed] = useState(true)
   const [memoryBrowserCollapsed, setMemoryBrowserCollapsed] = useState(true)
   const [memories, setMemories] = useState([])
   const [memoriesLoading, setMemoriesLoading] = useState(false)
   const [memoriesError, setMemoriesError] = useState(false)
+  const [discovering, setDiscovering] = useState({})         // { providerId: true }
+  const [discoveredModels, setDiscoveredModels] = useState({})// { providerId: ["gpt-4",...] }
+  const [discoverError, setDiscoverError] = useState({})      // { providerId: "msg" }
+  const [discoverFilter, setDiscoverFilter] = useState({})    // { providerId: "search" }
+  const [expandedProvider, setExpandedProvider] = useState(null)
 
-  /** Hardcoded fallback provider list — used when the backend is unreachable.
+  /** Built-in provider *families* — each can have multiple models discovered.
    *  Must be kept in sync with MODEL_PROVIDERS in src/config.py. */
-  const BUILT_IN_FALLBACK = [
-    { id: 'deepseek',             name: 'DeepSeek V4 Pro',                  description: 'Flagship reasoning model',                    supports_thinking: true,  api_key_configured: false },
-    { id: 'deepseek-flash',       name: 'DeepSeek V4 Flash',                description: 'Fast reasoning model',                        supports_thinking: true,  api_key_configured: false },
-    { id: 'opencode-ds-v4-pro',   name: 'OpenCode DS V4 Pro',               description: 'OpenCode Go hosted',                          supports_thinking: true,  api_key_configured: false },
-    { id: 'opencode-ds-v4-flash', name: 'OpenCode DS V4 Flash',             description: 'OpenCode Go hosted',                          supports_thinking: true,  api_key_configured: false },
-    { id: 'nvidia',               name: 'NVIDIA DS V4 Pro',                 description: 'NVIDIA hosted',                               supports_thinking: true,  api_key_configured: false },
-    { id: 'nvidia-fast',          name: 'NVIDIA DS V4 Pro (No Reasoning)',  description: 'NVIDIA hosted, no reasoning',                 supports_thinking: false, api_key_configured: false },
-    { id: 'nvidia-glm5',          name: 'NVIDIA GLM-5.1',                   description: 'NVIDIA hosted',                               supports_thinking: true,  api_key_configured: false },
-    { id: 'nvidia-glm5-fast',     name: 'NVIDIA GLM-5.1 (No Reasoning)',    description: 'NVIDIA hosted, no reasoning',                 supports_thinking: false, api_key_configured: false },
+  const BUILTIN_PROVIDERS = [
+    { id: 'deepseek', name: 'DeepSeek', base_url: 'https://api.deepseek.com/v1', builtin: true },
+    { id: 'opencode', name: 'OpenCode', base_url: 'https://opencode.ai/zen/go/v1', builtin: true },
+    { id: 'nvidia',  name: 'NVIDIA NIM', base_url: 'https://integrate.api.nvidia.com/v1', builtin: true },
   ]
 
   // ── Load ────────────────────────────────────────────────────────────────
@@ -82,7 +81,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
       } catch {
         // Backend unavailable — set safe defaults so the UI still works
         setSettings({ api_keys: {}, provider_overrides: {}, custom_providers: [], other: { web_secondary: {}, agent: {}, memory: {} } })
-        setProviders(BUILT_IN_FALLBACK)
+        setProviders(BUILTIN_PROVIDERS.map(p => ({ ...p, custom: false })))
         setMessage({ type: 'error', text: t('settings.loadError') })
       } finally {
         setLoading(false)
@@ -133,23 +132,6 @@ export default function SettingsPanel({ isOpen, onClose }) {
   const setApiKey = (providerId, value) => {
     setSettings(prev => {
       const next = { ...prev.api_keys, [providerId]: value }
-      // DeepSeek V4 Pro and V4 Flash share the same key — keep in sync
-      if (providerId === 'deepseek' || providerId === 'deepseek-flash') {
-        next['deepseek'] = value
-        next['deepseek-flash'] = value
-      }
-      // All OpenCode-hosted providers share OPENCODE_API_KEY — keep in sync
-      if (providerId === 'opencode-ds-v4-pro' || providerId === 'opencode-ds-v4-flash') {
-        next['opencode-ds-v4-pro'] = value
-        next['opencode-ds-v4-flash'] = value
-      }
-      // All NVIDIA-hosted providers share NVIDIA_API_KEY — keep in sync
-      if (['nvidia', 'nvidia-fast', 'nvidia-glm5', 'nvidia-glm5-fast'].includes(providerId)) {
-        next['nvidia'] = value
-        next['nvidia-fast'] = value
-        next['nvidia-glm5'] = value
-        next['nvidia-glm5-fast'] = value
-      }
       return { ...prev, api_keys: next }
     })
     setErrorFields(prev => ({ ...prev, [providerId]: false }))
@@ -177,7 +159,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
     setSettings(prev => ({
       ...prev,
       custom_providers: [...(prev.custom_providers || []), {
-        id: 'custom-' + Date.now(), name: '', base_url: '', api_key: '', model: '', supports_thinking: true
+        id: 'custom-' + Date.now(), name: '', base_url: '', api_key: ''
       }]
     }))
   }
@@ -187,14 +169,66 @@ export default function SettingsPanel({ isOpen, onClose }) {
       const cp = [...(prev.custom_providers || [])]; cp[index] = { ...cp[index], [field]: value }
       return { ...prev, custom_providers: cp }
     })
-    if (field === 'id' || field === 'base_url')
+    if (field === 'base_url')
       setErrorFields(prev => ({ ...prev, [`custom-${index}`]: false }))
   }
 
   const removeCustomProvider = (idx) => {
-    setSettings(prev => ({ ...prev, custom_providers: (prev.custom_providers || []).filter((_, i) => i !== idx) }))
+    setSettings(prev => {
+      const cp = [...(prev.custom_providers || [])]
+      const removed = cp[idx]
+      cp.splice(idx, 1)
+      // also clean up provider_models for this custom provider
+      const pm = { ...(prev.provider_models || {}) }
+      if (removed?.id) delete pm[removed.id]
+      return { ...prev, custom_providers: cp, provider_models: pm }
+    })
   }
 
+
+  // ── Discover models from a provider's endpoint ──────────────────────────
+  const discoverModels = async (providerId) => {
+    // Frontend never sees the API key — the gateway resolves it server-side.
+    setDiscovering(prev => ({ ...prev, [providerId]: true }))
+    setDiscoverError(prev => ({ ...prev, [providerId]: '' }))
+    setDiscoveredModels(prev => ({ ...prev, [providerId]: [] }))
+    try {
+      const resp = await fetch(`/api/discover-models?provider_id=${encodeURIComponent(providerId)}`)
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}))
+        throw new Error(data.detail || `HTTP ${resp.status}`)
+      }
+      const data = await resp.json()
+      setDiscoveredModels(prev => ({ ...prev, [providerId]: data.models || [] }))
+      setExpandedProvider(providerId)
+    } catch (err) {
+      setDiscoverError(prev => ({ ...prev, [providerId]: err.message }))
+    } finally {
+      setDiscovering(prev => ({ ...prev, [providerId]: false }))
+    }
+  }
+
+  const toggleModel = (providerId, modelId, enabled) => {
+    setSettings(prev => {
+      const pm = { ...(prev.provider_models || {}) }
+      let list = [...(pm[providerId] || [])]
+      if (enabled) {
+        if (!list.find(m => (typeof m === 'string' ? m : m.id) === modelId)) {
+          list.push({ id: modelId })
+        }
+      } else {
+        list = list.filter(m => (typeof m === 'string' ? m : m.id) !== modelId)
+      }
+      pm[providerId] = list
+      return { ...prev, provider_models: pm }
+    })
+  }
+
+  /** Get enabled model IDs for a provider from provider_models. */
+  const getEnabledModels = (pid) => {
+    const pm = settings?.provider_models || {}
+    return (pm[pid] || []).map(m => typeof m === 'string' ? m : m.id)
+  }
 
   // ── Validation ──────────────────────────────────────────────────────────
   const validate = () => {
@@ -204,7 +238,6 @@ export default function SettingsPanel({ isOpen, onClose }) {
       if (!cp.name?.trim()) errors[b] = t('msg.nameRequired')
       if (!cp.base_url?.trim()) errors[b] = errors[b] || t('msg.baseUrlRequired')
       if (!cp.api_key?.trim()) errors[b] = errors[b] || t('msg.apiKeyRequired')
-      if (!cp.model?.trim()) errors[b] = errors[b] || t('msg.modelRequired')
     })
     setErrorFields(errors)
     return Object.keys(errors).length === 0
@@ -242,9 +275,10 @@ export default function SettingsPanel({ isOpen, onClose }) {
       await updateSettings({
         api_keys: outApiKeys, provider_overrides: settings.provider_overrides,
         custom_providers: cp, other: prunedOther,
+        provider_models: settings.provider_models || {},
       })
       setMessage({ type: 'success', text: t('msg.saved') })
-      setTimeout(async () => { try { setProviders((await getProviders()).providers || []) } catch {} }, 800)
+      setTimeout(async () => { try { const p = await getProviders(); setProviders(p.providers || []); window.dispatchEvent(new Event('providers-changed')) } catch {} }, 800)
     } catch { setMessage({ type: 'error', text: t('msg.saveFailed') }) }
     finally { setSaving(false) }
   }
@@ -254,6 +288,24 @@ export default function SettingsPanel({ isOpen, onClose }) {
   const custom = settings?.custom_providers || []
   const apiKeys = settings?.api_keys || {}
   const other = settings?.other || {}
+
+  // ── Structured model-selection (de)serialization ───────────────────
+  // The on-disk form is { provider, model } (not a composite "provider::model"
+  // string), but a <select> needs a scalar value. The flat providers[] list
+  // carries a composite `id` ("provider::model" or bare family id) that we
+  // use as that scalar — converting to/from the structured form here.
+  const selectionToId = (sel) => {
+    if (!sel || typeof sel !== 'object') return ''
+    const exact = providers.find(p => p.provider_id === sel.provider
+      && (p.model || '') === (sel.model || ''))
+    if (exact) return exact.id
+    const byProv = providers.find(p => p.provider_id === sel.provider)
+    return byProv?.id || ''
+  }
+  const idToSelection = (id) => {
+    const entry = providers.find(p => p.id === id)
+    return entry ? { provider: entry.provider_id, model: entry.model || '' } : ''
+  }
 
   // Merge built-in + custom into one list for rendering
   const allProviders = [
@@ -298,62 +350,308 @@ export default function SettingsPanel({ isOpen, onClose }) {
             <div className="settings-loading">{t('settings.loading')}</div>
           ) : (
             <>
-              {/* ── DeepSeek API Key (primary) ────────────────────────── */}
-              <section className="settings-section settings-section-deepseek">
-                <h3 className="settings-section-title">🔑 DeepSeek API Key</h3>
-                <p className="settings-section-desc">
-                  One key for all DeepSeek models — DeepSeek V4 Pro (thinking) and DeepSeek V4 Flash (fast).
-                </p>
-                <div className="settings-field-row">
-                  <div className="settings-field-col settings-field-col-wide">
-                    <input className="settings-input settings-input-deepseek-key" type="text"
-                      value={apiKeys['deepseek'] || ''}
-                      onChange={e => setApiKey('deepseek', e.target.value)}
-                      placeholder={apiKeysConfigured['deepseek'] || apiKeysConfigured['deepseek-flash']
-                        ? 'DeepSeek API key has been set — enter a new key to override'
-                        : 'sk-…'}
-                    />
-                  </div>
-                </div>
-              </section>
 
-              {/* ── NVIDIA API Key ─────────────────────────────────────── */}
-              <section className="settings-section settings-section-key">
-                <h3 className="settings-section-title">🔑 NVIDIA API Key</h3>
-                <p className="settings-section-desc">
-                  One key for all NVIDIA-hosted models — DeepSeek V4 Pro, V4 Pro No-Thinking, GLM-5.1, and GLM-5.1 No-Thinking.
-                </p>
-                <div className="settings-field-row">
-                  <div className="settings-field-col settings-field-col-wide">
-                    <input className="settings-input settings-input-deepseek-key" type="text"
-                      value={apiKeys['nvidia'] || ''}
-                      onChange={e => setApiKey('nvidia', e.target.value)}
-                      placeholder={apiKeysConfigured['nvidia'] || apiKeysConfigured['nvidia-fast']
-                        || apiKeysConfigured['nvidia-glm5'] || apiKeysConfigured['nvidia-glm5-fast']
-                        ? 'NVIDIA API key has been set — enter a new key to override'
-                        : 'nvapi-…'}
-                    />
-                  </div>
-                </div>
-              </section>
+              {/* ── Providers ────────────────────────────────────────── */}
+              <section className="settings-section">
+                <h3 className="settings-section-title">⚙ {t('providers.title')}</h3>
+                <p className="settings-section-desc">{t('providers.desc')}</p>
+                  {/* ── Built-in provider families ──────────────────────── */}
+                  {BUILTIN_PROVIDERS.map(prov => {
+                    const pid = prov.id
+                    const enabled = getEnabledModels(pid)
+                    const isExpanded = expandedProvider === pid
+                    return (
+                      <div key={pid} className="settings-custom-provider">
+                        <div className="settings-custom-header">
+                          <div className="settings-provider-title-row">
+                            <span className="settings-custom-label">{prov.name}</span>
+                            <span className="settings-badge settings-badge-builtin"><Shield size={9} /> built‑in</span>
+                          </div>
+                        </div>
 
-              {/* ── OpenCode API Key ───────────────────────────────────── */}
-              <section className="settings-section settings-section-key">
-                <h3 className="settings-section-title">🔑 OpenCode API Key</h3>
-                <p className="settings-section-desc">
-                  One key for all OpenCode-hosted models — DeepSeek V4 Pro (reasoning) and DeepSeek V4 Flash (fast).
-                </p>
-                <div className="settings-field-row">
-                  <div className="settings-field-col settings-field-col-wide">
-                    <input className="settings-input settings-input-deepseek-key" type="text"
-                      value={apiKeys['opencode-ds-v4-pro'] || ''}
-                      onChange={e => setApiKey('opencode-ds-v4-pro', e.target.value)}
-                      placeholder={apiKeysConfigured['opencode-ds-v4-pro'] || apiKeysConfigured['opencode-ds-v4-flash']
-                        ? 'OpenCode API key has been set — enter a new key to override'
-                        : 'sk-…'}
-                    />
-                  </div>
-                </div>
+                        {/* Base URL — locked for built-in */}
+                        <div className="settings-field-row" style={{ marginTop: 10 }}>
+                          <div className="settings-field-col settings-field-col-wide">
+                            <label>{t('field.baseUrl')}</label>
+                            <input className="settings-input" type="text"
+                              value={prov.base_url}
+                              disabled
+                              placeholder={t('field.baseUrlPlaceholderBuiltin')} />
+                          </div>
+                        </div>
+
+                        {/* API Key */}
+                        <div className="settings-field-row" style={{ marginTop: 10 }}>
+                          <div className="settings-field-col settings-field-col-wide">
+                            <label>{t('field.apiKey')}</label>
+                            <input className="settings-input" type="text"
+                              value={apiKeys[pid] || ''}
+                              onChange={e => setApiKey(pid, e.target.value)}
+                              placeholder={apiKeysConfigured[pid]
+                                ? t('field.apiKeyPlaceholderSet').replace('{provider}', prov.name)
+                                : t('field.apiKeyPlaceholder')} />
+                          </div>
+                        </div>
+
+                        {/* Discover + Models */}
+                        <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border-color)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                            <button
+                              className="settings-btn-discover"
+                              onClick={() => discoverModels(pid)}
+                              disabled={discovering[pid]}
+                            >
+                              {discovering[pid] ? (
+                                <><RefreshCw size={14} className="spin" /> {t('field.discovering')}</>
+                              ) : (
+                                <><Search size={14} /> {t('field.discover')}</>
+                              )}
+                            </button>
+                            {enabled.length > 0 && (
+                              <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                                {enabled.length} model{enabled.length !== 1 ? 's' : ''} enabled
+                              </span>
+                            )}
+                          </div>
+
+                          {discoverError[pid] && (
+                            <div className="settings-field-error" style={{ marginBottom: 8 }}>{discoverError[pid]}</div>
+                          )}
+
+                          {/* Enabled models shown as tags */}
+                          {enabled.length > 0 && (
+                            <div className="settings-enabled-models">
+                              {enabled.map(m => (
+                                <span key={m} className="settings-enabled-model-tag">
+                                  {m}
+                                  <button className="settings-enabled-model-remove"
+                                    onClick={() => toggleModel(pid, m, false)}
+                                    title={t('providers.remove')}>
+                                    <X size={10} />
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Discovered model list with checkboxes (when expanded) */}
+                          {isExpanded && discoveredModels[pid] && discoveredModels[pid].length > 0 && (
+                            <div className="settings-discovered-models" style={{ marginTop: 8 }}>
+                              <div className="settings-discovered-models-header">
+                                {t('field.foundModels')} ({discoveredModels[pid].length})
+                              </div>
+                              <div className="settings-discovered-filter">
+                                <Search size={12} className="settings-discovered-filter-icon" />
+                                <input
+                                  className="settings-input settings-discovered-filter-input"
+                                  type="text"
+                                  value={discoverFilter[pid] || ''}
+                                  onChange={e => setDiscoverFilter(prev => ({ ...prev, [pid]: e.target.value }))}
+                                  placeholder={t('field.filterModels')}
+                                />
+                                {(discoverFilter[pid] || '') && (
+                                  <button className="settings-icon-btn"
+                                    onClick={() => setDiscoverFilter(prev => ({ ...prev, [pid]: '' }))}
+                                    title={t('field.clearFilter')}>
+                                    <X size={14} />
+                                  </button>
+                                )}
+                              </div>
+                              <div className="settings-discovered-models-list">
+                                {(() => {
+                                  const f = (discoverFilter[pid] || '').toLowerCase()
+                                  const filtered = f
+                                    ? discoveredModels[pid].filter(m => m.toLowerCase().includes(f))
+                                    : discoveredModels[pid]
+                                  const shown = filtered.slice(0, 50)
+                                  return (
+                                    <>
+                                      {shown.map(m => (
+                                        <label key={m} className="settings-discovered-model-checkbox">
+                                          <input type="checkbox"
+                                            checked={enabled.includes(m)}
+                                            onChange={e => toggleModel(pid, m, e.target.checked)} />
+                                          <span>{m}</span>
+                                        </label>
+                                      ))}
+                                      {filtered.length > 50 && (
+                                        <span className="settings-discovered-more">
+                                          … {filtered.length - 50} more
+                                        </span>
+                                      )}
+                                      {f && shown.length === 0 && (
+                                        <span className="settings-discovered-more">{t('field.noMatches')}</span>
+                                      )}
+                                    </>
+                                  )
+                                })()}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+
+                  {/* ── Custom provider cards ──────────────────────────── */}
+                  {custom.map((cp, ci) => {
+                    const pid = cp.id
+                    const enabled = getEnabledModels(pid)
+                    const isExpanded = expandedProvider === pid
+                    const hasError = errorFields[`custom-${ci}`]
+                    return (
+                      <div key={pid} className="settings-custom-provider">
+                        <div className="settings-custom-header">
+                          <div className="settings-provider-title-row">
+                            <span className="settings-custom-label">{cp.name || t('providers.untitled')}</span>
+                            <span className="settings-badge settings-badge-custom">{t('providers.badgeCustom')}</span>
+                          </div>
+                          <button className="settings-icon-btn settings-danger-btn"
+                            onClick={() => removeCustomProvider(ci)} title={t('providers.remove')}>
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                        {hasError && <div className="settings-field-error">{errorFields[`custom-${ci}`]}</div>}
+
+                        {/* Display Name */}
+                        <div className="settings-field-row">
+                          <div className="settings-field-col">
+                            <label>{t('field.displayName')}</label>
+                            <input className="settings-input" type="text"
+                              value={cp.name || ''}
+                              onChange={e => updateCustomProvider(ci, 'name', e.target.value)}
+                              placeholder={t('field.displayNamePlaceholder')} />
+                          </div>
+                        </div>
+
+                        {/* Base URL */}
+                        <div className="settings-field-row" style={{ marginTop: 10 }}>
+                          <div className="settings-field-col settings-field-col-wide">
+                            <label>{t('field.baseUrl')}</label>
+                            <input className="settings-input" type="text"
+                              value={cp.base_url || ''}
+                              onChange={e => updateCustomProvider(ci, 'base_url', e.target.value)}
+                              placeholder={t('field.baseUrlPlaceholderCustom')} />
+                          </div>
+                        </div>
+
+                        {/* API Key */}
+                        <div className="settings-field-row" style={{ marginTop: 10 }}>
+                          <div className="settings-field-col settings-field-col-wide">
+                            <label>{t('field.apiKey')}</label>
+                            <input className="settings-input" type="text"
+                              value={cp.api_key || ''}
+                              onChange={e => updateCustomProvider(ci, 'api_key', e.target.value)}
+                              placeholder={cp.api_key === '' && cp._key_configured
+                                ? t('field.apiKeyPlaceholderSet').replace('{provider}', cp.name || 'Custom')
+                                : 'sk-…'} />
+                          </div>
+                        </div>
+
+                        {/* Discover + Models */}
+                        <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border-color)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                            <button
+                              className="settings-btn-discover"
+                              onClick={() => discoverModels(pid)}
+                              disabled={discovering[pid]}
+                            >
+                              {discovering[pid] ? (
+                                <><RefreshCw size={14} className="spin" /> {t('field.discovering')}</>
+                              ) : (
+                                <><Search size={14} /> {t('field.discover')}</>
+                              )}
+                            </button>
+                            {enabled.length > 0 && (
+                              <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                                {enabled.length} model{enabled.length !== 1 ? 's' : ''} enabled
+                              </span>
+                            )}
+                          </div>
+
+                          {discoverError[pid] && (
+                            <div className="settings-field-error" style={{ marginBottom: 8 }}>{discoverError[pid]}</div>
+                          )}
+
+                          {/* Enabled models shown as tags */}
+                          {enabled.length > 0 && (
+                            <div className="settings-enabled-models">
+                              {enabled.map(m => (
+                                <span key={m} className="settings-enabled-model-tag">
+                                  {m}
+                                  <button className="settings-enabled-model-remove"
+                                    onClick={() => toggleModel(pid, m, false)}
+                                    title={t('providers.remove')}>
+                                    <X size={10} />
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Discovered model list with checkboxes (when expanded) */}
+                          {isExpanded && discoveredModels[pid] && discoveredModels[pid].length > 0 && (
+                            <div className="settings-discovered-models" style={{ marginTop: 8 }}>
+                              <div className="settings-discovered-models-header">
+                                {t('field.foundModels')} ({discoveredModels[pid].length})
+                              </div>
+                              <div className="settings-discovered-filter">
+                                <Search size={12} className="settings-discovered-filter-icon" />
+                                <input
+                                  className="settings-input settings-discovered-filter-input"
+                                  type="text"
+                                  value={discoverFilter[pid] || ''}
+                                  onChange={e => setDiscoverFilter(prev => ({ ...prev, [pid]: e.target.value }))}
+                                  placeholder={t('field.filterModels')}
+                                />
+                                {(discoverFilter[pid] || '') && (
+                                  <button className="settings-icon-btn"
+                                    onClick={() => setDiscoverFilter(prev => ({ ...prev, [pid]: '' }))}
+                                    title={t('field.clearFilter')}>
+                                    <X size={14} />
+                                  </button>
+                                )}
+                              </div>
+                              <div className="settings-discovered-models-list">
+                                {(() => {
+                                  const f = (discoverFilter[pid] || '').toLowerCase()
+                                  const filtered = f
+                                    ? discoveredModels[pid].filter(m => m.toLowerCase().includes(f))
+                                    : discoveredModels[pid]
+                                  const shown = filtered.slice(0, 50)
+                                  return (
+                                    <>
+                                      {shown.map(m => (
+                                        <label key={m} className="settings-discovered-model-checkbox">
+                                          <input type="checkbox"
+                                            checked={enabled.includes(m)}
+                                            onChange={e => toggleModel(pid, m, e.target.checked)} />
+                                          <span>{m}</span>
+                                        </label>
+                                      ))}
+                                      {filtered.length > 50 && (
+                                        <span className="settings-discovered-more">
+                                          … {filtered.length - 50} more
+                                        </span>
+                                      )}
+                                      {f && shown.length === 0 && (
+                                        <span className="settings-discovered-more">{t('field.noMatches')}</span>
+                                      )}
+                                    </>
+                                  )
+                                })()}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+
+                  {/* Add Custom Provider */}
+                  <button className="settings-add-btn" onClick={addCustomProvider}>
+                    <Plus size={16} /><span>{t('field.addProvider')}</span>
+                  </button>
               </section>
 
               {/* ── Agent Behavior ──────────────────────────────────────── */}
@@ -362,12 +660,12 @@ export default function SettingsPanel({ isOpen, onClose }) {
                 <p className="settings-section-desc">{t('agent.desc')}</p>
                 <div className="settings-field-row">
                   <div className="settings-field-col">
-                    <label>{t('agent.defaultProvider')}</label>
+                    <label>{t('agent.defaultModel')}</label>
                     <select className="settings-input"
-                      value={other.agent?.default_provider || ''}
-                      onChange={e => setOther('agent', 'default_provider', e.target.value)}>
+                      value={selectionToId(other.agent?.default_model)}
+                      onChange={e => setOther('agent', 'default_model', idToSelection(e.target.value))}>
                       <option value="">{t('agent.systemDefault')}</option>
-                      {allProviders.map(p => (
+                      {providers.map(p => (
                         <option key={p.id} value={p.id}>{p.name}{p.custom ? t('agent.customSuffix') : ''}</option>
                       ))}
                     </select>
@@ -472,125 +770,6 @@ export default function SettingsPanel({ isOpen, onClose }) {
                       </div>
                     )}
                   </>
-                )}
-              </section>
-
-              {/* ── Models ───────────────────────────────────────────────── */}
-              <section className="settings-section">
-                <h3 className="settings-section-title settings-collapse-title"
-                  onClick={() => setProvidersCollapsed(!providersCollapsed)}>
-                  {providersCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
-                  ⚙ {t('providers.title')}
-                </h3>
-                {!providersCollapsed && <p className="settings-section-desc">{t('providers.desc')}</p>}
-
-                {!providersCollapsed && (
-                <>
-                  {/* Built‑in — compact rows */}
-                  {allProviders.filter(p => p._builtin).map(prov => {
-                    const pid = prov.id
-                    const key = apiKeys[pid] || ''
-                    const needsOwnKey = pid !== 'deepseek' && pid !== 'deepseek-flash'
-                      && pid !== 'nvidia' && pid !== 'nvidia-fast'
-                      && pid !== 'nvidia-glm5' && pid !== 'nvidia-glm5-fast'
-                      && pid !== 'opencode-ds-v4-pro' && pid !== 'opencode-ds-v4-flash'
-                    return (
-                      <div key={pid} className="settings-provider-row-compact">
-                        <span className="settings-provider-name" title={prov.description}>{prov.name}</span>
-                        <span className="settings-badge settings-badge-builtin"><Shield size={9} /> built‑in</span>
-                        {needsOwnKey && (
-                          <input className="settings-input" type="text" value={key}
-                            onChange={e => setApiKey(pid, e.target.value)}
-                            placeholder={apiKeysConfigured[pid]
-                              ? t('field.apiKeyPlaceholderSet').replace('{provider}', prov.name)
-                              : t('field.apiKeyPlaceholder')}
-                          />
-                        )}
-                        <label className="settings-checkbox-label">
-                          <input type="checkbox" checked={prov.supports_thinking}
-                            onChange={e => setOverride(pid, 'supports_thinking', e.target.checked)} />
-                          {t('field.thinking')}
-                        </label>
-                      </div>
-                    )
-                  })}
-
-                  {/* Custom — full cards */}
-                  {allProviders.filter(p => !p._builtin).map(prov => {
-                    const ci = prov._customIndex
-                    const key = custom[ci]?.api_key || ''
-                    const hasError = errorFields[`custom-${ci}`]
-                    return (
-                      <div key={prov.id} className="settings-custom-provider">
-                        <div className="settings-custom-header">
-                          <div className="settings-provider-title-row">
-                            <span className="settings-custom-label">{prov.name || t('providers.untitled')}</span>
-                            <span className="settings-badge settings-badge-custom">{t('providers.badgeCustom')}</span>
-                          </div>
-                          <button className="settings-icon-btn settings-danger-btn"
-                            onClick={() => removeCustomProvider(ci)} title={t('providers.remove')}>
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
-                        {hasError && <div className="settings-field-error">{errorFields[`custom-${ci}`]}</div>}
-                        <div className="settings-field-row">
-                          <div className="settings-field-col">
-                            <label>{t('field.displayName')}</label>
-                            <input className="settings-input" type="text"
-                              value={custom[ci]?.name || ''}
-                              onChange={e => updateCustomProvider(ci, 'name', e.target.value)}
-                              placeholder={t('field.displayNamePlaceholder')} />
-                          </div>
-                          <div className="settings-field-col">
-                            <label>{t('field.providerId')}</label>
-                            <input className="settings-input" type="text"
-                              value={custom[ci]?.id || ''}
-                              onChange={e => updateCustomProvider(ci, 'id', e.target.value)}
-                              placeholder={t('field.providerIdPlaceholder')} />
-                          </div>
-                        </div>
-                        <div className="settings-field-row" style={{ marginTop: 10 }}>
-                          <div className="settings-field-col settings-field-col-wide">
-                            <label>{t('field.baseUrl')}</label>
-                            <input className="settings-input" type="text"
-                              value={custom[ci]?.base_url || ''}
-                              onChange={e => updateCustomProvider(ci, 'base_url', e.target.value)}
-                              placeholder={t('field.baseUrlPlaceholderCustom')} />
-                          </div>
-                        </div>
-                        <div className="settings-field-row" style={{ marginTop: 10 }}>
-                          <div className="settings-field-col">
-                            <label>{t('field.model')}</label>
-                            <input className="settings-input" type="text"
-                              value={custom[ci]?.model || ''}
-                              onChange={e => updateCustomProvider(ci, 'model', e.target.value)}
-                              placeholder={t('field.modelPlaceholderCustom')} />
-                          </div>
-                          <div className="settings-field-col">
-                            <label>{t('field.apiKey')}</label>
-                            <input className="settings-input" type="text" value={key}
-                              onChange={e => updateCustomProvider(ci, 'api_key', e.target.value)}
-                              placeholder={key === '' && custom[ci]?._key_configured
-                                ? t('field.apiKeyPlaceholderSet').replace('{provider}', custom[ci]?.name || 'Custom')
-                                : 'sk-or-…'} />
-                          </div>
-                          <div className="settings-field-col settings-field-col-checkbox">
-                            <label className="settings-checkbox-label">
-                              <input type="checkbox"
-                                checked={custom[ci]?.supports_thinking !== false}
-                                onChange={e => updateCustomProvider(ci, 'supports_thinking', e.target.checked)} />
-                              {t('field.thinking')}
-                            </label>
-                          </div>
-                        </div>
-                      </div>
-                    )
-                  })}
-
-                  <button className="settings-add-btn" onClick={addCustomProvider}>
-                    <Plus size={16} /><span>{t('field.addProvider')}</span>
-                  </button>
-                </>
                 )}
               </section>
 
@@ -782,12 +961,12 @@ placeholder="abc123..."
                 {!webSecondaryCollapsed && <>
                   <div className="settings-field-row">
                     <div className="settings-field-col">
-                      <label>{t('webSecondary.provider')}</label>
+                      <label>{t('webSecondary.model')}</label>
                       <select className="settings-input"
-                        value={other.web_secondary?.provider || ''}
-                        onChange={e => setOther('web_secondary', 'provider', e.target.value)}>
-                        <option value="">{t('webSecondary.providerDefault')}</option>
-                        {allProviders.map(p => (
+                        value={selectionToId(other.web_secondary?.model)}
+                        onChange={e => setOther('web_secondary', 'model', idToSelection(e.target.value))}>
+                        <option value="">{t('webSecondary.modelDefault')}</option>
+                        {providers.map(p => (
                           <option key={p.id} value={p.id}>{p.name}{p.custom ? t('agent.customSuffix') : ''}</option>
                         ))}
                       </select>

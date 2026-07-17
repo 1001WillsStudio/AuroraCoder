@@ -505,6 +505,62 @@ def test_build_docker_run_args_forwards_configured_provider_keys_only():
     assert not any(a.startswith("NVIDIA_API_KEY=") for a in args)
 
 
+def test_get_memory_extraction_config_resolves_a_real_model_under_the_provider_family_scheme():
+    """Regression test for a real bug found merging in a `dev` refactor that
+    replaced per-variant provider ids (e.g. 'opencode-ds-v4-pro' WAS a
+    provider id) with provider *families* (only 'deepseek'/'opencode'/
+    'nvidia' are provider ids now; models are a separate, per-family list).
+    get_memory_extraction_config() used to call a get_default_provider()
+    helper that no longer exists post-refactor (would have been a hard
+    NameError on every call with no explicit extraction_provider set -- the
+    common case), and even when a provider_id did resolve, resolve_provider()
+    no longer guarantees a non-empty 'model' the way per-variant ids used
+    to. Exercises the REAL resolution chain (settings -> resolve_provider ->
+    PROVIDER_DEFAULT_MODELS), unlike the extraction-pipeline tests in
+    test_memory_layer2.py which mock this function out entirely."""
+    from gateway.provider_registry import get_memory_extraction_config
+    from src.config import DEFAULT_PROVIDER, PROVIDER_DEFAULT_MODELS
+
+    data_dir = pathlib.Path(os.environ["AURORACODER_DATA_DIR"])
+    settings_path = data_dir / "settings.json"
+    original = settings_path.read_text(encoding="utf-8")
+    try:
+        # No extraction_provider, no agent default_model -- must still
+        # resolve to *some* real, non-empty model (not crash, not "").
+        settings_path.write_text(json.dumps({"other": {"memory": {"enabled": True}}}), encoding="utf-8")
+        cfg = get_memory_extraction_config()
+        assert cfg["provider_id"] == DEFAULT_PROVIDER
+        assert cfg["model"] == PROVIDER_DEFAULT_MODELS[DEFAULT_PROVIDER][0]["id"]
+
+        # Falls through to the agent's own structured default_model when
+        # extraction_provider is unset -- same {"provider", "model"} shape
+        # used everywhere else post-refactor (dev's "structured {provider,
+        # model}" change), not a legacy "provider::model" string.
+        settings_path.write_text(json.dumps({"other": {
+            "memory": {"enabled": True},
+            "agent": {"default_model": {"provider": "opencode", "model": "deepseek-v4-flash"}},
+        }}), encoding="utf-8")
+        cfg = get_memory_extraction_config()
+        assert cfg == {
+            "provider_id": "opencode",
+            "base_url": "https://opencode.ai/zen/go/v1",
+            "api_key": "",
+            "model": "deepseek-v4-flash",
+        }
+
+        # An explicit extraction_provider must be a provider *family* id
+        # (never a legacy per-variant id) and always resolves to that
+        # family's default model.
+        settings_path.write_text(json.dumps({"other": {
+            "memory": {"enabled": True, "extraction_provider": "nvidia"},
+        }}), encoding="utf-8")
+        cfg = get_memory_extraction_config()
+        assert cfg["provider_id"] == "nvidia"
+        assert cfg["model"] == PROVIDER_DEFAULT_MODELS["nvidia"][0]["id"]
+    finally:
+        settings_path.write_text(original, encoding="utf-8")
+
+
 def test_gap_investigation_tool_mode_survives_worker_own_memory_being_disabled():
     """Regression test for a real bug caught by manual Docker validation: a
     freshly-spawned memory-worker container never shares the main

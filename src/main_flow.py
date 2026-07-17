@@ -15,7 +15,7 @@ from typing import Dict, List, Generator, Optional
 from .tool_definitions import get_tool_definitions
 from .core_tools.tool_store_client import get_toolstore_tools_prompt
 from .config import (
-    DEFAULT_PROVIDER,
+    DEFAULT_PROVIDER, PROVIDER_DEFAULT_MODELS,
     MAX_TOKENS, MAX_ITERATIONS,
     MAX_STREAMING_RETRIES,
     SYSTEM_MESSAGE_TEMPLATE, VNC_INSTRUCTIONS, TERMINAL_ENV_NOTE,
@@ -94,6 +94,7 @@ def generate_chat_responses_stream_native(
     messages: list,
     max_iterations: int = MAX_ITERATIONS,
     provider_id: Optional[str] = None,
+    model: Optional[str] = None,
     tools_override: Optional[List[Dict]] = None,
     conversation_id: str | None = None,
     workspace_tree: str = "",
@@ -115,23 +116,29 @@ def generate_chat_responses_stream_native(
     if provider_id is None:
         provider_id = DEFAULT_PROVIDER
     
-    # Get client and config for the selected provider
+
+    # Get client and config for the resolved provider
     client = provider_manager.get_client(provider_id)
     config = provider_manager.get_config(provider_id)
-    model_name = config["model"]
+
+    # Model name: explicit param → config → PROVIDER_DEFAULT_MODELS
+    model_name = model or config.get("model") or ""
+    if not model_name:
+        defaults = PROVIDER_DEFAULT_MODELS.get(provider_id, [])
+        model_name = defaults[0]["id"] if defaults else "deepseek-chat"
+
     extra_body = config.get("extra_body")
-    
-    
-    # Get tool definitions (or use override for subagents / force_continuation)
-    tools = tools_override if tools_override is not None else get_tool_definitions()
-    filter_continuation = tools_override is None  # only filter the default set
-    
-    # Per-provider context window (falls back to global default)
-    context_window = config.get("context_window", CONTEXT_WINDOW_TOKENS)
+
+    # Context window — generous fixed default (1M tokens covers all modern models)
+    context_window = CONTEXT_WINDOW_TOKENS
     
     # Eagerly load primary tool schemas once at startup so the LLM's
     # tools[] array includes them from the very first turn.
     prefetch_primary_tools()
+
+    # Resolve tool definitions — use override if provided, else defaults
+    tools = tools_override or get_tool_definitions()
+    filter_continuation = tools_override is None  # only filter for default tools
 
     # Add system message if not already present.
     if not messages or messages[0].get("role") != "system":
@@ -208,7 +215,15 @@ def generate_chat_responses_stream_native(
         current_usage = None
 
         t_api_start = time.time()
-        completion_stream = client.chat.completions.create(**api_kwargs)
+        try:
+            completion_stream = client.chat.completions.create(**api_kwargs)
+        except Exception as exc:
+            import json as _j, datetime as _dt
+            _p = (Path(__file__).resolve().parent.parent / "data" / "diagnostics" / "llm_failures.jsonl")
+            _p.parent.mkdir(parents=True, exist_ok=True)
+            with open(_p, "a", encoding="utf-8") as _f:
+                _f.write(_j.dumps({"ts": _dt.datetime.now().isoformat(), "conversation_id": conversation_id, "provider": provider_id, "model": model_name, "error": f"{type(exc).__name__}: {exc}", "status": getattr(exc, "status_code", None), "upstream": getattr(getattr(exc, "response", None), "text", None), "api_kwargs": api_kwargs}, ensure_ascii=False, default=str) + "\n")
+            raise
 
         yield {
             "messages": messages + [assistant_message],

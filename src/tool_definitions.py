@@ -303,7 +303,7 @@ NATIVE_TOOL_DEFINITIONS = [
                     },
                     "timeout": {
                         "type": "integer",
-                        "description": "Timeout in seconds. Default is 30. Increase for long-running commands."
+                        "description": "Timeout in seconds. The default of 10 is sufficient for most commands, so you usually should not specify this parameter. For commands that may take longer than 30 seconds, prefer blocking=false instead."
                     },
                     "blocking": {
                         "type": "boolean",

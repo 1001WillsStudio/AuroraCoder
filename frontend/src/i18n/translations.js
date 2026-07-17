@@ -39,8 +39,6 @@ const LANG = {
     'field.apiKeyPlaceholderSet': '{provider} API key has been set, enter another to override',
     'field.displayName': 'Display Name',
     'field.displayNamePlaceholder': 'My OpenRouter',
-    'field.providerId': 'Provider ID',
-    'field.providerIdPlaceholder': 'my-openrouter',
     'field.baseUrl': 'Base URL',
     'field.baseUrlPlaceholderBuiltin': 'Defaults to built-in endpoint',
     'field.baseUrlPlaceholderCustom': 'https://openrouter.ai/api/v1',
@@ -49,20 +47,26 @@ const LANG = {
     'field.modelPlaceholderCustom': 'anthropic/claude-sonnet-4',
     'field.thinking': 'Thinking',
     'field.addProvider': 'Add Provider',
+    'field.discover': 'Discover',
+    'field.discovering': 'Discovering…',
+    'field.foundModels': 'Found models',
+    'field.filterModels': 'Filter models…',
+    'field.clearFilter': 'Clear filter',
+    'field.noMatches': 'No models match',
 
     // ── Web Secondary Model section ───────────────────────────────
     'webSecondary.title': 'Web Secondary Model',
     'webSecondary.desc':
-      "Fast/cheap model for summarizing scraped web pages before they enter the agent's context — select a provider above.",
-    'webSecondary.provider': 'Provider',
-    'webSecondary.providerDefault': '(same as agent default)',
+      "Fast/cheap model for summarizing scraped web pages before they enter the agent's context — select a model above.",
+    'webSecondary.model': 'Model',
+    'webSecondary.modelDefault': '(same as agent default)',
     'webSecondary.maxTokens': 'Max Tokens',
     'webSecondary.maxTokensPlaceholder': '4096',
 
     // ── Agent Behavior section ────────────────────────────────────
     'agent.title': 'Agent Behavior',
-    'agent.desc': 'Tune loop limits, parallelism, and the default provider.',
-    'agent.defaultProvider': 'Default Provider',
+    'agent.desc': 'Tune loop limits, parallelism, and the default model.',
+    'agent.defaultModel': 'Default Model',
     'agent.systemDefault': '(system default)',
     'agent.customSuffix': ' (custom)',
     'agent.maxIterations': 'Max Iterations Per Turn',
@@ -100,8 +104,9 @@ const LANG = {
     'msg.baseUrlRequired': 'Base URL required',
     'msg.apiKeyRequired': 'API key required',
     'msg.modelRequired': 'Model required',
-
-    // ═══════════════════════════════════════════════════════════════
+    'msg.fillFieldsFirst': 'Fill in Base URL and API Key first',
+    'msg.fillProviderFirst': 'Fill in the API key first, then click Discover',
+    'providers.untitled': 'Unnamed',
     // ── App‑wide translations (not just settings) ────────────────
     // ═══════════════════════════════════════════════════════════════
 
@@ -281,8 +286,6 @@ const LANG = {
     'field.apiKeyPlaceholderSet': '{provider} API 密钥已设置，输入新密钥以覆盖',
     'field.displayName': '显示名称',
     'field.displayNamePlaceholder': '我的 OpenRouter',
-    'field.providerId': '提供者 ID',
-    'field.providerIdPlaceholder': 'my-openrouter',
     'field.baseUrl': '基础 URL',
     'field.baseUrlPlaceholderBuiltin': '默认使用内置端点',
     'field.baseUrlPlaceholderCustom': 'https://openrouter.ai/api/v1',
@@ -291,19 +294,25 @@ const LANG = {
     'field.modelPlaceholderCustom': 'anthropic/claude-sonnet-4',
     'field.thinking': '思考模式',
     'field.addProvider': '添加提供者',
+    'field.discover': '发现模型',
+    'field.discovering': '发现中…',
+    'field.foundModels': '已发现的模型',
+    'field.filterModels': '筛选模型…',
+    'field.clearFilter': '清除筛选',
+    'field.noMatches': '无匹配模型',
 
     // ── Web Secondary Model section ───────────────────────────────
     'webSecondary.title': '网页辅助模型',
-    'webSecondary.desc': '用于在网页内容进入智能体上下文前对其进行摘要的快速/廉价模型 — 从上方选择一个提供者。',
-    'webSecondary.provider': '提供者',
-    'webSecondary.providerDefault': '（与智能体默认相同）',
+    'webSecondary.desc': '用于在网页内容进入智能体上下文前对其进行摘要的快速/廉价模型 — 从上方选择一个模型。',
+    'webSecondary.model': '模型',
+    'webSecondary.modelDefault': '（与智能体默认相同）',
     'webSecondary.maxTokens': '最大 Token 数',
     'webSecondary.maxTokensPlaceholder': '4096',
 
     // ── Agent Behavior section ────────────────────────────────────
     'agent.title': '智能体行为',
-    'agent.desc': '调整循环限制、并行度和默认提供者。',
-    'agent.defaultProvider': '默认提供者',
+    'agent.desc': '调整循环限制、并行度和默认模型。',
+    'agent.defaultModel': '默认模型',
     'agent.systemDefault': '(系统默认)',
     'agent.customSuffix': '（自定义）',
     'agent.maxIterations': '每轮最大迭代次数',
@@ -341,6 +350,9 @@ const LANG = {
     'msg.baseUrlRequired': '基础 URL 不能为空',
     'msg.apiKeyRequired': 'API 密钥不能为空',
     'msg.modelRequired': '模型不能为空',
+    'msg.fillFieldsFirst': '请先填写基础 URL 和 API 密钥',
+    'msg.fillProviderFirst': '请先填写 API 密钥，然后点击发现',
+    'providers.untitled': '未命名',
 
     // ═══════════════════════════════════════════════════════════════
     // ── App‑wide translations ─────────────────────────────────────

@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from src.config import WORKSPACE_DIR
+from src.config import WORKSPACE_DIR, MAX_FILE_READ_SIZE
 from gateway.conversation_store import store
 from gateway.workspace import (
     file_snapshots,
@@ -119,6 +119,11 @@ _FILE_WRITE_TOOLS = {"write_file", "edit_file", "delete_file"}
 # Prevents re-snapshotting after the write has already happened.
 _snapshotted_tool_calls: Dict[str, set] = {}  # {conversation_id: {tool_call_id, ...}}
 
+_TRACKING_TOO_LARGE_PLACEHOLDER = (
+    "[File too large to track — {size:,} bytes ({size_mb:.1f} MB). "
+    "Snapshot skipped to avoid OOM.]"
+)
+
 
 def _collect_orphan_tool_calls(raw_messages: list) -> list[dict]:
     """Return every assistant ``tool_call`` that has no matching ``tool``
@@ -215,7 +220,13 @@ def _track_file_changes(conversation_id: str, raw_messages: list):
                 if file_path not in file_snapshots.get(conversation_id, {}):
                     try:
                         if full_path.exists() and full_path.is_file():
-                            content = full_path.read_text(encoding="utf-8", errors="replace")
+                            size = full_path.stat().st_size
+                            if size > MAX_FILE_READ_SIZE:
+                                content = _TRACKING_TOO_LARGE_PLACEHOLDER.format(
+                                    size=size, size_mb=size / (1024 * 1024)
+                                )
+                            else:
+                                content = full_path.read_text(encoding="utf-8", errors="replace")
                         else:
                             content = ""
                         snapshot_file(conversation_id, file_path, content)
@@ -466,7 +477,10 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                             stream.latest_event_data = edata
 
                             # --- Continuation detection ---
-                            if not stream.new_conversation_id:
+                            # Only scan on full-state events (messages), never during
+                            # active streaming (delta) — tool-call arguments are still
+                            # being built up during deltas, producing bogus warnings.
+                            if not stream.new_conversation_id and etype == "messages":
                                 args = _scan_for_continuation(edata.get("raw_messages", []))
                                 if args:
                                     prompt = args.get("prompt", "")

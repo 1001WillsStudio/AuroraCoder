@@ -114,6 +114,8 @@ export async function streamChat(message, conversationId, callbacks, signal, exi
     conversation_id: conversationId || null,
     messages: existingMessages,
     provider: provider,
+    provider_id: options.provider_id || null,
+    model: options.model || null,
     ...options
   }
 
