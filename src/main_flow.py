@@ -18,7 +18,7 @@ from .config import (
     DEFAULT_PROVIDER, PROVIDER_DEFAULT_MODELS,
     MAX_TOKENS, MAX_ITERATIONS,
     MAX_STREAMING_RETRIES,
-    SYSTEM_MESSAGE_TEMPLATE, VNC_INSTRUCTIONS, TERMINAL_ENV_NOTE,
+    SYSTEM_MESSAGE_TEMPLATE, DISPLAY_GUIDE, TERMINAL_ENV_NOTE,
     CONTEXT_WINDOW_TOKENS, CONTEXT_WARN_THRESHOLD,
     _CONTINUATION_NOTICE_MARKER, CONTINUATION_NOTICE,
 )
@@ -131,7 +131,7 @@ def generate_chat_responses_stream_native(
     
     system_message = SYSTEM_MESSAGE_TEMPLATE.format(
         current_time=datetime.datetime.now().isoformat(),
-        vnc_instructions=VNC_INSTRUCTIONS,
+        display_guide=DISPLAY_GUIDE,
         terminal_env_note=TERMINAL_ENV_NOTE,
         toolstore_tools=get_toolstore_tools_prompt(),
         workspace_tree=workspace_tree,

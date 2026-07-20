@@ -51,7 +51,7 @@ user's requests end-to-end. Refrain from asking the user to perform tasks or
 provide clarification unless essential information cannot be acquired through
 your tools.
 
-{vnc_instructions}
+{display_guide}
 {terminal_env_note}
 
 **Guidelines**:

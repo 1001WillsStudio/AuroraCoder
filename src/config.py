@@ -228,9 +228,9 @@ else:
             + _TERMINAL_BLOCKING_NOTE
         )
 
-# VNC instructions block — only included when the VNC desktop is available.
+# Display guide — VNC desktop + dev-server ports for showing web content to the user.
 if DOCKER_VNC:
-    VNC_INSTRUCTIONS = """
+    DISPLAY_GUIDE = """
 **GUI Display via noVNC**:
 A virtual desktop (Xvfb + fluxbox) is running. GUI applications render on DISPLAY=:99 automatically.
 The user can view the live desktop through the noVNC viewer (port 6080).
@@ -239,9 +239,10 @@ The user can view the live desktop through the noVNC viewer (port 6080).
 - **Any GUI app** (pygame, tkinter, browser, etc.): just run it — the window appears on the noVNC desktop.
 - To launch a GUI app in the background so the terminal stays responsive, use `blocking=false` in `run_terminal_command`.
 - If the user can't find the GUI output, tell them to open port 6080 of the current server address in their browser.
+- To serve web content (HTML pages, dashboards, reports) for the user to view, start an HTTP server on ports 8900–8902 (e.g., `python -m http.server 8900`). The user accesses them at the same port on the host.
 """
 else:
-    VNC_INSTRUCTIONS = ""
+    DISPLAY_GUIDE = ""
 
 # System Message Template
 SYSTEM_MESSAGE_TEMPLATE = """You are a helpful and autonomous agent with powerful tools. You are running inside a Docker container (Linux). Your primary goal is to thoroughly address the user's query by leveraging your tools to gather comprehensive information and execute necessary actions.
@@ -253,7 +254,7 @@ SYSTEM_MESSAGE_TEMPLATE = """You are a helpful and autonomous agent with powerfu
 
 **SUPER IMPORTANT**: Do exactly what the user asks — no more, no less. Work autonomously toward the goal without stopping to ask the user. Use your tools to investigate and resolve issues yourself. Only ask the user when you truly cannot proceed without their input.
 
-{vnc_instructions}
+{display_guide}
 {terminal_env_note}
 
 **Guidelines**:
