@@ -12,7 +12,6 @@ from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .tool_definitions import execute_tool_call, PARALLEL_SAFE_TOOLS
-from .code_tools.file_operations import maybe_truncate_edits
 from .code_tools.panel_manager import triggered_by
 from .config import MAX_TOOL_CONCURRENCY
 
@@ -134,8 +133,14 @@ def _check_same_file_edit_guard(
     tool_name = tool_call["function"]["name"]
     if tool_name != "edit_file":
         return None
-    args = json.loads(tool_call["function"]["arguments"])
-    target = args.get("file")
+    try:
+        args = json.loads(tool_call["function"]["arguments"])
+    except (json.JSONDecodeError, TypeError):
+        # Malformed arguments — let _execute_single_tool surface the
+        # parse error rather than crashing the agent loop (this guard
+        # runs before the tool-execution try boundary).
+        return None
+    target = args.get("file") if isinstance(args, dict) else None
     if not target:
         return None
     if target in files_edited_this_turn:
@@ -171,8 +176,6 @@ def execute_tool_calls(
 
     for is_safe, batch in partition_tool_calls(current_tool_calls):
         if is_safe and len(batch) > 1:
-            for tc in batch:
-                maybe_truncate_edits(tc)
             futures = {
                 _get_executor().submit(_execute_single_tool, tc, conversation_id): tc
                 for tc in batch
@@ -203,7 +206,6 @@ def execute_tool_calls(
                     })
                     _mark(tool_name)
                     continue
-                maybe_truncate_edits(tc)
                 tc_out, tool_name, result = _execute_single_tool(tc, conversation_id)
                 messages.append({
                     "role": "tool",

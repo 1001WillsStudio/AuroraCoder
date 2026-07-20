@@ -176,8 +176,13 @@ function App() {
     }
     loadProviders()
 
+    // Listen for provider changes after settings save
+    const onProvidersChanged = () => { loadProviders() }
+    window.addEventListener('providers-changed', onProvidersChanged)
+
     return () => {
       cancelled = true
+      window.removeEventListener('providers-changed', onProvidersChanged)
       if (retryTimer) clearTimeout(retryTimer)
     }
   }, [])
@@ -288,6 +293,12 @@ function App() {
       messagesToSend = rawMessages
     }
 
+    const selectedEntry = providers.find(p => p.id === selectedProvider)
+    const opts = {
+      ...options,
+      provider_id: selectedEntry?.provider_id || null,
+      model: selectedEntry?.model || null,
+    }
     setLastRequest({ message: userMessageText, conversationId, provider: selectedProvider, existingMessages: messagesToSend })
 
     log('about to call streamChat()')
@@ -300,12 +311,13 @@ function App() {
         pendingInterruptRef, continuationNavigatedRef, abortControllerRef,
         withInterrupt: true,
         withRetry: true,
+        onMessagesRefresh: handleRefreshFiles,
         onFirstSse: () => setSseReceived(true),
         onStreamEnd: () => { setPendingInterrupt(null); pendingInterruptRef.current = null },
         onInterruptFired: () => setPendingInterrupt(null),
         ensureAssistantTail: true,
       })
-      await streamChat(apiMessage, conversationId, callbacks, abortControllerRef.current.signal, messagesToSend, selectedProvider, options)
+      await streamChat(apiMessage, conversationId, callbacks, abortControllerRef.current.signal, messagesToSend, selectedProvider, opts)
     } catch (error) {
       if (error.name !== 'AbortError') console.error('Chat error:', error)
       setIsStreaming(false)
@@ -339,6 +351,7 @@ function App() {
         pendingInterruptRef: null, continuationNavigatedRef, abortControllerRef: null,
         withInterrupt: false,
         withRetry: false,
+        onMessagesRefresh: handleRefreshFiles,
         onFirstSse: () => setSseReceived(true),
         ensureAssistantTail: true,
       })
@@ -500,6 +513,7 @@ function App() {
             pendingInterruptRef: null, continuationNavigatedRef, abortControllerRef: null,
             withInterrupt: false,
             withRetry: false,
+            onMessagesRefresh: handleRefreshFiles,
             onFirstSse: () => setSseReceived(true),
             onStreamEnd: () => { setPendingInterrupt(null); pendingInterruptRef.current = null },
             ensureAssistantTail: true,

@@ -43,7 +43,7 @@ from gateway.settings_store import (
 )
 from gateway.provider_registry import (
     get_available_providers,
-    get_default_provider,
+    get_default_model_entry,
     get_max_iterations,
     sync_tool_env_vars,
 )
@@ -94,6 +94,7 @@ class _SettingsUpdate(BaseModel):
     api_keys: Optional[dict] = None
     provider_overrides: Optional[dict] = None
     custom_providers: Optional[list] = None
+    provider_models: Optional[dict] = None
     other: Optional[dict] = None
 
 
@@ -345,7 +346,7 @@ async def list_active_streams():
 @app.get("/api/providers")
 async def list_providers():
     """Return available model providers (built-in + custom)."""
-    return {"providers": get_available_providers(), "default": get_default_provider()}
+    return {"providers": get_available_providers(), "default": get_default_model_entry()}
 
 
 @app.get("/api/settings")
@@ -369,6 +370,8 @@ async def update_settings(update: _SettingsUpdate):
         payload["provider_overrides"] = update.provider_overrides
     if update.custom_providers is not None:
         payload["custom_providers"] = update.custom_providers
+    if update.provider_models is not None:
+        payload["provider_models"] = update.provider_models
     if update.other is not None:
         payload["other"] = update.other
     result = _store_update_settings(payload)
@@ -453,6 +456,44 @@ async def refresh_toolstore():
         return {"ok": True, "output": result.stdout[-2000:], "errors": result.stderr[-500:] if result.returncode != 0 else None}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+@app.get("/api/discover-models")
+async def discover_models(base_url: str = "", api_key: str = "", provider_id: str = ""):
+    """Call {base_url}/v1/models and return the sorted list of model IDs.
+
+    If *provider_id* is given, the gateway resolves the API key from settings
+    — no need for the frontend to send it in the clear.  For custom providers
+    (where the key is stored inline), pass *base_url* and *api_key* directly.
+    """
+    # Resolve API key server-side when provider_id is given
+    if provider_id:
+        from gateway.provider_registry import resolve_provider
+        r = resolve_provider(provider_id)
+        base_url = base_url or r.get("base_url", "")
+        api_key = api_key or r.get("api_key", "")
+
+    url = base_url.rstrip("/")
+    if not url.endswith("/v1"):
+        url += "/v1"
+    url += "/models"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(url, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+            models = sorted(
+                [m["id"] for m in data.get("data", []) if isinstance(m, dict) and m.get("id")]
+            )
+            return {"models": models, "total": len(models)}
+    except httpx.HTTPStatusError as e:
+        detail = e.response.text[:500] if e.response else str(e)
+        raise HTTPException(status_code=502, detail=f"Upstream returned {e.response.status_code}: {detail}")
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Upstream timed out after 15 s")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 # ============================================================================

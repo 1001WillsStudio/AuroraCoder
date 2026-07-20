@@ -8,7 +8,8 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from ..code_sandbox import WORKSPACE
-from .edit_file import RangeReplaceEditor, maybe_truncate_edits
+from ..config import MAX_FILE_READ_SIZE, count_lines_buffered
+from .edit_file import RangeReplaceEditor
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,8 @@ class FileOperations:
     #  Read
     # -------------------------------------------------------------------
 
+    # File-read safety: thresholds + line counter live in src.config.
+
     def read_file(self, target_file: str) -> str:
         try:
             file_path = self._resolve_path(target_file)
@@ -40,10 +43,20 @@ class FileOperations:
                 return f"Error: File '{target_file}' does not exist"
             if not file_path.is_file():
                 return f"Error: '{target_file}' is not a file"
+            size = file_path.stat().st_size
+            if size > MAX_FILE_READ_SIZE:
+                # Count lines with a buffered reader — never load the full file.
+                lines = count_lines_buffered(file_path)
+                return (
+                    f"The file '{target_file}' ({lines} lines, {size} bytes) is opened "
+                    f"in the code interpreter.\n\n"
+                    f"⚠️  This file is {size:,} bytes ({size / (1024*1024):.1f} MB) — "
+                    f"too large to display in full. Use grep_search or edit_file with "
+                    f"specific line ranges to work with it instead."
+                )
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
             lines = content.count('\n') + 1
-            size = file_path.stat().st_size
             return f"The file '{target_file}' ({lines} lines, {size} bytes) is opened in the code interpreter."
         except Exception as e:
             return f"Error reading file '{target_file}': {str(e)}"

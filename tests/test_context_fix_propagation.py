@@ -1,6 +1,6 @@
 """
 Tests that edit_file self-corrections (content_to_remove [TO] normalisation,
-anchor/line-number shifts, edit truncation, and indent fixes) are propagated
+anchor/line-number shifts, and indent fixes) are propagated
 back into the assistant message stored in conversation history.
 
 By design, the agent must only ever see the *successful*, auto-corrected
@@ -24,7 +24,6 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.code_tools.file_operations import maybe_truncate_edits
 from src.tool_executor import execute_tool_calls
 from src.code_sandbox import WORKSPACE
 
@@ -222,105 +221,6 @@ def test_to_marker_preserved_when_already_correct():
     os.remove(os.path.join(WORKSPACE, "_t3.py"))
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# Test 4: maybe_truncate_edits — >3 edits truncated
-# ═══════════════════════════════════════════════════════════════════════
-
-def test_truncate_to_three_edits():
-    """5 edits → truncated to 3 in assistant message."""
-    make_file("_t4.py", "a\nb\nc\nd\ne\nf\n")
-
-    tc = build_tc(1, "edit_file", {
-        "target_file": "_t4.py",
-        "edits": [
-            {"remove_line_number": "1", "content_to_remove": "a", "replace_content": "A1"},
-            {"remove_line_number": "2", "content_to_remove": "b", "replace_content": "B2"},
-            {"remove_line_number": "3", "content_to_remove": "c", "replace_content": "C3"},
-            {"remove_line_number": "4", "content_to_remove": "d", "replace_content": "D4"},
-            {"remove_line_number": "5", "content_to_remove": "e", "replace_content": "E5"},
-        ],
-    })
-
-    messages, _ = simulate_main_flow([tc])
-    args = find_assistant_args(messages, "call_1")
-
-    assert_equals(len(args["edits"]), 3,
-                  "edits truncated to 3")
-    # Tool call is always rebuilt from the canonical applied form, which
-    # normalises single-line ranges to "start-end".
-    assert_equals(args["edits"][2]["remove_line_number"], "3-3",
-                  "third edit is the original third (1-indexed)")
-
-    os.remove(os.path.join(WORKSPACE, "_t4.py"))
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# Test 5: exactly 3 edits — no truncation needed
-# ═══════════════════════════════════════════════════════════════════════
-
-def test_no_truncate_when_exactly_three():
-    """Exactly 3 edits → no truncation, all 3 preserved."""
-    make_file("_t5.py", "a\nb\nc\n")
-
-    tc = build_tc(1, "edit_file", {
-        "target_file": "_t5.py",
-        "edits": [
-            {"remove_line_number": "1", "content_to_remove": "a", "replace_content": "A"},
-            {"remove_line_number": "2", "content_to_remove": "b", "replace_content": "B"},
-            {"remove_line_number": "3", "content_to_remove": "c", "replace_content": "C"},
-        ],
-    })
-
-    messages, _ = simulate_main_flow([tc])
-    args = find_assistant_args(messages, "call_1")
-
-    assert_equals(len(args["edits"]), 3,
-                  "exactly 3 edits — not truncated")
-
-    os.remove(os.path.join(WORKSPACE, "_t5.py"))
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# Test 6: truncation + [TO] correction together
-# ═══════════════════════════════════════════════════════════════════════
-
-def test_truncate_plus_to_correction():
-    """>3 edits, one with no [TO] → both truncation and [TO] propagate."""
-    make_file("_t6.py", textwrap.dedent("""\
-        def a(): pass
-        def b(): pass
-        def c():
-            return 1
-        def d(): pass
-        def e(): pass
-    """))
-
-    tc = build_tc(1, "edit_file", {
-        "target_file": "_t6.py",
-        "edits": [
-            {"remove_line_number": "1", "content_to_remove": "def a(): pass", "replace_content": "# a"},
-            # edit #2: multi-line without [TO] — should get corrected
-            {"remove_line_number": "3-4",
-             "content_to_remove": "def c():\n    return 1",
-             "replace_content": "def c():\n    return 99"},
-            {"remove_line_number": "2", "content_to_remove": "def b(): pass", "replace_content": "# b"},
-            # edit #4 & #5 — should be truncated off
-            {"remove_line_number": "5", "content_to_remove": "def d(): pass", "replace_content": "# d"},
-            {"remove_line_number": "6", "content_to_remove": "def e(): pass", "replace_content": "# e"},
-        ],
-    })
-
-    messages, _ = simulate_main_flow([tc])
-    args = find_assistant_args(messages, "call_1")
-
-    assert_equals(len(args["edits"]), 3,
-                  "truncated to 3 edits (combined corrections)")
-    # edit #2 (now index 1 after truncation keeping first 3) should have [TO]
-    ctr = args["edits"][1]["content_to_remove"]
-    assert_contains(ctr, "\n[TO]\n",
-                    "second edit's content_to_remove got [TO] marker")
-
-    os.remove(os.path.join(WORKSPACE, "_t6.py"))
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -643,9 +543,6 @@ if __name__ == "__main__":
         ("[TO] marker propagated (basic)", test_to_marker_propagated_basic),
         ("[TO] not added for single-line", test_to_marker_not_added_for_single_line),
         ("[TO] preserved when already correct", test_to_marker_preserved_when_already_correct),
-        ("truncation >3 edits", test_truncate_to_three_edits),
-        ("no truncation at exactly 3 edits", test_no_truncate_when_exactly_three),
-        ("truncation + [TO] combined", test_truncate_plus_to_correction),
         ("remove_line_number corrected", test_remove_line_number_corrected),
         ("indent fix propagated", test_indent_fix_propagated),
         ("multiple tool calls all corrected", test_multiple_tool_calls_all_corrected),

@@ -17,6 +17,7 @@ from ..code_sandbox import WORKSPACE
 from ..config import (
     CODE_PANEL_WARN_CHARS, CODE_PANEL_WARN_ITEMS,
     CODE_PANEL_CRITICAL_ITEMS, CODE_PANEL_CRITICAL_CHARS,
+    MAX_FILE_READ_SIZE,
 )
 
 CODE_INTERPRETER_START = "<====CODE_INTERPRETER_START====>"
@@ -125,12 +126,32 @@ def _format_code(code: str) -> str:
     )
 
 
+# Display-specific truncation window (threshold is MAX_FILE_READ_SIZE from config).
+_TRUNC_HEAD = 8_000  # chars shown from the beginning
+_TRUNC_TAIL = 4_000  # chars shown from the end
+
 def _display_file(filepath: str) -> str:
-    """Read a single file (relative to WORKSPACE) with line numbers."""
+    """Read a single file (relative to WORKSPACE) with line numbers.
+
+    Files larger than ``_MAX_DISPLAY_SIZE`` are truncated: only the first
+    ``_TRUNC_HEAD`` and last ``_TRUNC_TAIL`` characters are shown.
+    """
     try:
         full_path = WORKSPACE / filepath
         if not full_path.is_file():
             return f"--- {filepath} ---\n[File not found: {filepath}]"
+        size = full_path.stat().st_size
+        if size > MAX_FILE_READ_SIZE:
+            with open(full_path, 'r', encoding='utf-8') as f:
+                head = f.read(_TRUNC_HEAD)
+                f.seek(max(0, size - _TRUNC_TAIL))
+                tail = f.read(_TRUNC_TAIL)
+            skipped = size - len(head.encode('utf-8')) - len(tail.encode('utf-8'))
+            return (
+                f"--- {filepath} (TRUNCATED — {size:,} bytes, {size / (1024*1024):.1f} MB) ---\n"
+                f"{head}\n\n... [{skipped / (1024*1024):.1f} MB omitted] ...\n\n{tail}\n"
+                f"--- END TRUNCATED ---"
+            )
         with open(full_path, 'r', encoding='utf-8') as f:
             code = f.read()
         return f"--- {filepath} ---\n{_format_code(code)}"

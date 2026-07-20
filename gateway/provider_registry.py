@@ -18,7 +18,7 @@ from typing import List
 import httpx
 from openai import OpenAI
 
-from src.config import MODEL_PROVIDERS, DEFAULT_PROVIDER
+from src.config import MODEL_PROVIDERS, DEFAULT_PROVIDER, PROVIDER_DESCRIPTIONS, PROVIDER_DEFAULT_MODELS
 from gateway.settings_store import (
     get_api_key,
     get_custom_providers,
@@ -44,7 +44,7 @@ def resolve_provider(provider_id: str) -> dict:
 
     Returns a dict with **every** field consumers need:
         id, name, description, base_url, api_key, model,
-        supports_thinking, extra_body, context_window, custom,
+        extra_body, context_window, custom,
         api_key_configured
 
     For unknown provider IDs the default provider is returned as a fallback.
@@ -85,20 +85,46 @@ def resolve_provider(provider_id: str) -> dict:
 
     # Ensure all expected keys exist
     prov.setdefault("name", prov.get("id", provider_id))
-    prov.setdefault("description", "Custom provider" if custom else "")
-    prov.setdefault("supports_thinking", True)
+    prov.setdefault("description",
+        PROVIDER_DESCRIPTIONS.get(provider_id, "") if not custom else "Custom provider")
     prov.setdefault("extra_body", None)
     prov.setdefault("context_window", 128_000)
 
     return prov
 
 
-def get_default_provider() -> str:
-    """Return the settings-aware default provider ID."""
+def get_default_model_entry() -> str:
+    """Return the id of the default *model* entry shown in the sidebar.
+
+    The agent's default is a *model selection* stored structurally as
+    ``other.agent.default_model = {"provider": ..., "model": ...}`` (the
+    settings store normalizes any legacy form to this on read).  We map that
+    to a single entry id from ``get_available_providers()`` (a composite
+    ``provider::model_id`` when the provider has enabled models, else a bare
+    family id) so the frontend can use it as a scalar selection.
+    """
     settings = get_all_settings()
-    return settings.get("other", {}).get("agent", {}).get(
-        "default_provider", DEFAULT_PROVIDER
-    )
+    avail = get_available_providers()
+    if not avail:
+        return DEFAULT_PROVIDER
+
+    agent = settings.get("other", {}).get("agent", {})
+    dm = agent.get("default_model")
+    if isinstance(dm, dict):
+        provider_id = dm.get("provider", "")
+        model_id = dm.get("model", "")
+        if provider_id:
+            if model_id:
+                for e in avail:
+                    if e.get("provider_id") == provider_id and e.get("model") == model_id:
+                        return e["id"]
+            m = next((e for e in avail if e.get("provider_id") == provider_id), None)
+            if m:
+                return m["id"]
+
+    # System default: first entry belonging to DEFAULT_PROVIDER, else first
+    m = next((e for e in avail if e.get("provider_id") == DEFAULT_PROVIDER), None)
+    return m["id"] if m else avail[0]["id"]
 
 
 def get_available_providers() -> List[dict]:
@@ -109,13 +135,28 @@ def get_available_providers() -> List[dict]:
     for provider_id in MODEL_PROVIDERS:
         seen.add(provider_id)
         r = resolve_provider(provider_id)
-        result.append({
-            "id": r["id"],
-            "name": r["name"],
-            "description": r["description"],
-            "supports_thinking": r["supports_thinking"],
-            "api_key_configured": r["api_key_configured"],
-        })
+        settings = get_all_settings()
+        pm = settings.get("provider_models", {}).get(provider_id, [])
+
+        if pm:
+            for m in pm:
+                mid = m["id"] if isinstance(m, dict) else m
+                result.append({
+                    "id": f"{provider_id}::{mid}",
+                    "name": f"{r['name']} / {mid}",
+                    "api_key_configured": r["api_key_configured"],
+                    "provider_id": provider_id,
+                    "model": mid,
+                })
+        # If no user-selected models, show the provider as a single entry
+        # so the sidebar has something to click — chat will use default model.
+        else:
+            result.append({
+                "id": provider_id,
+                "name": r["name"],
+                "api_key_configured": r["api_key_configured"],
+                "provider_id": provider_id,
+            })
 
     for cp in get_custom_providers():
         cpid = cp.get("id")
@@ -123,14 +164,27 @@ def get_available_providers() -> List[dict]:
             continue
         seen.add(cpid)
         r = resolve_provider(cpid)
-        result.append({
-            "id": r["id"],
-            "name": r["name"],
-            "description": r["description"],
-            "supports_thinking": r["supports_thinking"],
-            "api_key_configured": r["api_key_configured"],
-            "custom": True,
-        })
+        settings = get_all_settings()
+        pm = settings.get("provider_models", {}).get(cpid, [])
+
+        if pm:
+            for m in pm:
+                mid = m["id"] if isinstance(m, dict) else m
+                result.append({
+                    "id": f"{cpid}::{mid}",
+                    "name": f"{r['name']} / {mid}",
+                    "api_key_configured": r["api_key_configured"],
+                    "provider_id": cpid,
+                    "model": mid,
+                    "custom": True,
+                })
+        else:
+            result.append({
+                "id": r["id"],
+                "name": r["name"],
+                "api_key_configured": r["api_key_configured"],
+                "custom": True,
+            })
 
     return result
 
@@ -158,18 +212,39 @@ def get_max_concurrent_tools() -> int:
 
 
 def get_web_secondary_config() -> dict:
-    """Resolve the web secondary model configuration."""
+    """Resolve the web secondary model configuration.
+
+    Reads the structured selection
+    ``other.web_secondary.model = {"provider": ..., "model": ...}``
+    (normalized on read by the settings store).  ``model`` ("") ⇒ auto-select
+    the provider's first enabled model (else its default model).  Returns
+    ``{provider_id, base_url, api_key, model}`` ready for the OpenAI client.
+    """
     settings = get_all_settings()
     ws = settings.get("other", {}).get("web_secondary", {})
-    provider_id = ws.get("provider", "")
+
+    sel = ws.get("model")
+    provider_id = ""
+    model_id = ""
+    if isinstance(sel, dict):
+        provider_id = sel.get("provider", "")
+        model_id = sel.get("model", "")
 
     if provider_id:
         r = resolve_provider(provider_id)
+        if not model_id:
+            # Auto-select: first enabled model, else the provider's default model
+            pm = settings.get("provider_models", {}).get(provider_id, [])
+            if pm:
+                first = pm[0]
+                model_id = first["id"] if isinstance(first, dict) else first
+            elif PROVIDER_DEFAULT_MODELS.get(provider_id):
+                model_id = PROVIDER_DEFAULT_MODELS[provider_id][0]["id"]
         return {
             "provider_id": provider_id,
             "base_url": r["base_url"],
             "api_key": r["api_key"],
-            "model": ws.get("model", "") or r.get("model", ""),
+            "model": model_id,
         }
     return {"provider_id": "", "base_url": "", "api_key": "", "model": ""}
 
