@@ -230,6 +230,15 @@ const LANG = {
     'tool.noOutput': 'No output',
     'tool.deletedBadge': '(deleted)',
     'tool.editIndex': 'Edit #{n}',
+    'tool.remembering': 'Remembering',
+    'tool.recallingMemory': 'Recalling memory',
+    'tool.loggingGap': 'Logging a knowledge gap',
+    'tool.forgettingMemory': 'Forgetting a memory',
+    'tool.reportingFindings': 'Reporting findings',
+    'tool.reportingUnresolved': 'Reporting: could not resolve',
+    'tool.memoryVolatile': 'volatile',
+    'tool.memoryUpdating': 'Updating memory {id}',
+    'tool.memoryPendingReview': 'Pending end-of-session review — not saved yet',
 
     // ── Thinking indicator ─────────────────────────────────────────
     'thinking.label': 'Thinking',
@@ -478,6 +487,15 @@ const LANG = {
     'tool.noOutput': '无输出',
     'tool.deletedBadge': '（已删除）',
     'tool.editIndex': '编辑 #{n}',
+    'tool.remembering': '记忆中',
+    'tool.recallingMemory': '回忆记忆',
+    'tool.loggingGap': '记录知识缺口',
+    'tool.forgettingMemory': '删除记忆',
+    'tool.reportingFindings': '报告调查结果',
+    'tool.reportingUnresolved': '报告：未能解决',
+    'tool.memoryVolatile': '易变',
+    'tool.memoryUpdating': '更新记忆 {id}',
+    'tool.memoryPendingReview': '待会话结束审核 — 尚未保存',
 
     // ── Thinking indicator ─────────────────────────────────────────
     'thinking.label': '思考中',

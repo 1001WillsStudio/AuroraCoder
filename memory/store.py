@@ -62,6 +62,16 @@ CREATE TABLE IF NOT EXISTS memories (
 );
 CREATE INDEX IF NOT EXISTS idx_memories_plane ON memories(plane);
 CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);
+
+-- How far into a conversation's message list ops/extractor.py's write pass
+-- has already scanned — see get_extraction_checkpoint/set_extraction_checkpoint
+-- below and run_extraction()'s docstring for why this exists (avoid
+-- re-scanning + re-judging the whole transcript from scratch on every turn).
+CREATE TABLE IF NOT EXISTS extraction_checkpoints (
+    conversation_id TEXT PRIMARY KEY,
+    last_extracted_count INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -236,6 +246,35 @@ class MemoryRepository:
         except ValueError:
             logger.error("[memory] Corrupt memory file: %s", full)
             return None
+
+    # ------------------------------------------------------------------
+    # Extraction checkpoints (ops/extractor.py's incremental write pass)
+    # ------------------------------------------------------------------
+
+    def get_extraction_checkpoint(self, conversation_id: str) -> int:
+        """How many of this conversation's messages the write pass has
+        already scanned. 0 for a conversation never extracted before."""
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT last_extracted_count FROM extraction_checkpoints WHERE conversation_id=?",
+                (conversation_id,),
+            ).fetchone()
+        return row["last_extracted_count"] if row else 0
+
+    def set_extraction_checkpoint(self, conversation_id: str, message_count: int) -> None:
+        """Record that this conversation's write pass has now scanned up to
+        (but not including anything past) ``message_count`` messages."""
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO extraction_checkpoints (conversation_id, last_extracted_count, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(conversation_id) DO UPDATE SET
+                    last_extracted_count=excluded.last_extracted_count, updated_at=excluded.updated_at
+                """,
+                (conversation_id, message_count, now),
+            )
 
     def all_items(self, plane: Optional[str] = None, scope: Optional[str] = None) -> List[MemoryItem]:
         """Return full MemoryItem objects (reads file content) for candidate ranking."""

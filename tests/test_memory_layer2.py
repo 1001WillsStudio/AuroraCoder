@@ -215,6 +215,124 @@ def test_nominated_duplicate_of_updates_existing_memory_in_place():
 
 
 # ---------------------------------------------------------------------------
+# Extraction checkpoint (memory/store.py's get/set_extraction_checkpoint) —
+# run_extraction() only scans the messages added since the LAST pass for a
+# given conversation_id, since _schedule_memory_distillation fires after
+# EVERY turn (gateway/streaming.py), not once at the end.
+# ---------------------------------------------------------------------------
+
+def test_run_extraction_only_rescans_new_messages_on_a_later_turn():
+    """Turn 1 nominates and writes a memory. Turn 2 adds two throwaway
+    messages with no nomination of its own. If the checkpoint weren't
+    advancing, turn 2 would re-send the ENTIRE (turn 1 + turn 2) transcript
+    — which still contains turn 1's `remember` call — back to the model.
+    With the checkpoint, turn 2's own new slice is just 2 plain messages:
+    below MIN_MESSAGES_TO_BOTHER and with nothing nominated, so the model
+    must not be called a second time at all."""
+    cid = "conv-incremental"
+    payload_turn1 = json.dumps({"memories": [{
+        "plane": "stance", "type": "preference", "scope": "user", "source": "nominated",
+        "content": _REMEMBER_ARGS["content"], "description": _REMEMBER_ARGS["description"], "confidence": "high",
+    }]})
+    _patch_extractor(payload_turn1)
+    result1 = extractor.run_extraction(cid, _MSGS_WITH_REMEMBER_CALL)
+    assert len(result1) == 1, result1
+
+    model_calls = []
+
+    def _explode_if_called(**kwargs):
+        model_calls.append(kwargs)
+        raise AssertionError("model must not be called again for turn 2's trivial new slice")
+
+    extractor.OpenAI = lambda base_url, api_key: types.SimpleNamespace(
+        chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=_explode_if_called))
+    )
+
+    full_history_turn2 = _MSGS_WITH_REMEMBER_CALL + [
+        {"role": "user", "content": "Thanks — one more unrelated question."},
+        {"role": "assistant", "content": "Sure, go ahead."},
+    ]
+    result2 = extractor.run_extraction(cid, full_history_turn2)
+    assert result2 == [], result2
+    assert model_calls == [], "checkpoint did not prevent re-scanning turn 1's messages"
+
+
+def test_run_extraction_checkpoint_advances_even_when_nothing_is_written():
+    """A turn whose new content is judged and yields zero candidates must
+    still advance the checkpoint — otherwise every all-no-op turn would
+    keep growing the re-scanned window forever."""
+    cid = "conv-checkpoint-noop"
+    repo = extractor.get_repository()
+    _patch_extractor('{"memories": []}')
+    result = extractor.run_extraction(cid, _MSGS_WITH_REMEMBER_CALL)
+    assert result == []
+    assert repo.get_extraction_checkpoint(cid) == len(_MSGS_WITH_REMEMBER_CALL)
+
+
+def test_run_extraction_checkpoint_not_advanced_when_extraction_disabled():
+    """A 'never even tried' skip (extraction toggled off) must NOT burn the
+    checkpoint — otherwise re-enabling passive extraction later would
+    silently and permanently drop whatever accumulated while it was off."""
+    cid = "conv-checkpoint-disabled"
+    repo = extractor.get_repository()
+    orig = extractor.passive_extraction_enabled
+    extractor.passive_extraction_enabled = lambda: False
+    try:
+        result = extractor.run_extraction(cid, _MSGS_WITH_REMEMBER_CALL)
+    finally:
+        extractor.passive_extraction_enabled = orig
+    assert result == []
+    assert repo.get_extraction_checkpoint(cid) == 0
+
+
+def test_run_extraction_checkpoint_not_advanced_when_no_provider_configured():
+    """Same 'never even tried' reasoning as above, for the other upfront
+    skip: no provider configured yet."""
+    cid = "conv-checkpoint-unconfigured"
+    repo = extractor.get_repository()
+    extractor.get_memory_extraction_config = lambda: {
+        "provider_id": "", "base_url": "", "api_key": "", "model": "",
+    }
+    result = extractor.run_extraction(cid, _MSGS_WITH_REMEMBER_CALL)
+    assert result == []
+    assert repo.get_extraction_checkpoint(cid) == 0
+
+
+def test_extraction_checkpoint_is_reserved_before_the_slow_llm_call():
+    """Regression test for a real race: gateway/streaming.py submits
+    run_extraction to a background thread pool rather than awaiting it, so
+    a resend that cancels+replaces the in-flight stream for a conversation
+    (see _cancel_active_stream's "no stream ever outlives a cancel call"
+    guarantee) can end up with the OLD stream's extraction call still
+    waiting on a slow LLM response when the NEW stream finishes and
+    submits its OWN extraction call for the SAME conversation_id. This
+    simulates that reentrant second call happening WHILE the first call's
+    model request is "in flight" (deterministic, no real threads needed —
+    the fake client just calls back into run_extraction from inside its
+    own create()). The reentrant call must see an already-advanced
+    checkpoint and find nothing left to scan, proving the checkpoint is
+    reserved before, not after, the network call."""
+    cid = "conv-race"
+    reentrant_results = []
+
+    def _reentrant_create(**kwargs):
+        reentrant_results.append(extractor.run_extraction(cid, _MSGS_WITH_REMEMBER_CALL))
+        choice = types.SimpleNamespace(message=types.SimpleNamespace(content='{"memories": []}'))
+        return types.SimpleNamespace(choices=[choice])
+
+    extractor.get_memory_extraction_config = lambda: {
+        "provider_id": "fake", "base_url": "http://fake", "api_key": "fake-key", "model": "fake-model",
+    }
+    extractor.OpenAI = lambda base_url, api_key: types.SimpleNamespace(
+        chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=_reentrant_create))
+    )
+
+    extractor.run_extraction(cid, _MSGS_WITH_REMEMBER_CALL)
+
+    assert reentrant_results == [[]], reentrant_results
+
+
+# ---------------------------------------------------------------------------
 # Cross-conversation search (ops/conversation_search.py) — the shared,
 # deterministic utility both the write-pass (in-process) and, eventually,
 # Layer 2b's gap-investigation worker (over HTTP) are meant to use, rather

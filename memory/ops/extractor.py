@@ -30,7 +30,10 @@ conversation reaches a terminal status, AND at the moment a conversation
 hands off via ``continue_as_new_chat`` (that segment is "done" from a
 memory point of view even though the logical task continues elsewhere —
 otherwise any ``remember`` calls made before the handoff would never be
-mined).
+mined). That trigger fires after EVERY qualifying turn, not once when a
+conversation is truly finished — so ``run_extraction`` only scans the
+messages added since that conversation's last pass (see its docstring),
+rather than re-scanning the whole transcript from turn one every time.
 
 ## Layer 2b (Gap Engine) reuses this same gate
 
@@ -212,8 +215,52 @@ def _extract_nominated_candidates(messages: List[Dict[str, Any]]) -> List[Dict[s
 
 
 def run_extraction(conversation_id: str, messages: List[Dict[str, Any]]) -> List[str]:
-    """Run the unified write pass for one finished (or handed-off)
-    conversation segment.
+    """Run the unified write pass for the messages added since this
+    conversation's LAST write pass — not the whole transcript from turn
+    one every time.
+
+    ## Why incremental, not "rescan everything" (see gateway/streaming.py
+    ## module docstring "Passive Memory Distillation")
+
+    ``_schedule_memory_distillation`` fires after EVERY qualifying turn of
+    a conversation, not once when the user is truly done with it — a
+    10-turn conversation calls this 10 times. The original version handed
+    the FULL message list to the write pass every single time, so a
+    `remember` call from turn 1 got re-parsed, re-judged by the LLM, and
+    re-submitted to dedup/consolidation on turns 2 through 10 too — safe
+    (existing-memory dedup mostly absorbs it into a `duplicate_of` update
+    rather than a fresh row) but wastes an LLM call proportional to
+    (transcript length × turn count), not just transcript length. A
+    memory/store.py-backed checkpoint (``get_extraction_checkpoint`` /
+    ``set_extraction_checkpoint``) now tracks how many messages of this
+    conversation have already been scanned, so each call only looks at
+    this turn's new messages.
+
+    Tradeoff accepted deliberately: the transcript text and nomination
+    parsing the LLM judge sees is now scoped to just the new tail, not the
+    whole conversation-so-far — so a nomination that only makes sense
+    combined with much earlier turns (rare) won't have that context
+    inline. Cross-conversation search (``ops/conversation_search.py``)
+    still runs unchanged and is unaffected (it was always about OTHER
+    conversations, never this one's own earlier turns).
+
+    ## Concurrency: the checkpoint is reserved BEFORE the LLM call, not after
+
+    ``_run_session_end_memory_ops`` (gateway/streaming.py) submits this to
+    a background thread pool rather than awaiting it — so on a fast resend
+    (cancel old stream, immediately start a new one for the SAME
+    conversation_id — see ``_cancel_active_stream``'s "no stream ever
+    outlives a cancel call" guarantee), the OLD stream's extraction call
+    can still be waiting on a slow LLM response when the NEW stream
+    finishes and submits its OWN extraction call for the same
+    conversation_id. If the checkpoint were only advanced after a
+    successful LLM round-trip, both calls could read the same starting
+    checkpoint and re-scan (and potentially double-write) the same
+    messages. Advancing the checkpoint to ``len(messages)`` immediately —
+    before the network call — means the second call always sees the
+    range as already claimed, at the cost of never retrying that range if
+    THIS call then fails. That's the same tradeoff already documented
+    below for plain failures, just applied slightly earlier.
 
     Returns the list of newly-written/updated memory ids (empty list is
     the expected common case — the no-op gate is "allowed and preferred",
@@ -221,13 +268,44 @@ def run_extraction(conversation_id: str, messages: List[Dict[str, Any]]) -> List
     raises: any failure is logged and treated as a no-op, since a broken
     pass must never surface as a user-visible error for a conversation
     that already completed successfully. Nominated candidates lost to a
-    failed pass are not retried — a missed memory can usually be
-    re-established later; that's an accepted tradeoff for keeping this
-    fail-open like the rest of the memory system (unlike the old
-    synchronous review gate, this pass has no user-facing tool-call
-    result to report failure through anyway).
+    failed pass (or claimed by the checkpoint but never actually judged,
+    e.g. this process crashing mid-call) are not retried — a missed
+    memory can usually be re-established later; that's an accepted
+    tradeoff for keeping this fail-open like the rest of the memory
+    system (unlike the old synchronous review gate, this pass has no
+    user-facing tool-call result to report failure through anyway).
+
+    The checkpoint is deliberately only advanced once we're actually
+    about to attempt a pass — NOT when skipped by ``passive_extraction_enabled``
+    or "no provider configured" below, both "never even tried" gates
+    rather than "tried and it didn't work out". Those are usually
+    transient/config states (memory just got enabled, or a provider just
+    got configured) — permanently skipping past whatever accumulated
+    while off would silently and pointlessly drop that backlog forever
+    instead of just catching up on the very next turn.
     """
-    written = _run_write_pass(conversation_id, messages, nomination_label="remember")
+    if not passive_extraction_enabled():
+        return []
+
+    repo = get_repository()
+    checkpoint = repo.get_extraction_checkpoint(conversation_id)
+    new_messages = messages[checkpoint:]
+    if not new_messages:
+        return []
+
+    cfg = get_memory_extraction_config()
+    if not cfg.get("api_key") or not cfg.get("base_url"):
+        logger.info("[memory-extract] No provider configured — skipping (checkpoint left unadvanced).")
+        return []
+
+    # Reserve this range now, before the slow LLM call — see "Concurrency"
+    # above. Everything past this point is "we tried" territory: a
+    # subsequent failure (network error, rejected judgment, malformed
+    # output) leaves the checkpoint advanced anyway, same as the plain
+    # failure case documented above.
+    repo.set_extraction_checkpoint(conversation_id, len(messages))
+
+    written = _run_write_pass(conversation_id, new_messages, nomination_label="remember")
     return [w["id"] for w in written]
 
 
@@ -267,6 +345,14 @@ def _run_write_pass(
     """Shared core behind ``run_extraction`` and
     ``run_gap_investigation_extraction``: parse nominations, judge
     (nominated + discovered) in one LLM call, write approved candidates.
+
+    ``messages`` means something different per caller: for
+    ``run_gap_investigation_extraction`` it's always the worker's entire
+    (one-shot, never revisited) transcript. For ``run_extraction`` it's
+    only the slice since that conversation's last extraction checkpoint —
+    see that function's docstring for why — so ``MIN_MESSAGES_TO_BOTHER``
+    below effectively means "this turn's own new content is trivial",
+    not "this conversation overall is short".
 
     Returns a list of ``{"id": memory_id, "source": "nominated"|"discovered"}``
     — richer than the plain id list ``run_extraction`` exposes publicly,

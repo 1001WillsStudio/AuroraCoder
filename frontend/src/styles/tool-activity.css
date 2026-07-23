@@ -377,3 +377,61 @@
   font-style: italic;
   font-size: 0.85rem;
 }
+
+/* ── Memory tools (remember/recall/log_gap/forget/report_findings) ── */
+.memory-fact-preview {
+  padding: 12px 14px;
+}
+
+.memory-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.memory-badge {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-secondary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+}
+
+.memory-badge-confidence {
+  color: var(--accent-secondary);
+  border-color: var(--accent-secondary);
+}
+
+.memory-badge-volatile {
+  color: var(--warning, #f59e0b);
+  border-color: var(--warning, #f59e0b);
+}
+
+.memory-fact-content {
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.memory-fact-updating {
+  margin-top: 8px;
+  font-size: 0.8rem;
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+.memory-fact-pending {
+  margin-top: 10px;
+  font-size: 0.78rem;
+  color: var(--text-tertiary);
+  font-style: italic;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 8px;
+}

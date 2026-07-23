@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef } from 'react'
 import { 
   Search, Globe, FileText, FilePlus, FileEdit, Trash2, 
   FolderOpen, Terminal, Package, CheckCircle, Loader2,
-  ChevronDown, ChevronRight, Eye, StopCircle
+  ChevronDown, ChevronRight, Eye, StopCircle,
+  BookmarkPlus, BookmarkX, Brain, HelpCircle, ClipboardCheck
 } from 'lucide-react'
 import useLanguage from '../hooks/useLanguage'
 
@@ -278,6 +279,78 @@ function getToolConfig(toolName, args, result, t) {
         { maxLines: 80 }
       )
 
+    // ── Memory tools (memory/ — see src/core_tools/memory_tools.py) ──
+    // `remember` and `report_findings` are pure local no-ops at call time
+    // (no I/O happens here — see their docstrings): what's shown below is
+    // just the nomination itself, judged later by memory/ops/extractor.py.
+    // `recall`/`forget`/`log_gap` do real I/O synchronously, so their
+    // result content (from memory_tools.py) is already a ready-to-show string.
+    case 'remember':
+      return {
+        icon: <BookmarkPlus size={16} />,
+        label: t('tool.remembering'),
+        detail: args.description || '',
+        hasExpandedView: true,
+        expandedContent: (
+          <MemoryFactPreview
+            content={args.content}
+            plane={args.plane}
+            type={args.type}
+            scope={args.scope}
+            confidence={args.confidence}
+            volatile={args.volatile}
+            updatingId={args.memory_id}
+          />
+        )
+      }
+
+    case 'recall':
+      return resultTool(<Brain size={16} />, t('tool.recallingMemory'), args.query ? `"${args.query}"` : '', { maxLines: 60 })
+
+    case 'log_gap':
+      return {
+        icon: <HelpCircle size={16} />,
+        label: t('tool.loggingGap'),
+        detail: args.question || '',
+        hasExpandedView: true,
+        expandedContent: (
+          <div className="memory-fact-preview">
+            <MemoryBadgeRow badges={[
+              args.priority && { key: 'priority', value: args.priority },
+              args.strategy && { key: 'strategy', value: args.strategy },
+              args.scope && { key: 'scope', value: args.scope },
+            ]} />
+          </div>
+        )
+      }
+
+    case 'forget':
+      return {
+        icon: <BookmarkX size={16} />,
+        label: t('tool.forgettingMemory'),
+        detail: args.memory_id || '',
+        hasExpandedView: false
+      }
+
+    case 'report_findings': {
+      const resolved = !!args.resolved
+      return {
+        icon: <ClipboardCheck size={16} />,
+        label: resolved ? t('tool.reportingFindings') : t('tool.reportingUnresolved'),
+        detail: (resolved ? args.description : args.notes) || '',
+        hasExpandedView: resolved,
+        expandedContent: resolved ? (
+          <MemoryFactPreview
+            content={args.answer}
+            plane={args.plane}
+            type={args.type}
+            scope={args.scope}
+            confidence={args.confidence}
+          />
+        ) : null
+      }
+    }
+
     default:
       return {
         icon: <Package size={16} />,
@@ -418,6 +491,48 @@ function FilePreview({ content, isNew }) {
           )}
         />
       </div>
+    </div>
+  )
+}
+
+/**
+ * A row of small metadata badges (plane/type/scope/confidence/...).
+ * Falsy entries in `badges` are skipped so callers can pass conditional
+ * fields inline without pre-filtering.
+ */
+function MemoryBadgeRow({ badges }) {
+  const visible = (badges || []).filter(Boolean)
+  if (visible.length === 0) return null
+  return (
+    <div className="memory-badge-row">
+      {visible.map((b, i) => (
+        <span key={i} className={`memory-badge memory-badge-${b.key}`}>{String(b.value)}</span>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * Preview for a `remember` nomination or a resolved `report_findings`
+ * finding — neither writes anything at call time (see memory_tools.py),
+ * this just shows what was nominated for the end-of-session judgment pass.
+ */
+function MemoryFactPreview({ content, plane, type, scope, confidence, volatile: isVolatile, updatingId }) {
+  const { t } = useLanguage()
+  return (
+    <div className="memory-fact-preview">
+      <MemoryBadgeRow badges={[
+        plane && { key: 'plane', value: plane },
+        type && { key: 'type', value: type },
+        scope && { key: 'scope', value: scope },
+        confidence && { key: 'confidence', value: confidence },
+        isVolatile && { key: 'volatile', value: t('tool.memoryVolatile') },
+      ]} />
+      {content && <div className="memory-fact-content">{content}</div>}
+      {updatingId && (
+        <div className="memory-fact-updating">{t('tool.memoryUpdating', { id: updatingId })}</div>
+      )}
+      <div className="memory-fact-pending">{t('tool.memoryPendingReview')}</div>
     </div>
   )
 }
