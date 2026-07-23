@@ -103,6 +103,8 @@ def _format_tool_display(tool: Dict) -> str:
         return _fmt_toolset(tool)
     elif ttype == "mcp":
         return _fmt_mcp(tool)
+    elif ttype == "mcp_toolset":
+        return _fmt_mcp_toolset(tool)
     elif ttype == "skill":
         return _fmt_skill(tool)
     else:
@@ -170,6 +172,26 @@ def _fmt_mcp(tool: Dict) -> str:
     desc = tool.get("description", "")
     suffix = f" — {desc}" if desc else ""
     lines.append(f"  {sig}{suffix}")
+
+    return "\n".join(lines)
+
+
+def _fmt_mcp_toolset(tool: Dict) -> str:
+    """MCP server in toolset mode (may expose 0 tools — prompt-only)."""
+    desc = tool.get("description", "") or tool.get("doc", "")
+    functions = tool.get("functions", [])
+
+    lines = [desc.strip()] if desc.strip() else []
+
+    if functions:
+        if lines:
+            lines.append("")
+        lines.append("Functions:")
+        for fn in functions:
+            fn_name = fn.get("name", "")
+            fn_desc = fn.get("description", "")
+            suffix = f" — {fn_desc}" if fn_desc else ""
+            lines.append(f"  - {fn_name}{suffix}")
 
     return "\n".join(lines)
 
