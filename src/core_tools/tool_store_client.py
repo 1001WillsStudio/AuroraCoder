@@ -117,12 +117,18 @@ def tool_store_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     return _raw_tool_store_tool(**arguments), arguments
 
 
-def get_toolstore_tools_prompt() -> str:
+def get_toolstore_tools_prompt(context: dict | None = None) -> str:
     """Return a unified listing of primary and secondary ToolStore tools.
 
-    Primary tools are listed first with descriptions (the LLM can call
-    them directly).  Secondary tools follow as names only (the LLM must
-    use ``tool_store`` to access them).
+    Parameters
+    ----------
+    context : dict | None
+        Execution-context metadata to inject into tool prompts.
+        Any ``{key}`` placeholder in a primary tool's description is
+        replaced with the corresponding value.  Common keys:
+
+        - ``conversation_id`` — the current conversation ID
+        - ``workspace_root`` — absolute path to the workspace
 
     Returns an empty string when no tools are configured.
     """
@@ -131,6 +137,11 @@ def get_toolstore_tools_prompt() -> str:
     # ── Primary tools (with descriptions) ────────────────────────────
     primary = _primary_tool_listing()
     if primary:
+        # Inject context metadata into the prompt
+        if context:
+            for key, value in context.items():
+                primary = primary.replace("{" + key + "}", str(value))
+
         parts.append(
             "\n\n**Tool Store — Primary Tools** (call these directly, "
             "no ``tool_store`` needed):\n"

@@ -133,7 +133,12 @@ def generate_chat_responses_stream_native(
         current_time=datetime.datetime.now().isoformat(),
         display_guide=DISPLAY_GUIDE,
         terminal_env_note=TERMINAL_ENV_NOTE,
-        toolstore_tools=get_toolstore_tools_prompt(),
+        toolstore_tools=get_toolstore_tools_prompt(
+            context={
+                "conversation_id": conversation_id or "",
+                "workspace_root": str(Path.cwd()),
+            }
+        ),
         workspace_tree=workspace_tree,
     )
 
