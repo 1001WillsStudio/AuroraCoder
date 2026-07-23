@@ -1,281 +1,415 @@
 #!/usr/bin/env python3
 """
-schedule-daemon — stdio MCP server for agent self-wakeup scheduling.
+ScheduleWake — a prompt-only stdio MCP server for agent self-wakeup.
 
-Provides three tools visible to the agent via the ToolStore MCP pipeline:
+This server exposes **zero** function tools.  Its entire purpose is:
 
-    schedule_wakeup  — register a future wake-up message for a conversation
-    list_scheduled   — list pending scheduled tasks for a conversation
-    cancel_scheduled — cancel a pending scheduled task
+  1. During the MCP ``initialize`` handshake, return an ``instructions``
+     string that teaches the agent how to schedule its own future wake-ups
+     by writing files into ``.schedules/``.  ToolStore surfaces that
+     ``instructions`` text to the agent's system prompt — that prompt IS
+     the tool.
 
-A background daemon thread monitors due tasks and fires them by POSTing
-to the AuroraCoder gateway's ``/api/chat`` endpoint, resuming the
-conversation as if the user had sent a message.
+  2. Run a background daemon thread that watches ``.schedules/`` for
+     due tasks and, when one matures, POSTs a user message to the
+     AuroraCoder gateway's ``/api/chat`` endpoint, resuming the
+     conversation as if the user had typed the message.
 
-Designed to be started by the ToolStore MCPClient via stdio transport
-and kept alive indefinitely by the connection pool.
+The agent interacts purely through the file system using tools it
+already has (``write_file``, ``edit_file``, ``delete_file``,
+``list_directory``, ``read_file``).  No tool calls are ever made into
+this process.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import httpx
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-SERVER_NAME = "schedule-daemon"
+SERVER_NAME = "ScheduleWake"
 SERVER_VERSION = "1.0.0"
+PROTOCOL_VERSION = "2024-11-05"
 
-# How often the daemon thread checks for due tasks (seconds)
-POLL_INTERVAL = 15
+# How often the daemon thread re-scans schedules and checks for due tasks.
+POLL_INTERVAL_SECONDS = 15
 
-# Where to find the AuroraCoder gateway
+# Where to find the AuroraCoder gateway (resumes the conversation).
 GATEWAY_URL = os.environ.get("CONVO_SERVER_URL", "http://localhost:8081")
 
-# Where to persist schedules
-DATA_DIR = Path(
-    os.environ.get("SCHEDULE_DATA_DIR", os.path.expanduser("~/.schedule-daemon"))
-)
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-SCHEDULES_FILE = DATA_DIR / "schedules.json"
+# The workspace root whose ``.schedules/`` subdirectory we watch.  Defaults
+# to the current working directory of the server process, which — when
+# launched by ToolStore under AuroraCoder — is the agent workspace.
+WORKSPACE_ROOT = Path(os.environ.get("WORKSPACE_DIR", os.getcwd())).resolve()
+SCHEDULES_DIR = WORKSPACE_ROOT / ".schedules"
+
+# Fired-schedule handling.  Default ("") → delete the file after firing,
+# since a one-shot wake-up has no reason to linger.  Set SCHEDULE_ARCHIVE_DIR
+# to a directory name (relative to the workspace) to move fired files there
+# instead, e.g. ".schedules/.done".
+ARCHIVE_DIR_NAME = os.environ.get("SCHEDULE_ARCHIVE_DIR", "")
+
+# ── The onboarding prompt that ToolStore surfaces to the agent ───────────────
+
+INSTRUCTIONS = """\
+Schedule wake-ups for yourself
+
+You can schedule a wake-up message that will be sent to this conversation
+at a future time — resuming you exactly as if the user had typed it.  Use
+this to check on long-running training, run periodic CI, follow up on a
+process that has not finished, or pick something back up later.
+
+Schedule files live in the `.schedules/` directory of the workspace.  Each
+file is one schedule.  To create one, use your existing file tools — no
+special tool call is needed:
+
+    write_file(".schedules/<descriptive-name>.json", {
+        "conversation_id": "<YOUR CURRENT CONVERSATION ID>",
+        "when": "<when to wake up>",
+        "message": "<what your future self should do>"
+    })
+
+Fields
+
+- `conversation_id`  — your current conversation ID.  It is
+  `{conversation_id}`.  Put that exact value here; the wake-up is
+  delivered back to *this* conversation.
+- `when`  — when the message should arrive.  Either an ISO 8601
+  datetime (`2026-07-23T15:00:00Z`) or a relative time
+  (`in 30 minutes`, `in 6 hours`, `in 2 days`).
+- `message`  — the user message you will receive.  Write it the way you
+  would want a user to phrase it; be specific about what to check or do,
+  because the woken-you may not remember why you set this.
+
+Manage your schedules with the file tools you already have
+
+- New schedule      → `write_file(".schedules/check_loss.json", {...})`
+- Change a schedule→ `edit_file(".schedules/check_loss.json", ...)`
+- Cancel one       → `delete_file(".schedules/check_loss.json")`
+- Inspect pending  → `list_directory(".schedules/")` then `read_file`
+
+Lifecycle
+
+A background watcher in this server scans `.schedules/` every
+15s, fires any schedule whose `when` has arrived, then removes the
+file.  Editing a schedule file re-reads it; deleting it cancels the
+wake-up.  Nothing else is required of you.
+
+Example
+
+You just started a long training run and want to check on it in 6 hours:
+
+    write_file(".schedules/check_training_loss.json", {
+        "conversation_id": "{conversation_id}",
+        "when": "in 6 hours",
+        "message": "Check whether the training run in /workspace/runs/exp3 has converged. Read the latest log, and if the loss is still dropping, schedule another check 6 hours from now; if it has plateaued, stop the run and summarise the results."
+    })
+
+Keep the filename descriptive (no spaces), so that several schedules can
+coexist without colliding.
+"""
 
 
-# ── In-memory schedule store (thread-safe) ───────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+# Schedule daemon — file watcher + due-task firer
+# ═══════════════════════════════════════════════════════════════════════════════
 
-class ScheduleStore:
-    """Thread-safe in-memory store backed by a JSON file."""
 
-    def __init__(self, filepath: Path):
-        self._filepath = filepath
+class ScheduleDaemon:
+    """Watches ``.schedules/`` and fires due tasks.
+
+    The file system is the single source of truth: the agent writes /
+    edits / deletes files, and this daemon reconciles its in-memory index
+    to the disk on every scan.
+
+    In-memory index:  filename → (mtime, parsed task dict).  Only files
+    that parse to a valid schedule (with the required keys) are tracked.
+   """
+
+    def __init__(self, schedules_dir: Path, poll_interval: float):
+        self._dir = schedules_dir
+        self._poll = poll_interval
         self._lock = threading.Lock()
-        self._tasks: Dict[str, dict] = {}
-        self._load()
+        # filename → (mtime, task dict)
+        self._index: Dict[str, Tuple[float, dict]] = {}
+        self._running = False
+        self._thread: Optional[threading.Thread] = None
 
-    # ── I/O ──────────────────────────────────────────────────────────────
+    # ── lifecycle ─────────────────────────────────────────────────────────
 
-    def _load(self) -> None:
-        if self._filepath.exists():
-            try:
-                with open(self._filepath, encoding="utf-8") as f:
-                    self._tasks = json.load(f)
-            except (json.JSONDecodeError, OSError):
-                self._tasks = {}
-
-    def _save(self) -> None:
+    def start(self) -> None:
+        if self._running:
+            return
+        self._running = True
+        # Best-effort mkdir; if it fails we simply watch nothing until the
+        # agent creates it.
         try:
-            tmp = self._filepath.with_suffix(".tmp")
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(self._tasks, f, indent=2, ensure_ascii=False)
-            tmp.replace(self._filepath)
+            self._dir.mkdir(parents=True, exist_ok=True)
         except OSError:
             pass
+        self._thread = threading.Thread(
+            target=self._loop, name="ScheduleWake-daemon", daemon=True
+        )
+        self._thread.start()
+        log("daemon started (poll=%.0fs, dir=%s, gateway=%s)",
+            self._poll, self._dir, GATEWAY_URL)
 
-    # ── CRUD ─────────────────────────────────────────────────────────────
+    def stop(self) -> None:
+        self._running = False
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=5)
+        log("daemon stopped")
 
-    def add(self, task: dict) -> str:
-        """Add a task and return its id."""
-        import uuid as _uuid
-        tid = _uuid.uuid4().hex[:12]
-        task["id"] = tid
-        task.setdefault("status", "pending")
-        task.setdefault("created_at", datetime.now(timezone.utc).isoformat())
+    # ── main loop ────────────────────────────────────────────────────────
+
+    def _loop(self) -> None:
+        while self._running:
+            try:
+                self._reconcile()
+                self._fire_due()
+            except Exception:
+                log("daemon iteration error", exc_info=True)
+            self._sleep(self._poll)
+
+    def _sleep(self, seconds: float) -> None:
+        """Sleep in small steps so stop() is responsive."""
+        for _ in range(int(seconds * 2)):
+            if not self._running:
+                return
+            time.sleep(0.5)
+
+    # ── reconcile index with disk ───────────────────────────────────────
+
+    def _reconcile(self) -> None:
+        """Update the in-memory index to match what is on disk."""
+        if not self._dir.exists():
+            return
+
+        seen: Dict[str, float] = {}
+        for entry in self._dir.iterdir():
+            if not entry.is_file() or not entry.name.endswith(".json"):
+                continue
+            # Don't pick up archive subfolder leak if ARCHIVE lives under .schedules.
+            if entry.name.startswith("."):
+                continue
+            try:
+                seen[entry.name] = entry.stat().st_mtime
+            except FileNotFoundError:
+                continue
+
         with self._lock:
-            self._tasks[tid] = task
-            self._save()
-        return tid
+            # New / modified files → load them.
+            for name, mtime in seen.items():
+                prev = self._index.get(name)
+                if prev is None or mtime > prev[0]:
+                    task = self._load(name)
+                    if task is not None:
+                        self._index[name] = (mtime, task)
+                    else:
+                        # Invalid: drop it so we don't keep retrying every cycle.
+                        self._index.pop(name, None)
+            # Deleted files → drop them.
+            for name in list(self._index):
+                if name not in seen:
+                    del self._index[name]
 
-    def list_for(self, conversation_id: str) -> List[dict]:
-        with self._lock:
-            return [
-                t for t in self._tasks.values()
-                if t.get("conversation_id") == conversation_id
-                and t.get("status") == "pending"
-            ]
+    def _load(self, name: str) -> Optional[dict]:
+        """Parse a schedule file, returning the task dict or None if invalid."""
+        path = self._dir / name
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            log("could not parse %s", name, exc_info=True)
+            return None
+        if not isinstance(raw, dict):
+            return None
+        missing = [k for k in ("conversation_id", "when", "message") if k not in raw]
+        if missing:
+            log("skipping %s: missing keys %s", name, missing)
+            return None
+        # Normalise `when` to an ISO 8601 string right away so the due-check
+        # is cheap.  Store both the resolved and original forms.
+        resolved = _resolve_when(raw["when"])
+        if resolved is None:
+            log("skipping %s: could not parse 'when'=%r", name, raw["when"])
+            return None
+        raw["when_resolved"] = resolved
+        return raw
 
-    def cancel(self, task_id: str) -> bool:
-        with self._lock:
-            if task_id in self._tasks:
-                self._tasks[task_id]["status"] = "cancelled"
-                self._save()
-                return True
-            return False
+    # ── fire due tasks ───────────────────────────────────────────────────
 
-    def get_due(self) -> List[dict]:
-        """Return pending tasks whose trigger_at has passed."""
+    def _fire_due(self) -> None:
         now = datetime.now(timezone.utc)
-        due: List[dict] = []
+        to_fire: List[str] = []
         with self._lock:
-            for t in list(self._tasks.values()):
-                if t.get("status") != "pending":
-                    continue
+            for name, (_mtime, task) in self._index.items():
                 try:
-                    trigger_at = datetime.fromisoformat(t["when"])
-                    if trigger_at.tzinfo is None:
-                        trigger_at = trigger_at.replace(tzinfo=timezone.utc)
+                    trigger = datetime.fromisoformat(task["when_resolved"])
+                    if trigger.tzinfo is None:
+                        trigger = trigger.replace(tzinfo=timezone.utc)
                 except (ValueError, KeyError):
                     continue
-                if trigger_at <= now:
-                    due.append(t)
-        return due
+                if trigger <= now:
+                    to_fire.append(name)
+        for name in to_fire:
+            self._fire(name)
 
-    def mark_fired(self, task_id: str) -> None:
+    def _fire(self, name: str) -> None:
+        """Fire one schedule: POST to gateway, then delete / archive the file."""
         with self._lock:
-            if task_id in self._tasks:
-                self._tasks[task_id]["status"] = "fired"
-                self._tasks[task_id]["fired_at"] = datetime.now(timezone.utc).isoformat()
-                self._save()
+            entry = self._index.pop(name, None)
+        if entry is None:
+            return
+        _mtime, task = entry
+
+        cid = task["conversation_id"]
+        message = task.get("message", "Scheduled wake-up")
+        when = task.get("when_resolved", task.get("when", "?"))
+
+        wakeup_msg = f"[SCHEDULED WAKE-UP — {when}]\n{message}"
+        payload = {
+            "conversation_id": cid,
+            "message": wakeup_msg,
+            "conv_type": "scheduled_task",
+        }
+
+        ok = False
+        try:
+            with httpx.Client(timeout=10) as client:
+                resp = client.post(f"{GATEWAY_URL}/api/chat", json=payload)
+                resp.raise_for_status()
+            ok = True
+            log("fired %s → conv %s  msg=%.60s", name, cid[:8], message)
+        except httpx.HTTPError as exc:
+            log("FAILED to fire %s: %s", name, exc)
+
+        # Remove from disk regardless (don't retry a dud forever).
+        path = self._dir / name
+        try:
+            if ARCHIVE_DIR_NAME and ok:
+                archive = self._dir.parent / ARCHIVE_DIR_NAME if not Path(ARCHIVE_DIR_NAME).is_absolute() else Path(ARCHIVE_DIR_NAME)
+                # under same parent (.schedules) by default; allow override
+                if str(ARCHIVE_DIR_NAME).startswith(".schedules"):
+                    archive = (WORKSPACE_ROOT / ARCHIVE_DIR_NAME)
+                archive.mkdir(parents=True, exist_ok=True)
+                target = archive / path.name
+                path.replace(target)
+                log("archived %s → %s", name, target)
+            else:
+                path.unlink(missing_ok=True)
+        except OSError as exc:
+            log("could not remove schedule file %s: %s", path, exc)
+
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+
+def _resolve_when(raw: str) -> Optional[str]:
+    """Parse `when` into an ISO 8601 UTC datetime string, or None.
+
+    Accepts:
+      - ISO 8601:      2026-07-23T08:00:00Z / 2026-07-23T08:00:00+00:00
+      - Relative:      in 30 minutes, in 6 hours, in 2 days
+    """
+    if not isinstance(raw, str):
+        return None
+    raw = raw.strip()
+
+    # Already ISO-ish?
+    if re.match(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}", raw):
+        try:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).isoformat()
+
+    # Relative: "in X (second|minute|hour|day)s"
+    m = re.match(
+        r"^in\s+(\d+)\s*(seconds?|minutes?|hours?|days?)$", raw, re.IGNORECASE
+    )
+    if m:
+        value = int(m.group(1))
+        unit = m.group(2).lower().rstrip("s")
+        now = datetime.now(timezone.utc)
+        kwargs = {
+            "second": {"seconds": value},
+            "minute": {"minutes": value},
+            "hour": {"hours": value},
+            "day": {"days": value},
+        }[unit]
+        dt = now + timedelta(**kwargs)
+        return dt.isoformat()
+
+    return None
+
+
+def log(fmt: str, *args: Any) -> None:
+    """Log to stderr (never stdout — stdout is the MCP channel)."""
+    msg = fmt % args if args else fmt
+    sys.stderr.write(f"[{SERVER_NAME}] {msg}\n")
+    sys.stderr.flush()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# MCP Server — JSON-RPC handler
+# MCP stdio server (zero tools)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-store = ScheduleStore(SCHEDULES_FILE)
 
-
-def handle_request(request: dict) -> dict | None:
-    """Process a single JSON-RPC request, return the response or None for notifications."""
+def handle_request(request: dict) -> Optional[dict]:
+    """Process one JSON-RPC request; return a response dict or None (for notifications)."""
     method = request.get("method", "")
     req_id = request.get("id")
 
-    # ── initialize ────────────────────────────────────────────────────────
     if method == "initialize":
         return {
             "jsonrpc": "2.0",
             "id": req_id,
             "result": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {"tools": {}},
-                "serverInfo": {
-                    "name": SERVER_NAME,
-                    "version": SERVER_VERSION,
-                },
-                "instructions": (
-                    "## Schedule Self-Wakeup\n\n"
-                    "You can schedule a wake-up message to be delivered to "
-                    "this conversation at a future time. Use these tools:\n\n"
-                    "- `schedule_wakeup(conversation_id, when, message)` — "
-                    "register a wake-up.  *when* is an ISO 8601 datetime "
-                    "(e.g. 2026-07-23T08:00:00Z) or a relative time "
-                    "(e.g. 'in 6 hours').\n"
-                    "- `list_scheduled(conversation_id)` — see your pending tasks.\n"
-                    "- `cancel_scheduled(task_id)` — cancel a pending task.\n\n"
-                    "Your conversation ID is `{conversation_id}`."
+                "protocolVersion": PROTOCOL_VERSION,
+                "capabilities": {"tools": {"listChanged": False}},
+                "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
+                "instructions": INSTRUCTIONS,
+            },
+        }
+
+    if method == "notifications/initialized":
+        return None
+
+    if method == "tools/list":
+        # This server intentionally exposes no tools. The agent drives
+        # scheduling purely through the file system (write_file / edit_file /
+        # delete_file) using the instructions above.
+        return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": []}}
+
+    if method == "tools/call":
+        # No tools to call — return a clear "method not available" style error.
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "error": {
+                "code": -32601,
+                "message": (
+                    "ScheduleWake exposes no callable tools. Schedule wake-ups by "
+                    "writing a JSON file to .schedules/ — see the server instructions."
                 ),
             },
         }
 
-    # ── notifications/initialized ────────────────────────────────────────
-    if method == "notifications/initialized":
-        return None
+    if method == "ping":
+        return {"jsonrpc": "2.0", "id": req_id, "result": {}}
 
-    # ── tools/list ────────────────────────────────────────────────────────
-    if method == "tools/list":
-        return {
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "result": {
-                "tools": [
-                    {
-                        "name": "schedule_wakeup",
-                        "description": (
-                            "Schedule a wake-up message to be sent to this "
-                            "conversation at a future time. When the schedule "
-                            "triggers, the message will appear as a user message "
-                            "in the conversation, resuming the agent.\n\n"
-                            "Use for: monitoring long-running training, periodic "
-                            "CI checks, delayed follow-ups, reminders."
-                        ),
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "conversation_id": {
-                                    "type": "string",
-                                    "description": "The ID of the conversation to wake up. Use the value from the system prompt.",
-                                },
-                                "when": {
-                                    "type": "string",
-                                    "description": (
-                                        "When to trigger. ISO 8601 datetime "
-                                        "(e.g. '2026-07-23T08:00:00Z') or "
-                                        "relative time (e.g. 'in 6 hours', "
-                                        "'in 30 minutes')."
-                                    ),
-                                },
-                                "message": {
-                                    "type": "string",
-                                    "description": (
-                                        "The user message to inject when the "
-                                        "schedule triggers. Be specific about "
-                                        "what you want the awakened agent to do."
-                                    ),
-                                },
-                            },
-                            "required": ["conversation_id", "when", "message"],
-                        },
-                    },
-                    {
-                        "name": "list_scheduled",
-                        "description": (
-                            "List all pending scheduled tasks for a conversation."
-                        ),
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "conversation_id": {
-                                    "type": "string",
-                                    "description": "The conversation ID to list schedules for.",
-                                },
-                            },
-                            "required": ["conversation_id"],
-                        },
-                    },
-                    {
-                        "name": "cancel_scheduled",
-                        "description": "Cancel a pending scheduled task by its ID.",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "task_id": {
-                                    "type": "string",
-                                    "description": "The ID of the scheduled task to cancel.",
-                                },
-                            },
-                            "required": ["task_id"],
-                        },
-                    },
-                ]
-            },
-        }
-
-    # ── tools/call ────────────────────────────────────────────────────────
-    if method == "tools/call":
-        params = request.get("params", {})
-        tool_name = params.get("name", "")
-        arguments = params.get("arguments", {})
-
-        if tool_name == "schedule_wakeup":
-            return _handle_schedule_wakeup(req_id, arguments)
-        elif tool_name == "list_scheduled":
-            return _handle_list_scheduled(req_id, arguments)
-        elif tool_name == "cancel_scheduled":
-            return _handle_cancel_scheduled(req_id, arguments)
-        else:
-            return {
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "error": {"code": -32601, "message": f"Unknown tool: {tool_name}"},
-            }
-
-    # ── fallback ──────────────────────────────────────────────────────────
     return {
         "jsonrpc": "2.0",
         "id": req_id,
@@ -283,204 +417,14 @@ def handle_request(request: dict) -> dict | None:
     }
 
 
-# ── Tool handlers ────────────────────────────────────────────────────────────
-
-
-def _handle_schedule_wakeup(req_id, args: dict) -> dict:
-    conversation_id = args.get("conversation_id", "")
-    when = args.get("when", "")
-    message = args.get("message", "")
-
-    if not conversation_id or not when or not message:
-        return _error(req_id, "Missing required arguments: conversation_id, when, message")
-
-    # Resolve relative time expressions like "in 6 hours"
-    trigger_at = _resolve_when(when)
-    if not trigger_at:
-        return _error(
-            req_id,
-            f"Could not parse 'when': {when}. Use ISO 8601 (2026-07-23T08:00:00Z) "
-            "or relative time ('in 6 hours').",
-        )
-
-    task_id = store.add({
-        "conversation_id": conversation_id,
-        "when": trigger_at,
-        "message": message,
-        "original_when": when,
-    })
-
-    return _ok(req_id, (
-        f"Schedule created (id={task_id}).\n"
-        f"  When:   {trigger_at}\n"
-        f"  Message: {message[:80]}{'...' if len(message) > 80 else ''}\n\n"
-        f"The conversation will be resumed at {trigger_at}."
-    ))
-
-
-def _handle_list_scheduled(req_id, args: dict) -> dict:
-    conversation_id = args.get("conversation_id", "")
-    if not conversation_id:
-        return _error(req_id, "Missing required argument: conversation_id")
-
-    tasks = store.list_for(conversation_id)
-    if not tasks:
-        return _ok(req_id, "No pending scheduled tasks for this conversation.")
-
-    lines = [f"Pending scheduled tasks ({len(tasks)}):"]
-    for t in tasks:
-        lines.append(f"  [{t['id']}] {t.get('when','?')} — {t.get('message','')[:60]}")
-    return _ok(req_id, "\n".join(lines))
-
-
-def _handle_cancel_scheduled(req_id, args: dict) -> dict:
-    task_id = args.get("task_id", "")
-    if not task_id:
-        return _error(req_id, "Missing required argument: task_id")
-
-    if store.cancel(task_id):
-        return _ok(req_id, f"Task {task_id} cancelled.")
-    return _error(req_id, f"Task {task_id} not found or already completed.")
-
-
-# ── JSON-RPC helpers ─────────────────────────────────────────────────────────
-
-
-def _ok(req_id, text: str) -> dict:
-    return {
-        "jsonrpc": "2.0",
-        "id": req_id,
-        "result": {"content": [{"type": "text", "text": text}]},
-    }
-
-
-def _error(req_id, message: str) -> dict:
-    return {
-        "jsonrpc": "2.0",
-        "id": req_id,
-        "error": {"code": -32000, "message": message},
-    }
-
-
-# ── Relative time resolver ───────────────────────────────────────────────────
-
-
-def _resolve_when(raw: str) -> str | None:
-    """Parse 'when' into an ISO 8601 datetime string.
-
-    Supports:
-      - ISO 8601:               2026-07-23T08:00:00Z  (returned as-is)
-      - Relative:               in 30 minutes, in 6 hours, in 2 days
-    """
-    import re
-
-    raw = raw.strip()
-
-    # Already ISO-ish?
-    if re.match(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}", raw):
-        return raw if raw.endswith("Z") or "+" in raw else raw + "Z"
-
-    # Relative: "in X (seconds|minutes|hours|days)"
-    m = re.match(r"^in\s+(\d+)\s*(seconds?|minutes?|hours?|days?)$", raw, re.IGNORECASE)
-    if m:
-        value = int(m.group(1))
-        unit = m.group(2).lower().rstrip("s")  # strip plural 's'
-        from datetime import timedelta
-        now = datetime.now(timezone.utc)
-        if unit == "second":
-            dt = now + timedelta(seconds=value)
-        elif unit == "minute":
-            dt = now + timedelta(minutes=value)
-        elif unit == "hour":
-            dt = now + timedelta(hours=value)
-        elif unit == "day":
-            dt = now + timedelta(days=value)
-        else:
-            return None
-        return dt.isoformat()
-
-    return None
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Daemon — background scheduler
-# ═══════════════════════════════════════════════════════════════════════════════
-
-_daemon_running = False
-_daemon_thread: Optional[threading.Thread] = None
-
-
-def _daemon_loop() -> None:
-    """Background thread: periodically check for due tasks and fire them."""
-    global _daemon_running
-    while _daemon_running:
-        due = store.get_due()
-        for task in due:
-            _fire_task(task)
-        _sleep(POLL_INTERVAL)
-
-
-def _fire_task(task: dict) -> None:
-    """Fire a due task: POST a user message to the gateway /api/chat."""
-    tid = task["id"]
-    cid = task["conversation_id"]
-    message = task.get("message", "Scheduled wake-up")
-    when = task.get("when", "?")
-
-    store.mark_fired(tid)
-
-    wakeup_msg = f"[SCHEDULED WAKE-UP — {when}]\n{message}"
-
-    payload = {
-        "conversation_id": cid,
-        "message": wakeup_msg,
-        "conv_type": "scheduled_task",
-    }
-
-    try:
-        with httpx.Client(timeout=10) as client:
-            resp = client.post(f"{GATEWAY_URL}/api/chat", json=payload)
-            resp.raise_for_status()
-        _log(f"fired task {tid} → conv {cid[:8]}  msg=%.60s", message)
-    except httpx.HTTPError as exc:
-        _log(f"FAILED to fire task {tid}: {exc}")
-
-
-def _start_daemon() -> None:
-    global _daemon_running, _daemon_thread
-    if _daemon_running:
-        return
-    _daemon_running = True
-    _daemon_thread = threading.Thread(target=_daemon_loop, daemon=True)
-    _daemon_thread.start()
-    _log("daemon started (poll=%ds, gateway=%s)", POLL_INTERVAL, GATEWAY_URL)
-
-
-def _sleep(seconds: float) -> None:
-    for _ in range(int(seconds * 2)):
-        if not _daemon_running:
-            break
-        time.sleep(0.5)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Main — stdio JSON-RPC event loop
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-def _log(fmt: str, *args) -> None:
-    """Log to stderr (does not interfere with stdio protocol)."""
-    msg = fmt % args if args else fmt
-    sys.stderr.write(f"[{SERVER_NAME}] {msg}\n")
-    sys.stderr.flush()
-
-
 def main() -> None:
-    _log("starting (pid=%d, data=%s)", os.getpid(), SCHEDULES_FILE)
+    log("starting (pid=%d, workspace=%s)", os.getpid(), WORKSPACE_ROOT)
 
-    # Start the background scheduler *after* MCP handshake? Or immediately?
-    # Immediately — the daemon is independent and the connection pool keeps us alive.
-    _start_daemon()
+    # Start the background daemon immediately — it is the entire point of
+    # the server, runs independently of MCP traffic, and the ToolStore
+    # connection pool keeps this process alive for its lifetime.
+    daemon = ScheduleDaemon(SCHEDULES_DIR, POLL_INTERVAL_SECONDS)
+    daemon.start()
 
     buffer = ""
     while True:
@@ -489,23 +433,22 @@ def main() -> None:
         except (EOFError, KeyboardInterrupt):
             break
         if not line:
-            break
+            break  # stdin closed → parent is shutting us down
 
         buffer += line
         try:
             request = json.loads(buffer)
             buffer = ""
         except json.JSONDecodeError:
-            continue  # partial read, wait for more
+            continue  # partial line — wait for more
 
         response = handle_request(request)
         if response is not None:
             sys.stdout.write(json.dumps(response) + "\n")
             sys.stdout.flush()
 
-    global _daemon_running
-    _daemon_running = False
-    _log("shutting down")
+    daemon.stop()
+    log("shutting down")
 
 
 if __name__ == "__main__":

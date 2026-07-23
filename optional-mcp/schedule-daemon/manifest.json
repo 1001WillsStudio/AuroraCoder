@@ -1,12 +1,13 @@
 {
-  "name": "schedule-daemon",
-  "command": "python",
-  "args": ["AuroraCoder/optional-mcp/schedule-daemon/server.py"],
-  "env": {
-    "CONVO_SERVER_URL": "${CONVO_SERVER_URL:-http://localhost:8081}",
-    "SCHEDULE_DATA_DIR": "${SCHEDULE_DATA_DIR:-~/.schedule-daemon}"
-  },
-  "description": "Agent self-wakeup scheduling. Schedule messages to be delivered to a conversation at a future time — useful for monitoring long-running tasks, periodic CI checks, and delayed follow-ups.",
-  "transport": "stdio",
-  "tools": ["schedule_wakeup", "list_scheduled", "cancel_scheduled"]
+  "mcpServers": {
+    "ScheduleWake": {
+      "transport": "stdio",
+      "command": "python",
+      "args": ["/app/optional-mcp/schedule-daemon/server.py"],
+      "env": {
+        "CONVO_SERVER_URL": "http://localhost:8081",
+        "WORKSPACE_DIR": "/workspace"
+      }
+    }
+  }
 }
