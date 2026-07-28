@@ -16,6 +16,34 @@ import { createStreamCallbacks } from './hooks/createStreamCallbacks'
 import { useFileTracking } from './hooks/useFileTracking'
 import useLanguage from './hooks/useLanguage'
 
+/**
+ * Resolve the `provider_id` and `model` to send to the backend for a given
+ * provider-dropdown selection.
+ *
+ * SHARED by handleSend (normal chat) and handleContinue (Continue button) so
+ * both paths construct an IDENTICAL request payload.  Keeping this in one
+ * place means a future refactor of how provider ids/models are derived can
+ * never make the Continue request diverge from a normal send again.
+ *
+ * Diversity hazard this closes: a provider dropdown entry's `id` may be a
+ * composite "provider::model" (e.g. "opencode::glm-5.2") while its
+ * `provider_id` / `model` fields carry the bare values the backend needs.
+ * The backend resolves the active client via
+ *   `provider_id or provider or DEFAULT_PROVIDER`
+ * so it prefers the structured `provider_id`.  If a caller ships only the
+ * composite `provider` (as Continue used to), the backend falls back to the
+ * composite value ("opencode::glm-5.2") which is NOT a configured client ->
+ * "Provider 'opencode::glm-5.2' is not configured".  Resolving here keeps
+ * Continue's payload byte-for-byte aligned with a normal send.
+ */
+function resolveProviderOptions(providers, selectedProvider) {
+  const entry = providers?.find(p => p.id === selectedProvider)
+  return {
+    provider_id: entry?.provider_id || null,
+    model: entry?.model || null,
+  }
+}
+
 function App() {
   const { t } = useLanguage()
 
@@ -293,11 +321,12 @@ function App() {
       messagesToSend = rawMessages
     }
 
-    const selectedEntry = providers.find(p => p.id === selectedProvider)
+    // Same resolution as handleContinue: see resolveProviderOptions() above.
+    // Both paths MUST stay aligned so Continue can never end up on a
+    // different/unconfigured provider than a normal send.
     const opts = {
       ...options,
-      provider_id: selectedEntry?.provider_id || null,
-      model: selectedEntry?.model || null,
+      ...resolveProviderOptions(providers, selectedProvider),
     }
     setLastRequest({ message: userMessageText, conversationId, provider: selectedProvider, existingMessages: messagesToSend })
 
@@ -355,7 +384,14 @@ function App() {
         onFirstSse: () => setSseReceived(true),
         ensureAssistantTail: true,
       })
-      await streamChat(null, conversationId, callbacks, abortControllerRef.current.signal, rawMessages, selectedProvider)
+      // IMPORTANT: Continue must send the EXACT same provider fields as a
+      // normal send (handleSend).  Both handlers resolve `provider_id`/
+      // `model` through the SAME helper — resolveProviderOptions() — so a
+      // future refactor of provider id derivation cannot make Continue's
+      // payload diverge from a normal send. (See the docstring above for the
+      // original "Provider '<client>' is not configured" mismatch this closes.)
+      const opts = resolveProviderOptions(providers, selectedProvider)
+      await streamChat(null, conversationId, callbacks, abortControllerRef.current.signal, rawMessages, selectedProvider, opts)
     } catch (error) {
       if (error.name !== 'AbortError') console.error('Continue error:', error)
       setIsStreaming(false)
