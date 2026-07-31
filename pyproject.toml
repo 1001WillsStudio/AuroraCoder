@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "auroracoder"
+version = "0.0.32"
+requires-python = ">=3.10"
+
+[tool.setuptools]
+# AuroraCoder is an app, not a distributable package; declare no packages.
+packages = []
+
+# ---------------------------------------------------------------------------
+# pytest / QA configuration
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-ra --strict-markers --strict-config"
+# NOTE: do NOT promote DeprecationWarning to error here — the existing
+# suite relies on third-party deps (openai/httpx/pydantic) that emit
+# deprecations on the installed versions and that is out of scope for this
+# unit layer. Asserted deprecation hygiene belongs in targeted tests instead.
+filterwarnings = [
+    "default::DeprecationWarning",
+    "ignore::pytest.PytestUnraisableExceptionWarning",
+]
+markers = [
+    "unit: fast, hermetic, no real network/subprocess/LLM (default layer)",
+    "integration: needs optional real services (Docker/g/git push/LLM); skipped by default",
+    "smoke: thin end-to-end sanity checks of an assembled app",
+]
+
+# ---------------------------------------------------------------------------
+# coverage
+# ---------------------------------------------------------------------------
+[tool.coverage.run]
+source = ["src", "gateway", "memory"]
+branch = true
+omit = [
+    "*/tests/*",
+    "*/__init__.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+show_missing = true
+skip_covered = false
+
+# ---------------------------------------------------------------------------
+# ruff lint gate (runs alongside tests in CI)
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501"]  # line length handled where it matters; not a test blocker

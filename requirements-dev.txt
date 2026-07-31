@@ -1,0 +1,10 @@
+# Test/dev-only dependencies for the AuroraCoder unit-test suite.
+# Runtime deps live in requirements.txt; this file is for QA tooling only.
+pytest>=8,<10
+pytest-asyncio>=1.0
+pytest-cov>=5
+pytest-mock>=3.12
+respx>=0.21          # httpx request mocking
+responses>=0.25       # requests (google_search fallback) mocking
+freezegun>=1.5        # time-based scheduler tests
+coverage>=7
