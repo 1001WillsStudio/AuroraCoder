@@ -11,6 +11,7 @@ import logging
 import os
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -24,6 +25,8 @@ from gateway.workspace import (
     mark_file_touched,
     snapshot_file,
 )
+from memory.ops.extractor import run_extraction
+from memory.ops.consolidator import run_consolidation
 
 logging.basicConfig(
     level=logging.INFO,
@@ -61,6 +64,53 @@ class ActiveStream:
 
 active_streams: Dict[str, ActiveStream] = {}
 _streams_lock = asyncio.Lock()
+
+
+# ============================================================================
+# Passive Memory Distillation (Layer 2a) — dispatched at session end
+# ============================================================================
+# Runs off the hot path in a small dedicated thread pool: extraction makes a
+# blocking LLM call, so it must never run on the asyncio event loop thread.
+# Deliberately separate from _get_executor() in tool_executor.py — that pool
+# sizes itself to MAX_TOOL_CONCURRENCY for in-turn tool calls; this one is for
+# fire-and-forget post-session housekeeping and should never compete with it.
+_memory_ops_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="memory-ops")
+
+# Only distill top-level user chats — never subagents mid-flight, and never
+# conversations that errored out with no real content. "continued" is
+# deliberately NOT in this set (a conversation handed off via
+# continue_as_new_chat isn't "really" done from the user's point of view) —
+# but that segment's transcript still needs mining, so it's triggered
+# directly at the handoff point instead of through this gate. See the
+# continuation-detection block in _proxy_backend_stream.
+_EXTRACTION_ELIGIBLE_STATUSES = {"completed", "max_iterations_reached", "interrupted"}
+
+
+def _run_session_end_memory_ops(conversation_id: str, conv_type: str, status: str) -> None:
+    """Background job: extraction, then a cheap consolidation pass.
+
+    Swallows all exceptions — this must never affect the conversation
+    that already finished and was already persisted successfully.
+    """
+    try:
+        written = run_extraction(conversation_id, store.get_messages(conversation_id))
+        if written:
+            # Only worth a consolidation pass when something new landed.
+            run_consolidation()
+    except Exception:
+        logger.exception(f"[memory-ops] Session-end distillation failed for {conversation_id[:8]}...")
+
+
+def _schedule_memory_distillation(conversation_id: str, conv_type: str, status: str) -> None:
+    """Enqueue passive distillation for a just-finished conversation.
+
+    Fire-and-forget: submitted to a background thread pool and never
+    awaited by the streaming path, so a slow or failing extraction pass
+    can never delay the response the user already received.
+    """
+    if conv_type != "user_chat" or status not in _EXTRACTION_ELIGIBLE_STATUSES:
+        return
+    _memory_ops_executor.submit(_run_session_end_memory_ops, conversation_id, conv_type, status)
 
 
 _FILE_WRITE_TOOLS = {"write_file", "edit_file", "delete_file"}
@@ -454,8 +504,25 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                                     store.save_frontend_messages(new_cid, [
                                         {"role": "user", "content": user_msg},
                                     ])
+                                    # Persist the old conversation's segment BEFORE marking it
+                                    # "continued" — its raw_msgs (including any `remember` calls
+                                    # made before the handoff) must be on disk before we hand off
+                                    # to the background distillation pass below, since that pass
+                                    # re-fetches messages from the store rather than taking them
+                                    # as an argument.
+                                    store.save_messages(cid, edata.get("raw_messages", []))
                                     store.update_status(cid, "continued")
                                     stream.new_conversation_id = new_cid
+
+                                    # A "continued" conversation is otherwise EXCLUDED from
+                                    # session-end distillation (see the finally block below) since
+                                    # it isn't really "done" — the task keeps going in new_cid.
+                                    # But this segment's transcript (and any `remember` calls in
+                                    # it) would otherwise never be mined at all, since the new
+                                    # conversation starts fresh rather than inheriting messages.
+                                    # Trigger distillation for THIS segment explicitly, right here,
+                                    # rather than widening the general terminal-status gate.
+                                    _memory_ops_executor.submit(_run_session_end_memory_ops, cid, "user_chat", "continued")
 
                                     # Simulate user pressing Send — POST to backend immediately
                                     asyncio.create_task(_start_continuation(new_cid, stream.provider, user_msg))
@@ -592,6 +659,9 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
             raw_msgs = stream.latest_event_data.get("raw_messages", []) if stream.latest_event_data else []
             if raw_msgs:
                 store.save_messages(cid, raw_msgs)
+
+            if current_status != "continued":
+                _schedule_memory_distillation(cid, stream.conv_type, persist_status)
         except Exception as e:
             logger.error(f"[proxy] Final persist failed for {cid[:8]}...: {e}")
 

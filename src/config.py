@@ -261,7 +261,7 @@ SYSTEM_MESSAGE_TEMPLATE = """You are a helpful and autonomous agent with powerfu
 - Use English exclusively in all generated code and comments.
 - Never delegate write/execute operations to a subagent — it is read-only.
 - **edit_file**: at most 3 edits per call per file. Split larger changes across multiple tool rounds.
-
+{memory_section}
 Current Time: {current_time}
 {toolstore_tools}
 """

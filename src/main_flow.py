@@ -28,10 +28,13 @@ from .code_tools.panel_manager import get_all as get_panels
 from .code_tools.panel_manager import register
 from .code_tools.code_interpreter_panel import CodeInterpreterPanel
 from .code_tools.tool_store_panel import ToolStorePanel
+from .code_tools.memory_panel import MemoryPanel
+from .core_tools import memory_client
 
 # ── Register all Living Tool State panels ──────────────────────────
 register(CodeInterpreterPanel())
 register(ToolStorePanel())
+register(MemoryPanel())
 from .tool_executor import execute_tool_calls
 from .training_log import record_api_call, load_save_training_flag
 
@@ -129,19 +132,6 @@ def generate_chat_responses_stream_native(
     # Context window — generous fixed default (1M tokens covers all modern models)
     context_window = CONTEXT_WINDOW_TOKENS
     
-    system_message = SYSTEM_MESSAGE_TEMPLATE.format(
-        current_time=datetime.datetime.now().isoformat(),
-        display_guide=DISPLAY_GUIDE,
-        terminal_env_note=TERMINAL_ENV_NOTE,
-        toolstore_tools=get_toolstore_tools_prompt(
-            context={
-                "conversation_id": conversation_id or "",
-                "workspace_root": str(Path.cwd()),
-            }
-        ),
-        workspace_tree=workspace_tree,
-    )
-
     # Eagerly load primary tool schemas once at startup so the LLM's
     # tools[] array includes them from the very first turn.
     prefetch_primary_tools()
@@ -149,9 +139,46 @@ def generate_chat_responses_stream_native(
     # Resolve tool definitions — use override if provided, else defaults
     tools = tools_override or get_tool_definitions()
     filter_continuation = tools_override is None  # only filter for default tools
-    
+
     # Add system message if not already present.
     if not messages or messages[0].get("role") != "system":
+        # Memory is opt-in (settings.other.memory.enabled, default False).
+        # When disabled, skip the stance fetch entirely (no gateway round
+        # trip) and drop the whole memory section from the prompt — with
+        # the remember/recall/log_gap tool schemas also filtered out
+        # (tool_definitions.memory_filter_tools), a disabled agent sees no
+        # mention of memory anywhere and behaves like a build with no
+        # memory module at all.
+        memory_section = ""
+        if memory_client.memory_enabled():
+            # Stance is fetched once here, at session start — NOT per turn.
+            # Subsequent turns reuse the already-inserted system message, so
+            # this network call only ever happens on the first turn of a
+            # conversation (fails open to "" on any error — see memory_client).
+            memory_stance = memory_client.get_stance()
+            memory_section = (
+                "- **Memory**: you have `remember`/`recall` tools for durable facts that persist "
+                "across sessions. Use `remember` sparingly — only for facts that are NOT derivable "
+                "from the code/git and would concretely change future behavior (preferences, "
+                "corrections, project context, external-system pointers, non-obvious conventions). "
+                "Silence is the correct default; most turns should not call it. If the user says a "
+                "remembered fact is wrong, `recall` it to get its id, then use `forget` to delete it "
+                "(or `remember` with `memory_id` set, if it should be replaced rather than removed).\n"
+                f"{memory_stance}\n"
+            )
+        system_message = SYSTEM_MESSAGE_TEMPLATE.format(
+            current_time=datetime.datetime.now().isoformat(),
+            display_guide=DISPLAY_GUIDE,
+            terminal_env_note=TERMINAL_ENV_NOTE,
+            toolstore_tools=get_toolstore_tools_prompt(
+                context={
+                    "conversation_id": conversation_id or "",
+                    "workspace_root": str(Path.cwd()),
+                }
+            ),
+            workspace_tree=workspace_tree,
+            memory_section=memory_section,
+        )
         messages.insert(0, {"role": "system", "content": system_message})
     
     iteration_count = 0

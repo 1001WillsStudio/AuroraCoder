@@ -27,7 +27,9 @@ from ..code_sandbox import shell, get_workspace, WORKSPACE
 from ..core_tools.subagent import cancel_active_subagents
 from ..config import DEFAULT_PROVIDER
 from ..providers import provider_manager
-from ..tool_definitions import NATIVE_TOOL_DEFINITIONS, SUBAGENT_READ_ONLY_TOOLS
+from ..tool_definitions import (
+    NATIVE_TOOL_DEFINITIONS, SUBAGENT_READ_ONLY_TOOLS, GAP_INVESTIGATION_TOOLS, memory_filter_tools,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -102,8 +104,24 @@ def get_filtered_tools(mode: str):
             continue
         if mode == "read_only" and name not in SUBAGENT_READ_ONLY_TOOLS:
             continue
+        # Used only for the one-shot /api/chat call the gap-investigation
+        # dispatcher makes against an isolated memory-worker (see
+        # memory/ops/dispatcher.py) — a minimal read-oriented set plus the
+        # tool that ends the task. Not reachable from a normal chat.
+        if mode == "gap_investigation" and name not in GAP_INVESTIGATION_TOOLS:
+            continue
         defs.append(td)
-    return defs
+    if mode == "gap_investigation":
+        # Skip the master-switch filter here: the worker is a fresh,
+        # isolated container with no settings.json of its own (never gets
+        # one — see dispatcher.py's isolation requirement), so its LOCAL
+        # memory_enabled() always reads back False regardless of what the
+        # dispatching main container decided. That decision (heavy_ops_enabled,
+        # which already implies memory_enabled — see memory/settings.py) was
+        # made before this worker was even spawned; re-checking it here would
+        # just silently strip report_findings and brick every investigation.
+        return defs
+    return memory_filter_tools(defs)
 
 
 def convert_messages_for_frontend(messages: list) -> list:

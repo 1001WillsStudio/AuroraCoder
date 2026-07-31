@@ -65,6 +65,14 @@ from gateway.streaming import (
     _subscriber_sse,
     _format_sse,
 )
+from memory.settings import memory_enabled
+from memory.store import get_repository as get_memory_repository
+from memory.schema import MemoryItem, MEMORY_PLANES, MEMORY_TYPES
+from memory.stance import build_stance_block
+from memory.retrieval import rank_candidates
+from memory.gap_store import get_gap_ledger, GAP_PRIORITIES, GAP_STRATEGIES
+from memory.ops.dispatcher import dispatch_gap_investigation
+from memory.ops.conversation_search import search_conversations
 
 # Import app after stream deps are resolved — app already exists in api.py's
 # namespace by the time api.py does ``from gateway import routes``.
@@ -101,6 +109,29 @@ class _SettingsUpdate(BaseModel):
 class DeleteRequest(BaseModel):
     """Request body for deleting a file or folder."""
     path: str = Field(..., description="Relative path within the workspace")
+
+
+class RememberRequest(BaseModel):
+    """Payload for the ``remember`` tool — one typed memory write."""
+    content: str = Field(..., description="The memory itself, in the agent's own words")
+    description: str = Field(..., description="One-liner used for relevance ranking")
+    plane: str = Field("world", description="'stance' (always injected) or 'world' (retrieved)")
+    type: str = Field("project", description="See MEMORY_TYPES")
+    scope: str = Field("project", description="'user' (global) or 'project'")
+    confidence: str = Field("medium", description="'high' | 'medium' | 'low'")
+    provenance: str = Field("agent-stated", description="How this was learned")
+    volatile: bool = Field(False, description="True if this fact can go stale")
+    ttl_days: Optional[int] = Field(None, description="Re-verify after this many days if volatile")
+    supersedes: Optional[str] = Field(None, description="ID of an existing memory this replaces/updates")
+    memory_id: Optional[str] = Field(None, description="Reuse this id to update an existing memory in place")
+
+
+class LogGapRequest(BaseModel):
+    """Payload for the ``log_gap`` tool — flag a knowledge gap for later resolution."""
+    question: str = Field(..., description="The specific thing the agent didn't know")
+    scope: str = Field("project", description="'user' (global) or 'project'")
+    priority: str = Field("medium", description="'low' | 'medium' | 'high'")
+    strategy: str = Field("ask", description="'self' (cheap to self-investigate later) or 'ask' (needs the user)")
 
 
 def _get_workspace() -> Optional[Path]:
@@ -494,6 +525,211 @@ async def discover_models(base_url: str = "", api_key: str = "", provider_id: st
         raise HTTPException(status_code=504, detail="Upstream timed out after 15 s")
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
+
+
+# ============================================================================
+# Endpoints — Agent Memory
+# ============================================================================
+# Gateway is the sole owner/writer of the memory store (files + SQLite index
+# in DATA_DIR/memory), mirroring how it already exclusively owns the
+# conversation store above. The backend (src/) is a thin HTTP client — see
+# src/core_tools/memory_client.py — so there is never more than one process
+# writing the on-disk store. See docs/code-agent-memory-design.md.
+
+@app.get("/api/memory/stance")
+async def get_memory_stance(scope: Optional[str] = None):
+    """Return the always-injected Stance block for the system prompt.
+
+    Called once per new conversation (session start) by the backend —
+    NOT per turn — so this can afford to do real work without hurting
+    hot-path latency. Fails open: returns an empty block on any error
+    rather than blocking the agent's turn loop.
+    """
+    if not memory_enabled():
+        return {"stance": ""}
+    try:
+        repo = get_memory_repository()
+        return {"stance": build_stance_block(repo, scope=scope)}
+    except Exception:
+        logger.exception("[memory] Stance assembly failed — failing open")
+        return {"stance": ""}
+
+
+@app.post("/api/memory/remember")
+async def remember_memory(body: RememberRequest):
+    """Directly write (or update, via ``memory_id``) one typed memory —
+    schema-validated, unreviewed.
+
+    The agent's ``remember`` tool does NOT call this at runtime anymore
+    (see ``src/core_tools/memory_tools.py`` — it's a purely local no-op
+    that leaves a marker in the transcript for the unified end-of-session
+    pass to judge with full context, alongside anything it discovers on
+    its own; see ``memory/ops/extractor.py``). This route is kept as a
+    plain direct-write primitive: useful for a future "add memory
+    manually" UI, tests, or any other trusted caller that doesn't need
+    the LLM judgment pass a live agent tool call does.
+    """
+    if not memory_enabled():
+        return {"ok": False, "reason": "memory disabled in settings"}
+
+    if body.plane not in MEMORY_PLANES:
+        raise HTTPException(status_code=400, detail=f"invalid plane: {body.plane}")
+    if body.type not in MEMORY_TYPES:
+        raise HTTPException(status_code=400, detail=f"invalid type: {body.type}")
+
+    kwargs = dict(
+        content=body.content,
+        description=body.description,
+        plane=body.plane,
+        type=body.type,
+        scope=body.scope,
+        confidence=body.confidence,
+        provenance=body.provenance,
+        volatile=body.volatile,
+        ttl_days=body.ttl_days,
+        supersedes=body.supersedes,
+    )
+    if body.memory_id:
+        kwargs["id"] = body.memory_id
+
+    try:
+        item = MemoryItem(**kwargs)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    repo = get_memory_repository()
+    saved = repo.upsert(item)
+    return {"ok": True, "id": saved.id}
+
+
+@app.get("/api/memory/recall")
+async def recall_memory(query: str = "", plane: str = "world", scope: Optional[str] = None, k: int = 5):
+    """Query-aware retrieval over the World Model (design doc §12)."""
+    if not memory_enabled():
+        return {"results": []}
+    if plane not in MEMORY_PLANES:
+        raise HTTPException(status_code=400, detail=f"invalid plane: {plane}")
+
+    repo = get_memory_repository()
+    results = rank_candidates(repo, query=query, plane=plane, scope=scope, k=max(1, min(k, 20)))
+    if results:
+        repo.bump_usage([r["id"] for r in results])
+    return {"results": results}
+
+
+@app.get("/api/memory")
+async def list_memory(plane: Optional[str] = None, scope: Optional[str] = None, limit: int = 200):
+    """List full memory items (including content) for the Memory browser in
+    Settings, and for debugging.
+
+    Deliberately NOT gated on ``memory_enabled()`` — this is a read-only
+    view, useful to review what's stored even while the toggle is off
+    (e.g. before deciding whether to clear it out or re-enable).
+    """
+    repo = get_memory_repository()
+    items = repo.all_items(plane=plane, scope=scope)
+    items.sort(key=lambda it: it.created, reverse=True)
+    return {"memories": [it.to_dict() for it in items[:limit]]}
+
+
+@app.delete("/api/memory/{memory_id}")
+async def delete_memory(memory_id: str):
+    """Delete a memory — used by both the Settings Memory browser and the
+    agent's ``forget`` tool. Memory files are also plain markdown a user
+    can hand-edit/delete directly on disk; this is the API equivalent.
+    """
+    if not memory_enabled():
+        return {"ok": False, "reason": "memory disabled in settings"}
+    repo = get_memory_repository()
+    if not repo.delete(memory_id):
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return {"ok": True, "deleted": memory_id}
+
+
+# ============================================================================
+# Endpoints — Gap Ledger (design doc §13, Gap Engine — "light" half only)
+# ============================================================================
+# Logging/listing/resolving gaps is always on (cheap, synchronous). Actively
+# *investigating* an open gap is Layer 2b heavy-ops, disabled by default —
+# see memory/ops/dispatcher.py.
+
+@app.post("/api/memory/gaps")
+async def log_gap(body: LogGapRequest):
+    """Flag a knowledge gap. Only ever called by the agent's ``log_gap`` tool.
+
+    Recurring gaps on the same scope (similar question already open) are
+    escalated in priority rather than duplicated — see GapLedger.log_gap.
+    """
+    if not memory_enabled():
+        return {"ok": False, "reason": "memory disabled in settings"}
+    if body.priority not in GAP_PRIORITIES or body.strategy not in GAP_STRATEGIES:
+        raise HTTPException(status_code=400, detail="Invalid priority or strategy")
+    ledger = get_gap_ledger()
+    gap = ledger.log_gap(
+        question=body.question, scope=body.scope,
+        priority=body.priority, detected_from="agent", strategy=body.strategy,
+    )
+    return {"ok": True, "gap": gap}
+
+
+@app.get("/api/memory/gaps")
+async def list_gaps(status: Optional[str] = None, scope: Optional[str] = None):
+    """List gap ledger entries — for a future Memory/Gaps browser UI."""
+    ledger = get_gap_ledger()
+    return {"gaps": ledger.list(status=status, scope=scope)}
+
+
+@app.get("/api/memory/gaps/{gap_id}")
+async def get_gap(gap_id: str):
+    ledger = get_gap_ledger()
+    gap = ledger.get(gap_id)
+    if gap is None:
+        raise HTTPException(status_code=404, detail="Gap not found")
+    return {"gap": gap}
+
+
+@app.post("/api/memory/gaps/{gap_id}/defer")
+async def defer_gap(gap_id: str):
+    ledger = get_gap_ledger()
+    if not ledger.defer(gap_id):
+        raise HTTPException(status_code=404, detail="Gap not found")
+    return {"ok": True}
+
+
+@app.post("/api/memory/gaps/{gap_id}/investigate")
+async def investigate_gap(gap_id: str):
+    """Dispatch active (heavy-ops) investigation of an open gap.
+
+    No-ops with a clear reason unless ``settings.other.memory.heavy_ops_enabled``
+    is explicitly set. When it is, this can take a while — spawning a
+    container, waiting for it to boot, and driving a real multi-turn
+    investigation is not a sub-second operation like the rest of this
+    file's routes. Run off the event loop thread (``asyncio.to_thread``,
+    NOT the fire-and-forget ``_memory_ops_executor`` in
+    ``gateway/streaming.py`` — this route's caller needs the actual
+    result, so it awaits completion, it just must not block every other
+    concurrent gateway request while doing so.
+    """
+    result = await asyncio.to_thread(dispatch_gap_investigation, gap_id)
+    if not result.get("ok") and result.get("reason") == "gap not found":
+        raise HTTPException(status_code=404, detail="Gap not found")
+    return result
+
+
+@app.get("/api/memory/conversations/search")
+async def search_other_conversations(query: str, exclude: Optional[str] = None, limit: int = 3):
+    """Deterministic keyword search over past conversations (see
+    ``ops/conversation_search.py``).
+
+    Called in-process by the write-pass today. This HTTP route exists so
+    Layer 2b's gap-investigation worker — which runs in its own isolated
+    container, not the gateway process — can reach the SAME search
+    implementation instead of growing its own separate path into
+    conversation history once its investigate/report protocol is built.
+    Not yet called by anything outside the write-pass and this repo's
+    tests.
+    """
+    return {"results": search_conversations(query, exclude_conversation_id=exclude, limit=limit)}
 
 
 # ============================================================================

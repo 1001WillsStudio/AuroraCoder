@@ -75,6 +75,18 @@ const LANG = {
     'agent.saveTrainingData': 'Save Training Data',
     'agent.saveTrainingDataDesc': 'Log each API request/response pair for fine-tuning. Disable to save disk space and reduce I/O overhead.',
 
+    // ── Memory section ──────────────────────────────────────────
+    'memory.title': 'Memory',
+    'memory.desc': 'Let the agent remember durable facts (preferences, conventions, corrections) across sessions.',
+    'memory.enabled': 'Enable Memory',
+    'memory.enabledDesc': 'When off, the agent behaves exactly as it does without the memory module — no remember/recall tools, no cross-session context.',
+    'memory.browserTitle': 'Stored Memories',
+    'memory.browserDesc': 'Review and delete individual memories. Works even while memory is disabled above.',
+    'memory.browserLoading': 'Loading…',
+    'memory.browserError': 'Failed to load memories.',
+    'memory.browserEmpty': 'No memories stored yet.',
+    'memory.browserDelete': 'Delete this memory',
+
     // ── Persistence note ──────────────────────────────────────────
     'persistence.note':
       'Stored in <code>/app/data/settings.json</code> (volume-mounted) — survives restarts & rebuilds.',
@@ -218,6 +230,15 @@ const LANG = {
     'tool.noOutput': 'No output',
     'tool.deletedBadge': '(deleted)',
     'tool.editIndex': 'Edit #{n}',
+    'tool.remembering': 'Remembering',
+    'tool.recallingMemory': 'Recalling memory',
+    'tool.loggingGap': 'Logging a knowledge gap',
+    'tool.forgettingMemory': 'Forgetting a memory',
+    'tool.reportingFindings': 'Reporting findings',
+    'tool.reportingUnresolved': 'Reporting: could not resolve',
+    'tool.memoryVolatile': 'volatile',
+    'tool.memoryUpdating': 'Updating memory {id}',
+    'tool.memoryPendingReview': 'Pending end-of-session review — not saved yet',
 
     // ── Thinking indicator ─────────────────────────────────────────
     'thinking.label': 'Thinking',
@@ -308,6 +329,18 @@ const LANG = {
     'agent.terminalMaxOutput': '终端最大输出',
     'agent.saveTrainingData': '保存训练数据',
     'agent.saveTrainingDataDesc': '记录每次 API 请求/响应用于微调。关闭可节省磁盘空间和 I/O 开销。',
+
+    // ── Memory section ──────────────────────────────────────────
+    'memory.title': '记忆',
+    'memory.desc': '让智能体在跨会话之间记住持久性事实（偏好、约定、更正）。',
+    'memory.enabled': '启用记忆',
+    'memory.enabledDesc': '关闭时，智能体的行为与没有记忆模块时完全一致 — 没有 remember/recall 工具，没有跨会话上下文。',
+    'memory.browserTitle': '已存储的记忆',
+    'memory.browserDesc': '查看并删除单条记忆。即使上方的记忆功能已关闭，此处仍可使用。',
+    'memory.browserLoading': '加载中…',
+    'memory.browserError': '加载记忆失败。',
+    'memory.browserEmpty': '尚无已存储的记忆。',
+    'memory.browserDelete': '删除此记忆',
 
     // ── Persistence note ──────────────────────────────────────────
     'persistence.note':
@@ -454,6 +487,15 @@ const LANG = {
     'tool.noOutput': '无输出',
     'tool.deletedBadge': '（已删除）',
     'tool.editIndex': '编辑 #{n}',
+    'tool.remembering': '记忆中',
+    'tool.recallingMemory': '回忆记忆',
+    'tool.loggingGap': '记录知识缺口',
+    'tool.forgettingMemory': '删除记忆',
+    'tool.reportingFindings': '报告调查结果',
+    'tool.reportingUnresolved': '报告：未能解决',
+    'tool.memoryVolatile': '易变',
+    'tool.memoryUpdating': '更新记忆 {id}',
+    'tool.memoryPendingReview': '待会话结束审核 — 尚未保存',
 
     // ── Thinking indicator ─────────────────────────────────────────
     'thinking.label': '思考中',

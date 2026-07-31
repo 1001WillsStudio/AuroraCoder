@@ -12,6 +12,7 @@ Start with::
     uvicorn gateway.api:app --host 0.0.0.0 --port 8081
 """
 
+import asyncio
 import logging
 import os
 import secrets
@@ -53,7 +54,14 @@ app = FastAPI(
 @app.on_event("startup")
 async def _startup_sync():
     """On boot: sync env vars for src tools, configure GitHub auth from
-    cached settings, then ping backend to reload providers."""
+    cached settings, ping backend to reload providers, and start the Gap
+    Engine's periodic sweep task.
+
+    The sweep task is started unconditionally — it no-ops on every tick
+    when memory / heavy ops is disabled for this install (the common
+    case), so there's no need to gate the ``create_task`` call itself on
+    any setting; see ``memory/ops/gap_scheduler.py``.
+    """
     sync_tool_env_vars()
     configure_github_auth()
     try:
@@ -61,6 +69,9 @@ async def _startup_sync():
             await c.post(f"{BACKEND_URL}/api/reload", timeout=5)
     except Exception:
         logger.warning("Backend not reachable at startup — will sync on first request")
+
+    from memory.ops.gap_scheduler import run_periodic_gap_sweep
+    asyncio.create_task(run_periodic_gap_sweep())
 
 
 app.add_middleware(

@@ -249,6 +249,49 @@ def get_web_secondary_config() -> dict:
     return {"provider_id": "", "base_url": "", "api_key": "", "model": ""}
 
 
+def get_memory_extraction_config() -> dict:
+    """Resolve the model used for passive memory extraction/consolidation
+    (Layer 2a). Falls back to the agent's own default provider/model — this
+    is a structured-output-only, no-tool call, so it doesn't need a
+    particularly strong model, but reuses the default rather than
+    inventing a second required setting for v1.
+
+    ``extraction_provider`` is deliberately kept as a single provider
+    *family* id (e.g. "deepseek"/"opencode"/"nvidia" — never a legacy
+    per-variant id like "opencode-ds-v4-pro", which no longer resolves to
+    anything meaningful under the family+model scheme in src/config.py) so
+    this setting doesn't also need its own model picker; it always uses
+    that family's default model. If unset, falls through to whatever the
+    agent's own default_model is currently pointed at (same
+    ``{"provider": ..., "model": ...}`` shape everything else uses), and
+    finally to PROVIDER_DEFAULT_MODELS if even that has no model pinned.
+    """
+    settings = get_all_settings()
+    mem = settings.get("other", {}).get("memory", {})
+    provider_id = mem.get("extraction_provider", "")
+    model_id = ""
+    if not provider_id:
+        default_model = settings.get("other", {}).get("agent", {}).get("default_model")
+        if isinstance(default_model, dict):
+            provider_id = default_model.get("provider", "")
+            model_id = default_model.get("model", "")
+    provider_id = provider_id or DEFAULT_PROVIDER
+
+    r = resolve_provider(provider_id)
+    if not model_id:
+        model_id = r.get("model") or ""
+    if not model_id:
+        defaults = PROVIDER_DEFAULT_MODELS.get(provider_id, [])
+        model_id = defaults[0]["id"] if defaults else ""
+
+    return {
+        "provider_id": provider_id,
+        "base_url": r["base_url"],
+        "api_key": r["api_key"],
+        "model": model_id,
+    }
+
+
 def get_toolstore_url() -> str:
     """Return the ToolStore URL from settings or env."""
     settings = get_all_settings()

@@ -511,3 +511,24 @@ export async function refreshToolStore() {
   if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
   return response.json()
 }
+
+// ============================================================================
+// Memory Browser (Settings panel)
+// ============================================================================
+
+/** List stored memories (full content) — works even while memory is disabled. */
+export async function getMemories() {
+  const response = await fetch(`${API_BASE}/memory`, { headers: _headers() })
+  if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+  return response.json()
+}
+
+/** Permanently delete one memory by id. */
+export async function deleteMemory(memoryId) {
+  const response = await fetch(`${API_BASE}/memory/${encodeURIComponent(memoryId)}`, {
+    method: 'DELETE',
+    headers: _headers(),
+  })
+  if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+  return response.json()
+}
