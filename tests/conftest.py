@@ -23,7 +23,35 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+import tempfile
+
 import pytest
+
+# ---------------------------------------------------------------------------
+# Suite-wide hermeticity (RUN FIRST, before any test module imports src.config).
+# ---------------------------------------------------------------------------
+# The host shell exports AURORACODER_DOCKER=1, which makes src.config bake
+# DATA_DIR=/app/data at first import. Several tests in this suite import
+# src.config transitively, so whichever test module is collected first bakes
+# /app/data for the whole process; its settings.json then leaks
+# memory.enabled=true into tests that expect the disabled-by-default baseline
+# (eg. test_memory_toggle). pytest imports this conftest BEFORE any test
+# module, so forcing local mode + an isolated data dir here wins the import
+# race regardless of collection order.
+# Use a FRESH mkdtemp per run (never a fixed path: a fixed path accumulates state
+# between runs and re-introduces the host-leak problem this exists to solve).
+# Seed it with memory enabled=True so the layer1/layer2/layer3 gateway and ops
+# suites (which expect the enabled path) behave exactly as they did against the
+# host /app/data, while test_memory_toggle flips it per test by overwriting
+# settings.json before every assertion (its readers re-read the file each call).
+import json as _json
+_SESSION_DATA_DIR = Path(tempfile.mkdtemp(prefix="aurora-qa-"))
+os.environ["AURORACODER_DOCKER"] = "0"
+os.environ["AURORACODER_DATA_DIR"] = str(_SESSION_DATA_DIR)
+_SESSION_DATA_DIR.mkdir(parents=True, exist_ok=True)
+(_SESSION_DATA_DIR / "settings.json").write_text(
+    _json.dumps({"other": {"memory": {"enabled": True}}}), encoding="utf-8"
+)
 
 # Ensure the project root is importable under both laid-out layouts
 # (running from AuroraCoder/ root, or from /workspace).

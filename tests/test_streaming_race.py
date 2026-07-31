@@ -55,7 +55,7 @@ async def subscriber_NEW(stream, queue):
         await asyncio.sleep(0)  # simulate yield
 
 
-async def test(scenario, subscriber_fn):
+async def _run_one(scenario, subscriber_fn):
     """Run one scenario: proxy puts done, then enters finally."""
     stream = FakeStream()
     queue = asyncio.Queue(maxsize=256)
@@ -81,8 +81,8 @@ async def main():
     old_results = []
     new_results = []
     for _ in range(1):
-        old_results.append(await test("OLD", subscriber_OLD))
-        new_results.append(await test("NEW", subscriber_NEW))
+        old_results.append(await _run_one("OLD", subscriber_OLD))
+        new_results.append(await _run_one("NEW", subscriber_NEW))
 
     print(f"OLD (buggy):  {old_results}")
     print(f"NEW (fixed):  {new_results}")
@@ -96,6 +96,23 @@ async def main():
         f"BUG FIX VERIFIED: NEW subscriber should get 'done'. Got: {new_results}"
 
     print("\n✓ Streaming race condition fix verified.")
+
+
+async def test_streaming_race_fix_verified():
+    """Lock the SSE subscriber race fix as a real pytest test.
+
+    ``_subscriber_sse`` must ``queue.get()`` BEFORE checking ``stream.finished``;
+    otherwise the 'done' sentinel arrives after the finished flag is set and is
+    skipped. The OLD subscriber (checks finished first) must never observe
+    'done'; the NEW one (drains first) always must.
+    """
+    new = await _run_one("NEW", subscriber_NEW)
+    assert new == "got_done", f"NEW subscriber should get 'done'. Got: {new}"
+
+    old = await _run_one("OLD", subscriber_OLD)
+    assert old in ("missed_done", "got_none"), (
+        f"OLD subscriber should NOT observe 'done' (it races on finished). Got: {old}"
+    )
 
 
 if __name__ == "__main__":
