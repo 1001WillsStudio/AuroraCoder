@@ -21,7 +21,11 @@ import requests
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("AURORACODER_DATA_DIR", tempfile.mkdtemp())
-os.environ.setdefault("AURORACODER_DOCKER", "0")
+# FORCE (not setdefault) — inside a container AURORACODER_DOCKER is already
+# exported as "1", so setdefault would no-op and gateway.settings_store would
+# bind DATA_DIR to /app/data, ignoring this suite's isolated AURORACODER_DATA_DIR
+# and reading the real /app/data/settings.json instead of the temp one below.
+os.environ["AURORACODER_DOCKER"] = "0"
 
 # Memory is opt-in (settings.other.memory.enabled defaults to False — see
 # memory/settings.py). Gap logging/listing is gated on the master switch
@@ -524,6 +528,24 @@ def test_get_memory_extraction_config_resolves_a_real_model_under_the_provider_f
     data_dir = pathlib.Path(os.environ["AURORACODER_DATA_DIR"])
     settings_path = data_dir / "settings.json"
     original = settings_path.read_text(encoding="utf-8")
+    # The settings.json we write here has no provider keys, so resolve_provider()
+    # should resolve api_key to "". Two sources can otherwise leak a real key:
+    #   (a) get_api_key() falls back to <PROVIDER>_API_KEY env vars, and this
+    #       host/container exports DEEPSEEK/OPENCODE/NVIDIA_API_KEY;
+    #   (b) src/config.py captures those same env vars INTO MODEL_PROVIDERS at
+    #       IMPORT time, and resolve_provider() keeps the baked-in key when
+    #       get_api_key() returns "" (its `elif not prov["api_key"]` branch).
+    # So clearing the env at test time alone is too late — config.py already
+    # grabbed them at import. Clear BOTH for this test's duration, restore below.
+    _provider_ids = ("deepseek", "opencode", "nvidia")
+    _provider_key_env = tuple(f"{pid.upper()}_API_KEY" for pid in _provider_ids)
+    _saved_env = {name: os.environ.get(name) for name in _provider_key_env}
+    for _name in _provider_key_env:
+        os.environ.pop(_name, None)
+    from src.config import MODEL_PROVIDERS as _MP
+    _saved_mp_keys = {pid: _MP[pid].get("api_key") for pid in _provider_ids if pid in _MP}
+    for _pid, _val in _saved_mp_keys.items():
+        _MP[_pid]["api_key"] = ""
     try:
         # No extraction_provider, no agent default_model -- must still
         # resolve to *some* real, non-empty model (not crash, not "").
@@ -559,6 +581,13 @@ def test_get_memory_extraction_config_resolves_a_real_model_under_the_provider_f
         assert cfg["model"] == PROVIDER_DEFAULT_MODELS["nvidia"][0]["id"]
     finally:
         settings_path.write_text(original, encoding="utf-8")
+        for _name, _val in _saved_env.items():
+            if _val is None:
+                os.environ.pop(_name, None)
+            else:
+                os.environ[_name] = _val
+        for _pid, _val in _saved_mp_keys.items():
+            _MP[_pid]["api_key"] = (_val if _val is not None else "")
 
 
 def test_gap_investigation_tool_mode_survives_worker_own_memory_being_disabled():

@@ -17,7 +17,11 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("AURORACODER_DATA_DIR", tempfile.mkdtemp())
-os.environ.setdefault("AURORACODER_DOCKER", "0")
+# FORCE (not setdefault) — inside a container AURORACODER_DOCKER is already
+# exported as "1", so setdefault would no-op and gateway.settings_store would
+# bind DATA_DIR to /app/data, ignoring this suite's isolated AURORACODER_DATA_DIR
+# and reading the real /app/data/settings.json instead of the temp one below.
+os.environ["AURORACODER_DOCKER"] = "0"
 
 # Memory is opt-in (settings.other.memory.enabled defaults to False — see
 # memory/settings.py). This suite specifically exercises the enabled path,

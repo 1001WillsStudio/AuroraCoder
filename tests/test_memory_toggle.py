@@ -19,7 +19,11 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _DATA_DIR = tempfile.mkdtemp()
 os.environ.setdefault("AURORACODER_DATA_DIR", _DATA_DIR)
-os.environ.setdefault("AURORACODER_DOCKER", "0")
+# FORCE (not setdefault) — inside a container AURORACODER_DOCKER is already
+# exported as "1", so setdefault would no-op and gateway.settings_store would
+# bind DATA_DIR to /app/data, ignoring this suite's isolated AURORACODER_DATA_DIR
+# and reading the real /app/data/settings.json instead of the temp one below.
+os.environ["AURORACODER_DOCKER"] = "0"
 
 from memory import settings as mem_settings
 from src.core_tools import memory_client
@@ -160,14 +164,14 @@ def test_system_prompt_omits_all_memory_mention_when_disabled():
     from src.config import SYSTEM_MESSAGE_TEMPLATE
 
     disabled_prompt = SYSTEM_MESSAGE_TEMPLATE.format(
-        current_time="now", vnc_instructions="", terminal_env_note="",
+        current_time="now", display_guide="", terminal_env_note="",
         toolstore_tools="", workspace_tree="", memory_section="",
     )
     assert "remember" not in disabled_prompt.lower()
     assert "recall" not in disabled_prompt.lower()
 
     enabled_prompt = SYSTEM_MESSAGE_TEMPLATE.format(
-        current_time="now", vnc_instructions="", terminal_env_note="",
+        current_time="now", display_guide="", terminal_env_note="",
         toolstore_tools="", workspace_tree="",
         memory_section="- **Memory**: you have `remember`/`recall` tools...\n[STANCE]\n",
     )
