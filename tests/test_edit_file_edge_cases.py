@@ -10,6 +10,25 @@ import sys, os, tempfile, textwrap, traceback
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.code_tools.file_operations import execute_edit_file, FileOperations
 from src.code_tools import edit_file as am
+import pytest
+from src.code_tools import file_operations as _fo
+from src import code_sandbox as _cs
+
+# Per-test isolated workspace root, pinned by the autouse fixture below. The
+# range/edit tools (execute_edit_file -> RangeReplaceEditor) resolve relative
+# paths against the module-level WORKSPACE constant; without this each test
+# wrote throw-away files into the live /workspace project tree AND the import-
+# order env leak made WORKSPACE non-deterministic. Hermetic now.
+_WR = None
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_workspace(tmp_path, monkeypatch):
+    global _WR
+    _WR = str(tmp_path)
+    monkeypatch.setattr(_fo, "WORKSPACE", tmp_path)
+    monkeypatch.setattr(_cs, "WORKSPACE", tmp_path)
+    yield
 
 _passed = 0
 _failed = 0
@@ -21,22 +40,22 @@ def _make_file(content: str) -> str:
     """Write content to a temp file, return its path (relative to workspace)."""
     # Use a path inside workspace since FileOperations resolves relative to WORKSPACE
     tmp = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".txt", delete=False, dir="/workspace"
+        mode="w", suffix=".txt", delete=False, dir=_WR
     )
     tmp.write(content)
     tmp.close()
-    return os.path.relpath(tmp.name, "/workspace")
+    return os.path.relpath(tmp.name, _WR)
 
 
 def _read(path: str) -> str:
-    with open(os.path.join("/workspace", path), "r") as f:
+    with open(os.path.join(_WR, path), "r") as f:
         return f.read()
 
 
 def _cleanup(*paths):
     for p in paths:
         try:
-            os.unlink(os.path.join("/workspace", p))
+            os.unlink(os.path.join(_WR, p))
         except OSError:
             pass
 
@@ -76,7 +95,7 @@ def check(name: str, *, ok: bool, file_path: str = None,
 def edit(*, path: str, edits: list, expected_content: str,
          result_contains: str = None, result_not_contains: str = None):
     """Run an edit, verify file content and result message."""
-    result, _ = execute_edit_file({"target_file": path, "edits": edits})
+    result, _ = execute_edit_file({"file": path, "edits": edits})
 
     # Check content
     actual = _read(path)
@@ -306,7 +325,7 @@ def test_tolerance_not_found():
     content = "a\nb\nc\n"
     f = _make_file(content)
     try:
-        result, _ = execute_edit_file({"target_file": f, "edits": [{
+        result, _ = execute_edit_file({"file": f, "edits": [{
             "remove_line_number": "1",
             "content_to_remove": "xyz_NOT_IN_FILE",
             "replace_content": "x",
@@ -359,7 +378,7 @@ def test_unmatched_content_error():
     content = "lineA\nlineB\n"
     f = _make_file(content)
     try:
-        result, _ = execute_edit_file({"target_file": f, "edits": [{
+        result, _ = execute_edit_file({"file": f, "edits": [{
             "remove_line_number": "1",
             "content_to_remove": "non_existent",
             "replace_content": "x",
@@ -467,7 +486,7 @@ def test_overlapping_edits_error():
     content = "a\nb\nc\nd\n"
     f = _make_file(content)
     try:
-        result, _ = execute_edit_file({"target_file": f, "edits": [
+        result, _ = execute_edit_file({"file": f, "edits": [
             {"remove_line_number": "2-3", "content_to_remove": "b\nc", "replace_content": "X"},
             {"remove_line_number": "3-4", "content_to_remove": "c\nd", "replace_content": "Y"},
         ]})
@@ -559,7 +578,7 @@ def test_no_trailing_newline_preserved():
 # 14. ERROR CASES
 # ===================================================================
 def test_nonexistent_file():
-    result, _ = execute_edit_file({"target_file": "nonexistent_xyz.txt", "edits": [{
+    result, _ = execute_edit_file({"file": "nonexistent_xyz.txt", "edits": [{
         "remove_line_number": "1", "content_to_remove": "x", "replace_content": "y",
     }]})
     assert result.startswith("Error"), f"Expected error: {result}"
@@ -570,7 +589,7 @@ def test_invalid_line_format():
     content = "a\nb\n"
     f = _make_file(content)
     try:
-        result, _ = execute_edit_file({"target_file": f, "edits": [{
+        result, _ = execute_edit_file({"file": f, "edits": [{
             "remove_line_number": "abc",
             "content_to_remove": "a",
             "replace_content": "x",
@@ -585,7 +604,7 @@ def test_start_greater_than_end():
     content = "a\nb\nc\n"
     f = _make_file(content)
     try:
-        result, _ = execute_edit_file({"target_file": f, "edits": [{
+        result, _ = execute_edit_file({"file": f, "edits": [{
             "remove_line_number": "3-1",
             "content_to_remove": "c\na",
             "replace_content": "x",
@@ -724,7 +743,7 @@ def test_noop_edit():
     content = "same\n"
     f = _make_file(content)
     try:
-        result, _ = execute_edit_file({"target_file": f, "edits": [{
+        result, _ = execute_edit_file({"file": f, "edits": [{
             "remove_line_number": "1",
             "content_to_remove": "same",
             "replace_content": "same",
@@ -829,7 +848,7 @@ def test_indent_auto_fix_deletion():
     content = "    delete_me\n    keep\n"
     f = _make_file(content)
     try:
-        result, _ = execute_edit_file({"target_file": f, "edits": [{
+        result, _ = execute_edit_file({"file": f, "edits": [{
             "remove_line_number": "1",
             "content_to_remove": "  delete_me",   # wrong indent
             "replace_content": "",                 # deletion
@@ -846,7 +865,7 @@ def test_indent_correct_no_warning():
     content = "    hello\n"
     f = _make_file(content)
     try:
-        result, _ = execute_edit_file({"target_file": f, "edits": [{
+        result, _ = execute_edit_file({"file": f, "edits": [{
             "remove_line_number": "1",
             "content_to_remove": "    hello",
             "replace_content": "    world",

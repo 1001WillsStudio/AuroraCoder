@@ -27,6 +27,26 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.tool_executor import execute_tool_calls
 from src.code_sandbox import WORKSPACE
 
+import pytest
+import src.code_sandbox as _cs
+from src.code_tools import file_operations as _fo
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_workspace(tmp_path, monkeypatch):
+    """Isolate every file tool from the real /workspace project tree.
+
+    read_file/write_file/edit_file/delete_file all resolve relative paths
+    against the module-level WORKSPACE singleton; without this the suite wrote
+    _tN.py scratch files into the live project tree (non-hermetic) and inherited
+    whatever WORKSPACE first-import happened to bake in. Pin all three module
+    bindings to a per-test tmp dir every time.
+    """
+    monkeypatch.setattr(_cs, "WORKSPACE", tmp_path)
+    monkeypatch.setattr(_fo, "WORKSPACE", tmp_path)
+    monkeypatch.setattr(sys.modules[__name__], "WORKSPACE", tmp_path)
+    yield
+
 # ═══════════════════════════════════════════════════════════════════════
 # helpers
 # ═══════════════════════════════════════════════════════════════════════
@@ -86,9 +106,7 @@ def assert_equals(a, b, label=""):
         print(f"  ✅ PASS: {label}")
     else:
         _failed += 1
-        print(f"  ❌ FAIL: {label}")
-        print(f"     expected: {b!r}")
-        print(f"     got:      {a!r}")
+        raise AssertionError(f"{label}: expected {b!r}, got {a!r}")
 
 
 def assert_contains(haystack, needle, label=""):
@@ -98,8 +116,7 @@ def assert_contains(haystack, needle, label=""):
         print(f"  ✅ PASS: {label}")
     else:
         _failed += 1
-        print(f"  ❌ FAIL: {label}")
-        print(f"     '{needle}' not found in result")
+        raise AssertionError(f"{label}: {needle!r} not found in result\n{haystack!r}")
 
 
 def assert_not_in(haystack, needle, label=""):
@@ -109,8 +126,7 @@ def assert_not_in(haystack, needle, label=""):
         print(f"  ✅ PASS: {label}")
     else:
         _failed += 1
-        print(f"  ❌ FAIL: {label}")
-        print(f"     '{needle}' unexpectedly found")
+        raise AssertionError(f"{label}: {needle!r} unexpectedly found in result")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -131,7 +147,7 @@ def test_to_marker_propagated_basic():
     """))
 
     tc = build_tc(1, "edit_file", {
-        "target_file": "_t1.py",
+        "file": "_t1.py",
         "edits": [{
             "remove_line_number": "6-8",
             "content_to_remove": (
@@ -165,7 +181,7 @@ def test_to_marker_not_added_for_single_line():
     make_file("_t2.py", "old_line\nother\n")
 
     tc = build_tc(1, "edit_file", {
-        "target_file": "_t2.py",
+        "file": "_t2.py",
         "edits": [{
             "remove_line_number": "1",
             "content_to_remove": "old_line",
@@ -201,7 +217,7 @@ def test_to_marker_preserved_when_already_correct():
     """))
 
     tc = build_tc(1, "edit_file", {
-        "target_file": "_t3.py",
+        "file": "_t3.py",
         "edits": [{
             "remove_line_number": "2-4",
             "content_to_remove": "b\n[TO]\nd",
@@ -232,7 +248,7 @@ def test_remove_line_number_corrected():
     make_file("_t7.py", "X\nA\nB\nC\nY\n")
 
     tc = build_tc(1, "edit_file", {
-        "target_file": "_t7.py",
+        "file": "_t7.py",
         "edits": [{
             "remove_line_number": "3",   # says line 3, but "A" is at line 2
             "content_to_remove": "A",
@@ -259,7 +275,7 @@ def test_indent_fix_propagated():
     make_file("_t8.py", "    def foo():\n        pass\n")
 
     tc = build_tc(1, "edit_file", {
-        "target_file": "_t8.py",
+        "file": "_t8.py",
         "edits": [{
             "remove_line_number": "1",
             "content_to_remove": "  def foo():",   # 2-space (wrong)
@@ -295,7 +311,7 @@ def test_multiple_tool_calls_all_corrected():
     make_file("_t9b.py", "W\nX\nY\nZ\n")
 
     tc1 = build_tc(1, "edit_file", {
-        "target_file": "_t9a.py",
+        "file": "_t9a.py",
         "edits": [{
             "remove_line_number": "2-3",
             "content_to_remove": "B\nC",   # no [TO]
@@ -303,7 +319,7 @@ def test_multiple_tool_calls_all_corrected():
         }],
     })
     tc2 = build_tc(2, "edit_file", {
-        "target_file": "_t9b.py",
+        "file": "_t9b.py",
         "edits": [{
             "remove_line_number": "2-3",
             "content_to_remove": "X\nY",   # no [TO]
@@ -334,7 +350,7 @@ def test_read_file_args_unchanged():
     make_file("_t10.py", "hello\n")
 
     tc1 = build_tc(1, "edit_file", {
-        "target_file": "_t10.py",
+        "file": "_t10.py",
         "edits": [{
             "remove_line_number": "1",
             "content_to_remove": "hello",
@@ -342,13 +358,13 @@ def test_read_file_args_unchanged():
         }],
     })
     tc2 = build_tc(2, "read_file", {
-        "target_file": "_t10.py",
+        "file": "_t10.py",
     })
 
     messages, _ = simulate_main_flow([tc1, tc2])
 
     args2 = find_assistant_args(messages, "call_2")
-    assert_equals(args2["target_file"], "_t10.py",
+    assert_equals(args2["file"], "_t10.py",
                   "read_file args unchanged")
 
     os.remove(os.path.join(WORKSPACE, "_t10.py"))
@@ -363,7 +379,7 @@ def test_empty_content_to_remove_unchanged():
     make_file("_t11.py", "a\n\nb\n")
 
     tc = build_tc(1, "edit_file", {
-        "target_file": "_t11.py",
+        "file": "_t11.py",
         "edits": [{
             "remove_line_number": "2",
             "content_to_remove": "",
@@ -391,7 +407,7 @@ def test_code_interpreter_panel_sees_corrected_args():
     make_file("_t12.py", "X\nY\nZ\n")
 
     tc = build_tc(1, "edit_file", {
-        "target_file": "_t12.py",
+        "file": "_t12.py",
         "edits": [{
             "remove_line_number": "2-3",
             "content_to_remove": "Y\nZ",   # no [TO]
@@ -422,7 +438,7 @@ def test_tool_result_no_self_correct_marker():
     make_file("_t13.py", "A\nB\nC\nD\n")
 
     tc = build_tc(1, "edit_file", {
-        "target_file": "_t13.py",
+        "file": "_t13.py",
         "edits": [{
             "remove_line_number": "2-3",
             "content_to_remove": "B\nC",
@@ -451,13 +467,13 @@ def test_delete_file_removed_from_context():
     make_file("_t14.py", "data\n")
 
     # First: read the file so it's "open"
-    tc_read = build_tc(1, "read_file", {"target_file": "_t14.py"})
+    tc_read = build_tc(1, "read_file", {"file": "_t14.py"})
     messages, _ = simulate_main_flow([tc_read])
     assert_contains(discover_open_files(messages), "_t14.py",
                     "file is in context after read_file")
 
     # Then: delete it in a new turn
-    tc_del = build_tc(2, "delete_file", {"target_file": "_t14.py"})
+    tc_del = build_tc(2, "delete_file", {"file": "_t14.py"})
     messages, _ = simulate_main_flow([tc_del])
     assert_not_in(discover_open_files(messages), "_t14.py",
                   "file is removed from context after delete_file")
@@ -476,17 +492,17 @@ def test_delete_file_removed_from_context():
 def test_write_file_args_unchanged():
     """write_file call — args are passed through unchanged."""
     tc = build_tc(1, "write_file", {
-        "target_file": "_t15.py",
-        "code_edit": "print('hello')",
+        "file": "_t15.py",
+        "content": "print('hello')",
     })
 
     messages, _ = simulate_main_flow([tc])
     args = find_assistant_args(messages, "call_1")
 
-    assert_equals(args["target_file"], "_t15.py",
-                  "write_file target_file unchanged")
-    assert_equals(args["code_edit"], "print('hello')",
-                  "write_file code_edit unchanged")
+    assert_equals(args["file"], "_t15.py",
+                  "write_file args unchanged")
+    assert_equals(args["content"], "print('hello')",
+                  "write_file content unchanged")
 
     os.remove(os.path.join(WORKSPACE, "_t15.py"))
 
@@ -500,7 +516,7 @@ def test_same_file_guard_preserves_args():
     make_file("_t16.py", "a\nb\nc\n")
 
     tc1 = build_tc(1, "edit_file", {
-        "target_file": "_t16.py",
+        "file": "_t16.py",
         "edits": [{
             "remove_line_number": "1",
             "content_to_remove": "a",
@@ -508,7 +524,7 @@ def test_same_file_guard_preserves_args():
         }],
     })
     tc2 = build_tc(2, "edit_file", {
-        "target_file": "_t16.py",        # same file!
+        "file": "_t16.py",        # same file!
         "edits": [{
             "remove_line_number": "2",
             "content_to_remove": "b",
