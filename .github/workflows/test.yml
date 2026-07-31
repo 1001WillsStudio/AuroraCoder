@@ -1,0 +1,52 @@
+# AuroraCoder QA / unit-test pipeline.
+# Runs the hermetic pytest suite as a required gate. No Docker/git/LLM/network —
+# the suite is fully isolated (see tests/conftest.py + doc/QA_TEST_PLAN.md).
+name: tests
+
+on:
+  push:
+    branches: [dev, master]
+  pull_request:
+    branches: [dev, master]
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install runtime deps
+        run: pip install -r requirements.txt
+
+      - name: Install QA deps
+        run: pip install -r requirements-dev.txt
+
+      - name: Run the hermetic unit suite (with coverage gate)
+        env:
+          # Belt-and-braces: the suite's own conftest pins these, but make the
+          # CI environment explicit so a stray runner env can't leak host state.
+          AURORACODER_DOCKER: "0"
+        run: |
+          # Fail-under is pinned to the current measured floor (45%). Raise as
+          # more modules are covered; see doc/QA_TEST_PLAN.md roadmap.
+          pytest --cov=src --cov=gateway --cov=memory \
+                 --cov-fail-under=45 \
+                 --cov-report=term-missing
+
+  # Integration tests are opt-in and never block the default gate.
+  pytest-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: false  # flip to github.event... for a nightly label/branch when desired
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: pytest -m integration

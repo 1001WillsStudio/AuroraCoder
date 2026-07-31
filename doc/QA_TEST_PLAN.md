@@ -1,8 +1,9 @@
 # AuroraCoder — QA Unit-Test Plan
 
-Status: **in progress** — branch `test/add-unit-test-suite`. This document is the
-QA-engineer design for "unit tests that ensure every module works right," plus
-the implementation map and the findings surfaced so far.
+Status: **whole suite GREEN** — branch `test/add-unit-test-suite` (pushed).
+Final: `242 passed, 1 xfailed, 0 failed, 0 errors` hermetically. This document is
+the QA-engineer design for "unit tests that ensure every module works right," the
+implementation map, and how all pre-existing failures were diagnosed and fixed.
 
 ---
 
@@ -87,35 +88,68 @@ msw (reuses the existing Vite config). Prime targets: `utils/streamUtils.js`,
 ## 4. Coverage gate (target)
 
 ```
-pytest --cov=src --cov=gateway --cov=memory --cov-fail-under=85
+pytest --cov=src --cov=gateway --cov=memory --cov-fail-under=85   # target
 ```
-Pure modules → ~95–100%; orchestration modules realistically land ~70–80% via
-injected fakes (the remainder is integration-layer territory).
+- **Current measured floor: 45%** — that's what `.github/workflows/test.yml`
+  pins (`--cov-fail-under=45`) so CI cannot fail spuriously. Raise the gate as
+  the modules marked 🟡/⬜ below get covered. Pure modules already sit at
+  ~95–100%; orchestration modules realistically land ~70–80% via injected fakes
+  (the remainder is integration-layer territory).
 
 ## 5. Updated recommendations
 
 - Adopt the **injected-fake-client** pattern project-wide (the memory ops tests
   already do; `conftest` generalizes it).
 - Keep `requirements-dev.txt` authoritative for QA tooling.
-- Run ruff + pytest in CI (`.github/workflows/ci.yml` — to add).
+- Run ruff + pytest in CI — see `.github/workflows/test.yml` (added on this branch).
 
-## 6. Known issues (pre-existing, NOT introduced by this branch)
+## 6. Pre-existing failures — diagnosed and fixed (whole suite now green)
 
-Baseline (`dev`, untouched): **42 failed, 112 passed**. With this branch:
-**42 failed, 199 passed (+87), 1 xfail, 0 new regressions.** The 42 are
-environment/behaviour-drift failures that pre-date this work:
+The untouched `dev` branch was **42 failed, 112 passed**. As QA owner of the whole
+suite I traced every failure to its root cause and fixed it (not masked). The full
+suite now passes hermetically: **242 passed, 1 xfailed, 0 failed, 0 errors**.
 
-- `tests/test_edit_file_edge_cases.py` (≈30): the `edit_file` tool lowercases
-  single-line content and otherwise drifts from the encoded contract
-  (e.g. `test_single_line_file` expects `'ONLY\n'`, gets `'only\n'`).
-  **Finding:** test-staleness / behaviour drift in `edit_file` — needs a
-  contract decision (preserve-case vs normalize) and either fix or test update.
-- `tests/test_memory_toggle.py` (≈8) + a few `test_memory_layer1`/`layer3`
-  gateway tests: `memory_enabled()` returns `True` because a host
-  `settings.json`/env enables memory; the tests assume disabled-by-default and
-  are not isolated from host env. **Finding:** the toggle tests leak host env
-  — they should run under `env_isolated` + a tmp settings store (the very
-  hermeticity pattern added here would fix them).
+### 6.1 `test_streaming_race.py` — 1 collection ERROR
+**Cause:** the file defined `async def test(scenario, subscriber_fn)` as a plain
+helper for its `main()` script, but `asyncio_mode=auto` collected it as a test and
+failed resolving `scenario` as a fixture. **Fix:** renamed it `_run_one` and added a
+real `test_streaming_race_fix_verified` entry point that locks the OLD-never-gets-
+`done` / NEW-always-gets-`done` contract.
 
-These are filed for follow-up; out of scope for the *add-unit-tests* task, but
-the new infrastructure is exactly what's needed to harden them.
+### 6.2 `test_memory_toggle.py` — 4 failures (host-env import-order leak)
+**Cause:** the host shell exports `AURORACODER_DOCKER=1`, so `src.config` bakes
+`DATA_DIR=/app/data` at first import. Several test modules import `src.config`
+transitively, so whichever is collected first bakes `/app/data` for the whole
+process; its `settings.json` (`memory.enabled=true`) then leaked into
+`test_memory_toggle`, which expects the disabled-by-default baseline. The file's
+own module-top env override ran too late (after `src.config` was already bound).
+**Fix:** `tests/conftest.py` now forces `AURORACODER_DOCKER=0` + a fresh per-run
+`mkdtemp` data dir (seeded `memory.enabled=true`) BEFORE any test module imports
+`src.config`. layer1/2/3 still see enabled (as before); `test_memory_toggle`
+overwrites settings per-test (it always writes before reading).
+
+### 6.3 `test_edit_file_edge_cases.py` — 36 failures (contract drift + non-hermetic)
+**Cause:** the suite called `execute_edit_file({"target_file": ...})`, but the
+tool reads `arguments.get("file")`, so `file=None` -> every edit silently no-ops
+-> file unchanged -> assertion fails. (Earlier guess about "lowercasing" was wrong;
+the file was simply never edited.) The helpers also hardcoded `/workspace`, writing
+scratch files into the live project tree.
+**Fix:** `target_file`->`file`; per-test autouse `tmp_path` WORKSPACE.
+
+### 6.4 `test_context_fix_propagation.py` — 2 failures + N false-passes
+**Cause:** same `target_file`->`file` (and `code_edit`->`content`) drift across
+edit_file/read_file/write_file/delete_file; tool_definitions drops the unknown keys
+so the tools no-op. Worse, its `assert_equals`/`assert_contains`/`assert_not_in`
+helper printed 🚫 but **never raised**, so most checks were false-passes masking
+the broken `[TO]`-propagation verification.
+**Fix:** renamed params to the current contract; per-test autouse tmp WORKSPACE;
+converted the three assert helpers to REAL (raising) pytest assertions so the
+suite genuinely verifies the context-fix channel.
+
+### 6.5 Persistent QA findings (still open, low priority)
+- **`file_operations._resolve_path` performs no path-escape validation** — a
+  relative `../../x` resolves outside `WORKSPACE`. Captured as an `xfail` test
+  (`test_resolve_path_blocks_traversal`); fix is a prod change (out of test
+  scope) but the contract is now locked.
+- `check()` helper in `test_edit_file_edge_cases.py` is dead code (defined, never
+  called) — safe to delete.
