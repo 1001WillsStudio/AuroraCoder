@@ -184,11 +184,16 @@ class FakeSubprocess:
                 return FakeCompletedProcess(args, stdout, stderr, returncode)
         raise AssertionError(f"FakeSubprocess: unhandled command: {args!r}")
 
-    def install(self, monkeypatch: pytest.MonkeyPatch, module) -> None:
-        """Patch ``subprocess.run`` as seen by *module* (and the global)."""
-        monkeypatch.setattr(module, "subprocess", self, raising=False)
+    def install(self, monkeypatch: pytest.MonkeyPatch, module=None) -> None:
+        """Patch ``subprocess.run`` globally (module-wide) without replacing the
+        *whole* ``subprocess`` module object.
+
+        Several modules reference ``subprocess.TimeoutExpired`` /
+        ``subprocess.FileNotFoundError`` at exception-handling time, so the
+        real module object must remain intact — we only swap ``.run``
+        (and the ``CompletedProcess`` type, which tests rarely need).
+        """
         monkeypatch.setattr("subprocess.run", self.run, raising=False)
-        # Also expose the CompletedProcess type for code that references it.
         monkeypatch.setattr("subprocess.CompletedProcess", FakeCompletedProcess, raising=False)
 
 
