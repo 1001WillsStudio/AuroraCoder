@@ -9,8 +9,6 @@ items (no more, no fewer).
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-import pytest
-
 from memory import stance
 
 

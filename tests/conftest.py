@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import importlib
 import os
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional

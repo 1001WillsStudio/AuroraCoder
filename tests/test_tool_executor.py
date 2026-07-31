@@ -8,9 +8,6 @@ covered by integration/behavioral tests elsewhere).
 """
 import json
 
-import pytest
-
-from src import tool_executor
 from src.tool_executor import (
     MAX_TOOL_CONCURRENCY,
     PARALLEL_SAFE_TOOLS,

@@ -24,12 +24,28 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.tool_executor import execute_tool_calls
-from src.code_sandbox import WORKSPACE
-
 import pytest
+from src.tool_executor import execute_tool_calls
 import src.code_sandbox as _cs
 from src.code_tools import file_operations as _fo
+
+# Script-mode hermeticity: under pytest the autouse fixture below pins WORKSPACE
+# to a per-test tmp_path. But when this file is run directly
+# (`python tests/test_context_fix_propagation.py`), no fixture runs and WORKSPACE
+# would stay the real /workspace, so the helpers below (make_file/Path/os.remove)
+# would write scratch _tN.py files into the live project tree. Give WORKSPACE a
+# throw-away temp dir when we're NOT under pytest so script mode is hermetic too.
+# (`"pytest" in sys.modules` is the clean, robust check; never index sys.modules.)
+if "pytest" not in sys.modules:
+    import tempfile as _tempfile
+    _ws = _cs.Path(_tempfile.mkdtemp(prefix="aurora-ctxfix-"))
+    # Rebind BOTH module singletons: the tools read file_operations.WORKSPACE
+    # (copied at import from code_sandbox, not aliased to the rebinding), so a
+    # single _cs.WORKSPACE = ... assignment would leave _fo.WORKSPACE pointing
+    # at the real /workspace and the helpers + tools would disagree.
+    _cs.WORKSPACE = _ws
+    _fo.WORKSPACE = _ws
+WORKSPACE = _cs.WORKSPACE
 
 
 @pytest.fixture(autouse=True)

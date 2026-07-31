@@ -5,10 +5,13 @@ boundaries, multi-edits, deletions, insertions, error handling, and more.
 
 Run with:  cd /workspace && python test_edit_file_edge_cases.py
 """
-import sys, os, tempfile, textwrap, traceback
+import os
+import sys
+import tempfile
+import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from src.code_tools.file_operations import execute_edit_file, FileOperations
+from src.code_tools.file_operations import execute_edit_file
 from src.code_tools import edit_file as am
 import pytest
 from src.code_tools import file_operations as _fo
@@ -19,7 +22,18 @@ from src import code_sandbox as _cs
 # paths against the module-level WORKSPACE constant; without this each test
 # wrote throw-away files into the live /workspace project tree AND the import-
 # order env leak made WORKSPACE non-deterministic. Hermetic now.
-_WR = None
+#
+# Script-mode default: when run directly (NOT under pytest), no fixture runs, so
+# rebind BOTH file-singletons (_fo.WORKSPACE for the tools, _cs.WORKSPACE for
+# the workspace pkg) to a throw-away temp dir AND set _WR to it — so the helpers
+# (make_file/read/cleanup) and the tools agree on the same isolated dir and
+# nothing ever touches the live /workspace. Under pytest the autouse fixture
+# below overrides _WR + both bindings to a per-test tmp_path.
+if "pytest" not in sys.modules:
+    _ws = type(_fo.WORKSPACE)(tempfile.mkdtemp(prefix="aurora-editfix-"))
+    _fo.WORKSPACE = _ws
+    _cs.WORKSPACE = _ws
+_WR = str(_fo.WORKSPACE)
 
 
 @pytest.fixture(autouse=True)
@@ -38,7 +52,7 @@ _failed = 0
 # ---------------------------------------------------------------------------
 def _make_file(content: str) -> str:
     """Write content to a temp file, return its path (relative to workspace)."""
-    # Use a path inside workspace since FileOperations resolves relative to WORKSPACE
+    # Use a path inside workspace since execute_edit_file resolves relative to WORKSPACE
     tmp = tempfile.NamedTemporaryFile(
         mode="w", suffix=".txt", delete=False, dir=_WR
     )
@@ -58,38 +72,6 @@ def _cleanup(*paths):
             os.unlink(os.path.join(_WR, p))
         except OSError:
             pass
-
-
-def check(name: str, *, ok: bool, file_path: str = None,
-          expected_content: str = None, result_prefix: str = None,
-          result_contains: str = None, result_not_contains: str = None):
-    """Assertion helper that counts passes/fails and cleans up."""
-    global _passed, _failed
-    try:
-        if ok:
-            assert ok, "ok must be True"
-        if file_path and expected_content is not None:
-            actual = _read(file_path)
-            assert actual == expected_content, (
-                f"\nEXPECTED:\n{repr(expected_content)}\nGOT:\n{repr(actual)}"
-            )
-        if result_prefix is not None:
-            assert result_prefix.startswith(result_prefix), (
-                f"result_prefix mismatch:\nEXPECTED: {result_prefix}\nGOT: {result_prefix}"
-            )
-        if result_contains is not None:
-            # result_contains is passed via a separate mechanism; handled below
-            pass
-        if result_not_contains is not None:
-            pass
-        _passed += 1
-        print(f"  ✅ {name}")
-    except AssertionError as e:
-        _failed += 1
-        print(f"  ❌ {name}: {e}")
-    finally:
-        if file_path:
-            _cleanup(file_path)
 
 
 def edit(*, path: str, edits: list, expected_content: str,

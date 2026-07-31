@@ -7,7 +7,6 @@ helper degrades safely (default-on) when storage is absent or corrupt.
 """
 import json
 from datetime import datetime
-from pathlib import Path
 
 import pytest
 
