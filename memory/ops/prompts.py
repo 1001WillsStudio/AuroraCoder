@@ -77,6 +77,15 @@ categories:
 - A "stance" candidate (injected on EVERY future turn, forever, for every session) that is not
   clearly durable, unambiguous, and high-confidence. When in doubt about a stance candidate,
   either drop it or fold it in as "world" plane instead of approving it as stance.
+- A "stance" candidate seen in only ONE session with no corroboration in the OTHER past
+  conversations shown to you. Stance is high-cost (injected every turn forever across all sessions),
+  so a single offhand remark — even if the agent `remember`-nominated it — should NOT graduate to
+  stance on first appearance. Either fold it into "world" plane (reference/low or medium — a
+  memory worth keeping but not one that shadows every future turn) and let independent
+  re-appearances across later sessions promote it, or drop it outright if it's truly a one-off.
+  Stance that later turns out to be genuine will surface again and corroborate the world entry,
+  at which point the agent (or consolidation) can lift it. This is exactly why the other-conversation
+  snippets are shown to you — use them to require repeat, independent occurrence before stance.
 
 ## The no-op default
 Silence is CORRECT and PREFERRED. Most sessions produce nothing — this applies just as much when
@@ -85,20 +94,39 @@ instruction to save. Before including anything, ask: "would a future agent plaus
 because of this, versus just re-deriving it in-situ?" If the answer is no or you're unsure, leave
 it out. Do not pad the output to seem useful.
 
-## Duplicates
-You will be shown existing memories that might overlap with each nominated candidate. If a
-candidate restates or refines an existing memory, set "duplicate_of" to that memory's id (it will
-be updated in place) instead of creating a new, separate entry. If a nominated candidate explicitly
-named an existing memory_id to update, treat that as the agent's own explicit intent and prefer
-honoring it (as "duplicate_of") unless you're rejecting the candidate entirely.
+## Duplicates and the full existing corpus
+You are given the COMPLETE current long-term memory corpus as base context, below the transcript —
+every existing memory (both planes), each with its id, plane, type, scope, confidence,
+corroboration_count, usage_count, last_used, and full content. The corpus is size-capped (low-value
+memories are evicted over time), so you can rely on it as the whole picture rather than a sample.
+
+For EACH candidate you are about to write — nominated OR discovered — first scan that corpus to see
+whether it restates, refines, contradicts, or is a rewording of an existing memory. This is
+semantic, not keyword: the same fact phrased differently, or stored under a different type/scope,
+is STILL a duplicate. When that happens, set "duplicate_of" to that memory's id; the candidate will
+UPDATE that memory in place (content/description/confidence improved, corroboration_count bumped)
+rather than create a new, separate row. Never write a new row that duplicates an existing one.
+
+If a nominated candidate explicitly named an existing memory_id to update, treat that as the agent's
+own explicit intent and prefer honoring it (as "duplicate_of") unless you're rejecting the candidate
+entirely. If two existing memories contradict each other, prefer the more recent / better-evidenced
+one and fold the other's content into the winner via "duplicate_of" rather than keeping both.
+
+This corpus-driven lookup replaces the old per-nomination keyword search: you see ALL memories (with
+full content, not just a one-line summary), so dedup is now your job, done semantically across
+planes/scope/types, not a fragile word-overlap pre-filter.
 
 ## Other conversations
 You may also be shown snippets from OTHER past sessions with this user, found by a simple keyword
-search (not curated, may be irrelevant — judge relevance yourself). Use these only to sanity-check
-a nominated candidate: does an earlier session corroborate it (raise your confidence), contradict
-it (the user may have changed their mind — prefer the more recent statement, or reject if genuinely
-unclear which should win), or reveal it's really a one-off from this session rather than a durable
-pattern? Do not go out of your way to invent connections that aren't clearly there.
+search (not curated, may be irrelevant — judge relevance yourself). Each snippet carries the
+session's created_at/updated_at — use them to judge WHEN it happened, not just THAT it happened:
+a mention echoed across several weeks is a stronger durability signal than one repeated twice
+in the span of an afternoon, and a contradicting statement that is MORE RECENT than the
+nominated candidate should win. Use these only to sanity-check a nominated candidate: does an
+earlier session corroborate it (raise your confidence), contradict it (the user may have changed
+their mind — prefer the more recent statement, or reject if genuinely unclear which should win),
+or reveal it's really a one-off from this session rather than a durable pattern? Do not go out of
+your way to invent connections that aren't clearly there.
 
 ## Confidence — judge this against the checklist below, not a gut feeling
 Self-rated confidence with no anchor tends to cluster at "high" regardless of actual reliability —
@@ -167,24 +195,89 @@ failure on your part — do not force an answer just to have one.
 """
 
 
+def render_existing_corpus(items: List[Dict[str, Any]]) -> str:
+    """Render the full existing memory corpus as compact JSON for the prompt.
+
+    Each entry carries the fields dedup needs to make a real judgment: id,
+    plane, type, scope, confidence, corroboration_count, usage_count,
+    last_used, and the FULL content (not just a one-line description — two
+    memories with different summaries can describe the same fact, which only
+    the body reveals). The corpus is size-capped upstream
+    (``MemoryRepository.enforce_capacity``), so this is bounded and cheap
+    to inject wholesale; it is the whole picture, not a keyword-filtered
+    sample. Used for both the extraction write-pass (dedup before write) and
+    the consolidation judge (merge/decay).
+    """
+    if not items:
+        return "(the memory corpus is currently empty — this session's candidates will be the first entries)"
+    return json.dumps(items, indent=2)
+
+
 def build_extraction_user_prompt(
     transcript_text: str,
     nominated: Optional[List[Dict[str, Any]]] = None,
-    similar_by_nomination: Optional[List[List[Dict[str, Any]]]] = None,
+    existing_corpus: Optional[List[Dict[str, Any]]] = None,
     other_conversations_by_nomination: Optional[List[List[Dict[str, Any]]]] = None,
+    session_meta: Optional[Dict[str, Any]] = None,
+    now_iso: Optional[str] = None,
 ) -> str:
-    """Build the combined user prompt: transcript + nominated candidates,
-    each paired with any similar existing memories AND any relevant
-    snippets from other past conversations found for it (both are cheap
-    deterministic pre-fetches done by the caller, not tool calls the model
-    makes itself — see ops/conversation_search.py)."""
-    parts = [
+    """Build the combined user prompt: a TIME anchor block (current time + this
+    session's created/updated), the FULL existing memory corpus (every memory,
+    both planes — base context for dedup), the session transcript, the
+    nominated candidates, and any relevant snippets from OTHER past
+    conversations found per nomination (a cheap deterministic pre-fetch by
+    the caller, not a tool call the model makes itself — see
+    ops/conversation_search.py).
+
+    Time injection is load-bearing for memory quality: project-type memories
+    that contain relative dates ("the deadline is next Friday") can only be
+    normalized to absolute dates with a reference time, and recency/
+    corroboration/deadline-timeout judgments need to know "how long ago did
+    this session and these other conversations actually happen." The version
+    before this handed the model a time-stripped transcript, so neither could
+    be done. The truly relative dates sit in the transcript; the model never
+    has access to per-message timestamps (the store doesn't keep them), so the
+    two conversation-level timestamps here + the current time are the
+    available reference frame, and the system prompt instructs the model to
+    treat the whole transcript as having occurred across the session's
+    created..updated window. The full-corpus injection replaces the old
+    per-nomination keyword similarity (``ops/similarity.py``).
+    """
+    # Time anchor block comes FIRST — it's the reference frame every relative
+    # date ("next Friday", "yesterday") and recency judgment below it is
+    # resolved against. Omitting any single piece silently degrades memory
+    # quality, so keep them together at the top, never interleaved.
+    sm = session_meta or {}
+    time_lines = []
+    if now_iso:
+        time_lines.append(f"Current time (UTC): {now_iso}")
+    if sm.get("created_at"):
+        time_lines.append(f"This session started: {sm['created_at']}")
+    if sm.get("updated_at"):
+        time_lines.append(f"This session last updated: {sm['updated_at']}")
+    parts = []
+    if time_lines:
+        parts.append("Times that anchor everything below — use the current time to normalize relative "
+                     "dates (e.g. 'next Friday') and to judge recency, and treat the session's "
+                     "created..updated window as when this transcript happened (the store keeps no "
+                     "per-message timestamps, so that window is the finest time resolution available).")
+        parts.append("--- TIME ANCHOR START ---")
+        parts.extend(time_lines)
+        parts.append("--- TIME ANCHOR END ---")
+        parts.append("")
+    parts.extend([
+        "Here is the COMPLETE current long-term memory corpus. Treat this as the whole picture "
+        "of what is already known — scan it for every candidate before deciding to create vs. update.",
+        "--- EXISTING MEMORY CORPUS START ---",
+        render_existing_corpus(existing_corpus or []),
+        "--- EXISTING MEMORY CORPUS END ---",
+        "",
         "Here is the session transcript (user/assistant/tool messages, truncated if very long).",
         "--- TRANSCRIPT START ---",
         transcript_text,
         "--- TRANSCRIPT END ---",
         "",
-    ]
+    ])
 
     nominated = nominated or []
     if not nominated:
@@ -195,10 +288,6 @@ def build_extraction_user_prompt(
         for i, cand in enumerate(nominated):
             parts.append(f"\nNominated candidate #{i + 1}:")
             parts.append(json.dumps(cand, indent=2))
-            similar = (similar_by_nomination or [[]] * len(nominated))[i] if similar_by_nomination else []
-            if similar:
-                parts.append("Existing memories that might be related/duplicates:")
-                parts.append(json.dumps(similar, indent=2))
             other = (other_conversations_by_nomination or [[]] * len(nominated))[i] if other_conversations_by_nomination else []
             if other:
                 parts.append("Snippets from other past conversations that might be related (keyword search, not curated):")

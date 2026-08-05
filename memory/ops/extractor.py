@@ -15,15 +15,20 @@ set of rules (see ``ops/prompts.py`` module docstring for the reasoning):
   - "Discovered": things the transcript reveals that the agent didn't
     explicitly flag.
 
-For each nominated candidate, two cheap deterministic pre-fetches are
-done before the (single) LLM call: similar existing memories
-(``ops/similarity.py``) and relevant snippets from OTHER past
-conversations (``ops/conversation_search.py``). Both are plain function
-calls the caller makes while building the prompt — not tool calls the
-model itself decides to make. This still runs entirely inside the
-gateway process: no tool access, no sandbox, no agent loop. Safe by
-construction — this is exactly why it doesn't need the isolated worker
-container that Layer 2b (Gap Engine) needs.
+Before the (single) LLM call, the model is handed the COMPLETE current
+memory corpus as base context — every existing memory (both planes), each
+with its full content — so dedup is the model's own job, done semantically
+across all planes/types/scope rather than a fragile word-overlap pre-filter
+(the old ``ops/similarity.py`` per-nomination shortlist that silently
+missed rewordings and cross-group duplicates). The corpus stays bounded
+because ``MemoryRepository.enforce_capacity`` caps total count
+(see ``settings.max_memories``). A cheap deterministic pre-fetch of
+relevant snippets from OTHER past conversations
+(``ops/conversation_search.py``) is also done while building the prompt —
+not a tool call the model itself decides to make. This still runs entirely
+inside the gateway process: no tool access, no sandbox, no agent loop.
+Safe by construction — this is exactly why it doesn't need the isolated
+worker container that Layer 2b (Gap Engine) needs.
 
 Triggered from ``gateway/streaming.py`` both when a top-level user_chat
 conversation reaches a terminal status, AND at the moment a conversation
@@ -43,7 +48,7 @@ treated as a THIRD kind of nomination, structurally identical to
 ``remember`` — it does no I/O either, it just leaves a marker in ITS
 transcript. ``memory/ops/dispatcher.py`` hands that transcript to
 ``run_gap_investigation_extraction`` below, which shares the exact same
-dedup search / cross-conversation search / LLM judgment / write core
+corpus-based dedup / cross-conversation search / LLM judgment / write core
 (``_run_write_pass``) as the normal session-end path. This is deliberate
 — the Gap Engine is "another source of memory candidates", not a
 separate write path with its own rules; see the design doc §13 and
@@ -66,7 +71,6 @@ from memory.settings import passive_extraction_enabled
 from memory.schema import MemoryItem, MEMORY_PLANES, MEMORY_TYPES
 from memory.store import get_repository
 from memory.ops.prompts import EXTRACTION_SYSTEM_PROMPT, build_extraction_user_prompt
-from memory.ops.similarity import find_similar_existing
 from memory.ops.conversation_search import search_conversations
 
 logger = logging.getLogger(__name__)
@@ -74,7 +78,6 @@ logger = logging.getLogger(__name__)
 MAX_TRANSCRIPT_CHARS = 20_000
 MIN_MESSAGES_TO_BOTHER = 4  # skip trivial 1-2 turn conversations, UNLESS something was nominated
 EXTRACTION_MAX_TOKENS = 3072
-SIMILAR_PER_NOMINATION_LIMIT = 5
 OTHER_CONVERSATIONS_PER_NOMINATION_LIMIT = 3
 
 # Tool calls treated as a "nomination" when scanning a transcript — see
@@ -85,6 +88,15 @@ NOMINATION_TOOL_NAMES = ("remember", "report_findings")
 
 def _transcript_to_text(messages: List[Dict[str, Any]], max_chars: int = MAX_TRANSCRIPT_CHARS) -> str:
     """Render a compact, role-tagged transcript for the extraction prompt.
+
+    TIME: deliberately per-message-time-stripped. The conversation store keeps
+    no per-message timestamps, so rather than fabricate resolution the model
+    doesn't have, the session's created..updated window is handed separately at
+    the top of the user prompt (build_extraction_user_prompt) and the system
+    prompt instructs the model to treat the whole transcript as occurring
+    across that window. Adding fake zs timestamps here would mislead; adding
+    nothing at all (the old behavior) left zero time resolution. This is the
+    honest middle.
 
     Tool call arguments/results are summarized rather than included in
     full — extraction only needs the narrative (what was asked, what was
@@ -378,28 +390,58 @@ def _run_write_pass(
         transcript = _transcript_to_text(messages)
 
         repo = get_repository()
-        similar_by_nomination = [
-            find_similar_existing(repo, plane=cand["plane"], scope=cand["scope"],
-                                   description=cand["description"], limit=SIMILAR_PER_NOMINATION_LIMIT)
-            for cand in nominated
-        ]
-        # Honor an explicit memory_id from the agent as a strong duplicate signal,
-        # even if the keyword-overlap search didn't independently surface it.
-        for cand, similar in zip(nominated, similar_by_nomination):
-            if cand.get("explicit_update_of") and not any(s["id"] == cand["explicit_update_of"] for s in similar):
-                existing = repo.get(cand["explicit_update_of"])
-                if existing:
-                    similar.insert(0, {"id": existing.id, "description": existing.description,
-                                        "type": existing.type, "confidence": existing.confidence})
 
-        # Deterministic pre-fetch (same shape as similar_by_nomination above),
-        # not an agent tool call — the model never decides whether/how to
-        # search, it just gets a few relevant snippets from OTHER sessions
-        # alongside the candidate, so it can judge whether something is
-        # actually corroborated (or contradicted) by earlier history rather
-        # than trusting this session's framing alone. See
-        # ops/conversation_search.py module docstring for why this is a
-        # single shared, deterministic utility rather than tool access.
+        # Time anchors for the write-pass: the current wall-clock (the one
+        # reference frame relative dates can be normalized against) and this
+        # session's own created_at/updated_at (when the transcript happened —
+        # the store keeps NO per-message timestamps, so the conversation-level
+        # window is the finest time resolution available). For gap-
+        # investigation transcripts ("gap-investigation:<id>") there's no
+        # matching conversation record, so session_meta is empty and the model
+        # only gets the current time, which is still far better than the
+        # time-stripped transcript both passes used to hand it. Fetched lazily
+        # and best-effort: a missing/corrupt conversation record degrades to
+        # "current time only" rather than failing the whole pass.
+        from datetime import datetime, timezone
+        now_iso = datetime.now(timezone.utc).isoformat()
+        session_meta: Dict[str, Any] = {}
+        try:
+            from gateway.conversation_store import store as _conv_store
+            sm = _conv_store.get_conversation(conversation_id)
+            if isinstance(sm, dict):
+                session_meta = {
+                    "created_at": sm.get("created_at", ""),
+                    "updated_at": sm.get("updated_at", ""),
+                }
+        except Exception:
+            pass  # gap-investigation transcripts and other non-conversation ids
+
+        # The model gets the COMPLETE current corpus as base context (see
+        # ops/prompts.py's build_extraction_user_prompt / render_existing_corpus),
+        # not a keyword-overlap shortlist. Dedup is now the model's job done
+        # semantically across all planes/types/scope, because the whole corpus
+        # is bounded (MemoryRepository.enforce_capacity caps total count) and
+        # every memory is shown with its FULL content — two memories with
+        # different one-line summaries can describe the same fact, which only
+        # the body reveals. This replaces the old per-nomination
+        # find_similar_existing() (ops/similarity.py) that silently missed
+        # rewordings and cross-(type/scope) duplicates.
+        existing_corpus: List[Dict[str, Any]] = []
+        for it in repo.all_items():
+            existing_corpus.append({
+                "id": it.id, "plane": it.plane, "type": it.type, "scope": it.scope,
+                "description": it.description, "content": it.content,
+                "confidence": it.confidence, "corroboration_count": it.corroboration_count,
+                "usage_count": it.usage_count, "last_used": it.last_used, "created": it.created,
+            })
+
+        # Deterministic pre-fetch, not an agent tool call — the model never
+        # decides whether/how to search, it just gets a few relevant snippets
+        # from OTHER sessions alongside a nomination, so it can judge whether
+        # something is actually corroborated (or contradicted) by earlier
+        # history rather than trusting this session's framing alone. See
+        # ops/conversation_search.py module docstring for why this is a single
+        # shared, deterministic utility rather than tool access.
         other_convs_by_nomination = [
             search_conversations(cand["description"], exclude_conversation_id=conversation_id,
                                   limit=OTHER_CONVERSATIONS_PER_NOMINATION_LIMIT)
@@ -411,7 +453,8 @@ def _run_write_pass(
             messages=[
                 {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
                 {"role": "user", "content": build_extraction_user_prompt(
-                    transcript, nominated, similar_by_nomination, other_convs_by_nomination)},
+                    transcript, nominated, existing_corpus, other_convs_by_nomination,
+                    session_meta=session_meta, now_iso=now_iso)},
             ],
             max_tokens=EXTRACTION_MAX_TOKENS,
             temperature=0,

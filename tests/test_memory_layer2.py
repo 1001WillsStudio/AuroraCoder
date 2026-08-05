@@ -2,8 +2,10 @@
 Sanity checks for Memory Layer 2a — the unified end-of-session pass that
 now handles BOTH agent-nominated candidates (from mid-session `remember`
 calls, which do no I/O at call time — see src/core_tools/memory_tools.py)
-and discovered candidates, in one pipeline (with a fake OpenAI client, no
-network), plus the consolidator's dedupe/decay heuristics.
+and discovered candidates, in one pipeline (with a fake OpenAI client,
+no network), plus the agent-driven consolidation judge (deterministic
+volatile-TTL expiry + plan-based merge/delete apply) — the old jaccard
+dedupe / self-rated-confidence heuristic decay gate is gone.
 
 Run with (host, conda env with gateway deps):
     python tests/test_memory_layer2.py
@@ -71,7 +73,7 @@ def test_prompt_renders_other_conversation_snippets():
 
     nominated = [{"description": "desc", "content": "c", "plane": "world", "type": "project", "scope": "project"}]
     other = [[{"conversation_id": "conv-old", "title": "Old chat", "snippet": "ruff stuff", "score": 0.4}]]
-    prompt = build_extraction_user_prompt("transcript", nominated, [[]], other)
+    prompt = build_extraction_user_prompt("transcript", nominated, [], other)
     assert "conv-old" in prompt and "ruff stuff" in prompt
 
 
@@ -553,132 +555,151 @@ def _iso_days_ago(days: int) -> str:
     return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
 
-def test_dedupe_keeps_higher_usage_duplicate():
+# ---------------------------------------------------------------------------
+# Consolidation is now agent-driven (the judge gets the whole world corpus and
+# decides merges/deletes semantically), so the old jaccard dedupe + self-rated
+# confidence / grace-day heuristic decay tests are gone. What's still pure and
+# worth covering: the deterministic volatile-TTL expiry pass, and the plan-
+# application that the judge's output flows through (merge keeps retention
+# history; delete retires world but never stance; unknown ids are skipped).
+# The LLM judgment call itself is exercised end-to-end in run_consolidation
+# with a fake client returning an empty plan below.
+# ---------------------------------------------------------------------------
+
+def test_expire_volatile_drops_world_memory_past_its_ttl_regardless_of_usage():
+    """Volatile facts are time-bound by design (design doc §10) — ttl expiry
+    is the one deterministic code pass retained; it applies even with
+    usage_count>0 since there's no re-verify-on-read yet."""
     repo = _fresh_repo()
-    a = MemoryItem(content="A", description="Pipeline bugs tracked in Linear INGEST project",
-                    plane="world", type="reference", scope="project", confidence="low")
-    b = MemoryItem(content="B", description="pipeline bugs tracked in linear ingest project.",
-                    plane="world", type="reference", scope="project", confidence="low", usage_count=3)
-    c = MemoryItem(content="C", description="Completely unrelated fact about deployment",
-                    plane="world", type="reference", scope="project", confidence="low")
-    repo.upsert(a)
-    repo.upsert(b)
-    repo.upsert(c)
-
-    merged = C.dedupe_world_memories(repo)
-    assert merged == 1, merged
-    remaining = {m["id"] for m in repo.list(plane="world")}
-    assert b.id in remaining and a.id not in remaining and c.id in remaining
-
-
-def test_decay_low_confidence_drops_faster_than_medium():
-    """Self-reported confidence is only trusted to shorten life (low ->
-    0.5x grace), never to lengthen it — see consolidator module docstring.
-    At age=60d with a 90d base grace: low's effective grace is 45d (decays),
-    medium's stays 90d (survives)."""
-    repo = _fresh_repo()
-    stale = MemoryItem(content="stale", description="a shaky fact nobody used",
-                        plane="world", type="reference", scope="project", confidence="low")
-    stale.created = _iso_days_ago(60)
-    repo.upsert(stale)
-
-    ok = MemoryItem(content="ok", description="an ordinary fact nobody used",
-                     plane="world", type="reference", scope="project", confidence="medium")
-    ok.created = _iso_days_ago(60)
-    repo.upsert(ok)
-
-    decayed = C.decay_unused_world_memories(repo, max_unused_days=90)
-    assert decayed == 1, decayed
-    assert repo.get(stale.id) is None
-    assert repo.get(ok.id) is not None
-
-
-def test_decay_high_confidence_alone_does_not_grant_immunity():
-    """The exact regression this rework targets: a self-rated 'high'
-    confidence memory with zero corroboration and zero usage is NOT
-    special-cased anymore — it decays on the same schedule as 'medium'."""
-    repo = _fresh_repo()
-    item = MemoryItem(content="important-sounding", description="an old 'high confidence' fact",
-                       plane="world", type="reference", scope="project", confidence="high")
-    item.created = "2020-01-01T00:00:00+00:00"
-    repo.upsert(item)
-
-    decayed = C.decay_unused_world_memories(repo, max_unused_days=90)
-    assert decayed == 1, decayed
-    assert repo.get(item.id) is None
-
-
-def test_decay_corroboration_extends_grace_period():
-    """corroboration_count — a deterministic, code-computed signal (see
-    ops/extractor.py's duplicate_of handling), not a self-report — is the
-    only thing allowed to buy a memory extra life."""
-    repo = _fresh_repo()
-    corroborated = MemoryItem(content="reaffirmed", description="a fact seen again independently",
-                               plane="world", type="reference", scope="project", confidence="medium",
-                               corroboration_count=2)
-    corroborated.created = _iso_days_ago(200)  # > base 90d, but grace = 90 * min(1+2,6) = 270d
-    repo.upsert(corroborated)
-
-    decayed = C.decay_unused_world_memories(repo, max_unused_days=90)
-    assert decayed == 0, decayed
-    assert repo.get(corroborated.id) is not None
-
-
-def test_decay_previously_used_memory_eventually_goes_stale():
-    """Closes the old 'retrieved once, immortal forever' gap: usage_count>0
-    still decays once long enough has passed since last_used."""
-    repo = _fresh_repo()
-    item = MemoryItem(content="once useful", description="was retrieved a long time ago",
-                       plane="world", type="reference", scope="project", confidence="medium",
-                       usage_count=1)
-    item.created = _iso_days_ago(1000)
-    item.last_used = _iso_days_ago(1000)  # grace(90) * STALE_USED_MULTIPLIER(3) = 270d — well past
-    repo.upsert(item)
-
-    decayed = C.decay_unused_world_memories(repo, max_unused_days=90)
-    assert decayed == 1, decayed
-    assert repo.get(item.id) is None
-
-
-def test_decay_recently_used_memory_survives():
-    repo = _fresh_repo()
-    item = MemoryItem(content="still useful", description="was retrieved recently",
-                       plane="world", type="reference", scope="project", confidence="medium",
-                       usage_count=1)
-    item.created = _iso_days_ago(1000)
-    item.last_used = _iso_days_ago(5)
-    repo.upsert(item)
-
-    decayed = C.decay_unused_world_memories(repo, max_unused_days=90)
-    assert decayed == 0, decayed
-    assert repo.get(item.id) is not None
-
-
-def test_decay_expires_volatile_memory_past_its_ttl_regardless_of_usage():
-    """Volatile facts are time-bound by design (design doc §10) — ttl
-    expiry applies even to a memory with usage_count>0, since there's no
-    re-verify-on-read mechanism yet to keep it honestly alive."""
-    repo = _fresh_repo()
-    item = MemoryItem(content="sprint ends March 5", description="current sprint deadline",
+    item = MemoryItem(content="sprint ends March 5", description="current deadline",
                        plane="world", type="project", scope="project", confidence="high",
                        volatile=True, ttl_days=30, usage_count=5)
     item.created = _iso_days_ago(40)
     item.last_used = _iso_days_ago(1)
     repo.upsert(item)
 
-    decayed = C.decay_unused_world_memories(repo, max_unused_days=90)
-    assert decayed == 1, decayed
+    removed = C._expire_volatile(repo)
+    assert removed == 1, removed
     assert repo.get(item.id) is None
 
 
-def test_decay_never_touches_stance_plane():
+def test_expire_volatile_keeps_within_ttl():
     repo = _fresh_repo()
-    stance_item = MemoryItem(content="pref", description="a stance pref", plane="stance",
-                              type="preference", scope="user", confidence="low")
-    stance_item.created = "2020-01-01T00:00:00+00:00"
-    repo.upsert(stance_item)
-    C.decay_unused_world_memories(repo, max_unused_days=1)
-    assert repo.get(stance_item.id) is not None
+    item = MemoryItem(content="sprint ends March 5", description="current deadline",
+                       plane="world", type="project", scope="project", confidence="high",
+                       volatile=True, ttl_days=30, usage_count=0)
+    item.created = _iso_days_ago(5)
+    repo.upsert(item)
+    assert C._expire_volatile(repo) == 0
+    assert repo.get(item.id) is not None
+
+
+def test_expire_volatile_never_touches_stance_plane():
+    repo = _fresh_repo()
+    stance = MemoryItem(content="pref", description="a stance pref", plane="stance",
+                         type="preference", scope="user", confidence="low", volatile=True, ttl_days=1)
+    stance.created = _iso_days_ago(100)
+    repo.upsert(stance)
+    assert C._expire_volatile(repo) == 0  # stance excluded from the corpus
+    assert repo.get(stance.id) is not None
+
+
+def test_apply_plan_merge_folders_loser_into_keeper_and_preserves_history():
+    """A judge merge keeps the larger usage, oldest-created, and bumps
+    corroboration (loser independently resolved to the same fact) — it must
+    NOT reset the retention history decay/retention judges by."""
+    repo = _fresh_repo()
+    keeper = MemoryItem(content="keeper-body", description="Pipeline bugs in Linear",
+                          plane="world", type="reference", scope="project", confidence="medium",
+                          usage_count=5, corroboration_count=1)
+    keeper.created = _iso_days_ago(100)
+    keeper.last_used = _iso_days_ago(2)
+    loser = MemoryItem(content="loser-body", description="pipeline bugs tracked in linear",
+                        plane="world", type="reference", scope="project", confidence="low",
+                        usage_count=2, corroboration_count=3)
+    loser.created = _iso_days_ago(40)
+    loser.last_used = _iso_days_ago(50)
+    repo.upsert(keeper)
+    repo.upsert(loser)
+
+    plan = {"merges": [{"into": keeper.id, "from": loser.id,
+                          "content": "combined body", "description": "combined summary",
+                          "confidence": "high"}], "deletes": []}
+    res = C._apply_plan(repo, plan)
+    assert res == {"merged": 1, "deleted": 0}, res
+
+    merged = repo.get(keeper.id)
+    assert repo.get(loser.id) is None  # loser removed
+    assert merged.content == "combined body"
+    assert merged.description == "combined summary"
+    assert merged.confidence == "high"
+    assert merged.usage_count == 5  # max, not reset
+    assert merged.corroboration_count == 1 + 3 + 1  # bumped
+    assert merged.supersedes == loser.id
+
+
+def test_apply_plan_delete_retires_world_but_never_stance():
+    repo = _fresh_repo()
+    world = MemoryItem(content="w", description="d", plane="world", type="reference",
+                        scope="project", confidence="low")
+    stance = MemoryItem(content="s", description="sp", plane="stance", type="preference",
+                         scope="user", confidence="low")
+    repo.upsert(world)
+    repo.upsert(stance)
+    # Judge only ever sees world items; an id it invented / a stance id it
+    # somehow emitted must be skipped, not honored.
+    plan = {"merges": [], "deletes": [world.id, stance.id, "does-not-exist"]}
+    res = C._apply_plan(repo, plan)
+    assert res == {"merged": 0, "deleted": 1}, res
+    assert repo.get(world.id) is None
+    assert repo.get(stance.id) is not None  # stance never auto-removed
+
+
+def test_apply_plan_skips_unknown_and_self_merging_ids():
+    repo = _fresh_repo()
+    a = MemoryItem(content="a", description="da", plane="world", type="reference",
+                    scope="project", confidence="low")
+    repo.upsert(a)
+    plan = {"merges": [{"into": "nope", "from": a.id}, {"into": a.id, "from": a.id}],
+             "deletes": []}
+    assert C._apply_plan(repo, plan) == {"merged": 0, "deleted": 0}
+    assert repo.get(a.id) is not None
+
+
+def test_run_consolidation_with_empty_plan_is_fail_open_noop():
+    """End-to-end: provider is faked, the judge returns an empty plan, and
+    volatile expiry still runs as the deterministic pre-pass."""
+    # Consolidator uses its own binding of get_memory_extraction_config
+    # (imported at module load), so patch C's, not extractor's.
+    C.get_memory_extraction_config = lambda: {
+        "provider_id": "fake", "base_url": "http://fake", "api_key": "fake-key", "model": "fake-model",
+    }
+    C.OpenAI = lambda base_url, api_key: _FakeClient('{"merges": [], "deletes": []}')
+    repo = _fresh_repo()
+    # Two world memories: one volatile + past ttl (expired by the code
+    # pre-pass), one stable (survives — so the judge is actually called with
+    # a non-empty corpus and returns the canned empty plan, exercising the
+    # LLM path + apply, not just the expiry short-circuit).
+    volatile = MemoryItem(content="v", description="v", plane="world", type="project",
+                           scope="project", confidence="high", volatile=True, ttl_days=10)
+    volatile.created = _iso_days_ago(20)
+    repo.upsert(volatile)
+    stable = MemoryItem(content="stable", description="a stable fact", plane="world",
+                        type="reference", scope="project", confidence="medium")
+    stable.created = _iso_days_ago(5)
+    repo.upsert(stable)
+    # consolidator imported get_repository into its own namespace at module
+    # load (``from memory.store import ..., get_repository``), so patch C's
+    # binding, not memory.store's — otherwise run_consolidation still sees
+    # the real global repo and never the temp corpus we just seeded.
+    orig = C.get_repository
+    C.get_repository = lambda: repo
+    try:
+        res = C.run_consolidation()
+    finally:
+        C.get_repository = orig
+    assert res["expired"] == 1, res  # volatile expired by code pass
+    assert res["merged"] == 0 and res["deleted"] == 0, res  # judge no-op applied cleanly
 
 
 def _run_all():

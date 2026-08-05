@@ -66,7 +66,10 @@ def search_conversations(
     """Keyword-overlap search over other top-level user-chat conversations.
 
     Returns up to *limit* results, most relevant first, each
-    ``{"conversation_id", "title", "snippet", "score"}``. Empty query,
+    ``{"conversation_id", "title", "snippet", "score", "created_at",
+    "updated_at"}`` — the timestamps let the write-pass judge WHEN
+    corroboration happened (recent repeats vs. a single mention long ago),
+    which a ``created_at`` alone can't. Empty query,
     empty store, or no overlap at all -> ``[]`` (never raises — callers
     treat this as best-effort context, not a required dependency).
     """
@@ -99,6 +102,8 @@ def search_conversations(
                 "title": meta.get("title", ""),
                 "snippet": text[:300],
                 "score": round(score, 4),
+                "created_at": meta.get("created_at", ""),
+                "updated_at": meta.get("updated_at", ""),
             }
             for score, meta, text in scored[:limit]
         ]

@@ -87,16 +87,24 @@ _EXTRACTION_ELIGIBLE_STATUSES = {"completed", "max_iterations_reached", "interru
 
 
 def _run_session_end_memory_ops(conversation_id: str, conv_type: str, status: str) -> None:
-    """Background job: extraction, then a cheap consolidation pass.
+    """Background job: extraction, then a consolidation pass.
+
+    Consolidation is now dispatched UNCONDITIONALLY at session end, not
+    gated on ``written``. The whole point of consolidation is the exact
+    case extraction did NOT write anything new: dedupe/merge keeps the
+    corpus tight and decay retires memories that have gone idle, and
+    neither has any causal link to "this turn produced a new memory."
+    When extraction returns nothing, that is precisely when the corpus is
+    most likely overdue for housekeeping — so the pass must still run.
+    (Both passes are internally fail-open and log-only; a no-op turn is
+    cheap.)
 
     Swallows all exceptions — this must never affect the conversation
     that already finished and was already persisted successfully.
     """
     try:
-        written = run_extraction(conversation_id, store.get_messages(conversation_id))
-        if written:
-            # Only worth a consolidation pass when something new landed.
-            run_consolidation()
+        run_extraction(conversation_id, store.get_messages(conversation_id))
+        run_consolidation()
     except Exception:
         logger.exception(f"[memory-ops] Session-end distillation failed for {conversation_id[:8]}...")
 

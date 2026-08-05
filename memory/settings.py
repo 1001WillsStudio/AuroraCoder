@@ -76,3 +76,19 @@ def gap_sweep_max_concurrent() -> int:
 def gap_sweep_batch_size() -> int:
     """Max NEW gaps the periodic sweep will dispatch in a single tick."""
     return max(1, int(_memory_settings().get("gap_sweep_batch_size", 1)))
+
+
+def max_memories() -> int:
+    """Hard ceiling on how many memories are kept.
+
+    A conservative safety net rather than an expected limit — typical
+    volumes stay far below it (50 is plenty for current usage). When the
+    count exceeds the cap, low-value *world* memories are evicted to fit
+    (see ``MemoryRepository.enforce_capacity``): least usage, oldest
+    ``last_used``, least corroboration, oldest created get removed first.
+
+    Stance memories are never removed automatically (explicit-overwrite /
+    human edit only, per the design doc), so if stance alone exceeds the
+    cap the surplus is left in place and merely logged.
+    """
+    return max(0, int(_memory_settings().get("max_memories", 50)))

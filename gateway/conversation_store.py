@@ -250,23 +250,47 @@ class ConversationStore:
             except (json.JSONDecodeError, OSError):
                 continue
 
-        ctimes, mtimes = [], []
-        for src in (backend, frontend):
-            if src.exists():
-                try:
-                    st = src.stat()
-                    ctimes.append(st.st_ctime)
-                    mtimes.append(st.st_mtime)
-                except OSError:
-                    pass
+        # Time is STORAGE, not inference. Prefer the per-message ``ts`` that
+        # save_messages stamps onto every message on first persist — created_at
+        # = earliest ts, updated_at = latest ts. This survives copy/migrate
+        # unchanged (it's data inside the file, not the file's inode), and it
+        # is the real time the conversation happened. Only when the messages
+        # carry no ts at all (legitimate legacy data predating the stamping)
+        # do we fall back to filesystem mtime — and then we flag
+        # ``recovered_time=True`` so readers know these timestamps are a
+        # best-effort inference, not stored fact.
+        tss: List[str] = []
+        for m in messages:
+            if isinstance(m, dict):
+                t = m.get("ts")
+                if isinstance(t, str) and t:
+                    tss.append(t)
 
-        if ctimes:
-            created = datetime.fromtimestamp(min(ctimes), timezone.utc).isoformat()
-            updated = datetime.fromtimestamp(max(mtimes), timezone.utc).isoformat()
+        inferred_time = not tss
+        if tss:
+            created = min(tss)
+            updated = max(tss)
         else:
-            created = updated = datetime.now(timezone.utc).isoformat()
+            # Legacy fallback ONLY — pre-stamping data has no stored ts, so
+            # mtime (content-change time) is the least-bad proxy for when the
+            # file last mattered. ctime is NOT used: it tracks inode metadata
+            # changes (chmod/chown/rename) and is regularly pushed ahead of
+            # mtime by operations unrelated to the conversation, producing the
+            # "created AFTER updated" inversion the old code had to paper over.
+            mtimes = []
+            for src in (backend, frontend):
+                if src.exists():
+                    try:
+                        mtimes.append(src.stat().st_mtime)
+                    except OSError:
+                        pass
+            if mtimes:
+                created = datetime.fromtimestamp(max(mtimes), timezone.utc).isoformat()
+                updated = created
+            else:
+                created = updated = datetime.now(timezone.utc).isoformat()
 
-        return {
+        meta_out = {
             "id": cid,
             "parent_id": None,
             "session_id": None,
@@ -278,6 +302,9 @@ class ConversationStore:
             "title": _extract_title(messages) if messages else "Untitled",
             "recovered": True,
         }
+        if inferred_time:
+            meta_out["recovered_time"] = True
+        return meta_out
 
     def _save_index(self) -> None:
         """Caller must hold self._lock."""
@@ -335,7 +362,23 @@ class ConversationStore:
         in the index.  This is the primary path for title extraction — the
         title key does not exist at all until this point (or until
         ``save_frontend_messages`` is called).
+
+        STAMPS a ``ts`` (arrival time, UTC ISO-8601) onto every message that
+        doesn't already carry one on the FIRST persist of that message list.
+        Time is part of storage, not an inference — every conversation's
+        when-it-happened is read straight back from these per-message ts,
+        never from filesystem ctime/mtime (which track inode/content changes,
+        not when a user actually said something, and which chmod/cp -p/tar -p
+        reshape at will). The full list is re-saved many times during a stream,
+        so this is the single natural choke point — no caller has to remember
+        to stamp. Already-stamped messages keep their real arrival time and
+        are never overwritten by a later now.
         """
+        now = datetime.now(timezone.utc).isoformat()
+        for msg in messages:
+            if isinstance(msg, dict) and not msg.get("ts"):
+                msg["ts"] = now
+
         with self._lock:
             meta = self._index.get(conversation_id)
             if meta is None:
@@ -420,7 +463,19 @@ class ConversationStore:
         the provided messages and persisted into the index.  This is the
         first opportunity to set a title when the frontend seeds a user
         message before the backend starts streaming.
+
+        STAMPS a ``ts`` (arrival time, UTC ISO-8601) exactly like
+        ``save_messages`` — time is storage, not inference here too. A
+        conversation first seeded from the frontend must carry real
+        timestamps so ``_reconstruct_meta`` reads fact, not mtime, and so a
+        frontend-seeded conversation that later gets a backend counterpart
+        stays time-consistent across both files.
         """
+        now = datetime.now(timezone.utc).isoformat()
+        for msg in messages:
+            if isinstance(msg, dict) and not msg.get("ts"):
+                msg["ts"] = now
+
         # Try to extract a title before writing the file — if the
         # conversation is brand new there won't be one yet.
         with self._lock:
