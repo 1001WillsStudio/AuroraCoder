@@ -76,6 +76,7 @@ import requests
 from gateway.settings_store import get_other_settings
 from memory.gap_store import get_gap_ledger
 from memory.settings import memory_enabled, heavy_ops_enabled
+from memory.ops.judge_io import EXTRACTION_PLAN_TOOL, CONSOLIDATION_PLAN_TOOL
 from memory.ops.prompts import GAP_INVESTIGATION_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -447,3 +448,262 @@ def dispatch_gap_investigation(gap_id: str) -> Dict[str, Any]:
         if container_name:
             teardown_worker(container_name)
         cleanup_snapshot(gap_id)
+
+
+# ===========================================================================
+# Memory maintenance (Layer 2b): extraction / consolidation through a real
+# AuroraCoder worker conversation — reusable + observable. The gap-engine
+# path above is a one-shot investigate+report task; this path is the same
+# architecture applied to the two regular memory-maintenance tasks. See
+# docs/code-agent-memory-design.md §19 (Design Doc) for why those should
+# run in a background worker / sidecar — this is that.
+# ===========================================================================
+
+# Maintenance tasks are lighter: fewer iterations + shorter wall-clock.
+MAINTENANCE_MAX_ITERATIONS = 15
+MAINTENANCE_WALL_CLOCK_BUDGET = 300
+
+
+def _maintenance_task_id(kind: str) -> str:
+    return f"maint-{kind}-{uuid.uuid4().hex[:10]}"
+
+
+def _build_maintenance_prompt(kind: str, payload: Dict[str, Any]):
+    """Return (system_prompt, user_message, emit_tool_name) for the worker."""
+    now_iso = payload.get("now_iso")
+    if kind == "extraction":
+        from memory.ops.prompts import EXTRACTION_SYSTEM_PROMPT, build_extraction_user_prompt
+        user = build_extraction_user_prompt(
+            payload.get("transcript", ""),
+            nominated=payload.get("nominated"),
+            existing_corpus=payload.get("corpus"),
+            other_conversations_by_nomination=payload.get("other_convs"),
+            session_meta=payload.get("session_meta"),
+            now_iso=now_iso,
+        )
+        return EXTRACTION_SYSTEM_PROMPT, user, EXTRACTION_PLAN_TOOL
+    else:  # consolidation
+        from memory.ops.consolidator import CONSOLIDATION_SYSTEM_PROMPT
+        corpus = payload.get("corpus", [])
+        now_line = f"Current time (UTC): {now_iso}\n\n" if now_iso else ""
+        user = (
+            now_line
+            + "Here is the COMPLETE current world-plane memory corpus. Decide which entries should be "
+            "MERGED (a loser folded into a keeper) or DELETED (retired). Be conservative; when in doubt keep.\n"
+            "--- WORLD MEMORY CORPUS START ---\n"
+            + json.dumps(corpus, indent=2)
+            + "\n--- WORLD MEMORY CORPUS END ---"
+        )
+        return CONSOLIDATION_SYSTEM_PROMPT, user, CONSOLIDATION_PLAN_TOOL
+
+
+def _run_maintenance_via_worker(
+    base_url: str,
+    kind: str,
+    payload: Dict[str, Any],
+    max_iterations: int = MAINTENANCE_MAX_ITERATIONS,
+) -> Optional[List[Dict[str, Any]]]:
+    """Drive a one-shot maintenance task on the worker — mirror of
+    ``investigate_gap_via_worker``. Returns the raw transcript, or None
+    on total failure (no usable response at all)."""
+    system, user, _emit_tool = _build_maintenance_prompt(kind, payload)
+    body = {
+        "messages": [{"role": "system", "content": system}],
+        "message": user,
+        "tools": "memory_maintenance",
+        "max_iterations": max_iterations,
+    }
+    try:
+        resp = requests.post(
+            f"{base_url}/api/chat", json=body, stream=True,
+            timeout=(WORKER_CONNECT_TIMEOUT, WORKER_READ_TIMEOUT),
+        )
+    except (requests.RequestException, OSError) as e:
+        logger.error("[memory-worker] Could not reach worker at %s: %s", base_url, e)
+        return None
+    if resp.status_code != 200:
+        logger.error(
+            "[memory-worker] Worker at %s returned %s: %s",
+            base_url, resp.status_code, resp.text[:500],
+        )
+        resp.close()
+        return None
+    raw_messages: Optional[List[Dict[str, Any]]] = None
+    deadline = time.monotonic() + MAINTENANCE_WALL_CLOCK_BUDGET
+    try:
+        for line in resp.iter_lines(decode_unicode=True):
+            if time.monotonic() > deadline:
+                logger.warning(
+                    "[memory-worker] Maintenance at %s exceeded its %ss wall-clock budget",
+                    base_url, MAINTENANCE_WALL_CLOCK_BUDGET,
+                )
+                break
+            if not line or not line.startswith("data:"):
+                continue
+            try:
+                data = json.loads(line[5:].strip())
+            except json.JSONDecodeError:
+                continue
+            if "raw_messages" in data:
+                raw_messages = data["raw_messages"]
+    except (requests.RequestException, OSError) as e:
+        logger.warning("[memory-worker] Maintenance stream from %s interrupted: %s", base_url, e)
+    finally:
+        resp.close()
+    return raw_messages
+
+
+def extract_emitted_plan(
+    raw_messages: Optional[List[Dict[str, Any]]], tool_name: str
+) -> Optional[Dict[str, Any]]:
+    """Pull the maintenance plan out of the transcript by finding the *emit*
+    tool call named *tool_name* and parsing its arguments. Returns the
+    LAST such plan (the final answer wins) or None. Never raises."""
+    from memory.ops.judge_io import extract_json
+    if not raw_messages:
+        return None
+    plan = None
+    for msg in raw_messages:
+        if not isinstance(msg, dict):
+            continue
+        for tc in (msg.get("tool_calls") or []):
+            fn = (tc or {}).get("function") or {}
+            if fn.get("name") != tool_name:
+                continue
+            args = fn.get("arguments")
+            if isinstance(args, dict):
+                plan = args
+            elif isinstance(args, str):
+                parsed = extract_json(args)
+                if parsed is not None:
+                    plan = parsed
+    return plan
+
+
+def _persist_maintenance_trace(
+    kind: str,
+    maint_id: str,
+    conversation_id: str,
+    request_messages: List[Dict[str, Any]],
+    raw_messages: Optional[List[Dict[str, Any]]],
+    status: str,
+) -> bool:
+    """Persist the full worker trace (request + transcript) into the MAIN
+    conversation store under a labeled conversation_id so the trace is
+    observable in the existing conversation system. Fail-open — an
+    observability failure must never block the actual memory write."""
+    try:
+        from gateway.conversation_store import store
+        store.create_conversation(conversation_id=conversation_id, conv_type="memory_maintenance")
+        # Prepend a short user message so the auto-derived title is readable
+        # (the real user message is a large corpus dump / transcript that
+        # would become an illegible title). The worker request is unchanged.
+        store_messages = [
+            {"role": "user", "content": f"Memory maintenance: {kind} ({maint_id[:8]})"},
+        ]
+        store_messages.extend(request_messages)
+        store_messages.extend(raw_messages or [])
+        store.save_messages(conversation_id, store_messages)
+        store.update_status(conversation_id, status)
+        return True
+    except Exception:
+        logger.exception("[memory-worker] Failed to persist maintenance trace")
+        return False
+
+
+def _apply_maintenance_plan(
+    kind: str, plan: Dict[str, Any], conversation_id: str
+) -> Dict[str, Any]:
+    """Apply the emitted plan on the main side. Extraction: upsert candidates
+    via ``apply_extraction_plan``. Consolidation: apply merges/deletes via
+    ``consolidator._apply_plan``."""
+    if kind == "extraction":
+        from memory.ops.extractor import apply_extraction_plan
+        candidates = (plan or {}).get("memories", []) or []
+        if not candidates:
+            return {"applied": True, "written": [], "merged": 0, "deleted": 0}
+        written = apply_extraction_plan(candidates, conversation_id, nomination_label="memory-maintenance")
+        return {"applied": True, "written": written, "merged": 0, "deleted": 0}
+    else:
+        from memory.ops import consolidator
+        from memory.store import get_repository
+        repo = get_repository()
+        result = consolidator._apply_plan(repo, plan or {"merges": [], "deletes": []})
+        return {
+            "applied": True,
+            "written": [],
+            "merged": result.get("merged", 0),
+            "deleted": result.get("deleted", 0),
+        }
+
+
+def dispatch_memory_maintenance(
+    kind: str, payload: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """Orchestrate one memory-maintenance task (extraction or consolidation)
+    through an isolated, on-demand AuroraCoder worker container so the trace
+    is observable in the existing conversation system.
+
+    Fail-open and inert by default: returns immediately without touching
+    docker/filesystem unless both ``memory_enabled()`` AND
+    ``heavy_ops_enabled()`` are true. Never raises — every failure path is
+    caught, logged, and turned into a non-ok result.
+
+    *kind* is ``"extraction"`` or ``"consolidation"``. *payload* carries the
+    inputs the worker needs (transcript/nominated/corpus/etc.). For a
+    self-contained consolidation pass, pass an empty dict — the caller just
+    provides the corpus inline (reads it from the memory repo beforehand).
+    """
+    payload = payload or {}
+    if kind not in ("extraction", "consolidation"):
+        return {"ok": False, "reason": f"unknown maintenance kind: {kind!r}"}
+    if not memory_enabled():
+        return {"ok": False, "reason": "memory disabled (settings.other.memory.enabled)"}
+    if not heavy_ops_enabled():
+        return {"ok": False, "reason": "heavy_ops disabled (settings.other.memory.heavy_ops_enabled)"}
+
+    maint_id = _maintenance_task_id(kind)
+    conversation_id = f"memory-maintenance:{kind}:{maint_id}"
+    container_name = None
+    try:
+        system, user, emit_tool = _build_maintenance_prompt(kind, payload)
+        request_messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+        snapshot_dir = snapshot_workspace(maint_id)
+        container_name = spawn_worker(maint_id, snapshot_dir)
+        if container_name is None:
+            _persist_maintenance_trace(kind, maint_id, conversation_id, request_messages, [], "failed")
+            return {"ok": False, "reason": "failed to spawn memory-worker container",
+                    "conversation_id": conversation_id}
+
+        base_url = worker_base_url(maint_id)
+        if not _wait_for_worker_ready(base_url):
+            _persist_maintenance_trace(kind, maint_id, conversation_id, request_messages, [], "failed")
+            return {"ok": False, "reason": "worker did not become ready in time",
+                    "container": container_name, "conversation_id": conversation_id}
+
+        raw_messages = _run_maintenance_via_worker(base_url, kind, payload)
+        if raw_messages is None:
+            _persist_maintenance_trace(kind, maint_id, conversation_id, request_messages, [], "failed")
+            return {"ok": False, "reason": "maintenance produced no usable transcript",
+                    "container": container_name, "conversation_id": conversation_id}
+
+        # Persist FIRST (observability is the point of this path), then
+        # extract + apply the emitted plan.
+        _persist_maintenance_trace(kind, maint_id, conversation_id, request_messages, raw_messages, "completed")
+        plan = extract_emitted_plan(raw_messages, emit_tool)
+        if plan is None:
+            return {"ok": False, "reason": "worker emitted no maintenance plan",
+                    "container": container_name, "conversation_id": conversation_id}
+        applied = _apply_maintenance_plan(kind, plan, conversation_id)
+        return {"ok": True, "kind": kind, "conversation_id": conversation_id,
+                "container": container_name, "plan": plan, **applied}
+    except Exception:
+        logger.exception("[memory-worker] Maintenance dispatch failed (kind=%s)", kind)
+        return {"ok": False, "reason": "internal error, see logs", "conversation_id": conversation_id}
+    finally:
+        if container_name:
+            teardown_worker(container_name)
+        cleanup_snapshot(maint_id)

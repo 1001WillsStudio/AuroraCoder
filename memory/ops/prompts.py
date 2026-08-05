@@ -148,7 +148,9 @@ self-rating like this one isn't trustworthy enough to grant permanence by itself
 incentive to inflate this — rate it honestly against the checklist.
 
 ## Output format
-Return ONLY a JSON object: {"memories": [...]}. Each item:
+Emit your answer by calling the `emit_memory_plan` tool with your plan (a JSON object of the shape below).
+If you cannot call the tool, return ONLY that JSON object as your whole reply (no prose, no markdown fences):
+{"memories": [...]}. Each item:
 {
   "plane": "stance" | "world",
   "type": "preference" | "feedback" | "communication" | "autonomy" | "project" | "reference" | "convention" | "landmine",

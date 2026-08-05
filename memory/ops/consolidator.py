@@ -48,6 +48,9 @@ from openai import OpenAI
 
 from gateway.provider_registry import get_memory_extraction_config
 from memory.schema import MemoryItem
+from memory.ops.judge_io import (
+    call_judge, CONSOLIDATION_PLAN_TOOL, CONSOLIDATION_PLAN_SCHEMA,
+)
 from memory.settings import passive_extraction_enabled
 from memory.store import MemoryRepository, get_repository
 
@@ -86,7 +89,8 @@ Do NOT invent new memories. Do NOT touch stance. Do NOT delete a memory you also
 (it'll be removed by the merge). Operate only on the ids actually present in the corpus you were given.
 
 ## Output format
-Return ONLY a JSON object:
+Emit your answer by calling the `emit_consolidation_plan` tool with your plan. If you cannot call the
+tool, return ONLY a JSON object:
 {"merges": [{"into": "<keeper id>", "from": "<loser id>", "content": "<new combined content>", \
 "description": "<new one-line summary>", "confidence": "high"|"medium"|"low"}], "deletes": ["<id>", ...]}
 If nothing to do, return {"merges": [], "deletes": []}.
@@ -166,21 +170,19 @@ last_used/created/ttl_days but not "how long ago" any of them is."""
         + json.dumps(corpus, indent=2)
         + "\n--- WORLD MEMORY CORPUS END ---"
     )
-    kwargs: Dict[str, Any] = dict(
-        model=model,
-        messages=[
-            {"role": "system", "content": CONSOLIDATION_SYSTEM_PROMPT},
-            {"role": "user", "content": user},
-        ],
+    # Structured output via a forced tool call (call_judge → parse_judge_response,
+    # see ops/judge_io.py). The configured consolidation provider returns EMPTY
+    # content when given response_format={"type":"json_object"} with no
+    # exception raised, so the old try/response_format/except/content-fallback
+    # pair silently no-op'd here. Forced tool calls are honored by that provider
+    # (finish_reason=tool_calls, JSON in tool_calls[0].function.arguments) and
+    # degrade to a plain-completion content fallback for providers that reject
+    # tools. Consolidation must be fail-open: any unparsable result → empty plan.
+    parsed = call_judge(
+        client, model, CONSOLIDATION_SYSTEM_PROMPT, user,
+        tool_name=CONSOLIDATION_PLAN_TOOL, tool_schema=CONSOLIDATION_PLAN_SCHEMA,
         max_tokens=CONSOLIDATION_MAX_TOKENS,
-        temperature=0,
     )
-    try:
-        response = client.chat.completions.create(response_format={"type": "json_object"}, **kwargs)
-    except Exception:
-        response = client.chat.completions.create(**kwargs)  # provider may lack response_format
-    raw = response.choices[0].message.content or ""
-    parsed = _extract_json(raw)
     if not parsed:
         logger.warning("[memory-consolidate] Could not parse consolidation judgment as JSON")
         return {"merges": [], "deletes": []}

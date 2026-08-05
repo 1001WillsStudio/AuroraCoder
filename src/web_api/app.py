@@ -28,7 +28,8 @@ from ..core_tools.subagent import cancel_active_subagents
 from ..config import DEFAULT_PROVIDER
 from ..providers import provider_manager
 from ..tool_definitions import (
-    NATIVE_TOOL_DEFINITIONS, SUBAGENT_READ_ONLY_TOOLS, GAP_INVESTIGATION_TOOLS, memory_filter_tools,
+    NATIVE_TOOL_DEFINITIONS, SUBAGENT_READ_ONLY_TOOLS, GAP_INVESTIGATION_TOOLS,
+    MEMORY_MAINTENANCE_TOOLS, MEMORY_MAINTENANCE_EMIT_TOOLS, memory_filter_tools,
 )
 
 logger = logging.getLogger(__name__)
@@ -110,8 +111,16 @@ def get_filtered_tools(mode: str):
         # tool that ends the task. Not reachable from a normal chat.
         if mode == "gap_investigation" and name not in GAP_INVESTIGATION_TOOLS:
             continue
+        # Memory-maintenance worker (see memory/ops/dispatcher.py::dispatch_memory_maintenance)
+        # — same architecture as gap-investigation but applied to extraction / consolidation.
+        if mode == "memory_maintenance" and name not in MEMORY_MAINTENANCE_TOOLS:
+            continue
+        # Emit tools are strictly internal to the maintenance worker — never
+        # surface them in normal chat, read_only, or gap_investigation.
+        if mode != "memory_maintenance" and name in MEMORY_MAINTENANCE_EMIT_TOOLS:
+            continue
         defs.append(td)
-    if mode == "gap_investigation":
+    if mode in ("gap_investigation", "memory_maintenance"):
         # Skip the master-switch filter here: the worker is a fresh,
         # isolated container with no settings.json of its own (never gets
         # one — see dispatcher.py's isolation requirement), so its LOCAL
@@ -119,7 +128,7 @@ def get_filtered_tools(mode: str):
         # dispatching main container decided. That decision (heavy_ops_enabled,
         # which already implies memory_enabled — see memory/settings.py) was
         # made before this worker was even spawned; re-checking it here would
-        # just silently strip report_findings and brick every investigation.
+        # just silently strip the emit / report tools and brick the session.
         return defs
     return memory_filter_tools(defs)
 

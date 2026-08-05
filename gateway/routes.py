@@ -65,13 +65,13 @@ from gateway.streaming import (
     _subscriber_sse,
     _format_sse,
 )
-from memory.settings import memory_enabled
+from memory.settings import memory_enabled, heavy_ops_enabled
 from memory.store import get_repository as get_memory_repository
 from memory.schema import MemoryItem, MEMORY_PLANES, MEMORY_TYPES
 from memory.stance import build_stance_block
 from memory.retrieval import rank_candidates
 from memory.gap_store import get_gap_ledger, GAP_PRIORITIES, GAP_STRATEGIES
-from memory.ops.dispatcher import dispatch_gap_investigation
+from memory.ops.dispatcher import dispatch_gap_investigation, dispatch_memory_maintenance
 from memory.ops.conversation_search import search_conversations
 
 # Import app after stream deps are resolved — app already exists in api.py's
@@ -713,6 +713,53 @@ async def investigate_gap(gap_id: str):
     result = await asyncio.to_thread(dispatch_gap_investigation, gap_id)
     if not result.get("ok") and result.get("reason") == "gap not found":
         raise HTTPException(status_code=404, detail="Gap not found")
+    return result
+
+
+@app.post("/api/memory/maintenance/run")
+async def run_memory_maintenance(kind: str = "consolidation"):
+    """Manually trigger a memory-maintenance task through an isolated
+    AuroraCoder worker container so the trace is observable.
+
+    *kind*: ``"consolidation"`` (self-contained — reads the current corpus,
+    hands it to the worker, applies the merge/delete plan it emits) or
+    ``"extraction"`` (requires a conversation payload; for per-session
+    extraction, the in-process path via streaming.py is more natural).
+
+    Returns the ``conversation_id`` where the worker's full transcript is
+    persisted — open it in the conversations list to see exactly what the
+    worker decided and why.
+
+    Requires both ``memory.enabled`` AND ``memory.heavy_ops_enabled`` in
+    settings. Fail-open: returns ``ok=False`` with a clear reason when gated.
+    """
+    from datetime import datetime, timezone
+    if kind not in ("extraction", "consolidation"):
+        return {"ok": False, "reason": f"unknown maintenance kind: {kind!r}"}
+    if not memory_enabled():
+        return {"ok": False, "reason": "memory disabled (settings.other.memory.enabled)"}
+    if not heavy_ops_enabled():
+        return {"ok": False, "reason": "heavy_ops disabled (settings.other.memory.heavy_ops_enabled)"}
+
+    payload: Dict[str, Any] = {}
+    if kind == "consolidation":
+        repo = get_memory_repository()
+        corpus: List[Dict[str, Any]] = []
+        for it in repo.all_items():
+            corpus.append({
+                "id": it.id, "plane": it.plane, "type": it.type, "scope": it.scope,
+                "description": it.description, "content": it.content,
+                "confidence": it.confidence, "corroboration_count": it.corroboration_count,
+                "usage_count": it.usage_count, "last_used": it.last_used, "created": it.created,
+            })
+        payload["corpus"] = corpus
+        payload["now_iso"] = datetime.now(timezone.utc).isoformat()
+    # Extraction requires a fuller payload (transcript, nominated, existing
+    # corpus, session_meta, etc.) — for now this is the in-process path's
+    # domain; the manual trigger primarily supports the self-contained
+    # consolidation pass.
+
+    result = await asyncio.to_thread(dispatch_memory_maintenance, kind, payload)
     return result
 
 

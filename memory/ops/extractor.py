@@ -71,6 +71,9 @@ from memory.settings import passive_extraction_enabled
 from memory.schema import MemoryItem, MEMORY_PLANES, MEMORY_TYPES
 from memory.store import get_repository
 from memory.ops.prompts import EXTRACTION_SYSTEM_PROMPT, build_extraction_user_prompt
+from memory.ops.judge_io import (
+    call_judge, EXTRACTION_PLAN_TOOL, EXTRACTION_PLAN_SCHEMA,
+)
 from memory.ops.conversation_search import search_conversations
 
 logger = logging.getLogger(__name__)
@@ -448,25 +451,23 @@ def _run_write_pass(
             for cand in nominated
         ]
 
-        kwargs: Dict[str, Any] = dict(
-            model=cfg["model"],
-            messages=[
-                {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
-                {"role": "user", "content": build_extraction_user_prompt(
-                    transcript, nominated, existing_corpus, other_convs_by_nomination,
-                    session_meta=session_meta, now_iso=now_iso)},
-            ],
-            max_tokens=EXTRACTION_MAX_TOKENS,
-            temperature=0,
+        # Structured output via a forced tool call (call_judge → parse_judge_response,
+        # see ops/judge_io.py). The configured extraction provider returns EMPTY
+        # content when given response_format={"type":"json_object"} — the old
+        # try/response_format/except/fallback pair never fired there (no exception
+        # is raised on an empty-content success) and the write pass silently no-
+        # op'd. Forced tool calls are honored by that provider (finish_reason=
+        # tool_calls, JSON in tool_calls[0].function.arguments) AND degrade to a
+        # plain-completion content fallback for providers that reject tools.
+        user_prompt = build_extraction_user_prompt(
+            transcript, nominated, existing_corpus, other_convs_by_nomination,
+            session_meta=session_meta, now_iso=now_iso,
         )
-        try:
-            response = client.chat.completions.create(response_format={"type": "json_object"}, **kwargs)
-        except Exception:
-            # Provider may not support response_format — retry without it.
-            response = client.chat.completions.create(**kwargs)
-
-        raw = response.choices[0].message.content or ""
-        parsed = _extract_json(raw)
+        parsed = call_judge(
+            client, cfg["model"], EXTRACTION_SYSTEM_PROMPT, user_prompt,
+            tool_name=EXTRACTION_PLAN_TOOL, tool_schema=EXTRACTION_PLAN_SCHEMA,
+            max_tokens=EXTRACTION_MAX_TOKENS,
+        )
         if not parsed:
             logger.warning("[memory-extract] [%s] Could not parse model output as JSON", conversation_id[:8])
             return []
@@ -476,52 +477,93 @@ def _run_write_pass(
             logger.info("[memory-extract] [%s] No-op (0 candidates, %d nominated) — expected common case",
                         conversation_id[:8], len(nominated))
             return []
-
-        written: List[Dict[str, str]] = []
-        for cand in candidates:
-            try:
-                if cand.get("plane") not in MEMORY_PLANES or cand.get("type") not in MEMORY_TYPES:
-                    continue
-                source = cand.get("source", "discovered")
-                provenance = (
-                    f"agent-nominated ({nomination_label}), validated from conversation {conversation_id[:8]}"
-                    if source == "nominated"
-                    else f"passive-extraction, discovered from conversation {conversation_id[:8]}"
-                )
-                kwargs2: Dict[str, Any] = dict(
-                    content=cand["content"],
-                    description=cand["description"],
-                    plane=cand["plane"],
-                    type=cand["type"],
-                    scope=cand.get("scope", "project"),
-                    confidence=cand.get("confidence", "low"),
-                    provenance=provenance,
-                )
-                if cand.get("duplicate_of"):
-                    kwargs2["id"] = cand["duplicate_of"]
-                    existing = repo.get(cand["duplicate_of"])
-                    if existing:
-                        # An in-place update must not reset the very history that
-                        # decay/retention judges it by (see ops/consolidator.py) —
-                        # only content/description/confidence/provenance actually
-                        # change here. corroboration_count is bumped because this
-                        # candidate independently resolved back to the same memory
-                        # from a SEPARATE session — a deterministic, code-computed
-                        # signal that a self-reported confidence can't fake.
-                        kwargs2["usage_count"] = existing.usage_count
-                        kwargs2["last_used"] = existing.last_used
-                        kwargs2["created"] = existing.created
-                        kwargs2["corroboration_count"] = existing.corroboration_count + 1
-                item = MemoryItem(**kwargs2)
-                repo.upsert(item)
-                written.append({"id": item.id, "source": source})
-            except (KeyError, ValueError) as e:
-                logger.warning("[memory-extract] Skipped malformed candidate: %s", e)
-
-        logger.info("[memory-extract] [%s] Wrote %d memor(y/ies) (%d nominated, %d total candidates)",
-                    conversation_id[:8], len(written), len(nominated), len(candidates))
-        return written
+        return apply_extraction_plan(candidates, conversation_id, nomination_label, repo)
 
     except Exception:
         logger.exception("[memory-extract] [%s] Extraction failed — treating as no-op", conversation_id[:8])
         return []
+
+
+def apply_extraction_plan(
+    candidates: List[Dict[str, Any]],
+    conversation_id: str,
+    nomination_label: str = "remember",
+    repo=None,
+) -> List[Dict[str, str]]:
+    """Apply a parsed extraction plan (list of candidate dicts from the judge's
+    ``emit_memory_plan`` call, whether the judge ran in-process via ``call_judge``
+    or inside an isolated memory-maintenance worker via ``dispatch_memory_maintenance``).
+
+    Each candidate is validated, provenance-stamped, and upserted. The caller must
+    have already verified the judge returned a parseable plan — this function does
+    NOT make a second LLM call. Returns a list of ``{"id": memory_id, "source":
+    "nominated"|"discovered"}`` entries for every candidate that passed validation.
+    Never raises: bad candidates are skipped with a warning."""
+    repo = repo or get_repository()
+    written: List[Dict[str, str]] = []
+    for cand in candidates:
+        if not isinstance(cand, dict):
+            continue
+        plane = cand.get("plane")
+        mtype = cand.get("type")
+        if plane not in MEMORY_PLANES:
+            logger.warning("[memory-extract] [%s] Skipping candidate with invalid plane %r", conversation_id[:8], plane)
+            continue
+        if mtype not in MEMORY_TYPES:
+            logger.warning("[memory-extract] [%s] Skipping candidate with invalid type %r", conversation_id[:8], mtype)
+            continue
+
+        source = cand.get("source", "discovered")
+
+        provenance = (
+            f"agent-driven write pass — nominated: {nomination_label}, judged together with "
+            f"all other candidates from the same session under the full corpus and transcript "
+            f"context (session {conversation_id[:8]}). conversation_scope: all messages "
+            f"(write pass runs per-conversation, not per-message)."
+        )
+        if source == "nominated":
+            provenance += " Source: agent explicitly nominated this via a tool call during the session."
+        else:
+            provenance += " Source: discovered by the model during the write pass."
+
+        kwargs: Dict[str, Any] = {
+            "content": cand["content"],
+            "description": cand["description"],
+            "plane": plane,
+            "type": mtype,
+            "scope": cand.get("scope", "project"),
+            "confidence": cand.get("confidence", "medium"),
+            "provenance": provenance,
+        }
+        if cand.get("volatile"):
+            kwargs["volatile"] = True
+        if cand.get("ttl_days"):
+            kwargs["ttl_days"] = int(cand["ttl_days"])
+
+        memory_id = cand.get("memory_id")
+        if memory_id:
+            kwargs["id"] = memory_id
+
+        supersedes = cand.get("duplicate_of")
+        if supersedes:
+            existing = repo.get(supersedes)
+            if existing:
+                kwargs.update({
+                    "usage_count": existing.usage_count,
+                    "last_used": existing.last_used,
+                    "created": existing.created,
+                    "corroboration_count": existing.corroboration_count + 1,
+                    "id": supersedes,
+                })
+            else:
+                logger.warning(
+                    "[memory-extract] [%s] duplicate_of references unknown id %s — treating as new memory",
+                    conversation_id[:8], supersedes,
+                )
+        try:
+            saved = repo.upsert(MemoryItem(**kwargs))
+        except Exception:
+            logger.warning("[memory-extract] [%s] Skipping invalid candidate", conversation_id[:8], exc_info=True)
+            continue
+        written.append({"id": saved.id, "source": source})
+    return written

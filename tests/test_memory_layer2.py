@@ -702,6 +702,249 @@ def test_run_consolidation_with_empty_plan_is_fail_open_noop():
     assert res["merged"] == 0 and res["deleted"] == 0, res  # judge no-op applied cleanly
 
 
+# ---------------------------------------------------------------------------
+# Phase 0: tool-call structured output (ops/judge_io.py). The configured
+# extraction provider returns EMPTY content when given response_format=
+# {"type":"json_object"} (no exception raised → the old response_format
+# fallback pair silently no-op'd). It DOES honor a forced tool call, returning
+# the plan in message.tool_calls[0].function.arguments. These tests pin that
+# transport end-to-end (tool_calls preferred over content, tools/tool_choice
+# actually passed) plus the judge_io unit helpers themselves.
+# ---------------------------------------------------------------------------
+
+from memory.ops import judge_io
+
+
+class _ToolCallFakeClient:
+    """Mimics a provider that honors a forced tool call: returns the plan in
+    message.tool_calls[0].function.arguments and an EMPTY content (the exact
+    shape that broke the old response_format path). Records every create()'s
+    kwargs so tests can assert the structured-output transport was used."""
+
+    def __init__(self, tool_name, arguments):
+        self.tool_name = tool_name
+        self.arguments = arguments
+        self.create_calls = []
+        msg = types.SimpleNamespace(
+            content="",
+            tool_calls=[
+                types.SimpleNamespace(
+                    id="call_judge",
+                    type="function",
+                    function=types.SimpleNamespace(name=tool_name, arguments=arguments),
+                )
+            ],
+        )
+        response = types.SimpleNamespace(choices=[types.SimpleNamespace(message=msg)])
+        self.__dict__["_response"] = response
+
+    @property
+    def chat(self):
+        fake_client = self
+
+        class _Completions:
+            def create(self_inner, **kwargs):
+                fake_client.create_calls.append(kwargs)
+                return fake_client._response
+
+        return types.SimpleNamespace(completions=_Completions())
+
+
+def test_extract_json_helper_variants():
+    assert judge_io.extract_json('{"a": 1}') == {"a": 1}
+    assert judge_io.extract_json('noise {"a": 1} noise') == {"a": 1}
+    assert judge_io.extract_json("not json") is None
+    assert judge_io.extract_json(None) is None
+    assert judge_io.extract_json("") is None
+
+
+def test_parse_judge_response_prefers_tool_calls_over_content():
+    """A tool_calls field must win even when content is also present — the
+    forced-tool path is the robust transport; content is the fallback only."""
+    msg = types.SimpleNamespace(
+        content='{"memories": [{"SHOULD": "not be used"}]}',
+        tool_calls=[
+            types.SimpleNamespace(
+                function=types.SimpleNamespace(
+                    name="emit_memory_plan", arguments='{"memories": [{"plane": "world"}]}',
+                )
+            )
+        ],
+    )
+    response = types.SimpleNamespace(choices=[types.SimpleNamespace(message=msg)])
+    parsed = judge_io.parse_judge_response(response)
+    assert parsed == {"memories": [{"plane": "world"}]}, parsed
+
+
+def test_parse_judge_response_accepts_dict_arguments():
+    """Some client bindings deserialize function.arguments to a dict already;
+    parse must accept that shape without re-decoding."""
+    msg = types.SimpleNamespace(
+        content="",
+        tool_calls=[
+            types.SimpleNamespace(
+                function=types.SimpleNamespace(
+                    name="emit_memory_plan", arguments={"memories": [{"plane": "world"}]},
+                )
+            )
+        ],
+    )
+    response = types.SimpleNamespace(choices=[types.SimpleNamespace(message=msg)])
+    assert judge_io.parse_judge_response(response) == {"memories": [{"plane": "world"}]}
+
+
+def test_parse_judge_response_falls_back_to_content_without_tool_calls():
+    """No tool_calls → read JSON out of content (the providers-without-tools
+    fallback / the old happy path _FakeClient exercises)."""
+    msg = types.SimpleNamespace(content='{"memories": [1, 2]}', tool_calls=None)
+    response = types.SimpleNamespace(choices=[types.SimpleNamespace(message=msg)])
+    assert judge_io.parse_judge_response(response) == {"memories": [1, 2]}
+
+
+def test_parse_judge_response_returns_none_for_empty_content_provider():
+    """The root-cause bug's exact shape — content='' and NO tool_calls — must
+    yield None so the call sites fail open instead of silently no-op'ing."""
+    msg = types.SimpleNamespace(content="", tool_calls=None)
+    response = types.SimpleNamespace(choices=[types.SimpleNamespace(message=msg)])
+    assert judge_io.parse_judge_response(response) is None
+
+
+def test_extraction_writes_valid_candidate_via_tool_call_path():
+    """End-to-end through run_extraction with a provider that answers via a
+    forced tool call (empty content + tool_calls[0].function.arguments).
+    Pins that (a) the candidate IS written on this transport (the bug was that
+    it was silently dropped), and (b) tools + tool_choice were actually sent."""
+    tool_args = json.dumps({"memories": [{
+        "plane": "stance", "type": "preference", "scope": "user",
+        "content": "Run ruff before declaring a task done.",
+        "description": "User preference: run ruff before finishing",
+        "confidence": "high",
+    }]})
+    fake = _ToolCallFakeClient(judge_io.EXTRACTION_PLAN_TOOL, tool_args)
+    extractor.get_memory_extraction_config = lambda: {
+        "provider_id": "fake", "base_url": "http://fake", "api_key": "fake-key", "model": "glm",
+    }
+    extractor.OpenAI = lambda base_url, api_key: fake
+    result = extractor.run_extraction("conv-toolcall", _SAMPLE_MSGS * 2)
+    assert len(result) == 1, result
+    saved = extractor.get_repository().get(result[0])
+    assert saved is not None and saved.content.startswith("Run ruff")
+    # Transport assertion: the forced tool call MUST have been sent (this is
+    # the actual fix — the old code passed response_format=... instead).
+    assert fake.create_calls, "model was never called"
+    call = fake.create_calls[0]
+    assert "tools" in call and "tool_choice" in call
+    assert call["tool_choice"]["function"]["name"] == judge_io.EXTRACTION_PLAN_TOOL
+    assert "response_format" not in call
+
+
+def test_extraction_fallback_to_content_when_provider_rejects_tools():
+    """If the forced-tool call raises, call_judge retries as a plain
+    completion and parses JSON out of content — providers that reject tools
+    still work, and no-double-failure leaves a clean no-op."""
+    content_payload = json.dumps({"memories": [{
+        "plane": "stance", "type": "preference", "scope": "user",
+        "content": "Harness content fallback path too.",
+        "description": "content fallback", "confidence": "medium",
+    }]})
+
+    class _RejectingThenContentClient:
+        def __init__(self):
+            self.calls = 0
+
+        @property
+        def chat(self):
+            self_client = self
+
+            class _Completions:
+                def create(self_inner, **kwargs):
+                    self_client.calls += 1
+                    if "tools" in kwargs:
+                        raise RuntimeError("this provider rejects forced tool calls")
+                    choice = types.SimpleNamespace(message=types.SimpleNamespace(content=content_payload))
+                    return types.SimpleNamespace(choices=[choice])
+
+            return types.SimpleNamespace(completions=_Completions())
+
+    client = _RejectingThenContentClient()
+    extractor.get_memory_extraction_config = lambda: {
+        "provider_id": "fake", "base_url": "http://fake", "api_key": "fake-key", "model": "glm",
+    }
+    extractor.OpenAI = lambda base_url, api_key: client
+    result = extractor.run_extraction("conv-fallback", _SAMPLE_MSGS * 2)
+    assert len(result) == 1, result
+    saved = extractor.get_repository().get(result[0])
+    assert saved is not None and saved.content.startswith("Harness content")
+    assert client.calls == 2, "both the failing tool call and the succeeding fallback must have been attempted"
+
+
+def test_consolidation_writes_merge_via_tool_call_path():
+    """End-to-end through run_consolidation with a provider answering via a
+    forced tool call. Pins that a judge-issued merge plan (tool_calls) is
+    parsed and actually applied to the corpus — the bug was that the empty
+    content response silently produced a no-op apply."""
+    repo = _fresh_repo()
+    keeper = MemoryItem(content="keeper-body", description="Pipeline bugs in Linear",
+                        plane="world", type="reference", scope="project", confidence="medium",
+                        usage_count=5, corroboration_count=1)
+    loser = MemoryItem(content="loser-body", description="pipeline bugs tracked in linear",
+                      plane="world", type="reference", scope="project", confidence="low",
+                      usage_count=2, corroboration_count=0)
+    repo.upsert(keeper)
+    repo.upsert(loser)
+    tool_args = json.dumps({
+        "merges": [{"into": keeper.id, "from": loser.id,
+                    "content": "combined via tool call", "description": "combined",
+                    "confidence": "high"}],
+        "deletes": [],
+    })
+    fake = _ToolCallFakeClient(judge_io.CONSOLIDATION_PLAN_TOOL, tool_args)
+    C.get_memory_extraction_config = lambda: {
+        "provider_id": "fake", "base_url": "http://fake", "api_key": "fake-key", "model": "glm",
+    }
+    C.OpenAI = lambda base_url, api_key: fake
+    orig = C.get_repository
+    C.get_repository = lambda: repo
+    try:
+        res = C.run_consolidation()
+    finally:
+        C.get_repository = orig
+    assert res["merged"] == 1 and res["deleted"] == 0, res
+    merged = repo.get(keeper.id)
+    assert repo.get(loser.id) is None and merged.content == "combined via tool call"
+    assert fake.create_calls, "judge was never called"
+    call = fake.create_calls[0]
+    assert call["tool_choice"]["function"]["name"] == judge_io.CONSOLIDATION_PLAN_TOOL
+
+
+def test_consolidation_fail_open_on_unparsable_empty_content():
+    """The root-cause shape (empty content, no tool_calls) → empty plan, never
+    raising. Consolidation must be fail-open."""
+    repo = _fresh_repo()
+    stable = MemoryItem(content="stable", description="d", plane="world",
+                        type="reference", scope="project", confidence="medium")
+    stable.created = _iso_days_ago(5)
+    repo.upsert(stable)
+    msg = types.SimpleNamespace(content="", tool_calls=None)
+    client = types.SimpleNamespace(
+        chat=types.SimpleNamespace(completions=types.SimpleNamespace(
+            create=lambda **k: types.SimpleNamespace(choices=[types.SimpleNamespace(message=msg)])))
+    )
+    C.get_memory_extraction_config = lambda: {
+        "provider_id": "fake", "base_url": "http://fake", "api_key": "fake-key", "model": "glm",
+    }
+    C.OpenAI = lambda base_url, api_key: client
+    orig = C.get_repository
+    C.get_repository = lambda: repo
+    try:
+        res = C.run_consolidation()
+    finally:
+        C.get_repository = orig
+    assert res["merged"] == 0 and res["deleted"] == 0, res
+    # The stable world memory is untouched — nothing was invented/deleted.
+    assert repo.get(stable.id) is not None
+
+
 def _run_all():
     tests = [v for k, v in list(globals().items()) if k.startswith("test_") and callable(v)]
     for t in tests:
