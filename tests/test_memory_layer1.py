@@ -180,6 +180,99 @@ def test_forget_route_disabled_when_memory_disabled():
     assert r.status_code == 200 and r.json()["ok"] is True
 
 
+# ---------------------------------------------------------------------------
+# Regression tests for the usage/recency source-of-truth fix:
+# bump_usage() only updates the SQLite index, while ranking (retrieval.py),
+# eviction (enforce_capacity) and the consolidation/extraction corpus read
+# MemoryItem objects hydrated from the markdown files. All read paths must
+# therefore hydrate usage_count/last_used from the index (store.get /
+# all_items), and upsert-on-conflict must never roll the index values back.
+# ---------------------------------------------------------------------------
+
+def test_bump_usage_is_visible_to_get_and_all_items():
+    """A retrieval hit recorded by bump_usage() must be visible on every
+    read path — otherwise ranking, eviction and decay judge by a counter
+    that froze at the last upsert."""
+    repo = MemoryRepository(storage_dir=pathlib.Path(tempfile.mkdtemp()))
+    item = MemoryItem(content="X", description="deploy checklist lives in Notion",
+                      plane="world", type="reference", scope="project")
+    repo.upsert(item)
+    assert repo.get(item.id).usage_count == 0
+
+    repo.bump_usage([item.id])
+    repo.bump_usage([item.id])
+
+    fetched = repo.get(item.id)
+    assert fetched.usage_count == 2, fetched.usage_count
+    assert fetched.last_used is not None
+
+    items = repo.all_items(plane="world")
+    assert len(items) == 1
+    assert items[0].usage_count == 2, items[0].usage_count
+    assert items[0].last_used is not None
+
+
+def test_upsert_update_never_resets_usage_history():
+    """Re-upserting an existing id (the dedup / in-place-update path) must
+    not roll usage_count/last_used back to whatever the item object carries
+    — the index row always wins."""
+    repo = MemoryRepository(storage_dir=pathlib.Path(tempfile.mkdtemp()))
+    item = MemoryItem(content="Old wording", description="convention: ruff before commit",
+                      plane="world", type="convention", scope="project")
+    repo.upsert(item)
+    repo.bump_usage([item.id])
+    repo.bump_usage([item.id])
+
+    # An update arriving with a stale/zero usage counter (e.g. a direct
+    # write, or any write pass that didn't preserve history).
+    update = MemoryItem(content="New wording", description="convention: ruff before commit",
+                        plane="world", type="convention", scope="project",
+                        id=item.id, usage_count=0, last_used=None)
+    repo.upsert(update)
+
+    fetched = repo.get(item.id)
+    assert fetched.content == "New wording"
+    assert fetched.usage_count == 2, fetched.usage_count
+    assert fetched.last_used is not None
+
+
+def test_recall_bumps_make_ranking_and_eviction_usage_aware():
+    """End-to-end consequence of the hydration fix: a memory that was
+    recalled many times must outrank and outlive a newer never-used one.
+    Before the fix, bumps only touched the SQLite index while ranking and
+    eviction read stale file values — so usage had zero effect and
+    eviction was effectively oldest-created-first."""
+    from datetime import datetime, timedelta, timezone
+    from memory.retrieval import rank_candidates
+
+    repo = MemoryRepository(storage_dir=pathlib.Path(tempfile.mkdtemp()))
+    now = datetime.now(timezone.utc)
+    old = MemoryItem(content="legacy runbook", description="how to restart the ingest pipeline",
+                     plane="world", type="reference", scope="project",
+                     created=(now - timedelta(days=200)).isoformat())
+    new = MemoryItem(content="recent note about the ingest pipeline", description="ingest pipeline trivia",
+                     plane="world", type="project", scope="project",
+                     created=(now - timedelta(days=20)).isoformat())
+    repo.upsert(old)
+    repo.upsert(new)
+    for _ in range(3):
+        repo.bump_usage([old.id])
+
+    # Ranking: with the 3 bumps old must beat the newer, equally-relevant
+    # note. Without hydration, old scores 0.30 (keyword only) vs new's
+    # ~0.43 (keyword + recency) and loses.
+    ranked = rank_candidates(repo, query="restart the ingest pipeline", plane="world")
+    assert ranked and ranked[0]["id"] == old.id, [(r["id"], r["score"]) for r in ranked]
+
+    # Eviction: cap=1 forces exactly one eviction. The never-used newer
+    # memory must go — before the fix both files showed usage 0 and the
+    # older (but actively-used) memory was evicted instead.
+    evicted = repo.enforce_capacity(cap=1)
+    assert evicted == 1, evicted
+    remaining = [it.id for it in repo.all_items(plane="world")]
+    assert remaining == [old.id], remaining
+
+
 def _run_all():
     tests = [v for k, v in list(globals().items()) if k.startswith("test_") and callable(v)]
     for t in tests:

@@ -129,11 +129,6 @@ class MemoryItem:
         meta = {k: v for k, v in meta.items() if k in valid_keys}
         return cls(**meta)
 
-    def touch_usage(self) -> None:
-        """Record a retrieval hit — feeds the decay/retention loop (§17)."""
-        self.usage_count += 1
-        self.last_used = _now_iso()
-
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 

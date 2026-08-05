@@ -139,6 +139,11 @@ class MemoryRepository:
         §7.1 item 2 / Claude Code convention) is the caller's
         responsibility — pass the existing ``id`` via ``supersedes`` or
         reuse it directly to dedupe.
+
+        Usage history is preserved on update: ``usage_count`` / ``last_used``
+        live in the SQLite index (kept fresh by ``bump_usage``) and are never
+        reset by re-upserting the same id — an in-place content update must
+        not erase the very signal that ranking, decay and eviction judge by.
         """
         item.content, n1 = redact(item.content)
         item.description, n2 = redact(item.description)
@@ -149,6 +154,21 @@ class MemoryRepository:
         rel_path = str(path.relative_to(self._dir))
 
         with self._lock:
+            # Usage history is owned by the SQLite index — bump_usage() writes
+            # it there and the markdown files only carry the value as of their
+            # last upsert. If this id already exists, pull the live values
+            # BEFORE writing the file (so the file doesn't resurrect a stale
+            # counter), and leave usage/last_used out of the ON CONFLICT clause
+            # below so a bump landing between this read and the write is never
+            # rolled back.
+            with self._connect() as conn:
+                existing = conn.execute(
+                    "SELECT usage_count, last_used FROM memories WHERE id=?",
+                    (item.id,),
+                ).fetchone()
+            if existing is not None:
+                item.usage_count = existing["usage_count"]
+                item.last_used = existing["last_used"]
             _atomic_write_text(path, item.to_markdown())
             with self._connect() as conn:
                 conn.execute(
@@ -162,8 +182,7 @@ class MemoryRepository:
                         plane=excluded.plane, type=excluded.type, scope=excluded.scope,
                         description=excluded.description, confidence=excluded.confidence,
                         provenance=excluded.provenance, volatile=excluded.volatile,
-                        ttl_days=excluded.ttl_days, usage_count=excluded.usage_count,
-                        last_used=excluded.last_used, created=excluded.created,
+                        ttl_days=excluded.ttl_days, created=excluded.created,
                         supersedes=excluded.supersedes, corroboration_count=excluded.corroboration_count,
                         file_path=excluded.file_path
                     """,
@@ -175,14 +194,24 @@ class MemoryRepository:
                     ),
                 )
         logger.info("[memory] Upserted %s (%s/%s, scope=%s)", item.id, item.plane, item.type, item.scope)
+        self.enforce_capacity()
         return item
 
     def get(self, memory_id: str) -> Optional[MemoryItem]:
         with self._lock, self._connect() as conn:
-            row = conn.execute("SELECT file_path FROM memories WHERE id=?", (memory_id,)).fetchone()
+            row = conn.execute(
+                "SELECT file_path, usage_count, last_used FROM memories WHERE id=?",
+                (memory_id,),
+            ).fetchone()
         if row is None:
             return None
-        return self._read_file(Path(row["file_path"]))
+        item = self._read_file(Path(row["file_path"]))
+        if item is not None:
+            # bump_usage() only updates the index, so the file's usage fields
+            # lag behind — the index row is the source of truth. Hydrate.
+            item.usage_count = row["usage_count"]
+            item.last_used = row["last_used"]
+        return item
 
     def delete(self, memory_id: str) -> bool:
         with self._lock, self._connect() as conn:
@@ -277,14 +306,60 @@ class MemoryRepository:
             )
 
     def all_items(self, plane: Optional[str] = None, scope: Optional[str] = None) -> List[MemoryItem]:
-        """Return full MemoryItem objects (reads file content) for candidate ranking."""
+        """Return full MemoryItem objects (reads file content) for candidate ranking.
+
+        ``usage_count`` / ``last_used`` are hydrated from the SQLite index:
+        ``bump_usage()`` only updates the index, so the values baked into the
+        markdown files lag behind and must never drive ranking, eviction or
+        decay decisions.
+        """
         rows = self.list(plane=plane, scope=scope)
         items = []
         for row in rows:
             item = self._read_file(Path(row["file_path"]))
             if item is not None:
+                item.usage_count = row["usage_count"]
+                item.last_used = row["last_used"]
                 items.append(item)
         return items
+
+    def enforce_capacity(self, cap: Optional[int] = None) -> int:
+        """Evict low-value WORLD memories down to the capacity cap.
+
+        A conservative safety net (see ``settings.max_memories``) rather than
+        an expected limit — under normal use the count stays far below the cap
+        and this returns 0 after a cheap ``COUNT``. When over-cap, the least
+        valuable world memories are removed first (lowest usage, oldest
+        ``last_used``, least corroboration, oldest created). Stance memories
+        are never auto-evicted (explicit overwrite / human edit only, per the
+        design doc); if stance alone exceeds the cap, what can't be trimmed
+        is logged and left in place.
+        """
+        from .settings import max_memories
+
+        if cap is None:
+            cap = max_memories()
+        if cap <= 0:
+            return 0
+        with self._lock, self._connect() as conn:
+            total = conn.execute("SELECT COUNT(*) AS c FROM memories").fetchone()["c"]
+        overflow = total - cap
+        if overflow <= 0:
+            return 0
+        items = self.all_items(plane="world")
+        items.sort(
+            key=lambda it: (it.usage_count, it.last_used or it.created, it.corroboration_count, it.created)
+        )
+        evicted = 0
+        for item in items:
+            if evicted >= overflow:
+                break
+            self.delete(item.id)
+            evicted += 1
+            logger.info("[memory-cap] Evicted %s (%s) to honor cap %d", item.id, item.description, cap)
+        if evicted < overflow:
+            logger.warning("[memory-cap] Still %d over cap %d (stance not auto-removable)", overflow - evicted, cap)
+        return evicted
 
 
 # ── Module-level singleton (mirrors gateway/conversation_store.py) ─────────

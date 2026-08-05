@@ -231,8 +231,13 @@ confidence: str           # "high" | "medium" | "low" — self-reported by the w
 provenance: str           # free text, e.g. "agent-nominated (remember), validated from conversation ab12cd34"
 volatile: bool            # if true, expires on ttl_days regardless of usage
 ttl_days: Optional[int]
-usage_count: int          # bumped every time recall()/stance returns this item
-last_used: Optional[str]  # ISO timestamp of last usage bump
+usage_count: int          # bumped only by explicit recall hits (/api/memory/recall) —
+                           # NOT by stance injection (that happens every session and
+                           # would inflate usage regardless of actual usefulness).
+                           # The SQLite index is the source of truth for this field and
+                           # last_used; the file copy may lag, and store.get()/
+                           # all_items() hydrate both from the index on every read.
+last_used: Optional[str]  # ISO timestamp of last usage bump (index-authoritative)
 created: str              # ISO timestamp
 supersedes: Optional[str] # descriptive lineage only — does NOT hide/delete the pointed-to memory
 corroboration_count: int  # code-incremented each time a LATER, separate session's candidate

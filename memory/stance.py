@@ -37,6 +37,15 @@ def build_stance_block(repo: MemoryRepository, scope: str | None = None) -> str:
     Empty Stance is the common case for a new install — the block is
     entirely omitted rather than injecting an empty header, keeping the
     "no-op is the default" discipline (§15) even at the injection layer.
+
+    Deliberately a PURE READ — no bump_usage() here. Injection happens on
+    every session start for every session, so bumping on injection would make
+    usage_count grow linearly with session count regardless of actual
+    usefulness — and since the top-N selection above sorts BY usage, the
+    inflation would self-reinforce (frequently-injected items keep crowding
+    out newer ones). The usage signal is only meaningful when it reflects an
+    explicit retrieval act (the recall endpoint bumps), so that is the only
+    place usage gets recorded.
     """
     items = repo.all_items(plane="stance", scope=scope)
     if not items:
@@ -49,8 +58,6 @@ def build_stance_block(repo: MemoryRepository, scope: str | None = None) -> str:
     for item in top:
         label = _TYPE_LABEL.get(item.type, item.type.capitalize())
         lines.append(f"- [{label}] {item.content.strip()}")
-
-    repo.bump_usage([it.id for it in top])
 
     return (
         "**What you know about this user/project (from memory):**\n"
