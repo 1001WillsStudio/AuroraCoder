@@ -73,6 +73,10 @@ const LANG = {
     'agent.maxToolConcurrency': 'Max Tool Concurrency',
     'agent.terminalMaxOutput': 'Terminal Max Output',
     'agent.saveTrainingData': 'Save Training Data',
+    'agent.editMode': 'File Edit Mode',
+    'agent.editModeAurora': 'AuroraCoder Style (anchor-based)',
+    'agent.editModeNormal': 'Normal Style (string replace)',
+    'agent.editModeDesc': 'AuroraCoder: line-range anchor-based editing with indentation auto-fix. Normal: simpler exact-string replacement (like Claude Code).',
     'agent.saveTrainingDataDesc': 'Log each API request/response pair for fine-tuning. Disable to save disk space and reduce I/O overhead.',
 
     // ── Memory section ──────────────────────────────────────────
@@ -328,6 +332,10 @@ const LANG = {
     'agent.maxToolConcurrency': '最大工具并发数',
     'agent.terminalMaxOutput': '终端最大输出',
     'agent.saveTrainingData': '保存训练数据',
+    'agent.editMode': '文件编辑模式',
+    'agent.editModeAurora': 'AuroraCoder 风格（锚点定位）',
+    'agent.editModeNormal': '普通风格（字符串替换）',
+    'agent.editModeDesc': 'AuroraCoder 风格：基于行号和锚点的精准编辑，支持自动缩进修复。普通风格：更简单的精确字符串替换（类似 Claude Code）。',
     'agent.saveTrainingDataDesc': '记录每次 API 请求/响应用于微调。关闭可节省磁盘空间和 I/O 开销。',
 
     // ── Memory section ──────────────────────────────────────────

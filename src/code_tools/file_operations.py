@@ -10,6 +10,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from ..code_sandbox import WORKSPACE
 from ..config import MAX_FILE_READ_SIZE, count_lines_buffered
 from .edit_file import RangeReplaceEditor
+from .edit_file_normal import StringReplaceEditor
 
 logger = logging.getLogger(__name__)
 
@@ -193,7 +194,7 @@ def read_file_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
 
 
 def execute_edit_file(arguments: Dict[str, Any]):
-    """Execute an ``edit_file`` call and return ``(result, applied_arguments)``.
+    """Execute an ``edit_file`` call (aurora mode) and return ``(result, applied_arguments)``.
 
     ``applied_arguments`` is the full argument dict in the exact form that was
     applied to the file (line numbers resolved, ``[TO]`` normalised, indent
@@ -205,6 +206,24 @@ def execute_edit_file(arguments: Dict[str, Any]):
     result, applied = editor.edit(
         arguments.get("file"),
         arguments.get("edits"),
+    )
+    return result, applied if applied is not None else arguments
+
+
+def execute_edit_file_normal(arguments: Dict[str, Any]):
+    """Execute an ``edit_file`` call (normal / string-replace mode).
+
+    Uses simpler string matching — the LLM provides ``old_string``,
+    ``new_string``, and an optional ``replace_all`` flag directly instead
+    of line numbers and [TO] anchors.  Uniqueness is enforced per
+    Claude Code / attractor best practices.
+    """
+    editor = StringReplaceEditor(WORKSPACE)
+    result, applied = editor.edit(
+        arguments.get("file"),
+        arguments.get("old_string", ""),
+        arguments.get("new_string", ""),
+        replace_all=arguments.get("replace_all", False),
     )
     return result, applied if applied is not None else arguments
 

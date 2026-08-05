@@ -20,6 +20,7 @@ from .code_tools.file_operations import (
     file_search_tool,
     close_file_tool,
     execute_edit_file,
+    execute_edit_file_normal,
 )
 # from .code_tools.grep_search import grep_search_tool  # COMMENTED OUT — agent can use terminal grep
 from .code_tools.terminal_runner import run_terminal_cmd_tool
@@ -47,6 +48,25 @@ RULES:
 - Multiple edits per call: all line numbers refer to the file as it was BEFORE this call. Ranges must not overlap.
 - Use empty `replace_content` to delete the range.
 - Do NOT edit the same file more than once per turn. After an edit, read the refreshed code interpreter for correct line numbers before editing that file again.
+"""
+
+NORMAL_EDIT_FILE_DESCRIPTION = """Performs exact string replacements in an existing file.
+
+Usage:
+- When editing text, ensure you preserve the exact indentation (tabs/spaces) as it appears before.
+- ALWAYS prefer editing existing files. NEVER write new files unless explicitly required.
+- Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.
+- The edit will FAIL if `old_string` is not unique in the file.
+  * Either provide a larger string with more surrounding context to make it unique.
+  * Or set `replace_all` to true to replace every occurrence.
+- To create or overwrite a file, prefer using the `write_file` tool.
+
+CRITICAL:
+- old_string must include all whitespace, indentation, blank lines, and surrounding code exactly as it appears in the file.
+- You MUST preserve the original punctuation exactly in old_string — including full-width/half-width forms and Chinese/English marks, especially quotation marks.
+  * NEVER escape them with \\ or any other character.
+  * If the original code uses Chinese quotation marks 「」, keep them in old_string — do NOT replace with ".
+- For deletion, use an empty string as new_string.
 """
 
 
@@ -710,8 +730,52 @@ def get_tool_definitions() -> List[Dict[str, Any]]:
     Merges the hard‑coded native tool schemas with primary ToolStore tools
     whose function schemas are injected directly so the LLM can call them
     like any other native tool.
+
+    The ``edit_file`` schema is swapped based on the ``EDIT_MODE`` env var:
+    ``"aurora"`` (default) → anchor-based range replacement; ``"normal"``
+    → simple string replacement.
     """
+    import os
     tools = copy.deepcopy(NATIVE_TOOL_DEFINITIONS)
+
+    # ── Edit-mode swap ───────────────────────────────────────────────
+    edit_mode = os.environ.get("EDIT_MODE", "aurora")
+    if edit_mode == "normal":
+        normal_def = {
+            "type": "function",
+            "function": {
+                "name": "edit_file",
+                "description": NORMAL_EDIT_FILE_DESCRIPTION,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "file": {
+                            "type": "string",
+                            "description": "Path to the file to edit (relative to workspace)"
+                        },
+                        "old_string": {
+                            "type": "string",
+                            "description": "The exact string to find and replace in the file. Must be unique in the file unless replace_all is true."
+                        },
+                        "new_string": {
+                            "type": "string",
+                            "description": "The replacement string (use empty string to delete)"
+                        },
+                        "replace_all": {
+                            "type": "boolean",
+                            "description": "Replace all occurrences of old_string (default: false). When false, old_string must be unique in the file."
+                        }
+                    },
+                    "required": ["file", "old_string", "new_string"]
+                }
+            }
+        }
+        # Replace the aurora edit_file entry
+        tools = [
+            normal_def if t["function"]["name"] == "edit_file" else t
+            for t in tools
+        ]
+
     tools = memory_filter_tools(tools)
     try:
         tools.extend(get_primary_tool_schemas())
@@ -721,8 +785,16 @@ def get_tool_definitions() -> List[Dict[str, Any]]:
 
 
 def get_tool_function_map() -> Dict[str, Any]:
-    """Returns the mapping of tool names to their implementation functions."""
-    return TOOL_FUNCTION_MAP
+    """Returns the mapping of tool names to their implementation functions.
+
+    The ``edit_file`` entry is swapped based on the ``EDIT_MODE`` env var.
+    """
+    import os
+    result = dict(TOOL_FUNCTION_MAP)
+    edit_mode = os.environ.get("EDIT_MODE", "aurora")
+    if edit_mode == "normal":
+        result["edit_file"] = execute_edit_file_normal
+    return result
 
 
 # ── Build the set of valid parameters per tool from NATIVE_TOOL_DEFINITIONS ──
@@ -732,6 +804,10 @@ def _build_valid_params() -> Dict[str, set]:
     for tdef in NATIVE_TOOL_DEFINITIONS:
         props = tdef["function"]["parameters"].get("properties", {})
         valid[tdef["function"]["name"]] = set(props.keys())
+    # Also include the normal-mode edit_file params so argument filtering
+    # doesn't drop them when EDIT_MODE=normal.
+    if "edit_file" in valid:
+        valid["edit_file"] |= {"old_string", "new_string", "replace_all"}
     return valid
 
 _TOOL_VALID_PARAMS: Dict[str, set] = _build_valid_params()
@@ -770,24 +846,14 @@ def execute_tool_call(tool_name: str, arguments: Dict[str, Any], tool_call_id: s
             arguments = {k: v for k, v in arguments.items() if k in valid_params}
 
     # ── ToolStore routing ────────────────────────────────────────────
-    if tool_name not in TOOL_FUNCTION_MAP:
+    # Use the dynamic function map (respects EDIT_MODE for edit_file)
+    function_map = get_tool_function_map()
+    if tool_name not in function_map:
         # Not a native tool — route to the ToolStore (primary tools). Their
         # schemas are injected at startup so the LLM calls them like any other.
         return arguments, execute_tool_direct(tool_name, arguments)
 
     # ── Uniform native-tool execution ────────────────────────────────
-    # All tools in TOOL_FUNCTION_MAP have signature:
+    # All tools in the function map have signature:
     #   (arguments: Dict[str, Any]) -> (result: str, arguments: Dict[str, Any])
-    function = TOOL_FUNCTION_MAP[tool_name]
-
-    # Subagent: inject execution-only metadata.  The subagent function strips
-    # tool_call_id and conversation_id from the returned applied args so the
-    # LLM never sees them.
-    if tool_name == "subagent":
-        if tool_call_id:
-            arguments = {**arguments, "tool_call_id": tool_call_id}
-        if conversation_id:
-            arguments = {**arguments, "conversation_id": conversation_id}
-
-    result, arguments = function(arguments)
-    return arguments, result
+    function = function_map[tool_name]

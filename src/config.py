@@ -95,6 +95,11 @@ DEFAULT_PROVIDER = "deepseek"
 MAX_TOKENS = 32768
 
 # Tool Calling Limits
+
+# Edit mode — "aurora" (anchor-based, default) or "normal" (string replace)
+DEFAULT_EDIT_MODE = "aurora"
+
+# Tool Calling Limits
 MAX_TOOL_CALLS = 10  # Increased since native tool calling is more efficient
 
 # Iteration Limits

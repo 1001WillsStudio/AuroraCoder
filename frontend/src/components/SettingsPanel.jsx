@@ -698,6 +698,20 @@ export default function SettingsPanel({ isOpen, onClose }) {
                   </div>
                 </div>
                 <div className="settings-field-row" style={{ marginTop: 12 }}>
+                  <div className="settings-field-col" style={{ maxWidth: 260 }}>
+                    <label>{t('agent.editMode')}</label>
+                    <select className="settings-input"
+                      value={other.agent?.edit_mode || 'aurora'}
+                      onChange={e => setOther('agent', 'edit_mode', e.target.value)}>
+                      <option value="aurora">{t('agent.editModeAurora')}</option>
+                      <option value="normal">{t('agent.editModeNormal')}</option>
+                    </select>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginTop: 4 }}>
+                      {t('agent.editModeDesc')}
+                    </span>
+                  </div>
+                </div>
+                <div className="settings-field-row" style={{ marginTop: 12 }}>
                   <div className="settings-field-col settings-field-col-checkbox" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <label className="settings-checkbox-label">
                       <input type="checkbox"

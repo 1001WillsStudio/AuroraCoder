@@ -279,6 +279,10 @@ class ProviderManager:
         if tmo is not None and str(tmo).isdigit():
             os.environ["TERMINAL_MAX_OUTPUT_CHARS"] = str(tmo)
 
+        edit_mode = agent.get("edit_mode")
+        if edit_mode and edit_mode in ("aurora", "normal"):
+            os.environ["EDIT_MODE"] = edit_mode
+
     # ── Agent API (pull) ────────────────────────────────────────────────
 
     def get_client(self, provider_id: str) -> OpenAI:
