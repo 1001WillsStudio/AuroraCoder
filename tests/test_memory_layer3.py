@@ -472,16 +472,19 @@ def test_dispatch_gap_investigation_defers_when_finding_is_rejected_by_write_pas
 
 def test_gap_investigation_tool_mode_is_minimal_and_ends_with_report_findings():
     """The one-shot HTTP call the dispatcher makes uses tools='gap_investigation'
-    (see get_filtered_tools in src/web_api/app.py) -- assert that mode
-    resolves to exactly the minimal read-oriented set plus report_findings,
-    never remember/recall/forget/log_gap/subagent/write_file/edit_file."""
+    (see get_filtered_tools in src/web_api/app.py). Gap investigation merged
+    into the unified memory-maintenance worker, so that mode now resolves to
+    exactly the shared unified set (tool_definitions.py: GAP_INVESTIGATION_TOOLS
+    ≡ MEMORY_MAINTENANCE_TOOLS): remember/forget + the read tools. Still never
+    recall/log_gap/subagent/write_file/edit_file/delete_file."""
     from src.web_api.app import get_filtered_tools
     from src.tool_definitions import GAP_INVESTIGATION_TOOLS
 
     names = {td["function"]["name"] for td in get_filtered_tools("gap_investigation")}
     assert names == GAP_INVESTIGATION_TOOLS
     assert "report_findings" in names
-    assert not names & {"remember", "recall", "log_gap", "forget", "subagent", "write_file", "edit_file", "delete_file"}
+    assert "remember" in names and "forget" in names
+    assert not names & {"recall", "log_gap", "subagent", "write_file", "edit_file", "delete_file"}
 
 
 def test_build_docker_run_args_forwards_configured_provider_keys_only():
@@ -612,153 +615,111 @@ def test_gap_investigation_tool_mode_survives_worker_own_memory_being_disabled()
 
 # ---------------------------------------------------------------------------
 # Phase 1: memory-maintenance dispatch (extraction / consolidation through a
-# real AuroraCoder worker, persistent transcript). All docker/HTTP/filesystem
-# operations are mocked -- these tests never touch a real container or socket.
+# real AuroraCoder worker, persistent transcript). The worker mounts the main
+# container's memory data dir read-write, so its remember/forget calls write
+# STRAIGHT into the shared store — there are no emit tools, no plan extraction,
+# and no dispatcher-side application anymore; the persisted transcript IS the
+# trace. All docker/HTTP/filesystem operations are mocked -- these tests never
+# touch a real container or socket.
 # ---------------------------------------------------------------------------
 
 
-def test_memory_maintenance_tool_mode_includes_emit_tools():
-    """get_filtered_tools('memory_maintenance') must expose the read set plus
-    both emit tools, exactly the set dispatch_memory_maintenance relies on the
-    worker to have. Never includes remember/recall/forget/log_gap/subagent."""
+def test_memory_maintenance_tool_mode_is_unified_set():
+    """get_filtered_tools('memory_maintenance') must resolve to EXACTLY the
+    unified worker set: remember/forget (direct writes to the shared store)
+    plus the read tools. No emit tools, no recall/log_gap/subagent/write."""
     from src.web_api.app import get_filtered_tools
     from src.tool_definitions import MEMORY_MAINTENANCE_TOOLS
     names = {td["function"]["name"] for td in get_filtered_tools("memory_maintenance")}
     assert names == MEMORY_MAINTENANCE_TOOLS
-    assert "emit_memory_plan" in names
-    assert "emit_consolidation_plan" in names
-    assert not names & {"remember", "recall", "log_gap", "forget", "subagent", "write_file", "edit_file"}
+    assert names == {"remember", "forget", "read_file", "list_directory", "run_terminal_command", "report_findings"}
+    assert not names & {"recall", "log_gap", "subagent", "write_file", "edit_file",
+                        "delete_file", "emit_memory_plan", "emit_consolidation_plan"}
 
 
-def test_emit_tools_excluded_from_normal_chat():
-    """Emit tools are strictly internal to the maintenance worker -- they must
-    NOT appear in the default (mode=None) tool list, even if memory is enabled."""
+def test_gap_investigation_mode_same_as_maintenance():
+    """Gap investigation is just one maintenance kind now — both modes share
+    the same unified tool set (GAP_INVESTIGATION_TOOLS ≡ MEMORY_MAINTENANCE_TOOLS)."""
     from src.web_api.app import get_filtered_tools
-    from src.tool_definitions import MEMORY_MAINTENANCE_EMIT_TOOLS
-    names = {td["function"]["name"] for td in get_filtered_tools(None)}
-    assert not names & MEMORY_MAINTENANCE_EMIT_TOOLS, (
-        "emit tools leaked into normal chat mode"
-    )
+    gap_names = {td["function"]["name"] for td in get_filtered_tools("gap_investigation")}
+    maint_names = {td["function"]["name"] for td in get_filtered_tools("memory_maintenance")}
+    assert gap_names == maint_names
 
 
-def test_emit_tools_excluded_from_gap_investigation():
-    """The gap_investigation mode has its own emit tool (report_findings),
-    so the maintenance emit tools must not pollute that mode either."""
+def test_remember_in_memory_maintenance_mode():
     from src.web_api.app import get_filtered_tools
-    from src.tool_definitions import MEMORY_MAINTENANCE_EMIT_TOOLS
-    names = {td["function"]["name"] for td in get_filtered_tools("gap_investigation")}
-    assert not names & MEMORY_MAINTENANCE_EMIT_TOOLS, (
-        "emit tools leaked into gap_investigation mode"
-    )
+    names = {td["function"]["name"] for td in get_filtered_tools("memory_maintenance")}
+    assert "remember" in names
 
 
-def test_memory_maintenance_tool_mode_survives_worker_own_memory_being_disabled():
+def test_forget_in_memory_maintenance_mode():
+    from src.web_api.app import get_filtered_tools
+    names = {td["function"]["name"] for td in get_filtered_tools("memory_maintenance")}
+    assert "forget" in names
+
+
+def test_memory_maintenance_mode_skips_master_switch():
     """Same isolation contract as gap_investigation: the worker has no
-    settings.json, so its memory_enabled() is False. memory_maintenance mode
-    must skip the master-switch filter exactly like gap_investigation mode does,
-    or the emit tools would be silently stripped and every maintenance task
-    would dead-end with 'no usable plan'."""
+    settings.json, so its own memory_enabled() reads False. memory_maintenance
+    mode must skip the master-switch filter (memory_filter_tools) exactly like
+    gap_investigation mode does, or remember/forget would be silently stripped
+    and every maintenance task would dead-end."""
     import src.tool_definitions as tool_definitions
     from src.tool_definitions import MEMORY_MAINTENANCE_TOOLS
     from src.web_api.app import get_filtered_tools
     with _patched(tool_definitions, memory_enabled=lambda: False):
         names = {td["function"]["name"] for td in get_filtered_tools("memory_maintenance")}
-    assert "emit_memory_plan" in names
-    assert "emit_consolidation_plan" in names
     assert names == MEMORY_MAINTENANCE_TOOLS
+    assert "remember" in names and "forget" in names
 
 
-def test_extract_emitted_plan_finds_last_plan():
-    """The transcript may contain multiple tool calls across several turns;
-    extract_emitted_plan must pick the LAST emit call as the final answer."""
-    from memory.ops.dispatcher import extract_emitted_plan
-    msgs = [
-        {"role": "assistant", "tool_calls": [
-            {"function": {"name": "read_file", "arguments": "{}"}},
-            {"function": {"name": "emit_memory_plan", "arguments": json.dumps({"memories": [{"plane": "world", "type": "reference", "scope": "project", "content": "x", "description": "x"}]})}},
-        ]},
-        {"role": "assistant", "content": "let me refine"},
-        {"role": "assistant", "tool_calls": [
-            {"function": {"name": "emit_memory_plan", "arguments": json.dumps({"memories": [{"plane": "stance", "type": "preference", "scope": "user", "content": "final", "description": "final"}]})}},
-        ]},
-    ]
-    plan = extract_emitted_plan(msgs, "emit_memory_plan")
-    assert plan is not None
-    assert plan["memories"][0]["content"] == "final"
-
-
-def test_extract_emitted_plan_accepts_dict_arguments():
-    """Some scenarios may populate arguments as an already-parsed dict; extract
-    should accept both str and dict."""
-    from memory.ops.dispatcher import extract_emitted_plan
-    plan = extract_emitted_plan([{"role": "assistant", "tool_calls": [
-        {"function": {"name": "emit_consolidation_plan", "arguments": {"merges": [], "deletes": ["abc"]}}}
-    ]}], "emit_consolidation_plan")
-    assert plan == {"merges": [], "deletes": ["abc"]}
-
-
-def test_extract_emitted_plan_returns_none_for_empty_transcript():
-    from memory.ops.dispatcher import extract_emitted_plan
-    assert extract_emitted_plan(None, "emit_memory_plan") is None
-    assert extract_emitted_plan([], "emit_memory_plan") is None
-    assert extract_emitted_plan([{"role": "user", "content": "hi"}], "emit_memory_plan") is None
-
-
-def test_dispatch_memory_maintenance_consolidation_full_success_path():
-    """The whole maintenance pipeline, everything mocked: spawn → wait-ready →
-    worker run → persist transcript → extract plan → apply merges/deletes →
-    teardown. Also asserts the transcript was written to the conversation store."""
-    from memory.ops import consolidator as consolidator_module
-    from memory.ops import extractor as extractor_module
-    from memory.store import get_repository
-    from memory.schema import MemoryItem
+def test_dispatch_memory_maintenance_consolidation_persists_transcript():
+    """The worker's remember/forget calls write directly into the shared store
+    (mounted data dir) — the dispatcher no longer extracts or applies a plan.
+    What it must do is persist the full transcript (request + remember/forget
+    tool calls) into the conversation store so the trace is observable."""
     from gateway.conversation_store import store
 
-    repo = get_repository()
-    keeper = MemoryItem(content="keeper", description="K", plane="world", type="reference",
-                        scope="project", confidence="medium", usage_count=5, corroboration_count=1)
-    loser = MemoryItem(content="loser", description="L", plane="world", type="reference",
-                      scope="project", confidence="low", usage_count=1, corroboration_count=0)
-    repo.upsert(keeper)
-    repo.upsert(loser)
-
-    plan_args = json.dumps({"merges": [{"into": keeper.id, "from": loser.id, "content": "merged", "description": "m"}], "deletes": []})
     raw_messages = [{"role": "assistant", "tool_calls": [
-        {"function": {"name": "emit_consolidation_plan", "arguments": plan_args}}
+        {"function": {"name": "forget", "arguments": json.dumps({"memory_id": "loser-1"})}},
+        {"function": {"name": "remember", "arguments": json.dumps({
+            "memory_id": "keeper-1", "content": "merged content", "description": "merged",
+            "plane": "world", "type": "reference", "scope": "project", "confidence": "medium",
+        })}},
     ]}]
 
     calls = []
-
     with _patched(
         dispatcher,
         heavy_ops_enabled=lambda: True,
-        snapshot_workspace=lambda gap_id: (calls.append("snapshot") or pathlib.Path(tempfile.mkdtemp())),
-        spawn_worker=lambda gap_id, snap: (calls.append("spawn") or f"worker-{gap_id}"),
+        snapshot_workspace=lambda maint_id: (calls.append("snapshot") or pathlib.Path(tempfile.mkdtemp())),
+        spawn_worker=lambda maint_id, snap: (calls.append("spawn") or f"worker-{maint_id}"),
         teardown_worker=lambda name: calls.append(("teardown", name)),
-        cleanup_snapshot=lambda gap_id: calls.append("cleanup"),
+        cleanup_snapshot=lambda maint_id: calls.append("cleanup"),
         _wait_for_worker_ready=lambda base_url, timeout=30: calls.append("ready") or True,
         _run_maintenance_via_worker=lambda base_url, kind, payload, max_iterations=15: (
             calls.append("run-maintenance") or raw_messages
         ),
     ):
-        result = dispatcher.dispatch_memory_maintenance("consolidation", {"corpus": ["fake-corpus"], "now_iso": "2026-01-01T00:00:00"})
+        result = dispatcher.dispatch_memory_maintenance("consolidation", {
+            "corpus": ["fake-corpus"], "now_iso": "2026-01-01T00:00:00",
+        })
 
     assert result["ok"] is True
     assert result["kind"] == "consolidation"
-    assert "conversation_id" in result
-    assert result["merged"] == 1 and result["deleted"] == 0
+    assert "conversation_id" in result and "container" in result
+    # No plan extraction/application anymore — the worker wrote to the shared
+    # store itself, so the result carries no plan/applied keys.
+    assert "plan" not in result and "applied" not in result
+    assert "merged" not in result and "deleted" not in result and "written" not in result
 
-    # Verify the plan was actually applied on the repo.
-    assert repo.get(loser.id) is None
-    merged = repo.get(keeper.id)
-    assert merged is not None and merged.content == "merged"
-
-    # Verify the conversation was persisted.
+    # The transcript is persisted with the remember/forget calls visible.
     conv = store.get_messages(result["conversation_id"])
     assert conv is not None and len(conv) > 0
-    assert any("emit_consolidation_plan" in str(m) for m in conv)
+    conv_str = json.dumps(conv)
+    assert '"name": "remember"' in conv_str and '"name": "forget"' in conv_str
 
-    # Lifecycle order (teardown runs in finally before assertion).
+    # Lifecycle order (teardown runs in finally before the assertion).
     assert calls[0] == "snapshot"
     assert calls[1] == "spawn"
     assert calls[2] == "ready"
@@ -767,28 +728,27 @@ def test_dispatch_memory_maintenance_consolidation_full_success_path():
     assert "teardown" in [c[0] if isinstance(c, tuple) else c for c in calls]
 
 
-def test_dispatch_memory_maintenance_extraction_full_success_path():
-    """End-to-end extraction maintenance: the worker emits a memory plan,
-    and the dispatcher applies it via apply_extraction_plan."""
-    from memory.store import get_repository
+def test_dispatch_memory_maintenance_extraction_persists_transcript():
+    """End-to-end extraction maintenance under the direct-write model: the
+    worker calls remember itself; the dispatcher persists the trace and does
+    not apply any plan."""
     from gateway.conversation_store import store
 
-    plan_args = json.dumps({"memories": [{
-        "plane": "world", "type": "reference", "scope": "project",
-        "content": "Extraction via worker succeeded.",
-        "description": "worker extraction test", "confidence": "high",
-    }]})
     raw_messages = [{"role": "assistant", "tool_calls": [
-        {"function": {"name": "emit_memory_plan", "arguments": plan_args}}
+        {"function": {"name": "remember", "arguments": json.dumps({
+            "plane": "world", "type": "reference", "scope": "project",
+            "content": "Extraction via worker succeeded.",
+            "description": "worker extraction test", "confidence": "high",
+        })}},
     ]}]
 
     with _patched(
         dispatcher,
         heavy_ops_enabled=lambda: True,
-        snapshot_workspace=lambda gap_id: pathlib.Path(tempfile.mkdtemp()),
-        spawn_worker=lambda gap_id, snap: f"worker-{gap_id}",
+        snapshot_workspace=lambda maint_id: pathlib.Path(tempfile.mkdtemp()),
+        spawn_worker=lambda maint_id, snap: f"worker-{maint_id}",
         teardown_worker=lambda name: None,
-        cleanup_snapshot=lambda gap_id: None,
+        cleanup_snapshot=lambda maint_id: None,
         _wait_for_worker_ready=lambda base_url, timeout=30: True,
         _run_maintenance_via_worker=lambda base_url, kind, payload, max_iterations=15: raw_messages,
     ):
@@ -798,18 +758,14 @@ def test_dispatch_memory_maintenance_extraction_full_success_path():
 
     assert result["ok"] is True
     assert result["kind"] == "extraction"
-    assert len(result["written"]) == 1
-    assert result["written"][0]["source"] == "discovered"
+    assert "conversation_id" in result and "container" in result
+    assert "plan" not in result and "written" not in result
 
-    repo = get_repository()
-    memory = repo.get(result["written"][0]["id"])
-    assert memory is not None and memory.content.startswith("Extraction via worker")
-
-    conv_id = result["conversation_id"]
-    conv = store.get_messages(conv_id)
-    assert conv is not None
-    # The first message should be the title surrogate.
+    conv = store.get_messages(result["conversation_id"])
+    assert conv is not None and len(conv) > 0
+    # The first message is the title surrogate; the remember call is visible.
     assert conv[0]["content"].startswith("Memory maintenance: extraction")
+    assert '"name": "remember"' in json.dumps(conv)
 
 
 def test_dispatch_memory_maintenance_gated_when_disabled():
@@ -821,8 +777,8 @@ def test_dispatch_memory_maintenance_gated_when_disabled():
     # settings reads False and that's the gate we're testing.
     with _patched(
         dispatcher,
-        snapshot_workspace=lambda gap_id: calls.append("snapshot") or pathlib.Path(tempfile.mkdtemp()),
-        spawn_worker=lambda gap_id, snap: calls.append("spawn"),
+        snapshot_workspace=lambda maint_id: calls.append("snapshot") or pathlib.Path(tempfile.mkdtemp()),
+        spawn_worker=lambda maint_id, snap: calls.append("spawn"),
     ):
         r = dispatcher.dispatch_memory_maintenance("consolidation")
         assert r["ok"] is False and "heavy_ops" in r["reason"]
@@ -833,17 +789,11 @@ def test_dispatch_memory_maintenance_gated_when_disabled():
         dispatcher,
         memory_enabled=lambda: False,
         heavy_ops_enabled=lambda: True,
-        snapshot_workspace=lambda gap_id: calls.append("snapshot"),
+        snapshot_workspace=lambda maint_id: calls.append("snapshot"),
     ):
         r = dispatcher.dispatch_memory_maintenance("consolidation")
         assert r["ok"] is False and "memory" in r["reason"]
         assert calls == []
-
-
-def test_dispatch_memory_maintenance_unknown_kind_rejected():
-    with _patched(dispatcher, heavy_ops_enabled=lambda: True):
-        r = dispatcher.dispatch_memory_maintenance("nope")
-        assert r == {"ok": False, "reason": "unknown maintenance kind: 'nope'"}
 
 
 def test_dispatch_memory_maintenance_spawn_failure_persists_failed_trace():
@@ -854,10 +804,10 @@ def test_dispatch_memory_maintenance_spawn_failure_persists_failed_trace():
     with _patched(
         dispatcher,
         heavy_ops_enabled=lambda: True,
-        snapshot_workspace=lambda gap_id: pathlib.Path(tempfile.mkdtemp()),
-        spawn_worker=lambda gap_id, snap: None,  # docker failure
+        snapshot_workspace=lambda maint_id: pathlib.Path(tempfile.mkdtemp()),
+        spawn_worker=lambda maint_id, snap: None,  # docker failure
         teardown_worker=lambda name: None,
-        cleanup_snapshot=lambda gap_id: None,
+        cleanup_snapshot=lambda maint_id: None,
     ):
         result = dispatcher.dispatch_memory_maintenance("consolidation", {
             "corpus": ["test-corpus"], "now_iso": "2026-01-01",
@@ -871,30 +821,6 @@ def test_dispatch_memory_maintenance_spawn_failure_persists_failed_trace():
     assert conv is not None and any("test-corpus" in str(m.get("content", "")) for m in conv)
 
 
-def test_dispatch_memory_maintenance_no_emit_in_transcript():
-    """Worker ran but never called the emit tool — the plan is None and
-    the result must indicate that clearly (fail-open, never raises)."""
-    from gateway.conversation_store import store
-
-    raw_messages = [{"role": "assistant", "content": "nothing to report"}]
-    with _patched(
-        dispatcher,
-        heavy_ops_enabled=lambda: True,
-        snapshot_workspace=lambda gap_id: pathlib.Path(tempfile.mkdtemp()),
-        spawn_worker=lambda gap_id, snap: f"worker-{gap_id}",
-        teardown_worker=lambda name: None,
-        cleanup_snapshot=lambda gap_id: None,
-        _wait_for_worker_ready=lambda base_url, timeout=30: True,
-        _run_maintenance_via_worker=lambda base_url, kind, payload, max_iterations=15: raw_messages,
-    ):
-        result = dispatcher.dispatch_memory_maintenance("consolidation", {"corpus": [], "now_iso": "2026-01-01"})
-
-    assert result["ok"] is False
-    assert "plan" in result["reason"] or "no" in result["reason"].lower()
-    conv_id = result.get("conversation_id")
-    assert store.get_messages(conv_id) is not None
-
-
 def test_dispatch_memory_maintenance_teardown_even_on_error():
     """If run_maintenance raises (simulated by an exception in
     _run_maintenance_via_worker), teardown + cleanup must still happen."""
@@ -906,10 +832,10 @@ def test_dispatch_memory_maintenance_teardown_even_on_error():
     with _patched(
         dispatcher,
         heavy_ops_enabled=lambda: True,
-        snapshot_workspace=lambda gap_id: (calls.append("snapshot") or pathlib.Path(tempfile.mkdtemp())),
-        spawn_worker=lambda gap_id, snap: (calls.append("spawn") or f"worker-{gap_id}"),
+        snapshot_workspace=lambda maint_id: (calls.append("snapshot") or pathlib.Path(tempfile.mkdtemp())),
+        spawn_worker=lambda maint_id, snap: (calls.append("spawn") or f"worker-{maint_id}"),
         teardown_worker=lambda name: calls.append(("teardown", name)),
-        cleanup_snapshot=lambda gap_id: calls.append("cleanup"),
+        cleanup_snapshot=lambda maint_id: calls.append("cleanup"),
         _wait_for_worker_ready=lambda base_url, timeout=30: calls.append("ready") or True,
         _run_maintenance_via_worker=_failing_run,
     ):

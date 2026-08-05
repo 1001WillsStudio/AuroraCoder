@@ -722,13 +722,17 @@ async def run_memory_maintenance(kind: str = "consolidation"):
     AuroraCoder worker container so the trace is observable.
 
     *kind*: ``"consolidation"`` (self-contained — reads the current corpus,
-    hands it to the worker, applies the merge/delete plan it emits) or
+    hands it to the worker, which applies merges/deletes directly via
+    ``remember``/``forget`` against the shared memory store) or
     ``"extraction"`` (requires a conversation payload; for per-session
     extraction, the in-process path via streaming.py is more natural).
 
-    Returns the ``conversation_id`` where the worker's full transcript is
-    persisted — open it in the conversations list to see exactly what the
-    worker decided and why.
+    The worker mounts the main container's memory data dir (read-write), so
+    its ``remember``/``forget`` calls write straight into the shared store —
+    no emit tool, no plan parsing, no dispatcher-side application. The full
+    transcript is persisted as a ``memory_maintenance`` conversation and IS
+    the trace: open the returned ``conversation_id`` in the conversations
+    list to see exactly what the worker decided and why.
 
     Requires both ``memory.enabled`` AND ``memory.heavy_ops_enabled`` in
     settings. Fail-open: returns ``ok=False`` with a clear reason when gated.

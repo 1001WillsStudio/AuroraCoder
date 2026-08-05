@@ -111,36 +111,3 @@ def log_gap_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     return f"Failed to log gap: {result.get('error') or result.get('reason', 'unknown error')}", arguments
 
 
-def emit_memory_plan_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
-    """Purely local — does no I/O at call time, exactly like ``remember`` and
-    ``report_findings``.
-
-    Only meaningful inside a memory-maintenance worker session (see
-    ``memory/ops/dispatcher.py::dispatch_memory_maintenance``). This call just
-    leaves the extraction plan as a marker in THAT session's transcript. The
-    dispatcher, running in the main container, reads the transcript back over
-    HTTP once the session ends, parses this tool call's arguments, and applies
-    the plan (``memory/ops/extractor.py::apply_extraction_plan``). Nothing is
-    written from inside the worker itself — same isolation contract as the gap
-    investigation path.
-    """
-    n = len(arguments.get("memories", []) or [])
-    return (
-        f"Memory-extraction plan recorded ({n} candidate(s)). It will be applied by the "
-        f"dispatcher once this session ends. Ending the maintenance task now."
-    ), arguments
-
-
-def emit_consolidation_plan_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
-    """Purely local — consolidation twin of ``emit_memory_plan_tool``.
-
-    Leaves the merge/delete plan as a marker in the maintenance worker's
-    transcript; the dispatcher parses it back out and applies it via
-    ``memory/ops/consolidator.py::_apply_plan`` on the main side.
-    """
-    merges = arguments.get("merges", []) or []
-    deletes = arguments.get("deletes", []) or []
-    return (
-        f"Consolidation plan recorded ({len(merges)} merge(s), {len(deletes)} delete(s)). It "
-        f"will be applied by the dispatcher once this session ends. Ending the maintenance task now."
-    ), arguments

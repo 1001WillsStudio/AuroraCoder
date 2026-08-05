@@ -32,8 +32,6 @@ from .core_tools.tool_store_client import (
 from .core_tools.subagent import run_subagent
 from .core_tools.continue_chat import continue_as_new_chat
 from .core_tools.memory_tools import remember_tool, recall_tool, log_gap_tool, forget_tool, report_findings_tool
-from .core_tools.memory_tools import emit_memory_plan_tool, emit_consolidation_plan_tool
-from memory.ops.judge_io import EXTRACTION_PLAN_SCHEMA, CONSOLIDATION_PLAN_SCHEMA
 from .core_tools.memory_client import memory_enabled
 
 
@@ -617,32 +615,6 @@ NATIVE_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
-            "name": "emit_memory_plan",
-            "description": (
-                "Emit the final memory-extraction plan and end the task. Call this EXACTLY ONCE, "
-                "as your last action — do not call any tool after it. Only meaningful inside an "
-                "isolated memory-maintenance worker session (see memory/ops/dispatcher.py "
-                "dispatch_memory_maintenance); calling it anywhere else is harmless but pointless."
-            ),
-            "parameters": EXTRACTION_PLAN_SCHEMA,
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "emit_consolidation_plan",
-            "description": (
-                "Emit the final memory-consolidation plan and end the task. Call this EXACTLY "
-                "ONCE, as your last action — do not call any tool after it. Only meaningful "
-                "inside an isolated memory-maintenance worker session; calling it anywhere "
-                "else is harmless but pointless."
-            ),
-            "parameters": CONSOLIDATION_PLAN_SCHEMA,
-        }
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "continue_as_new_chat",
             "description": (
                 "Continue the current task in a fresh conversation. "
@@ -714,17 +686,17 @@ MEMORY_TOOL_NAMES = {"remember", "recall", "log_gap", "forget", "report_findings
 # normal write pass, not through the worker calling memory tools directly.
 GAP_INVESTIGATION_TOOLS = {"read_file", "list_directory", "run_terminal_command", "report_findings"}
 
-# Tools available to an isolated memory-maintenance worker (see
-# memory/ops/dispatcher.py::dispatch_memory_maintenance) — read-oriented plus
-# the two emit tools that end the task (one for extraction, one for
-# consolidation). Used by get_filtered_tools() in web_api/app.py via the
-# "tools":"memory_maintenance" mode on the one-shot /api/chat call.
-MEMORY_MAINTENANCE_TOOLS = {"read_file", "list_directory", "run_terminal_command", "emit_memory_plan", "emit_consolidation_plan"}
+# Unified tool set for the memory-maintenance worker — the agent directly
+# calls remember/forget to write into the shared memory store (the worker
+# mounts the main container's AURORACODER_DATA_DIR, so writes are immediate
+# and visible). Read tools let it inspect the workspace snapshot for
+# investigation tasks; report_findings is kept for backward compatibility
+# with the existing gap-investigation path.  Used by get_filtered_tools() in
+# web_api/app.py via the "tools":"memory_maintenance" mode.
+MEMORY_MAINTENANCE_TOOLS = {"remember", "forget", "read_file", "list_directory", "run_terminal_command", "report_findings"}
 
-# Emit tools are strictly internal to the maintenance worker — excluded from
-# every other tools mode (normal chat, read_only, gap_investigation) by
-# get_filtered_tools() so the main agent never sees "emit_memory_plan" etc.
-MEMORY_MAINTENANCE_EMIT_TOOLS = {"emit_memory_plan", "emit_consolidation_plan"}
+# Alias — gap investigation is just one maintenance kind now.
+GAP_INVESTIGATION_TOOLS = MEMORY_MAINTENANCE_TOOLS
 
 
 def memory_filter_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -761,8 +733,6 @@ TOOL_FUNCTION_MAP = {
     "log_gap": log_gap_tool,
     "forget": forget_tool,
     "report_findings": report_findings_tool,
-    "emit_memory_plan": emit_memory_plan_tool,
-    "emit_consolidation_plan": emit_consolidation_plan_tool,
 }
 
 
