@@ -288,7 +288,6 @@ def generate_chat_responses_stream_native(
                     current_usage = chunk.usage.model_dump()
 
                 # Yield streaming updates so the frontend can render in real-time
-                assistant_message["thinking"] = current_reasoning
                 assistant_message["reasoning_content"] = current_reasoning
                 assistant_message["content"] = current_content
                 if current_tool_calls:
