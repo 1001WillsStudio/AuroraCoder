@@ -514,8 +514,17 @@ async def discover_models(base_url: str = "", api_key: str = "", provider_id: st
             resp = await client.get(url, headers=headers)
             resp.raise_for_status()
             data = resp.json()
+            # Keep the real limits the provider returns (context_length /
+            # max_completion_tokens) alongside each id — the frontend persists
+            # them in settings.provider_models so the backend can use the
+            # model's actual context window / max output instead of the
+            # hardcoded defaults in src/config.py.
             models = sorted(
-                [m["id"] for m in data.get("data", []) if isinstance(m, dict) and m.get("id")]
+                [{"id": m.get("id"),
+                  "context_length": m.get("context_length"),
+                  "max_completion_tokens": m.get("max_completion_tokens")}
+                 for m in data.get("data", []) if isinstance(m, dict) and m.get("id")],
+                key=lambda x: x["id"],
             )
             return {"models": models, "total": len(models)}
     except httpx.HTTPStatusError as e:

@@ -129,8 +129,13 @@ def generate_chat_responses_stream_native(
 
     extra_body = config.get("extra_body")
 
-    # Context window — generous fixed default (1M tokens covers all modern models)
-    context_window = CONTEXT_WINDOW_TOKENS
+    # Context window & max output — use the real per-model limits captured
+    # from the provider's /models endpoint (stored in settings.provider_models
+    # when the model was enabled in Settings), falling back to the constants
+    # in config.py when the API didn't report them.
+    _ctx, _max_out = provider_manager.get_model_limits(provider_id, model_name)
+    context_window = _ctx or CONTEXT_WINDOW_TOKENS
+    api_max_tokens = _max_out or MAX_TOKENS
     
     # Eagerly load primary tool schemas once at startup so the LLM's
     # tools[] array includes them from the very first turn.
@@ -203,7 +208,7 @@ def generate_chat_responses_stream_native(
             "messages": messages,
             "tools": tools_for_iteration,
             "tool_choice": "auto",
-            "max_tokens": MAX_TOKENS,
+            "max_tokens": api_max_tokens,
             "stream": True,
             "stream_options": {"include_usage": True},
         }

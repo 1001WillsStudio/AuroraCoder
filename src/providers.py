@@ -325,6 +325,25 @@ class ProviderManager:
         resolved["model"] = _resolve_model(provider_id, default.get("model", ""))
         return resolved
 
+    def get_model_limits(self, provider_id: str, model: str) -> tuple:
+        """Return ``(context_length, max_completion_tokens)`` for *model* as
+        captured from the provider's ``/models`` endpoint when the user enabled
+        the model in Settings (stored in settings.``provider_models``).
+
+        Either element is ``None`` when the provider didn't report it, so the
+        caller falls back to a configured default instead of a guess.  Never
+        raises.
+        """
+        try:
+            pm = _load_settings().get("provider_models", {}).get(provider_id, [])
+            for m in pm:
+                mid = m["id"] if isinstance(m, dict) else m
+                if mid == model and isinstance(m, dict):
+                    return (m.get("context_length"), m.get("max_completion_tokens"))
+        except Exception:
+            pass
+        return (None, None)
+
 
 # Global singleton
 provider_manager = ProviderManager()

@@ -214,7 +214,11 @@ export default function SettingsPanel({ isOpen, onClose }) {
       let list = [...(pm[providerId] || [])]
       if (enabled) {
         if (!list.find(m => (typeof m === 'string' ? m : m.id) === modelId)) {
-          list.push({ id: modelId })
+          // Persist the real limits (context_length / max_completion_tokens)
+          // discovered from the provider's /models endpoint, so the backend can
+          // use them instead of the hardcoded defaults in config.py.
+          const disc = (discoveredModels[providerId] || []).find(m => m.id === modelId)
+          list.push(disc || { id: modelId })
         }
       } else {
         list = list.filter(m => (typeof m === 'string' ? m : m.id) !== modelId)
@@ -461,17 +465,17 @@ export default function SettingsPanel({ isOpen, onClose }) {
                                 {(() => {
                                   const f = (discoverFilter[pid] || '').toLowerCase()
                                   const filtered = f
-                                    ? discoveredModels[pid].filter(m => m.toLowerCase().includes(f))
+                                    ? discoveredModels[pid].filter(m => m.id.toLowerCase().includes(f))
                                     : discoveredModels[pid]
                                   const shown = filtered.slice(0, 50)
                                   return (
                                     <>
                                       {shown.map(m => (
-                                        <label key={m} className="settings-discovered-model-checkbox">
+                                        <label key={m.id} className="settings-discovered-model-checkbox">
                                           <input type="checkbox"
-                                            checked={enabled.includes(m)}
-                                            onChange={e => toggleModel(pid, m, e.target.checked)} />
-                                          <span>{m}</span>
+                                            checked={enabled.includes(m.id)}
+                                            onChange={e => toggleModel(pid, m.id, e.target.checked)} />
+                                          <span>{m.id}</span>
                                         </label>
                                       ))}
                                       {filtered.length > 50 && (
@@ -616,17 +620,17 @@ export default function SettingsPanel({ isOpen, onClose }) {
                                 {(() => {
                                   const f = (discoverFilter[pid] || '').toLowerCase()
                                   const filtered = f
-                                    ? discoveredModels[pid].filter(m => m.toLowerCase().includes(f))
+                                    ? discoveredModels[pid].filter(m => m.id.toLowerCase().includes(f))
                                     : discoveredModels[pid]
                                   const shown = filtered.slice(0, 50)
                                   return (
                                     <>
                                       {shown.map(m => (
-                                        <label key={m} className="settings-discovered-model-checkbox">
+                                        <label key={m.id} className="settings-discovered-model-checkbox">
                                           <input type="checkbox"
-                                            checked={enabled.includes(m)}
-                                            onChange={e => toggleModel(pid, m, e.target.checked)} />
-                                          <span>{m}</span>
+                                            checked={enabled.includes(m.id)}
+                                            onChange={e => toggleModel(pid, m.id, e.target.checked)} />
+                                          <span>{m.id}</span>
                                         </label>
                                       ))}
                                       {filtered.length > 50 && (
