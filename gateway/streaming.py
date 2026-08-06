@@ -58,8 +58,6 @@ class ActiveStream:
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
     task: Optional[asyncio.Task] = None
     new_conversation_id: Optional[str] = None   # set when continuation detected
-    last_full_snapshot: Optional[dict] = None   # latest tier 3 snapshot for reconnection
-    pending_deltas: list = field(default_factory=list)  # deltas since last full snapshot
 
 
 active_streams: Dict[str, ActiveStream] = {}
@@ -550,12 +548,6 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                             if edata.get("messages"):
                                 stream.latest_frontend_messages = edata["messages"]
 
-                            # ── Track full snapshots and deltas for reconnection ──
-                            if etype == "messages":
-                                stream.last_full_snapshot = edata
-                                stream.pending_deltas.clear()
-                            elif etype == "delta":
-                                stream.pending_deltas.append(edata)
 
                             # --- File tracking for diff endpoint ---
                             raw_msgs = edata.get("raw_messages", [])
