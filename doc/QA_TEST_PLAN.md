@@ -85,6 +85,10 @@ msw (reuses the existing Vite config). Prime targets: `utils/streamUtils.js`,
 `hooks/createStreamCallbacks.js`. Extract pure helpers from `SettingsPanel.jsx`
 /`FileTree.jsx`/`ToolActivity.jsx` before component testing. — ⬜ (separate PR recommended).
 
+Stable `data-testid` hooks on the desktop SPA (`chat-input`, `chat-send`,
+`chat-message`, …) are locked by `tests/test_frontend_testids.py` (source scan;
+no DOM). The mobile SPA is intentionally excluded.
+
 ## 4. Coverage gate (target)
 
 ```
