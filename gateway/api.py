@@ -262,18 +262,51 @@ from gateway import routes  # noqa: E402, F401 — registers routes on `app`
 # Serve Static Assets
 # ============================================================================
 
-frontend_dir = Path(__file__).resolve().parent.parent / "frontend" / "dist"
-mobile_dir = Path(__file__).resolve().parent.parent / "mobile"
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_DEFAULT_FRONTEND_DIR = _REPO_ROOT / "frontend" / "dist"
+_DEFAULT_MOBILE_DIR = _REPO_ROOT / "mobile"
 
-if frontend_dir.exists():
-    app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
 
-if mobile_dir.exists():
-    app.mount("/mobile", StaticFiles(directory=str(mobile_dir), html=True), name="mobile")
+async def _mobile_shortcut():
+    return RedirectResponse(url="/mobile/")
 
-    @app.get("/m")
-    async def mobile_shortcut():
-        return RedirectResponse(url="/mobile/")
+
+def mount_static_assets(
+    application: FastAPI,
+    frontend_dir: Path | None = None,
+    mobile_dir: Path | None = None,
+) -> None:
+    """Mount the mobile web app and the desktop SPA.
+
+    ``/m`` and ``/mobile`` must be registered *before* the catch-all
+    frontend mount at ``/``. Starlette matches mounts in registration
+    order; a ``Mount("/")`` registered first swallows ``GET /m`` and
+    FastAPI then returns ``{"detail":"Not Found"}`` — the failure the
+    Settings "Open mobile web app" link produced in production images
+    (where ``frontend/dist`` exists because Docker runs ``npm run build``).
+    """
+    if frontend_dir is None:
+        frontend_dir = _DEFAULT_FRONTEND_DIR
+    if mobile_dir is None:
+        mobile_dir = _DEFAULT_MOBILE_DIR
+
+    if mobile_dir.exists():
+        application.add_api_route("/m", _mobile_shortcut, methods=["GET"])
+        application.mount(
+            "/mobile",
+            StaticFiles(directory=str(mobile_dir), html=True),
+            name="mobile",
+        )
+
+    if frontend_dir.exists():
+        application.mount(
+            "/",
+            StaticFiles(directory=str(frontend_dir), html=True),
+            name="frontend",
+        )
+
+
+mount_static_assets(app)
 
 
 # ============================================================================

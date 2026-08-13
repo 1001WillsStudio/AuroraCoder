@@ -460,7 +460,7 @@ generate_chat_responses_stream_native(
 
 ### Gateway Layer
 
-- `api.py` — FastAPI app factory with CORS middleware
+- `api.py` — FastAPI app factory with CORS middleware. `mount_static_assets()` serves the mobile web app at `/m` → `/mobile/` *before* the catch-all desktop SPA at `/` (a `/` mount registered first swallows `/m` and returns FastAPI's JSON 404).
 - `routes.py` — All route handlers: chat, continue, conversations, files, settings, health
 - `streaming.py` — SSE stream registration, event queue management, keepalive, cancellation
 - `conversation_store.py` — File-backed store with thread-safe atomic writes and index management
@@ -586,6 +586,7 @@ Test files in `tests/`:
 - `test_edit_file_edge_cases.py` — Edit file matching edge cases
 - `test_streaming_race.py` — SSE streaming race condition tests
 - `test_mergePanelFiles.mjs` — Frontend panel merging tests
+- `test_mobile_routes.py` — `/m` and `/mobile` must win over the desktop SPA mount
 
 ---
 

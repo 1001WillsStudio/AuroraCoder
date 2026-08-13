@@ -72,7 +72,7 @@ Legend: ✅ done · 🟡 next · ⬜ later.
 | `src.tool_executor` | ✅ | partition batching, same-file guard, concurrency env knob (pure core) |
 | `src.providers` | 🟡 | patch `openai.OpenAI`, stream vs non-stream branching |
 | `gateway.streaming` | 🟡 | expand existing race/abort tests via injected provider |
-| `gateway.routes` / `api` | ⬜ | `TestClient` per endpoint, **auth** via `ACCESS_PASSWORD` |
+| `gateway.routes` / `api` | 🟡 | `TestClient` per endpoint, **auth** via `ACCESS_PASSWORD`; `/m` + `/mobile` mount-order regression in `tests/test_mobile_routes.py` |
 | `gateway.provider_registry` | ⬜ | lookup, model metadata, live-list fetch mocked |
 | `gateway.workspace` | ⬜ | git push behind `GITHUB_TOKEN` (mock; skip when absent) |
 | `src.web_api.app` | ⬜ | FastAPI app wiring smoke |
