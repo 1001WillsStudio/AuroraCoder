@@ -1,9 +1,9 @@
 """Unit tests for :mod:`src.code_tools.file_operations`.
 
 QA focus: filesystem tooling that the agent drives directly. We verify the
-read/write/delete/list/search contract, the large-file guard, and —
-critically — flag the path-escape surface as a known security finding
-(``_resolve_path`` performs no traversal validation).
+read/write/delete/list/search contract, the large-file guard, and that
+``_resolve_path`` rejects ``..`` traversal and symlink escapes out of the
+workspace.
 """
 import subprocess
 
@@ -35,16 +35,48 @@ def test_resolve_path_absolute_passes_through(ws):
     assert str(resolved) == "/tmp/some/abs/path.py" and resolved.is_absolute()
 
 
-@pytest.mark.xfail(
-    reason="SECURITY GAP: _resolve_path performs no path-escape validation; "
-           "a relative '../../x' resolves outside WORKSPACE. Filed for hardening.",
-    strict=False,
-)
+def test_resolve_path_absolute_inside_workspace(ws):
+    target = ws / "inside.py"
+    resolved = _fops()._resolve_path(str(target))
+    assert resolved == target
+
+
 def test_resolve_path_blocks_traversal(ws):
     fops = _fops()
-    resolved = fops._resolve_path("subdir/../../escape.txt")
-    # Passes only once traversal is actually blocked:
-    assert resolved.resolve().is_relative_to(ws)
+    with pytest.raises(ValueError, match="outside the workspace"):
+        fops._resolve_path("subdir/../../escape.txt")
+    # High-level tools must surface the same rejection without leaking the
+    # resolved host path, and must not create the escaped file.
+    out = fops.full_file_write("subdir/../../escape.txt", "pwned")
+    assert "outside the workspace" in out
+    escaped = (ws / "subdir" / ".." / ".." / "escape.txt").resolve()
+    assert str(escaped) not in out
+    assert not escaped.exists()
+
+
+def test_resolve_path_blocks_symlink_escape(ws):
+    """A symlink inside the workspace that points outside must be rejected."""
+    outside = ws.parent / f"outside-{ws.name}.txt"
+    outside.write_text("secret")
+    try:
+        (ws / "escape_link").symlink_to(outside)
+        fops = _fops()
+        with pytest.raises(ValueError, match="outside the workspace"):
+            fops._resolve_path("escape_link")
+        out = fops.read_file("escape_link")
+        assert "outside the workspace" in out
+        assert str(outside.resolve()) not in out
+        assert "secret" not in out
+    finally:
+        outside.unlink(missing_ok=True)
+
+
+def test_resolve_path_allows_internal_dotdot(ws):
+    (ws / "sub").mkdir()
+    (ws / "keep.py").write_text("ok")
+    resolved = _fops()._resolve_path("sub/../keep.py")
+    assert resolved.resolve() == (ws / "keep.py").resolve()
+    assert "is opened in the code interpreter" in _fops().read_file("sub/../keep.py")
 
 
 # --------------------------------------------------------------------------- read_file
