@@ -60,6 +60,22 @@ def strip_task_instruction(content: str) -> str:
     return _TASK_BLOCK_RE.sub("", content).strip()
 
 
+def sanitize_frontend_messages(messages: List[Dict]) -> List[Dict]:
+    """Strip task-instruction wrappers from user bubbles in a frontend message list.
+
+    The markers are an internal transport so the model sees the instruction;
+    they must never appear in the transcript.  Mutates *messages* in place
+    and returns the same list.
+    """
+    for msg in messages:
+        if not isinstance(msg, dict) or msg.get("role") != "user":
+            continue
+        content = msg.get("content")
+        if isinstance(content, str) and TASK_INSTRUCTION_START in content:
+            msg["content"] = strip_task_instruction(content)
+    return messages
+
+
 def _extract_title(messages: List[Dict]) -> str:
     """Extract a title from the first user message.
 
@@ -472,6 +488,7 @@ class ConversationStore:
         stays time-consistent across both files.
         """
         now = datetime.now(timezone.utc).isoformat()
+        sanitize_frontend_messages(messages)
         for msg in messages:
             if isinstance(msg, dict) and not msg.get("ts"):
                 msg["ts"] = now
@@ -494,7 +511,10 @@ class ConversationStore:
             return []
         try:
             with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                loaded = json.load(f)
+            if isinstance(loaded, list):
+                return sanitize_frontend_messages(loaded)
+            return loaded
         except (json.JSONDecodeError, OSError) as e:
             logger.error(f"Failed to read frontend messages for {conversation_id}: {e}")
             return []

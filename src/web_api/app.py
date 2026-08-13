@@ -7,6 +7,7 @@ have been moved to ``gateway/api.py`` (port 8081, internal).
 """
 
 import json
+import re
 import uuid
 import asyncio
 import logging
@@ -115,6 +116,21 @@ def get_filtered_tools(mode: str):
     return memory_filter_tools(defs)
 
 
+# Must match gateway.conversation_store / frontend streamUtils markers.
+# Duplicated here so the agent process does not import the conversation store.
+_TASK_INSTRUCTION_BLOCK_RE = re.compile(
+    r"\[TASK INSTRUCTION\].*?\[/TASK INSTRUCTION\]\s*",
+    re.DOTALL,
+)
+
+
+def _visible_user_content(content: Any) -> Any:
+    """Return user-bubble text with the internal task-instruction wrapper removed."""
+    if not isinstance(content, str) or "[TASK INSTRUCTION]" not in content:
+        return content
+    return _TASK_INSTRUCTION_BLOCK_RE.sub("", content).strip()
+
+
 def convert_messages_for_frontend(messages: list) -> list:
     frontend_messages = []
     i = 0
@@ -126,7 +142,10 @@ def convert_messages_for_frontend(messages: list) -> list:
             i += 1
             continue
         elif role == "user":
-            frontend_messages.append({"role": "user", "content": msg.get("content", "")})
+            frontend_messages.append({
+                "role": "user",
+                "content": _visible_user_content(msg.get("content", "")),
+            })
             i += 1
         elif role == "assistant":
             activities = []
