@@ -1,5 +1,5 @@
 import React from 'react'
-import { Sun, Moon, ChevronDown, Upload, FileText, Settings } from 'lucide-react'
+import { Sun, Moon, ChevronDown, Upload, FileText, Settings, X } from 'lucide-react'
 import useLanguage from '../hooks/useLanguage'
 import FileTree from './FileTree'
 import ConversationHistory from './ConversationHistory'
@@ -34,10 +34,12 @@ export default function Sidebar({
   showProviderDropdown,
   onToggleProviderDropdown,
   onOpenSettings,
+  mobileOpen = false,
+  onCloseMobile,
 }) {
   const { t } = useLanguage()
   return (
-    <aside className="sidebar">
+    <aside id="app-sidebar" className={`sidebar${mobileOpen ? ' mobile-open' : ''}`}>
       <div className="sidebar-header">
         <div className="logo">
           <img src="/assets/logo.png" alt="1001 Wills AI Lab" className="logo-image" />
@@ -58,6 +60,17 @@ export default function Sidebar({
           >
             <Settings size={18} />
           </button>
+          {onCloseMobile && (
+            <button
+              type="button"
+              className="mobile-sidebar-close"
+              onClick={onCloseMobile}
+              aria-label={t('sidebar.closeMenu')}
+              title={t('sidebar.closeMenu')}
+            >
+              <X size={18} />
+            </button>
+          )}
         </div>
       </div>
       

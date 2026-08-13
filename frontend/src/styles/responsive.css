@@ -14,9 +14,80 @@
   }
 }
 
+/* Hamburger + overlay are desktop-hidden; the 768px block reveals them. */
+.mobile-menu-btn,
+.mobile-sidebar-overlay,
+.mobile-sidebar-close {
+  display: none;
+}
+
 @media (max-width: 768px) {
   .sidebar {
     display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(320px, 88vw);
+    max-width: 320px;
+    flex: none;
+    z-index: 300;
+    overflow-y: auto;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .sidebar.mobile-open {
+    display: flex;
+  }
+
+  .mobile-menu-btn {
+    display: flex;
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    z-index: 50;
+    width: 44px;
+    height: 44px;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    cursor: pointer;
+  }
+
+  .mobile-sidebar-overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 250;
+  }
+
+  .mobile-sidebar-close {
+    display: flex;
+    width: 40px;
+    height: 40px;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+
+  .chat-container {
+    padding-top: 56px;
+  }
+
+  .history-drawer,
+  .task-instructions-drawer {
+    left: 0;
+    width: 100%;
+    max-width: 100vw;
+    z-index: 320;
   }
 
   .messages-container {

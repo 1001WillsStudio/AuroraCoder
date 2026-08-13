@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { STATUS } from './constants'
 import { useAutoScroll } from './hooks/useAutoScroll'
-import { RotateCcw, X, ArrowDown } from 'lucide-react'
+import { RotateCcw, X, ArrowDown, Menu } from 'lucide-react'
 import ChatMessage from './components/ChatMessage'
 import ChatInput from './components/ChatInput'
 import LoginScreen from './components/LoginScreen'
@@ -124,6 +124,7 @@ function App() {
   // subagent_event notifications and their originating tool calls.
   const [subagentChildIds, setSubagentChildIds] = useState({})
   const [showSettings, setShowSettings] = useState(false)
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
   const [forkWarning, setForkWarning] = useState(null)
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
@@ -142,6 +143,23 @@ function App() {
     document.documentElement.setAttribute('data-theme', theme)
     localStorage.setItem('theme', theme)
   }, [theme])
+
+  // Phone-width drawer: close on Escape or when the viewport grows past the
+  // 768px breakpoint that hides the sidebar into an overlay.
+  useEffect(() => {
+    if (!mobileSidebarOpen) return
+    const onKey = (e) => { if (e.key === 'Escape') setMobileSidebarOpen(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [mobileSidebarOpen])
+
+  useEffect(() => {
+    const onResize = () => {
+      if (window.innerWidth > 768) setMobileSidebarOpen(false)
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
 
   // ── Load task instruction from server (not localStorage — follows the instance, not the port) ──
   useEffect(() => {
@@ -606,11 +624,18 @@ function App() {
   }
 
   return (
-    <div className={`app ${(showCodePanel && editedFiles.length > 0) ? 'code-mode' : ''}`}>
+    <div className={`app ${(showCodePanel && editedFiles.length > 0) ? 'code-mode' : ''}${mobileSidebarOpen ? ' mobile-sidebar-open' : ''}`}>
+      {mobileSidebarOpen && (
+        <div
+          className="mobile-sidebar-overlay"
+          onClick={() => setMobileSidebarOpen(false)}
+          aria-hidden="true"
+        />
+      )}
       <Sidebar
         theme={theme}
         onToggleTheme={toggleTheme}
-        onNewChat={handleClear}
+        onNewChat={() => { setMobileSidebarOpen(false); handleClear() }}
         uploadInputRef={uploadInputRef}
         isUploading={isUploading}
         onUploadProject={handleUploadProject}
@@ -626,7 +651,7 @@ function App() {
         isStreaming={isStreaming}
         onFileClick={handleFileTreeClick}
         conversationId={conversationId}
-        onLoadConversation={handleLoadConversation}
+        onLoadConversation={(id) => { setMobileSidebarOpen(false); handleLoadConversation(id) }}
         historyRefreshTrigger={historyRefreshTrigger}
         historyCloseTrigger={historyCloseTrigger}
         onDrawerToggle={(open) => { if (open) setShowTaskInstructions(false) }}
@@ -636,10 +661,22 @@ function App() {
         onSelectProvider={(id) => { setSelectedProvider(id); setShowProviderDropdown(false) }}
         showProviderDropdown={showProviderDropdown}
         onToggleProviderDropdown={() => setShowProviderDropdown(!showProviderDropdown)}
-        onOpenSettings={() => setShowSettings(true)}
+        onOpenSettings={() => { setMobileSidebarOpen(false); setShowSettings(true) }}
+        mobileOpen={mobileSidebarOpen}
+        onCloseMobile={() => setMobileSidebarOpen(false)}
       />
 
       <main className="main-content">
+        <button
+          type="button"
+          className="mobile-menu-btn"
+          onClick={() => setMobileSidebarOpen(true)}
+          aria-label={t('sidebar.openMenu')}
+          aria-expanded={mobileSidebarOpen}
+          aria-controls="app-sidebar"
+        >
+          <Menu size={20} />
+        </button>
         <div className="chat-container" ref={chatContainerRef}>
           {messages.length === 0 ? (
             <WelcomeScreen onExampleClick={(text) => setInputValue(text)} />

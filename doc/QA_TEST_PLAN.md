@@ -85,6 +85,11 @@ msw (reuses the existing Vite config). Prime targets: `utils/streamUtils.js`,
 `hooks/createStreamCallbacks.js`. Extract pure helpers from `SettingsPanel.jsx`
 /`FileTree.jsx`/`ToolActivity.jsx` before component testing. — ⬜ (separate PR recommended).
 
+Hermetic source-contract coverage (no browser):
+| File | Status | Notes |
+|---|---|---|
+| `tests/test_mobile_sidebar_nav.py` | ✅ | Phone-width (`max-width: 768px`) must not hide `.sidebar` without an openable `.mobile-menu-btn` / `.sidebar.mobile-open` drawer. Locks New Chat / History / Settings reachability. |
+
 ## 4. Coverage gate (target)
 
 ```
