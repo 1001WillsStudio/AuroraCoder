@@ -260,6 +260,24 @@ export async function updateSettings(payload) {
 // ============================================================================
 
 /**
+ * Hand the current conversation off to a fresh standalone chat.
+ * The gateway creates the new thread with a progress summary and
+ * auto-starts generation; the caller should navigate to new_conversation_id.
+ * @param {string} conversationId
+ * @param {string} extraMessage - Optional composer text included in the handoff
+ */
+export async function continueAsNewChat(conversationId, extraMessage = '') {
+  const response = await fetch(`${API_BASE}/conversations/${conversationId}/continue-as-new`, {
+    method: 'POST',
+    headers: _headers({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ message: extraMessage || null }),
+  })
+  if (!response.ok) throw new Error(`Continue-as-new error! status: ${response.status}`)
+  return response.json()
+}
+
+
+/**
  * Cancel an active stream on the conversation server.
  * This actually stops the backend generation (not just the frontend connection).
  * @param {string} conversationId

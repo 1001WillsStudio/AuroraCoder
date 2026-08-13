@@ -376,6 +376,106 @@ def _parse_sse_blocks(text: str) -> List[tuple]:
 # Continuation Helpers
 # ============================================================================
 
+# Prefix on the first user message of a handed-off conversation.
+CONTINUATION_USER_PREFIX = "[Continued from previous agent session]"
+_CONTINUE_TOOL_INSTRUCTION_MARKER = "`continue_as_new_chat`"
+_MAX_HANDOFF_CHARS = 8000
+_MAX_HANDOFF_MSG_CHARS = 1200
+
+
+def _is_internal_continue_instruction(text: str) -> bool:
+    """True if *text* is the UI's old "please call this tool" prompt."""
+    return bool(text) and _CONTINUE_TOOL_INSTRUCTION_MARKER in text and "Please use the" in text
+
+
+def build_user_continuation_prompt(raw_messages: list, extra_note: str = "") -> str:
+    """Deterministic progress dump for a user-initiated continue-in-new-chat.
+
+    Never includes the internal ``continue_as_new_chat`` instruction that used
+    to be posted as a user message.
+    """
+    parts: list[str] = []
+    extra = (extra_note or "").strip()
+    if extra and not _is_internal_continue_instruction(extra):
+        parts.append(extra)
+        parts.append("")
+    parts.append("Continue this task from where the previous session left off. Summary of progress:")
+    parts.append("")
+
+    for msg in raw_messages or []:
+        role = msg.get("role")
+        if role == "system":
+            continue
+        if role == "user":
+            content = (msg.get("content") or "").strip()
+            if not content or _is_internal_continue_instruction(content):
+                continue
+            if len(content) > _MAX_HANDOFF_MSG_CHARS:
+                content = content[:_MAX_HANDOFF_MSG_CHARS] + "…"
+            parts.append(f"User: {content}")
+        elif role == "assistant":
+            content = (msg.get("content") or "").strip()
+            if content:
+                if len(content) > _MAX_HANDOFF_MSG_CHARS:
+                    content = content[:_MAX_HANDOFF_MSG_CHARS] + "…"
+                parts.append(f"Assistant: {content}")
+            names = []
+            for tc in msg.get("tool_calls") or []:
+                name = (tc.get("function") or {}).get("name") or "?"
+                if name != "continue_as_new_chat":
+                    names.append(name)
+            if names:
+                parts.append(f"  [tools: {', '.join(names)}]")
+
+    text = "\n".join(parts).strip()
+    if len(text) > _MAX_HANDOFF_CHARS:
+        text = text[:_MAX_HANDOFF_CHARS] + "\n…"
+    return text
+
+
+def handoff_to_new_conversation(
+    source_cid: str,
+    prompt: str,
+    provider_id: Optional[str] = None,
+    source_raw_messages: Optional[list] = None,
+    conv_store=None,
+) -> tuple[str, str]:
+    """Create a new standalone chat seeded with *prompt* and mark *source_cid* continued.
+
+    Returns ``(new_cid, user_msg)``. Does not start generation — the caller
+    should invoke ``_start_continuation``. Shared by the agent tool-call
+    path and the user-clicked "Continue in new chat" control.
+    """
+    conv_store = conv_store or store
+    new_cid = str(uuid.uuid4())
+    user_msg = f"{CONTINUATION_USER_PREFIX}\n\n{prompt}"
+
+    conv_store.create_conversation(
+        conversation_id=new_cid,
+        parent_id=None,
+        conv_type="user_chat",
+        provider_id=provider_id,
+    )
+    user_record = [{"role": "user", "content": user_msg}]
+    conv_store.save_messages(new_cid, user_record)
+    conv_store.save_frontend_messages(new_cid, list(user_record))
+
+    # Persist the old conversation's segment BEFORE marking it "continued"
+    # so the background distillation pass below can re-fetch from disk.
+    if source_raw_messages is not None:
+        conv_store.save_messages(source_cid, source_raw_messages)
+    conv_store.update_status(source_cid, "continued")
+
+    # A "continued" conversation is otherwise EXCLUDED from session-end
+    # distillation (see _EXTRACTION_ELIGIBLE_STATUSES) since it isn't really
+    # "done" — the task keeps going in new_cid. Trigger distillation for
+    # THIS segment explicitly rather than widening the terminal-status gate.
+    _memory_ops_executor.submit(
+        _run_session_end_memory_ops, source_cid, "user_chat", "continued",
+    )
+    return new_cid, user_msg
+
+
 def _scan_for_continuation(raw_messages: list) -> dict | None:
     """
     Scan assistant messages for the LAST (most recent) continue_as_new_chat
@@ -490,49 +590,15 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                                 args = _scan_for_continuation(edata.get("raw_messages", []))
                                 if args:
                                     prompt = args.get("prompt", "")
-                                    new_cid = str(uuid.uuid4())
-
-                                    # Build the user message: just the agent's prompt with a note
-                                    user_msg = f"[Continued from previous agent session]\n\n{prompt}"
-
-                                    # Continuation is a new standalone main chat —
-                                    # no parent_id, so the frontend does NOT display
-                                    # it as a subagent child in the sidebar.
-                                    store.create_conversation(
-                                        conversation_id=new_cid,
-                                        parent_id=None,
-                                        conv_type="user_chat",
+                                    new_cid, user_msg = handoff_to_new_conversation(
+                                        source_cid=cid,
+                                        prompt=prompt,
                                         provider_id=stream.provider,
+                                        source_raw_messages=edata.get("raw_messages", []),
                                     )
-                                    store.save_messages(new_cid, [
-                                        {"role": "user", "content": user_msg},
-                                    ])
-                                    store.save_frontend_messages(new_cid, [
-                                        {"role": "user", "content": user_msg},
-                                    ])
-                                    # Persist the old conversation's segment BEFORE marking it
-                                    # "continued" — its raw_msgs (including any `remember` calls
-                                    # made before the handoff) must be on disk before we hand off
-                                    # to the background distillation pass below, since that pass
-                                    # re-fetches messages from the store rather than taking them
-                                    # as an argument.
-                                    store.save_messages(cid, edata.get("raw_messages", []))
-                                    store.update_status(cid, "continued")
                                     stream.new_conversation_id = new_cid
-
-                                    # A "continued" conversation is otherwise EXCLUDED from
-                                    # session-end distillation (see the finally block below) since
-                                    # it isn't really "done" — the task keeps going in new_cid.
-                                    # But this segment's transcript (and any `remember` calls in
-                                    # it) would otherwise never be mined at all, since the new
-                                    # conversation starts fresh rather than inheriting messages.
-                                    # Trigger distillation for THIS segment explicitly, right here,
-                                    # rather than widening the general terminal-status gate.
-                                    _memory_ops_executor.submit(_run_session_end_memory_ops, cid, "user_chat", "continued")
-
                                     # Simulate user pressing Send — POST to backend immediately
                                     asyncio.create_task(_start_continuation(new_cid, stream.provider, user_msg))
-
                                     logger.info(f"[proxy] Created continuation {new_cid[:8]}... from {cid[:8]}... — auto-started")
 
                             # Annotate events with new_conversation_id if continuation was detected

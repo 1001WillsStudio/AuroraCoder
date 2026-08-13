@@ -8,7 +8,7 @@ import LoginScreen from './components/LoginScreen'
 import Sidebar from './components/Sidebar'
 import WelcomeScreen from './components/WelcomeScreen'
 import SettingsPanel from './components/SettingsPanel'
-import { streamChat, getProviders, cancelConversation, getConversation, getActiveStreams, resumeStream, getTaskInstruction, setTaskInstruction, getInstanceInfo } from './services/api'
+import { streamChat, getProviders, cancelConversation, getConversation, getActiveStreams, resumeStream, getTaskInstruction, setTaskInstruction, getInstanceInfo, continueAsNewChat } from './services/api'
 import { isInterruptible, TASK_MARKER_START, TASK_MARKER_END } from './utils/streamUtils'
 import { checkAuth, isAuthRequired } from './utils/auth.js'
 import CodePanel from './components/CodePanel'
@@ -732,16 +732,19 @@ function App() {
               setPendingInterrupt(null)
               pendingInterruptRef.current = null
             }}
-            onContinueInNewChat={() => {
-              const userText = inputValue.trim()
-              const standardCommand = 'Please use the `continue_as_new_chat` tool to hand off this task to a new chat with fresh context. ' +
-                'In your prompt, provide a comprehensive summary of: (1) what has been accomplished so far, ' +
-                '(2) what remains to be done, (3) key files and decisions made, and ' +
-                '(4) any important context the next agent needs to continue effectively.'
-              const combinedMessage = userText
-                ? `${userText}\n\n---\n\n${standardCommand}`
-                : standardCommand
-              handleSend(null, combinedMessage, { tools: 'force_continuation' })
+            onContinueInNewChat={async () => {
+              if (!conversationId) return
+              const extra = inputValue.trim()
+              try {
+                const result = await continueAsNewChat(conversationId, extra)
+                setInputValue('')
+                setHistoryRefreshTrigger(prev => prev + 1)
+                if (result?.new_conversation_id) {
+                  handleLoadConversation(result.new_conversation_id)
+                }
+              } catch (e) {
+                console.error('[continueAsNewChat]', e)
+              }
             }}
           />
         )}
