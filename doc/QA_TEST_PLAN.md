@@ -85,6 +85,10 @@ msw (reuses the existing Vite config). Prime targets: `utils/streamUtils.js`,
 `hooks/createStreamCallbacks.js`. Extract pure helpers from `SettingsPanel.jsx`
 /`FileTree.jsx`/`ToolActivity.jsx` before component testing. — ⬜ (separate PR recommended).
 
+| Module | Status | Notes |
+|---|---|---|
+| `frontend/src/utils/uuid.js` | ✅ | `tests/test_fork_conversation_uuid.py` — fork button must not call `crypto.randomUUID()` (secure-context-only; throws on http:// non-localhost). Helper fallback executed via Node when present. |
+
 ## 4. Coverage gate (target)
 
 ```

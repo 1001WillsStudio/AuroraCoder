@@ -11,6 +11,7 @@ import SettingsPanel from './components/SettingsPanel'
 import { streamChat, getProviders, cancelConversation, getConversation, getActiveStreams, resumeStream, getTaskInstruction, setTaskInstruction, getInstanceInfo } from './services/api'
 import { isInterruptible, TASK_MARKER_START, TASK_MARKER_END } from './utils/streamUtils'
 import { checkAuth, isAuthRequired } from './utils/auth.js'
+import { newConversationId } from './utils/uuid.js'
 import CodePanel from './components/CodePanel'
 import { createStreamCallbacks } from './hooks/createStreamCallbacks'
 import { useFileTracking } from './hooks/useFileTracking'
@@ -435,7 +436,7 @@ function App() {
     }
     if (abortControllerRef.current) { abortControllerRef.current.abort(); abortControllerRef.current = null }
     if (inputValueRef.current.trim()) draftInputsRef.current.set(conversationId ?? '__new__', inputValueRef.current)
-    setConversationId(crypto.randomUUID())
+    setConversationId(newConversationId())
     setRawMessages(rawMessages.slice(0, rawIdx))
     setMessages(messages.slice(0, frontendMsgIdx))
     setIsStreaming(false)
