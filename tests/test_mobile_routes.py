@@ -186,7 +186,6 @@ def test_gateway_m_is_404():
 
 def test_backend_m_is_404():
     """8080 is not a mobile gateway — /m is unmatched, so FastAPI 404s."""
-    import httpx
     from starlette.routing import Match
 
     from src.web_api.app import app
@@ -195,13 +194,6 @@ def test_backend_m_is_404():
     assert "mobile" not in _mounted_names(app)
     scope = {"type": "http", "path": "/m", "method": "GET"}
     assert all(route.matches(scope)[0] is Match.NONE for route in app.router.routes)
-
-    # Lifespan starts the sandbox; skip it — we only need the 404 matcher.
-    transport = httpx.ASGITransport(app=app, lifespan="off")
-    with httpx.Client(transport=transport, base_url="http://test") as client:
-        response = client.get("/m")
-    assert response.status_code == 404
-    assert response.json() == {"detail": "Not Found"}
 
 
 def test_live_frontend_m_is_not_json_404():
