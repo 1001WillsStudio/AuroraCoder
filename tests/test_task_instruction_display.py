@@ -101,6 +101,36 @@ def test_save_and_get_frontend_messages_hide_wrapper_keep_chip(tmp_path):
     assert store.get_conversation(cid)["title"] == "Ping"
 
 
+def test_pre_sse_seed_keeps_chip_across_reload(tmp_path):
+    """The chat route seeds frontend_messages before the first SSE event.
+
+    Seeding stripped text only (no taskInstruction) is the hole the
+    reviewer called out: a reload in that window has no record of the
+    repeating command.
+    """
+    store = ConversationStore(storage_dir=tmp_path)
+    cid = store.create_conversation()
+    store.seed_frontend_user_message(cid, WRAPPED_PING)
+
+    reloaded = store.get_frontend_messages(cid)
+    assert reloaded[0]["content"] == "Ping"
+    assert reloaded[0]["taskInstruction"] == INSTRUCTION
+    assert "[TASK INSTRUCTION]" not in reloaded[0]["content"]
+
+
+def test_pre_sse_seed_appends_without_dropping_earlier_chip(tmp_path):
+    store = ConversationStore(storage_dir=tmp_path)
+    cid = store.create_conversation()
+    store.seed_frontend_user_message(cid, WRAPPED_PING)
+    store.seed_frontend_user_message(cid, "Follow up")
+
+    reloaded = store.get_frontend_messages(cid)
+    assert reloaded[0]["content"] == "Ping"
+    assert reloaded[0]["taskInstruction"] == INSTRUCTION
+    assert reloaded[1]["content"] == "Follow up"
+    assert "taskInstruction" not in reloaded[1]
+
+
 # --------------------------------------------------------------------------- UI conversion (the live SSE user-bubble path)
 def test_user_message_for_frontend_hides_wrapper_and_exposes_chip():
     out = user_message_for_frontend(WRAPPED_PING)

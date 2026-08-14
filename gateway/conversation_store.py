@@ -22,6 +22,7 @@ from src.task_instruction_display import (
     TASK_INSTRUCTION_START,
     sanitize_frontend_messages,
     strip_task_instruction,
+    user_message_for_frontend,
 )
 
 logger = logging.getLogger(__name__)
@@ -471,6 +472,21 @@ class ConversationStore:
                 self._save_index()
 
         _atomic_write_json(self._frontend_messages_path(conversation_id), messages)
+
+    def seed_frontend_user_message(self, conversation_id: str, raw_content: str) -> None:
+        """Persist a user bubble before the first SSE event.
+
+        Strips the transport wrapper from the visible text and keeps the
+        inner prompt on ``taskInstruction``, so a reload still shows what
+        repeating command was applied.
+        """
+        new_user_msg = user_message_for_frontend(raw_content)
+        existing = self.get_frontend_messages(conversation_id)
+        if existing:
+            existing.append(new_user_msg)
+            self.save_frontend_messages(conversation_id, existing)
+        else:
+            self.save_frontend_messages(conversation_id, [new_user_msg])
 
     def get_frontend_messages(self, conversation_id: str) -> List[Dict]:
         """Read frontend-formatted messages, returning [] if not persisted."""

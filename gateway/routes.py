@@ -35,7 +35,7 @@ try:
 except ImportError:
     ConfigManager = None
 
-from gateway.conversation_store import store, strip_task_instruction
+from gateway.conversation_store import store
 from gateway.settings_store import (
     get_all_settings,
     update_settings as _store_update_settings,
@@ -234,14 +234,7 @@ async def proxy_chat(request: Request):
     # (re-send / interrupt), APPEND instead of replacing — otherwise the
     # entire history is lost if the backend never produces events.
     if body.get("message"):
-        clean_content = strip_task_instruction(body["message"]) or body["message"]
-        new_user_msg = {"role": "user", "content": clean_content.strip()}
-        existing_fe_msgs = store.get_frontend_messages(conversation_id)
-        if existing_fe_msgs:
-            existing_fe_msgs.append(new_user_msg)
-            store.save_frontend_messages(conversation_id, existing_fe_msgs)
-        else:
-            store.save_frontend_messages(conversation_id, [new_user_msg])
+        store.seed_frontend_user_message(conversation_id, body["message"])
     t5 = time.perf_counter()
     logger.info(f"[proxy] [{cid_tag}...] store_ops={t5-t4:.3f}s")
 
