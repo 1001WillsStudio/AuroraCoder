@@ -261,9 +261,6 @@ from gateway import routes  # noqa: E402, F401 — registers routes on `app`
 # ============================================================================
 # Serve Static Assets
 # ============================================================================
-# Desktop SPA only. /m and /mobile are not gateway routes — 8081 (and the
-# agent backend on 8080) 404 them. Experimental mobile is served by the
-# user-facing frontend on :3000, so there is no mobile-specific gateway.
 
 frontend_dir = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 if frontend_dir.exists():

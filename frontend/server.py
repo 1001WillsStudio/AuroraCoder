@@ -84,11 +84,10 @@ def mount_static_assets(
     frontend_dir: Path | None = None,
     mobile_dir: Path | None = None,
 ) -> None:
-    """User-facing static files. Desktop at ``/``; experimental mobile on demand.
+    """User-facing static files. Desktop at ``/``; mobile is an alternative page.
 
-    ``/m`` and ``/mobile`` are served here (:3000), not by the gateway
-    (8081) or the agent backend (8080). Those stay 404 — there is no
-    mobile-specific gateway. Desktop ``/`` is a plain ``StaticFiles``
+    ``/m`` and ``/mobile`` are a second frontend tree, served only when
+    ``mobile/`` is present. Desktop ``/`` stays a plain ``StaticFiles``
     mount and never wraps mobile.
     """
     if frontend_dir is None:

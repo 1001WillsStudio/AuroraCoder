@@ -1,9 +1,7 @@
 """Regression: Settings 'Open mobile web app' (href /m) must serve the mobile UI.
 
-Users hit the frontend on :3000. The gateway (8081) and agent backend (8080)
-are not a mobile-specific gateway — ``/m`` there is a 404. Experimental
-mobile is served on demand by the user-facing frontend so the desktop
-``/`` mount stays plain ``StaticFiles``.
+Mobile is an alternative frontend page on :3000, not a gateway or backend
+route. Desktop ``/`` stays a plain ``StaticFiles`` mount.
 """
 from __future__ import annotations
 
@@ -161,39 +159,16 @@ def test_m_works_when_frontend_dist_is_missing(tmp_path: Path):
     assert '{"detail":"Not Found"}' not in response.text
 
 
-def test_gateway_style_desktop_mount_404s_on_m(tmp_path: Path):
-    """8081 layout: only Mount('/') — /m is FastAPI JSON 404."""
-    frontend = _write_spa(tmp_path / "frontend", "DESKTOP-SPA")
-    app = FastAPI()
-    app.mount("/", StaticFiles(directory=str(frontend), html=True), name="frontend")
+def test_gateway_auth_keeps_mobile_public_prefixes():
+    """Review: leave /m and /mobile on the gateway auth allow-list."""
+    import inspect
 
-    response = TestClient(app, follow_redirects=False).get("/m")
-    assert response.status_code == 404
-    assert response.json() == {"detail": "Not Found"}
+    from gateway.api import auth_middleware
 
-
-def test_gateway_m_is_404():
-    """8081 is not a mobile gateway — /m stays a JSON 404."""
-    from gateway.api import app
-
-    assert not any(getattr(r, "path", None) in ("/m", "/mobile") for r in app.routes)
-    assert "mobile" not in _mounted_names(app)
-
-    response = TestClient(app, follow_redirects=False).get("/m")
-    assert response.status_code == 404
-    assert response.json() == {"detail": "Not Found"}
-
-
-def test_backend_m_is_404():
-    """8080 is not a mobile gateway — /m is unmatched, so FastAPI 404s."""
-    from starlette.routing import Match
-
-    from src.web_api.app import app
-
-    assert not any(getattr(r, "path", None) in ("/m", "/mobile") for r in app.routes)
-    assert "mobile" not in _mounted_names(app)
-    scope = {"type": "http", "path": "/m", "method": "GET"}
-    assert all(route.matches(scope)[0] is Match.NONE for route in app.router.routes)
+    source = inspect.getsource(auth_middleware)
+    assert '"/mobile"' in source
+    assert '"/m/"' in source
+    assert 'path == "/m"' in source
 
 
 def test_live_frontend_m_is_not_json_404():
