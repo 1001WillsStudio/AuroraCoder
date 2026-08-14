@@ -84,28 +84,21 @@ def mount_static_assets(
     frontend_dir: Path | None = None,
     mobile_dir: Path | None = None,
 ) -> None:
-    """User-facing static files. Desktop at ``/``; mobile is an alternative page.
-
-    ``/m`` and ``/mobile`` are a second frontend tree, served only when
-    ``mobile/`` is present. Desktop ``/`` stays a plain ``StaticFiles``
-    mount and never wraps mobile.
-    """
+    """Desktop at ``/``. The other page is mounted at ``/m`` when present."""
     if frontend_dir is None:
         frontend_dir = _DEFAULT_FRONTEND_DIR
     if mobile_dir is None:
         mobile_dir = _DEFAULT_MOBILE_DIR
 
     if mobile_dir.exists():
-        async def _mobile_shortcut():
-            return RedirectResponse(url="/mobile/", status_code=307)
+        async def _m_index():
+            return RedirectResponse(url="/m/", status_code=307)
 
-        application.add_api_route(
-            "/m", _mobile_shortcut, methods=["GET", "HEAD"]
-        )
+        application.add_api_route("/m", _m_index, methods=["GET", "HEAD"])
         application.mount(
-            "/mobile",
+            "/m",
             StaticFiles(directory=str(mobile_dir), html=True),
-            name="mobile",
+            name="m",
         )
 
     if frontend_dir.exists():

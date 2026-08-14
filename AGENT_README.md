@@ -460,7 +460,7 @@ generate_chat_responses_stream_native(
 
 ### Gateway Layer
 
-- `api.py` — FastAPI app factory with CORS middleware. Serves the desktop SPA at `/` when `frontend/dist` exists.
+- `api.py` — FastAPI app factory with CORS middleware
 - `routes.py` — All route handlers: chat, continue, conversations, files, settings, health
 - `streaming.py` — SSE stream registration, event queue management, keepalive, cancellation
 - `conversation_store.py` — File-backed store with thread-safe atomic writes and index management
@@ -586,7 +586,7 @@ Test files in `tests/`:
 - `test_edit_file_edge_cases.py` — Edit file matching edge cases
 - `test_streaming_race.py` — SSE streaming race condition tests
 - `test_mergePanelFiles.mjs` — Frontend panel merging tests
-- `test_mobile_routes.py` — `/m` is an alternative frontend page; gateway auth still lists `/m` and `/mobile` as public
+- `test_mobile_routes.py` — Settings link `/m` serves the other frontend page
 
 ---
 

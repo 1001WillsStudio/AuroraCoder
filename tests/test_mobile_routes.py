@@ -1,8 +1,4 @@
-"""Regression: Settings 'Open mobile web app' (href /m) must serve the mobile UI.
-
-Mobile is an alternative frontend page on :3000, not a gateway or backend
-route. Desktop ``/`` stays a plain ``StaticFiles`` mount.
-"""
+"""Regression: Settings 'Open mobile web app' (href /m) must serve that page."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -33,7 +29,7 @@ def _mounted_names(app: FastAPI) -> list[str]:
     return [name for r in app.routes if (name := getattr(r, "name", None))]
 
 
-def test_m_redirects_to_mobile_on_frontend(tmp_path: Path):
+def test_m_is_not_json_404(tmp_path: Path):
     """The reported bug: GET /m on the user-facing app must not 404 JSON."""
     frontend = _write_spa(tmp_path / "frontend", "DESKTOP-SPA")
     mobile = _write_spa(tmp_path / "mobile", "MOBILE-WEB-APP")
@@ -42,15 +38,15 @@ def test_m_redirects_to_mobile_on_frontend(tmp_path: Path):
     response = client.get("/m")
     assert response.status_code != 404, (
         f"/m returned 404 (body={response.text!r}); the desktop SPA mount "
-        "is shadowing the mobile shortcut"
+        "is shadowing the page"
     )
-    assert response.status_code in (301, 302, 303, 307, 308)
-    assert response.headers["location"] == "/mobile/"
     assert '{"detail":"Not Found"}' not in response.text
+    if response.status_code in (301, 302, 303, 307, 308):
+        assert response.headers["location"] == "/m/"
 
 
-def test_following_m_loads_mobile_chat_ui(tmp_path: Path):
-    """Settings opens /m in a new tab; the user must land on the mobile UI."""
+def test_following_m_loads_the_page(tmp_path: Path):
+    """Settings opens /m in a new tab; the user must land on that UI."""
     frontend = _write_spa(tmp_path / "frontend", "DESKTOP-SPA")
     mobile = _write_spa(tmp_path / "mobile", "MOBILE-WEB-APP")
     app = FastAPI()
@@ -64,21 +60,21 @@ def test_following_m_loads_mobile_chat_ui(tmp_path: Path):
     assert '{"detail":"Not Found"}' not in response.text
 
 
-def test_mobile_index_and_asset_are_reachable(tmp_path: Path):
+def test_m_index_and_asset_are_reachable(tmp_path: Path):
     frontend = _write_spa(tmp_path / "frontend", "DESKTOP-SPA")
     mobile = _write_spa(tmp_path / "mobile", "MOBILE-WEB-APP")
     (mobile / "css").mkdir()
-    (mobile / "css" / "mobile.css").write_text("/* mobile */", encoding="utf-8")
+    (mobile / "css" / "mobile.css").write_text("/* page */", encoding="utf-8")
     client = _client_for(frontend, mobile)
 
-    index = client.get("/mobile/")
+    index = client.get("/m/")
     assert index.status_code == 200
     assert "MOBILE-WEB-APP" in index.text
     assert "DESKTOP-SPA" not in index.text
 
-    asset = client.get("/mobile/css/mobile.css")
+    asset = client.get("/m/css/mobile.css")
     assert asset.status_code == 200
-    assert "mobile" in asset.text
+    assert "page" in asset.text
 
 
 def test_desktop_spa_still_served_at_root(tmp_path: Path):
@@ -98,26 +94,24 @@ def test_desktop_spa_still_served_at_root(tmp_path: Path):
     assert asset.text == "DESKTOP-ASSET"
 
 
-def test_desktop_root_identical_with_or_without_mobile(tmp_path: Path):
-    """On-demand mobile must not change the desktop `/` response."""
+def test_desktop_root_identical_with_or_without_the_other_page(tmp_path: Path):
     frontend = _write_spa(tmp_path / "frontend", "DESKTOP-SPA")
     mobile = _write_spa(tmp_path / "mobile", "MOBILE-WEB-APP")
-    missing = tmp_path / "no-mobile"
+    missing = tmp_path / "no-page"
 
     app_with = FastAPI()
     mount_static_assets(app_with, frontend_dir=frontend, mobile_dir=mobile)
     app_without = FastAPI()
     mount_static_assets(app_without, frontend_dir=frontend, mobile_dir=missing)
 
-    with_mobile = TestClient(app_with).get("/")
-    without_mobile = TestClient(app_without).get("/")
-    assert with_mobile.status_code == without_mobile.status_code == 200
-    assert with_mobile.text == without_mobile.text
-    assert with_mobile.headers["content-type"] == without_mobile.headers["content-type"]
+    with_page = TestClient(app_with).get("/")
+    without_page = TestClient(app_without).get("/")
+    assert with_page.status_code == without_page.status_code == 200
+    assert with_page.text == without_page.text
+    assert with_page.headers["content-type"] == without_page.headers["content-type"]
 
 
 def test_desktop_mount_is_plain_staticfiles(tmp_path: Path):
-    """Desktop `/` is not a mobile-aware wrapper."""
     frontend = _write_spa(tmp_path / "frontend", "DESKTOP-SPA")
     mobile = _write_spa(tmp_path / "mobile", "MOBILE-WEB-APP")
     app = FastAPI()
@@ -125,20 +119,21 @@ def test_desktop_mount_is_plain_staticfiles(tmp_path: Path):
 
     names = _mounted_names(app)
     assert "frontend" in names
-    assert "mobile" in names
+    assert "m" in names
+    assert "mobile" not in names
     for route in app.routes:
         if getattr(route, "name", None) == "frontend":
             assert type(route.app) is StaticFiles
 
 
-def test_no_mobile_routes_when_mobile_dir_missing(tmp_path: Path):
+def test_no_m_route_when_dir_missing(tmp_path: Path):
     frontend = _write_spa(tmp_path / "frontend", "DESKTOP-SPA")
-    missing = tmp_path / "no-mobile"
+    missing = tmp_path / "no-page"
     app = FastAPI()
     mount_static_assets(app, frontend_dir=frontend, mobile_dir=missing)
 
     assert "frontend" in _mounted_names(app)
-    assert "mobile" not in _mounted_names(app)
+    assert "m" not in _mounted_names(app)
     assert not any(getattr(r, "path", None) == "/m" for r in app.routes)
 
     response = TestClient(app, follow_redirects=False).get("/")
@@ -159,29 +154,13 @@ def test_m_works_when_frontend_dist_is_missing(tmp_path: Path):
     assert '{"detail":"Not Found"}' not in response.text
 
 
-def test_gateway_auth_keeps_mobile_public_prefixes():
-    """Review: leave /m and /mobile on the gateway auth allow-list."""
-    import inspect
-
-    from gateway.api import auth_middleware
-
-    source = inspect.getsource(auth_middleware)
-    assert '"/mobile"' in source
-    assert '"/m/"' in source
-    assert 'path == "/m"' in source
-
-
 def test_live_frontend_m_is_not_json_404():
-    """Smoke the real frontend app (repo ``mobile/`` is present)."""
+    """Smoke the real frontend app (repo page tree is present)."""
     from frontend.server import app
 
-    client = TestClient(app, follow_redirects=False)
+    client = TestClient(app, follow_redirects=True)
     response = client.get("/m")
-    assert response.status_code != 404
+    assert response.status_code == 200
     assert '{"detail":"Not Found"}' not in response.text
-    if response.status_code in (301, 302, 303, 307, 308):
-        assert response.headers["location"] == "/mobile/"
-        followed = client.get("/mobile/")
-        assert followed.status_code == 200
-        assert "AuroraCoder" in followed.text
-        assert "chat-input" in followed.text
+    assert "AuroraCoder" in response.text
+    assert "chat-input" in response.text

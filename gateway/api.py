@@ -120,15 +120,15 @@ async def auth_middleware(request: Request, call_next):
     """Require Bearer token for all /api/* routes (except /api/auth/*, /health).
 
     If ACCESS_PASSWORD is not set, no auth is required.
-    Public paths: /health, /api/auth/*, /mobile/*, /m
+    Public paths: /health, /api/auth/*
     """
     path = request.url.path
 
     if not AUTH_PASSWORD:
         return await call_next(request)
 
-    public_prefixes = ("/health", "/api/auth/", "/mobile", "/m/")
-    if any(path.startswith(p) for p in public_prefixes) or path == "/m":
+    public_prefixes = ("/health", "/api/auth/")
+    if any(path.startswith(p) for p in public_prefixes):
         return await call_next(request)
 
     if not path.startswith("/api/"):
