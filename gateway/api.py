@@ -22,9 +22,8 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from pydantic import BaseModel
 
@@ -262,96 +261,13 @@ from gateway import routes  # noqa: E402, F401 — registers routes on `app`
 # ============================================================================
 # Serve Static Assets
 # ============================================================================
+# Desktop SPA only. /m and /mobile are not gateway routes — 8081 (and the
+# agent backend on 8080) 404 them. Experimental mobile is served by the
+# user-facing frontend on :3000, so there is no mobile-specific gateway.
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-_DEFAULT_FRONTEND_DIR = _REPO_ROOT / "frontend" / "dist"
-_DEFAULT_MOBILE_DIR = _REPO_ROOT / "mobile"
-
-
-class DesktopStaticFiles(StaticFiles):
-    """Desktop SPA mount. Experimental mobile is a 404 fallback only.
-
-    Successful desktop hits (``/``, assets, the SPA) take the same
-    ``StaticFiles.get_response`` path as before. ``/m`` and ``/mobile``
-    are answered only after that lookup misses — so mobile is up on
-    demand and never sits in front of the desktop matcher, the app
-    middleware stack, or API/SSE routes.
-    """
-
-    def __init__(self, *args, mobile_dir: str | Path, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.mobile_dir = str(mobile_dir)
-        self._mobile: StaticFiles | None = None
-
-    def _mobile_files(self) -> StaticFiles:
-        if self._mobile is None:
-            self._mobile = StaticFiles(directory=self.mobile_dir, html=True)
-        return self._mobile
-
-    async def get_response(self, path: str, scope):
-        try:
-            return await super().get_response(path, scope)
-        except StarletteHTTPException as exc:
-            if exc.status_code != 404:
-                raise
-            if path in ("m", "m/"):
-                return RedirectResponse(url="/mobile/", status_code=307)
-            if path == "mobile" or path.startswith("mobile/"):
-                rel = path[len("mobile") :].lstrip("/")
-                return await self._mobile_files().get_response(rel, scope)
-            raise
-
-
-def mount_static_assets(
-    application: FastAPI,
-    frontend_dir: Path | None = None,
-    mobile_dir: Path | None = None,
-) -> None:
-    """Mount the desktop SPA at ``/``. Mobile is experimental and on-demand.
-
-    Desktop is registered first and is the only static mount — same as
-    the original layout, so general WebUI routing is unchanged. No
-    middleware is added: API, SSE, and successful desktop responses
-    never enter mobile code. When ``mobile/`` is absent the mount is
-    plain ``StaticFiles``, identical to an install without mobile.
-
-    ``/m`` 404s on the desktop tree (there is no file named ``m``), and
-    that miss is what brings mobile up. Without the fallback, FastAPI
-    returns ``{"detail":"Not Found"}`` — the Settings link failure.
-    """
-    if frontend_dir is None:
-        frontend_dir = _DEFAULT_FRONTEND_DIR
-    if mobile_dir is None:
-        mobile_dir = _DEFAULT_MOBILE_DIR
-
-    if frontend_dir.exists():
-        if mobile_dir.exists():
-            static_app = DesktopStaticFiles(
-                directory=str(frontend_dir),
-                html=True,
-                mobile_dir=mobile_dir,
-            )
-        else:
-            static_app = StaticFiles(directory=str(frontend_dir), html=True)
-        application.mount("/", static_app, name="frontend")
-    elif mobile_dir.exists():
-        # No desktop SPA (unbuilt frontend). /m and /mobile can be normal
-        # routes — there is no Mount("/") to shadow them and no desktop
-        # WebUI to wrap.
-        async def _mobile_shortcut():
-            return RedirectResponse(url="/mobile/", status_code=307)
-
-        application.add_api_route(
-            "/m", _mobile_shortcut, methods=["GET", "HEAD"]
-        )
-        application.mount(
-            "/mobile",
-            StaticFiles(directory=str(mobile_dir), html=True),
-            name="mobile",
-        )
-
-
-mount_static_assets(app)
+frontend_dir = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if frontend_dir.exists():
+    app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
 
 
 # ============================================================================
