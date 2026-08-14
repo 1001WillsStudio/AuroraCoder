@@ -85,10 +85,10 @@ msw (reuses the existing Vite config). Prime targets: `utils/streamUtils.js`,
 `hooks/createStreamCallbacks.js`. Extract pure helpers from `SettingsPanel.jsx`
 /`FileTree.jsx`/`ToolActivity.jsx` before component testing. — ⬜ (separate PR recommended).
 
-`frontend/src/utils/settingsValidation.js` is the Settings → Save check for
-custom providers. `tests/test_settings_validation.py` covers the bug: a
-provider that already has a stored key must not block Save just because
-the key field is empty (the UI never redisplays the secret).
+`frontend/src/utils/settingsValidation.js` is the shared Settings → Save
+check for built-in and custom providers. `tests/test_settings_validation.py`
+covers the bug: a stored key must not block Save just because the key
+field is empty (the UI never redisplays the secret).
 
 ## 4. Coverage gate (target)
 

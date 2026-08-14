@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { X, Plus, Trash2, Save, RefreshCw, Shield, Globe, LogOut, ExternalLink, Wrench, ChevronDown, ChevronRight, Search } from 'lucide-react'
 import { getSettings, updateSettings, getProviders, getToolStoreStatus, refreshToolStore, getMemories, deleteMemory } from '../services/api'
 import { isAuthRequired, isAuthenticated, logout as authLogout, clearToken } from '../utils/auth.js'
-import { validateCustomProviders } from '../utils/settingsValidation.js'
+import { validateProviders, encodeStoredApiKey } from '../utils/settingsValidation.js'
 import useLanguage from '../hooks/useLanguage'
 import { LANG_LABELS } from '../i18n/translations'
 import '../styles/settings.css'
@@ -236,11 +236,28 @@ export default function SettingsPanel({ isOpen, onClose }) {
   }
 
   // ── Validation ──────────────────────────────────────────────────────────
-  // Stored custom-provider keys are shown as an empty field (placeholder:
-  // "already set"). That empty field is not missing — reject only a brand-new
-  // provider with no key. Otherwise Save is blocked and nothing is persisted.
+  // Built-in and custom cards share one helper. An empty key box is not
+  // missing when a key is already stored. Pre-configured (built-in) cards
+  // do not require a key, so unused defaults cannot block Save.
   const validate = () => {
-    const errors = validateCustomProviders(settings?.custom_providers, {
+    const errors = validateProviders([
+      ...BUILTIN_PROVIDERS.map(p => ({
+        errorKey: p.id,
+        name: p.name,
+        base_url: p.base_url,
+        api_key: settings?.api_keys?.[p.id],
+        keyConfigured: Boolean(apiKeysConfigured[p.id]),
+        preconfigured: true,
+      })),
+      ...(settings?.custom_providers || []).map((cp, i) => ({
+        errorKey: `custom-${i}`,
+        name: cp.name,
+        base_url: cp.base_url,
+        api_key: cp.api_key,
+        keyConfigured: Boolean(cp._key_configured),
+        preconfigured: false,
+      })),
+    ], {
       nameRequired: t('msg.nameRequired'),
       baseUrlRequired: t('msg.baseUrlRequired'),
       apiKeyRequired: t('msg.apiKeyRequired'),
@@ -256,24 +273,29 @@ export default function SettingsPanel({ isOpen, onClose }) {
     try {
       // Prune empty custom providers
       const cp = (settings.custom_providers || []).filter(c => c.name?.trim() || c.base_url?.trim())
-      // Convert empty-kept keys back to boolean true so backend preserves the real key
       for (const c of cp) {
-        if (c.api_key === '' && c._key_configured) { c.api_key = true; delete c._key_configured }
+        const encoded = encodeStoredApiKey(c.api_key, c._key_configured)
+        if (encoded === undefined) c.api_key = ''
+        else c.api_key = encoded
+        delete c._key_configured
       }
-      // Convert api_keys: empty+configured → true, non-empty → actual value
       const outApiKeys = {}
       for (const [k, v] of Object.entries(settings.api_keys || {})) {
-        if (v === '' && apiKeysConfigured[k]) outApiKeys[k] = true   // keep existing
-        else if (v && v.trim()) outApiKeys[k] = v                     // new key
+        const encoded = encodeStoredApiKey(v, apiKeysConfigured[k])
+        if (encoded !== undefined) outApiKeys[k] = encoded
       }
-      // Prune empty 'other' sub-objects (also convert empty+configured for web_secondary api_key)
+      // Prune empty 'other' sub-objects (same stored-key encoding for api_key fields)
       const prunedOther = {}
       for (const [sec, fields] of Object.entries(settings.other || {})) {
         if (fields && typeof fields === 'object') {
           const clean = {}
           for (const [k, v] of Object.entries(fields)) {
-            if (v === '' && apiKeysConfigured[k]) clean[k] = true    // keep existing
-            else if (v !== '' && v !== null && v !== undefined) clean[k] = v
+            if (typeof v === 'string' || v === true) {
+              const encoded = encodeStoredApiKey(v, apiKeysConfigured[k])
+              if (encoded !== undefined) clean[k] = encoded
+            } else if (v !== '' && v !== null && v !== undefined) {
+              clean[k] = v
+            }
           }
           if (Object.keys(clean).length > 0) prunedOther[sec] = clean
         }
