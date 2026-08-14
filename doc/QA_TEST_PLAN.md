@@ -85,6 +85,11 @@ msw (reuses the existing Vite config). Prime targets: `utils/streamUtils.js`,
 `hooks/createStreamCallbacks.js`. Extract pure helpers from `SettingsPanel.jsx`
 /`FileTree.jsx`/`ToolActivity.jsx` before component testing. — ⬜ (separate PR recommended).
 
+`tests/test_conversation_id.py` is a narrow exception: it drives
+`frontend/src/utils/id.js` through Node to lock the insecure-HTTP fallback
+(`crypto.randomUUID` missing) used by Fork conversation. It does not start a
+browser or a JS test runner.
+
 ## 4. Coverage gate (target)
 
 ```
