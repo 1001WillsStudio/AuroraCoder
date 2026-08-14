@@ -54,15 +54,16 @@ def validate_custom_providers(custom_providers, messages=_MESSAGES) -> dict:
 
 
 def test_save_allows_empty_override_when_custom_key_already_stored():
-    """Explorer repro: Mock LLM (E2E) field empty, placeholder says key is set.
+    """Save with no edits must succeed when a custom provider already has a key.
 
-    Fresh load → custom_providers[mockllm] has api_key blanked and
-    ``_key_configured=true``. Save with no edits must not be rejected.
+    The Settings form blanks the key input on load (the real secret is never
+    sent to the browser) and sets ``_key_configured``. That empty box is not
+    a missing key.
     """
     providers = [
         {
             "id": "mockllm",
-            "name": "Mock LLM (E2E)",
+            "name": "Mock LLM",
             "base_url": "http://mock-llm:8080/v1",
             "api_key": "",
             "_key_configured": True,
@@ -91,7 +92,7 @@ def test_typed_override_counts_as_present():
     providers = [
         {
             "id": "mockllm",
-            "name": "Mock LLM (E2E)",
+            "name": "Mock LLM",
             "base_url": "http://mock-llm:8080/v1",
             "api_key": "sk-dummy",
         }
@@ -103,7 +104,7 @@ def test_raw_get_shape_boolean_true_counts_as_present():
     """GET /api/settings returns api_key: true before the panel blanks it."""
     cp = {
         "id": "mockllm",
-        "name": "Mock LLM (E2E)",
+        "name": "Mock LLM",
         "base_url": "http://mock-llm:8080/v1",
         "api_key": True,
     }
