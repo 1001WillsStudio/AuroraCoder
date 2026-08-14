@@ -22,14 +22,14 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 
 from pydantic import BaseModel
 
 from gateway.conversation_store import store
 from gateway.provider_registry import sync_tool_env_vars
 from gateway.settings_store import configure_github_auth
+from gateway.static_assets import mount_static_assets
 
 logging.basicConfig(
     level=logging.INFO,
@@ -261,19 +261,11 @@ from gateway import routes  # noqa: E402, F401 — registers routes on `app`
 # ============================================================================
 # Serve Static Assets
 # ============================================================================
+# Mobile must be mounted before the desktop SPA catch-all at "/". Starlette
+# matches mounts in order; "/" swallows /mobile/ and FastAPI then returns
+# JSON 404. See gateway/static_assets.py.
 
-frontend_dir = Path(__file__).resolve().parent.parent / "frontend" / "dist"
-mobile_dir = Path(__file__).resolve().parent.parent / "mobile"
-
-if frontend_dir.exists():
-    app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
-
-if mobile_dir.exists():
-    app.mount("/mobile", StaticFiles(directory=str(mobile_dir), html=True), name="mobile")
-
-    @app.get("/m")
-    async def mobile_shortcut():
-        return RedirectResponse(url="/mobile/")
+mount_static_assets(app)
 
 
 # ============================================================================

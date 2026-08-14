@@ -44,7 +44,8 @@ frontend/                     ← UI + conversation ownership
                                  sidebar, settings, tool-activity, code-panel,
                                  file-tree, input, welcome, reset, responsive)
 mobile/                       ← Standalone vanilla JS mobile web app (api.js,
-                                 app.js, auth.js, chat.js, mobile.css)
+                                 app.js, auth.js, chat.js, mobile.css);
+                                 served at /mobile/ (/m redirects there)
 launcher/                     ← One-click Go launcher (main.go, docker.go,
                                  extract.go, progress.go, build.sh)
 ```
@@ -123,6 +124,7 @@ Aurora Coder/
 ├── gateway/
 │   ├── __init__.py             ← Re-exports ConversationStore
 │   ├── api.py                  ← FastAPI app factory (port 8081, internal)
+│   ├── static_assets.py        ← Mobile /mobile/ + /m, then desktop SPA at /
 │   ├── routes.py               ← SSE proxy, chat/continue/stream endpoints
 │   ├── streaming.py            ← SSE stream management, event queues, keepalive
 │   ├── conversation_store.py   ← File-backed store (thread-safe, atomic writes)
@@ -461,6 +463,7 @@ generate_chat_responses_stream_native(
 ### Gateway Layer
 
 - `api.py` — FastAPI app factory with CORS middleware
+- `static_assets.py` — Mobile SPA at `/mobile/` (and `/m`) mounted before the desktop `/` catch-all
 - `routes.py` — All route handlers: chat, continue, conversations, files, settings, health
 - `streaming.py` — SSE stream registration, event queue management, keepalive, cancellation
 - `conversation_store.py` — File-backed store with thread-safe atomic writes and index management

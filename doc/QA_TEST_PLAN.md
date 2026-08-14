@@ -73,6 +73,7 @@ Legend: ✅ done · 🟡 next · ⬜ later.
 | `src.providers` | 🟡 | patch `openai.OpenAI`, stream vs non-stream branching |
 | `gateway.streaming` | 🟡 | expand existing race/abort tests via injected provider |
 | `gateway.routes` / `api` | ⬜ | `TestClient` per endpoint, **auth** via `ACCESS_PASSWORD` |
+| `gateway.static_assets` | ✅ | `/mobile/` and `/mobile` serve the mobile SPA even when `frontend/dist` exists; `/m` redirects; desktop `/` still served |
 | `gateway.provider_registry` | ⬜ | lookup, model metadata, live-list fetch mocked |
 | `gateway.workspace` | ⬜ | git push behind `GITHUB_TOKEN` (mock; skip when absent) |
 | `src.web_api.app` | ⬜ | FastAPI app wiring smoke |
