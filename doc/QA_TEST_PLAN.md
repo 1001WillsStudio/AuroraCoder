@@ -1,7 +1,7 @@
 # AuroraCoder — QA Unit-Test Plan
 
 Status: **whole suite GREEN** — branch `test/add-unit-test-suite` (pushed).
-Final: `242 passed, 1 xfailed, 0 failed, 0 errors` hermetically. This document is
+Final: hermetic unit suite green (0 xfailed). This document is
 the QA-engineer design for "unit tests that ensure every module works right," the
 implementation map, and how all pre-existing failures were diagnosed and fixed.
 
@@ -57,7 +57,7 @@ Legend: ✅ done · 🟡 next · ⬜ later.
 | Module | Status | Notes |
 |---|---|---|
 | `src.code_tools.grep_search` | ✅ | exact cmd build + tool contract via `FakeSubprocess` |
-| `src.code_tools.file_operations` | ✅ | read/write/delete/list/search, large-file guard, wrappers, **xfail: path traversal gap** |
+| `src.code_tools.file_operations` | ✅ | read/write/delete/list/search, large-file guard, wrappers, ``_resolve_path`` rejects ``..`` and symlink escapes |
 | `src.code_tools.terminal_runner` | 🟡 | persistent-shell state + `subprocess.run` paths |
 | `src.code_sandbox.sandbox` | 🟡 | timeout/resource/cwd isolation, exit codes (Docker branch = integration) |
 | `src.config` | 🟡 | env→defaults, `.env` load, reload safety (env read at import) |
@@ -107,7 +107,7 @@ pytest --cov=src --cov=gateway --cov=memory --cov-fail-under=85   # target
 
 The untouched `dev` branch was **42 failed, 112 passed**. As QA owner of the whole
 suite I traced every failure to its root cause and fixed it (not masked). The full
-suite now passes hermetically: **242 passed, 1 xfailed, 0 failed, 0 errors**.
+suite now passes hermetically (the former ``_resolve_path`` xfail is a real gate).
 
 ### 6.1 `test_streaming_race.py` — 1 collection ERROR
 **Cause:** the file defined `async def test(scenario, subscriber_fn)` as a plain
@@ -147,9 +147,5 @@ converted the three assert helpers to REAL (raising) pytest assertions so the
 suite genuinely verifies the context-fix channel.
 
 ### 6.5 Persistent QA findings (still open, low priority)
-- **`file_operations._resolve_path` performs no path-escape validation** — a
-  relative `../../x` resolves outside `WORKSPACE`. Captured as an `xfail` test
-  (`test_resolve_path_blocks_traversal`); fix is a prod change (out of test
-  scope) but the contract is now locked.
 - `check()` helper in `test_edit_file_edge_cases.py` is dead code (defined, never
   called) — safe to delete.
