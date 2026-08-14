@@ -586,7 +586,7 @@ Test files in `tests/`:
 - `test_edit_file_edge_cases.py` — Edit file matching edge cases
 - `test_streaming_race.py` — SSE streaming race condition tests
 - `test_mergePanelFiles.mjs` — Frontend panel merging tests
-- `test_mobile_routes.py` — Settings link `/m` serves the other frontend page
+- `test_mobile_routes.py` — Settings `/m` page is off by default; serves only when enabled
 
 ---
 

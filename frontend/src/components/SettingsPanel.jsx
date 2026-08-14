@@ -76,11 +76,12 @@ export default function SettingsPanel({ isOpen, onClose }) {
         other.google_search = other.google_search || {}
         other.github = other.github || {}
         other.memory = other.memory || {}
+        other.m = other.m || {}
         setSettings({ ...s, other })
         setProviders(p.providers || [])
       } catch {
         // Backend unavailable — set safe defaults so the UI still works
-        setSettings({ api_keys: {}, provider_overrides: {}, custom_providers: [], other: { web_secondary: {}, agent: {}, memory: {} } })
+        setSettings({ api_keys: {}, provider_overrides: {}, custom_providers: [], other: { web_secondary: {}, agent: {}, memory: {}, m: {} } })
         setProviders(BUILTIN_PROVIDERS.map(p => ({ ...p, custom: false })))
         setMessage({ type: 'error', text: t('settings.loadError') })
       } finally {
@@ -959,11 +960,19 @@ placeholder="abc123..."
                   </div>
                 )}
                 <div className="settings-security-status" style={{ marginTop: 14, borderTop: '1px solid var(--border-color)', paddingTop: 12 }}>
-                  <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-                    📱 <a href="/m" target="_blank" rel="noopener"
-                      style={{ color: 'var(--accent)' }}>Open mobile web app</a> —
-                    optimized for your phone.
-                  </span>
+                  <label className="settings-checkbox-label" style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+                    <input type="checkbox"
+                      checked={other.m?.enabled === true}
+                      onChange={e => setOther('m', 'enabled', e.target.checked)}
+                    />
+                    Enable /m page
+                  </label>
+                  {other.m?.enabled === true && (
+                    <span style={{ fontSize: 13, color: 'var(--text-muted)', marginLeft: 10 }}>
+                      <a href="/m" target="_blank" rel="noopener"
+                        style={{ color: 'var(--accent)' }}>Open</a>
+                    </span>
+                  )}
                 </div>
               </section>
 
