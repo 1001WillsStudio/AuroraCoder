@@ -270,8 +270,11 @@ function App() {
     setActiveConvoWarning(false)
 
     const userMessageText = messageToSend
-    const apiMessage = (systemPrompt.trim() && !conversationId)
-      ? `${TASK_MARKER_START}\n${systemPrompt.trim()}\n${TASK_MARKER_END}\n\n${userMessageText}`
+    const appliedInstruction = (systemPrompt.trim() && !conversationId)
+      ? systemPrompt.trim()
+      : ''
+    const apiMessage = appliedInstruction
+      ? `${TASK_MARKER_START}\n${appliedInstruction}\n${TASK_MARKER_END}\n\n${userMessageText}`
       : userMessageText
 
     const isInterrupt = interruptMessages !== null && interruptMessages.length > 0
@@ -303,7 +306,11 @@ function App() {
     }
 
     log('setState batch (messages, streaming, etc.)')
-    setMessages(prev => [...prev, { role: 'user', content: userMessageText }, { role: 'assistant', content: '' }])
+    const userBubble = { role: 'user', content: userMessageText }
+    if (appliedInstruction) {
+      userBubble.taskInstruction = appliedInstruction
+    }
+    setMessages(prev => [...prev, userBubble, { role: 'assistant', content: '' }])
     setInputValue('')
     setIsStreaming(true)
     setSseReceived(false)

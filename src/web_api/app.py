@@ -7,7 +7,6 @@ have been moved to ``gateway/api.py`` (port 8081, internal).
 """
 
 import json
-import re
 import uuid
 import asyncio
 import logging
@@ -28,6 +27,7 @@ from ..code_sandbox import shell, get_workspace, WORKSPACE
 from ..core_tools.subagent import cancel_active_subagents
 from ..config import DEFAULT_PROVIDER
 from ..providers import provider_manager
+from ..task_instruction_display import user_message_for_frontend
 from ..tool_definitions import (
     NATIVE_TOOL_DEFINITIONS, SUBAGENT_READ_ONLY_TOOLS, GAP_INVESTIGATION_TOOLS,
     MEMORY_MAINTENANCE_TOOLS, memory_filter_tools,
@@ -116,21 +116,6 @@ def get_filtered_tools(mode: str):
     return memory_filter_tools(defs)
 
 
-# Must match gateway.conversation_store / frontend streamUtils markers.
-# Duplicated here so the agent process does not import the conversation store.
-_TASK_INSTRUCTION_BLOCK_RE = re.compile(
-    r"\[TASK INSTRUCTION\].*?\[/TASK INSTRUCTION\]\s*",
-    re.DOTALL,
-)
-
-
-def _visible_user_content(content: Any) -> Any:
-    """Return user-bubble text with the internal task-instruction wrapper removed."""
-    if not isinstance(content, str) or "[TASK INSTRUCTION]" not in content:
-        return content
-    return _TASK_INSTRUCTION_BLOCK_RE.sub("", content).strip()
-
-
 def convert_messages_for_frontend(messages: list) -> list:
     frontend_messages = []
     i = 0
@@ -142,10 +127,7 @@ def convert_messages_for_frontend(messages: list) -> list:
             i += 1
             continue
         elif role == "user":
-            frontend_messages.append({
-                "role": "user",
-                "content": _visible_user_content(msg.get("content", "")),
-            })
+            frontend_messages.append(user_message_for_frontend(msg.get("content", "")))
             i += 1
         elif role == "assistant":
             activities = []

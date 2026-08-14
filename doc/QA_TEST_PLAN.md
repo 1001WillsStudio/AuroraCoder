@@ -50,7 +50,7 @@ Legend: ✅ done · 🟡 next · ⬜ later.
 | `src.training_log` | ✅ | JSONL row shape, toggle, never-raise IO safety, flag loader corruption tolerance |
 | `memory.ops.prompts` | 🟡 | pure templates — cheap, next |
 | `memory.store` / `schema` | 🟡 | extend existing layer1 (migrations, embedding-null paths) |
-| `gateway.conversation_store` | 🟡 | task-instruction strip/title + frontend-message sanitizer (`test_task_instruction_display.py`); CRUD still ⬜ |
+| `gateway.conversation_store` | 🟡 | task-instruction strip/title + chip field via `src.task_instruction_display` (`test_task_instruction_display.py`); CRUD still ⬜ |
 | `gateway.settings_store` | ⬜ | obfuscation round-trip, missing-file defaults |
 
 ### Side-effecting (subprocess / FS / network)
@@ -75,7 +75,7 @@ Legend: ✅ done · 🟡 next · ⬜ later.
 | `gateway.routes` / `api` | ⬜ | `TestClient` per endpoint, **auth** via `ACCESS_PASSWORD` |
 | `gateway.provider_registry` | ⬜ | lookup, model metadata, live-list fetch mocked |
 | `gateway.workspace` | ⬜ | git push behind `GITHUB_TOKEN` (mock; skip when absent) |
-| `src.web_api.app` | 🟡 | `convert_messages_for_frontend` strips task-instruction wrappers from user bubbles (`test_task_instruction_display.py`); app wiring still ⬜ |
+| `src.web_api.app` | 🟡 | user-bubble conversion uses `user_message_for_frontend` (chip field; `test_task_instruction_display.py`); app wiring still ⬜ |
 | `src.main_flow` / `core_tools.subagent` | ⬜ | inject `FakeLLMClient` + fake tool_executor |
 
 ### Frontend (`frontend/`, `mobile/`)

@@ -135,6 +135,12 @@ function ChatMessage({ message, msgIdx, isLatest, isStreaming, onRetry, onStopTo
         )}
         {isUser ? (
           <>
+            {message.taskInstruction && (
+              <div className="task-instruction-chip" role="note">
+                <span className="task-instruction-chip-label">{t('chat.taskInstructionChip')}</span>
+                <span className="task-instruction-chip-text">{message.taskInstruction}</span>
+              </div>
+            )}
             <div className="user-message-row">
               <div className="message-text">
                 <p>{message.content}</p>

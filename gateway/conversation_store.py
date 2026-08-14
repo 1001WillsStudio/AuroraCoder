@@ -10,7 +10,6 @@ Thread-safe: all public methods acquire self._lock before mutating state.
 
 import json
 import os
-import re
 import uuid
 import threading
 import tempfile
@@ -19,20 +18,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
+from src.task_instruction_display import (
+    TASK_INSTRUCTION_START,
+    sanitize_frontend_messages,
+    strip_task_instruction,
+)
+
 logger = logging.getLogger(__name__)
 
-# Distinctive markers for task instruction blocks injected by the frontend.
-# Real users will never type these, so stripping is reliable and does not
-# affect the agent's behaviour (the markers flow to the LLM as natural text).
-TASK_INSTRUCTION_START = "[TASK INSTRUCTION]"
-TASK_INSTRUCTION_END = "[/TASK INSTRUCTION]"
-
-# Regex that removes a task-instruction block (any content between the
-# start/end markers, including newlines) and the blank line that follows it.
-_TASK_BLOCK_RE = re.compile(
-    re.escape(TASK_INSTRUCTION_START) + r".*?" + re.escape(TASK_INSTRUCTION_END) + r"\s*",
-    re.DOTALL,
-)
 
 def _default_storage_dir() -> Path:
     if os.environ.get("AURORACODER_DOCKER", "0") == "1":
@@ -49,31 +42,6 @@ TERMINAL_STATUSES = frozenset({
 })
 
 TITLE_MAX_LENGTH = 100
-
-
-def strip_task_instruction(content: str) -> str:
-    """Remove a task instruction marker block and trailing whitespace from *content*.
-
-    Returns the cleaned string.  If no markers are present the input is
-    returned unchanged (apart from leading/trailing whitespace).
-    """
-    return _TASK_BLOCK_RE.sub("", content).strip()
-
-
-def sanitize_frontend_messages(messages: List[Dict]) -> List[Dict]:
-    """Strip task-instruction wrappers from user bubbles in a frontend message list.
-
-    The markers are an internal transport so the model sees the instruction;
-    they must never appear in the transcript.  Mutates *messages* in place
-    and returns the same list.
-    """
-    for msg in messages:
-        if not isinstance(msg, dict) or msg.get("role") != "user":
-            continue
-        content = msg.get("content")
-        if isinstance(content, str) and TASK_INSTRUCTION_START in content:
-            msg["content"] = strip_task_instruction(content)
-    return messages
 
 
 def _extract_title(messages: List[Dict]) -> str:
