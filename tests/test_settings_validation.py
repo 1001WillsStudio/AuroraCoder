@@ -1,13 +1,11 @@
-"""Regression tests for Settings-panel custom-provider validation.
+"""Regression: Save Settings must not demand a re-typed custom-provider key.
 
-The Settings UI never sees real API keys. GET /api/settings returns
-``api_key: true`` for a stored custom-provider key; the panel blanks the
-input and sets ``_key_configured``. Save used to treat that empty override
-as missing, show "API key required", and skip PUT /api/settings.
+Bug: a provider that already has a stored API key shows an empty field
+(the real secret is never sent to the browser). Save used to treat that
+empty field as "API key required" and refuse to save.
 
-The helper under test is ``frontend/src/utils/settingsValidation.js``.
-There is no JS runner in this suite, so the predicate is mirrored here
-and the JS source is locked to the same conditions.
+``frontend/src/utils/settingsValidation.js`` is the check the panel runs.
+This file mirrors that check and also asserts the panel still calls it.
 """
 from __future__ import annotations
 

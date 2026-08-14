@@ -1,11 +1,13 @@
 /**
- * Client-side settings validation (pure — no React, no I/O).
+ * Settings → Save checks for custom LLM providers.
  *
- * GET /api/settings never returns real secrets. A configured custom-provider
- * key arrives as `api_key: true`; the panel blanks the input and sets
- * `_key_configured` so the user can override later. Save must treat that
- * stored key as present — otherwise an unchanged form is rejected with
- * "API key required" and PUT /api/settings is never sent.
+ * What this solves: clicking Save with no edits used to fail with
+ * "API key required" on a provider whose key was already stored. The
+ * server never sends the real secret back (only "yes, a key exists"),
+ * so the input is empty on purpose. This helper treats that stored key
+ * as present so other settings can be saved without re-typing the key.
+ *
+ * A newly added provider with a blank key is still rejected.
  */
 
 /** True when the user typed a key, or a key is already stored server-side. */

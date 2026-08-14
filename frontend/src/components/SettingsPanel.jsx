@@ -236,6 +236,9 @@ export default function SettingsPanel({ isOpen, onClose }) {
   }
 
   // ── Validation ──────────────────────────────────────────────────────────
+  // Stored custom-provider keys are shown as an empty field (placeholder:
+  // "already set"). That empty field is not missing — reject only a brand-new
+  // provider with no key. Otherwise Save is blocked and nothing is persisted.
   const validate = () => {
     const errors = validateCustomProviders(settings?.custom_providers, {
       nameRequired: t('msg.nameRequired'),
