@@ -460,7 +460,7 @@ generate_chat_responses_stream_native(
 
 ### Gateway Layer
 
-- `api.py` — FastAPI app factory with CORS middleware. `mount_static_assets()` mounts only the desktop SPA at `/`. The experimental mobile web app is served on demand (`/m` → `/mobile/`) by `OnDemandMobileMiddleware` so it has no route-table impact on the desktop WebUI.
+- `api.py` — FastAPI app factory with CORS middleware. `mount_static_assets()` mounts only the desktop SPA at `/`. Experimental mobile is a 404 fallback on that mount (`/m` → `/mobile/`) so it is up on demand and does not wrap the desktop/API/SSE stack.
 - `routes.py` — All route handlers: chat, continue, conversations, files, settings, health
 - `streaming.py` — SSE stream registration, event queue management, keepalive, cancellation
 - `conversation_store.py` — File-backed store with thread-safe atomic writes and index management
@@ -586,7 +586,7 @@ Test files in `tests/`:
 - `test_edit_file_edge_cases.py` — Edit file matching edge cases
 - `test_streaming_race.py` — SSE streaming race condition tests
 - `test_mergePanelFiles.mjs` — Frontend panel merging tests
-- `test_mobile_routes.py` — `/m` is served on demand; desktop `Mount("/")` stays the only static mount
+- `test_mobile_routes.py` — `/m` is a desktop-miss fallback; no mobile mount or app middleware
 
 ---
 

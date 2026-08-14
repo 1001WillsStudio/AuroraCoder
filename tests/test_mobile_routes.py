@@ -5,9 +5,10 @@ and is mounted at ``/``. ``StaticFiles(html=True)`` then looks up a file named
 ``m``, misses, and FastAPI returns ``{"detail":"Not Found"}`` — the exact body
 the explorer agent saw.
 
-Mobile is experimental and must stay off the desktop route table: these tests
+Mobile is experimental and must stay off the desktop request path: these tests
 rebuild the production layout in tmp dirs and lock (1) ``/m`` works on demand
-and (2) the desktop ``Mount("/")`` is the only static mount.
+after a desktop miss and (2) desktop routing is otherwise unchanged — no extra
+mount, no app middleware.
 """
 from __future__ import annotations
 
@@ -15,9 +16,10 @@ from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
 
-from gateway.api import OnDemandMobileMiddleware, mount_static_assets
+from gateway.api import DesktopStaticFiles, mount_static_assets
 
 
 def _write_spa(root: Path, marker: str) -> Path:
@@ -50,12 +52,10 @@ def _mounted_names(app: FastAPI) -> list[str]:
     return [name for r in app.routes if (name := getattr(r, "name", None))]
 
 
-def _on_demand_middleware(app: FastAPI) -> OnDemandMobileMiddleware | None:
-    current = app.middleware_stack
-    while current is not None:
-        if isinstance(current, OnDemandMobileMiddleware):
-            return current
-        current = getattr(current, "app", None)
+def _frontend_static(app: FastAPI) -> StaticFiles | None:
+    for route in app.routes:
+        if getattr(route, "name", None) == "frontend":
+            return route.app
     return None
 
 
@@ -141,7 +141,7 @@ def test_desktop_is_the_only_static_mount(both_spas):
 
 
 def test_desktop_unknown_path_is_not_served_as_mobile(both_spas):
-    """A non-/m path must not be intercepted by the on-demand mobile wrapper."""
+    """A non-/m desktop miss must not be served as mobile."""
     frontend, mobile = both_spas
     client = _client_for(frontend, mobile)
 
@@ -176,23 +176,31 @@ def test_desktop_api_route_unaffected(both_spas):
     assert "DESKTOP-SPA" in client.get("/").text
 
 
+def test_no_mobile_middleware_on_the_app(both_spas):
+    """Review: mobile must not wrap the desktop/API/SSE stack."""
+    frontend, mobile = both_spas
+    app = FastAPI()
+    mount_static_assets(app, frontend_dir=frontend, mobile_dir=mobile)
+    assert app.user_middleware == []
+
+
 def test_mobile_files_stay_unbuilt_until_mobile_path(both_spas):
     """On demand: a desktop hit must not construct mobile StaticFiles."""
     frontend, mobile = both_spas
     app = FastAPI()
     mount_static_assets(app, frontend_dir=frontend, mobile_dir=mobile)
     client = TestClient(app, follow_redirects=False)
+    spa = _frontend_static(app)
+    assert isinstance(spa, DesktopStaticFiles)
 
     client.get("/")
-    mw = _on_demand_middleware(app)
-    assert mw is not None
-    assert mw._static is None
+    assert spa._mobile is None
 
     client.get("/m")
-    assert mw._static is None
+    assert spa._mobile is None
 
     client.get("/mobile/")
-    assert mw._static is not None
+    assert spa._mobile is not None
 
 
 def test_desktop_root_identical_with_or_without_mobile(both_spas):
@@ -212,6 +220,21 @@ def test_desktop_root_identical_with_or_without_mobile(both_spas):
     assert with_mobile.headers["content-type"] == without_mobile.headers["content-type"]
 
 
+def test_m_works_when_frontend_dist_is_missing(tmp_path: Path):
+    """Unbuilt desktop: /m is a normal route. No desktop WebUI to affect."""
+    mobile = _write_spa(tmp_path / "mobile", "MOBILE-WEB-APP")
+    missing = tmp_path / "no-frontend"
+    app = FastAPI()
+    mount_static_assets(app, frontend_dir=missing, mobile_dir=mobile)
+    client = TestClient(app, follow_redirects=True)
+
+    assert app.user_middleware == []
+    response = client.get("/m")
+    assert response.status_code == 200
+    assert "MOBILE-WEB-APP" in response.text
+    assert '{"detail":"Not Found"}' not in response.text
+
+
 def test_desktop_only_when_mobile_dir_missing(tmp_path: Path):
     frontend = _write_spa(tmp_path / "frontend", "DESKTOP-SPA")
     missing = tmp_path / "no-mobile"
@@ -221,7 +244,9 @@ def test_desktop_only_when_mobile_dir_missing(tmp_path: Path):
 
     assert "frontend" in _mounted_names(app)
     assert "mobile" not in _mounted_names(app)
-    assert not any(m.cls is OnDemandMobileMiddleware for m in app.user_middleware)
+    assert app.user_middleware == []
+    assert isinstance(_frontend_static(app), StaticFiles)
+    assert not isinstance(_frontend_static(app), DesktopStaticFiles)
 
     response = client.get("/")
     assert response.status_code == 200
