@@ -24,6 +24,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.types import Receive, Scope, Send
 
 from pydantic import BaseModel
 
@@ -267,8 +269,56 @@ _DEFAULT_FRONTEND_DIR = _REPO_ROOT / "frontend" / "dist"
 _DEFAULT_MOBILE_DIR = _REPO_ROOT / "mobile"
 
 
-async def _mobile_shortcut():
-    return RedirectResponse(url="/mobile/")
+class OnDemandMobileMiddleware:
+    """Serve the experimental mobile web app only when it is requested.
+
+    Desktop routing is unchanged: this is a pure ASGI prefix check, not a
+    ``Mount`` in front of the SPA. Non-``/m`` / ``/mobile`` requests are
+    forwarded with ``await app(scope, receive, send)`` so SSE and the
+    desktop static mount are not wrapped or remounted. Mobile
+    ``StaticFiles`` is constructed on the first ``/mobile`` hit.
+    """
+
+    def __init__(self, app, mobile_dir: str | Path):
+        self.app = app
+        self.mobile_dir = str(mobile_dir)
+        self._static: StaticFiles | None = None
+
+    def _files(self) -> StaticFiles:
+        if self._static is None:
+            self._static = StaticFiles(directory=self.mobile_dir, html=True)
+        return self._static
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+        method = scope.get("method", "GET")
+
+        if path in ("/m", "/m/") and method in ("GET", "HEAD"):
+            response = RedirectResponse(url="/mobile/", status_code=307)
+            await response(scope, receive, send)
+            return
+
+        if (path == "/mobile" or path.startswith("/mobile/")) and method in (
+            "GET",
+            "HEAD",
+        ):
+            rel = path[len("/mobile") :].lstrip("/")
+            try:
+                response = await self._files().get_response(rel, scope)
+            except StarletteHTTPException as exc:
+                response = JSONResponse(
+                    {"detail": exc.detail},
+                    status_code=exc.status_code,
+                    headers=dict(exc.headers) if exc.headers else None,
+                )
+            await response(scope, receive, send)
+            return
+
+        await self.app(scope, receive, send)
 
 
 def mount_static_assets(
@@ -276,27 +326,22 @@ def mount_static_assets(
     frontend_dir: Path | None = None,
     mobile_dir: Path | None = None,
 ) -> None:
-    """Mount the mobile web app and the desktop SPA.
+    """Mount the desktop SPA at ``/``. Mobile is experimental and on-demand.
 
-    ``/m`` and ``/mobile`` must be registered *before* the catch-all
-    frontend mount at ``/``. Starlette matches mounts in registration
-    order; a ``Mount("/")`` registered first swallows ``GET /m`` and
-    FastAPI then returns ``{"detail":"Not Found"}`` — the failure the
-    Settings "Open mobile web app" link produced in production images
-    (where ``frontend/dist`` exists because Docker runs ``npm run build``).
+    The desktop ``Mount("/")`` is registered exactly as before — it is the
+    only static mount — so general WebUI routing is unchanged. ``/m`` and
+    ``/mobile`` are not inserted into the route table (a mount registered
+    ahead of ``/`` would steal those paths from the SPA matcher). They are
+    served by :class:`OnDemandMobileMiddleware` only when requested, which
+    is what Settings "Open mobile web app" does.
+
+    Without this interceptor, ``StaticFiles(html=True)`` at ``/`` looks up
+    a file named ``m``, misses, and FastAPI returns ``{"detail":"Not Found"}``.
     """
     if frontend_dir is None:
         frontend_dir = _DEFAULT_FRONTEND_DIR
     if mobile_dir is None:
         mobile_dir = _DEFAULT_MOBILE_DIR
-
-    if mobile_dir.exists():
-        application.add_api_route("/m", _mobile_shortcut, methods=["GET"])
-        application.mount(
-            "/mobile",
-            StaticFiles(directory=str(mobile_dir), html=True),
-            name="mobile",
-        )
 
     if frontend_dir.exists():
         application.mount(
@@ -304,6 +349,9 @@ def mount_static_assets(
             StaticFiles(directory=str(frontend_dir), html=True),
             name="frontend",
         )
+
+    if mobile_dir.exists():
+        application.add_middleware(OnDemandMobileMiddleware, mobile_dir=str(mobile_dir))
 
 
 mount_static_assets(app)

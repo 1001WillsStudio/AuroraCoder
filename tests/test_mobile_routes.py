@@ -1,12 +1,13 @@
 """Regression: Settings 'Open mobile web app' (href /m) must serve the mobile UI.
 
 In the production image, ``frontend/dist`` exists (Docker runs ``npm run build``)
-and used to be mounted at ``/`` *before* ``/m`` and ``/mobile``. Starlette's
-catch-all ``Mount("/")`` then swallowed those paths and FastAPI returned
-``{"detail":"Not Found"}`` — the exact body the explorer agent saw.
+and is mounted at ``/``. ``StaticFiles(html=True)`` then looks up a file named
+``m``, misses, and FastAPI returns ``{"detail":"Not Found"}`` — the exact body
+the explorer agent saw.
 
-These tests rebuild that production layout in tmp dirs (no network, no
-real frontend build) and lock the mount-order contract.
+Mobile is experimental and must stay off the desktop route table: these tests
+rebuild the production layout in tmp dirs and lock (1) ``/m`` works on demand
+and (2) the desktop ``Mount("/")`` is the only static mount.
 """
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from gateway.api import mount_static_assets
+from gateway.api import OnDemandMobileMiddleware, mount_static_assets
 
 
 def _write_spa(root: Path, marker: str) -> Path:
@@ -31,6 +32,8 @@ def _write_spa(root: Path, marker: str) -> Path:
 @pytest.fixture
 def both_spas(tmp_path: Path) -> tuple[Path, Path]:
     frontend = _write_spa(tmp_path / "frontend", "DESKTOP-SPA")
+    (frontend / "assets").mkdir()
+    (frontend / "assets" / "app.js").write_text("DESKTOP-ASSET", encoding="utf-8")
     mobile = _write_spa(tmp_path / "mobile", "MOBILE-WEB-APP")
     (mobile / "css").mkdir()
     (mobile / "css" / "mobile.css").write_text("/* mobile */", encoding="utf-8")
@@ -41,6 +44,19 @@ def _client_for(frontend: Path, mobile: Path) -> TestClient:
     app = FastAPI()
     mount_static_assets(app, frontend_dir=frontend, mobile_dir=mobile)
     return TestClient(app, follow_redirects=False)
+
+
+def _mounted_names(app: FastAPI) -> list[str]:
+    return [name for r in app.routes if (name := getattr(r, "name", None))]
+
+
+def _on_demand_middleware(app: FastAPI) -> OnDemandMobileMiddleware | None:
+    current = app.middleware_stack
+    while current is not None:
+        if isinstance(current, OnDemandMobileMiddleware):
+            return current
+        current = getattr(current, "app", None)
+    return None
 
 
 def test_m_redirects_to_mobile_when_frontend_dist_exists(both_spas):
@@ -103,6 +119,109 @@ def test_mobile_static_asset_is_reachable(both_spas):
 def test_desktop_spa_still_served_at_root(both_spas):
     frontend, mobile = both_spas
     client = _client_for(frontend, mobile)
+
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "DESKTOP-SPA" in response.text
+    assert "MOBILE-WEB-APP" not in response.text
+
+
+def test_desktop_is_the_only_static_mount(both_spas):
+    """Review: mobile must not sit in the route table in front of the SPA."""
+    frontend, mobile = both_spas
+    app = FastAPI()
+    mount_static_assets(app, frontend_dir=frontend, mobile_dir=mobile)
+
+    names = _mounted_names(app)
+    assert "frontend" in names
+    assert "mobile" not in names
+    assert not any(
+        getattr(r, "path", None) in ("/m", "/mobile") for r in app.routes
+    )
+
+
+def test_desktop_unknown_path_is_not_served_as_mobile(both_spas):
+    """A non-/m path must not be intercepted by the on-demand mobile wrapper."""
+    frontend, mobile = both_spas
+    client = _client_for(frontend, mobile)
+
+    response = client.get("/conversations/abc")
+    assert "MOBILE-WEB-APP" not in response.text
+    assert response.headers.get("location", "") != "/mobile/"
+
+
+def test_desktop_static_asset_is_unchanged(both_spas):
+    frontend, mobile = both_spas
+    client = _client_for(frontend, mobile)
+
+    response = client.get("/assets/app.js")
+    assert response.status_code == 200
+    assert response.text == "DESKTOP-ASSET"
+
+
+def test_desktop_api_route_unaffected(both_spas):
+    frontend, mobile = both_spas
+    app = FastAPI()
+
+    @app.get("/api/health")
+    def health():
+        return {"ok": True}
+
+    mount_static_assets(app, frontend_dir=frontend, mobile_dir=mobile)
+    client = TestClient(app)
+
+    response = client.get("/api/health")
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    assert "DESKTOP-SPA" in client.get("/").text
+
+
+def test_mobile_files_stay_unbuilt_until_mobile_path(both_spas):
+    """On demand: a desktop hit must not construct mobile StaticFiles."""
+    frontend, mobile = both_spas
+    app = FastAPI()
+    mount_static_assets(app, frontend_dir=frontend, mobile_dir=mobile)
+    client = TestClient(app, follow_redirects=False)
+
+    client.get("/")
+    mw = _on_demand_middleware(app)
+    assert mw is not None
+    assert mw._static is None
+
+    client.get("/m")
+    assert mw._static is None
+
+    client.get("/mobile/")
+    assert mw._static is not None
+
+
+def test_desktop_root_identical_with_or_without_mobile(both_spas):
+    """Review: enabling on-demand mobile must not change the desktop `/` response."""
+    frontend, mobile = both_spas
+    missing = mobile.parent / "no-mobile"
+
+    app_with = FastAPI()
+    mount_static_assets(app_with, frontend_dir=frontend, mobile_dir=mobile)
+    app_without = FastAPI()
+    mount_static_assets(app_without, frontend_dir=frontend, mobile_dir=missing)
+
+    with_mobile = TestClient(app_with).get("/")
+    without_mobile = TestClient(app_without).get("/")
+    assert with_mobile.status_code == without_mobile.status_code == 200
+    assert with_mobile.text == without_mobile.text
+    assert with_mobile.headers["content-type"] == without_mobile.headers["content-type"]
+
+
+def test_desktop_only_when_mobile_dir_missing(tmp_path: Path):
+    frontend = _write_spa(tmp_path / "frontend", "DESKTOP-SPA")
+    missing = tmp_path / "no-mobile"
+    app = FastAPI()
+    mount_static_assets(app, frontend_dir=frontend, mobile_dir=missing)
+    client = TestClient(app, follow_redirects=False)
+
+    assert "frontend" in _mounted_names(app)
+    assert "mobile" not in _mounted_names(app)
+    assert not any(m.cls is OnDemandMobileMiddleware for m in app.user_middleware)
 
     response = client.get("/")
     assert response.status_code == 200
