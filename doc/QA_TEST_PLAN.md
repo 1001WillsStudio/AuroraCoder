@@ -85,6 +85,11 @@ msw (reuses the existing Vite config). Prime targets: `utils/streamUtils.js`,
 `hooks/createStreamCallbacks.js`. Extract pure helpers from `SettingsPanel.jsx`
 /`FileTree.jsx`/`ToolActivity.jsx` before component testing. — ⬜ (separate PR recommended).
 
+`frontend/src/utils/settingsValidation.js` is the extracted Settings-panel
+custom-provider validator. `tests/test_settings_validation.py` locks the
+contract that a stored key (`_key_configured` / `api_key: true`) satisfies
+Save so an empty override does not block PUT /api/settings.
+
 ## 4. Coverage gate (target)
 
 ```

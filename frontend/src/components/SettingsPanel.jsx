@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { X, Plus, Trash2, Save, RefreshCw, Shield, Globe, LogOut, ExternalLink, Wrench, ChevronDown, ChevronRight, Search } from 'lucide-react'
 import { getSettings, updateSettings, getProviders, getToolStoreStatus, refreshToolStore, getMemories, deleteMemory } from '../services/api'
 import { isAuthRequired, isAuthenticated, logout as authLogout, clearToken } from '../utils/auth.js'
+import { validateCustomProviders } from '../utils/settingsValidation.js'
 import useLanguage from '../hooks/useLanguage'
 import { LANG_LABELS } from '../i18n/translations'
 import '../styles/settings.css'
@@ -236,12 +237,10 @@ export default function SettingsPanel({ isOpen, onClose }) {
 
   // ── Validation ──────────────────────────────────────────────────────────
   const validate = () => {
-    const errors = {};
-    (settings?.custom_providers || []).forEach((cp, i) => {
-      const b = `custom-${i}`
-      if (!cp.name?.trim()) errors[b] = t('msg.nameRequired')
-      if (!cp.base_url?.trim()) errors[b] = errors[b] || t('msg.baseUrlRequired')
-      if (!cp.api_key?.trim()) errors[b] = errors[b] || t('msg.apiKeyRequired')
+    const errors = validateCustomProviders(settings?.custom_providers, {
+      nameRequired: t('msg.nameRequired'),
+      baseUrlRequired: t('msg.baseUrlRequired'),
+      apiKeyRequired: t('msg.apiKeyRequired'),
     })
     setErrorFields(errors)
     return Object.keys(errors).length === 0
