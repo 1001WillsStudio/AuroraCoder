@@ -17,6 +17,68 @@
 @media (max-width: 768px) {
   .sidebar {
     display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(320px, 86vw);
+    flex: none;
+    z-index: 300;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .app.sidebar-open .sidebar {
+    display: flex;
+  }
+
+  .mobile-sidebar-toggle {
+    display: flex;
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    z-index: 310;
+    width: 40px;
+    height: 40px;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+
+  .mobile-sidebar-toggle:hover {
+    background: var(--bg-hover);
+    color: var(--accent-primary);
+    border-color: var(--accent-primary);
+  }
+
+  .app.sidebar-open .mobile-sidebar-toggle {
+    left: calc(min(320px, 86vw) + 8px);
+  }
+
+  .app.sidebar-open .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 290;
+  }
+
+  .main-content {
+    padding-top: 56px;
+  }
+
+  .history-drawer,
+  .task-instructions-drawer {
+    left: 0;
+    z-index: 320;
+  }
+
+  .app.sidebar-open .history-drawer,
+  .app.sidebar-open .task-instructions-drawer {
+    left: min(320px, 86vw);
   }
 
   .messages-container {

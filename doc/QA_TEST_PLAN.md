@@ -85,6 +85,11 @@ msw (reuses the existing Vite config). Prime targets: `utils/streamUtils.js`,
 `hooks/createStreamCallbacks.js`. Extract pure helpers from `SettingsPanel.jsx`
 /`FileTree.jsx`/`ToolActivity.jsx` before component testing. — ⬜ (separate PR recommended).
 
+Hermetic source-contract coverage (no browser):
+| File | Status | Notes |
+|---|---|---|
+| `tests/test_narrow_viewport_sidebar.py` | ✅ | Below 768px the sidebar must stay reachable (visible, or hidden behind a `mobile-sidebar-toggle` drawer). Locks Upload Project / file-tree / download / export. |
+
 ## 4. Coverage gate (target)
 
 ```

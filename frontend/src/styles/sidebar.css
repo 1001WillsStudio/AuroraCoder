@@ -20,6 +20,15 @@
   padding: 16px 8px;
 }
 
+/* Hidden on desktop; shown in the 768px media query. */
+.mobile-sidebar-toggle {
+  display: none;
+}
+
+.sidebar-backdrop {
+  display: none;
+}
+
 
 /* ── Sidebar Header ──────────────────────────────────────────── */
 .sidebar-header {

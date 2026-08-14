@@ -37,7 +37,7 @@ export default function Sidebar({
 }) {
   const { t } = useLanguage()
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" id="workspace-sidebar">
       <div className="sidebar-header">
         <div className="logo">
           <img src="/assets/logo.png" alt="1001 Wills AI Lab" className="logo-image" />

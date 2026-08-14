@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { STATUS } from './constants'
 import { useAutoScroll } from './hooks/useAutoScroll'
-import { RotateCcw, X, ArrowDown } from 'lucide-react'
+import { RotateCcw, X, ArrowDown, Menu } from 'lucide-react'
 import ChatMessage from './components/ChatMessage'
 import ChatInput from './components/ChatInput'
 import LoginScreen from './components/LoginScreen'
@@ -124,6 +124,7 @@ function App() {
   // subagent_event notifications and their originating tool calls.
   const [subagentChildIds, setSubagentChildIds] = useState({})
   const [showSettings, setShowSettings] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [forkWarning, setForkWarning] = useState(null)
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
@@ -241,6 +242,13 @@ function App() {
       document.removeEventListener('keydown', handleKey)
     }
   }, [showTaskInstructions])
+
+  useEffect(() => {
+    if (!sidebarOpen) return
+    function handleKey(e) { if (e.key === 'Escape') setSidebarOpen(false) }
+    document.addEventListener('keydown', handleKey)
+    return () => document.removeEventListener('keydown', handleKey)
+  }, [sidebarOpen])
 
   const { chatContainerRef, resetToFollowing, showScrollButton } = useAutoScroll(messages, isStreaming)
 
@@ -606,7 +614,25 @@ function App() {
   }
 
   return (
-    <div className={`app ${(showCodePanel && editedFiles.length > 0) ? 'code-mode' : ''}`}>
+    <div className={`app ${(showCodePanel && editedFiles.length > 0) ? 'code-mode' : ''} ${sidebarOpen ? 'sidebar-open' : ''}`}>
+      <button
+        type="button"
+        className="mobile-sidebar-toggle"
+        onClick={() => setSidebarOpen(open => !open)}
+        aria-expanded={sidebarOpen}
+        aria-controls="workspace-sidebar"
+        title={sidebarOpen ? t('sidebar.closeMenu') : t('sidebar.openMenu')}
+        aria-label={sidebarOpen ? t('sidebar.closeMenu') : t('sidebar.openMenu')}
+      >
+        {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
+      </button>
+      {sidebarOpen && (
+        <div
+          className="sidebar-backdrop"
+          onClick={() => setSidebarOpen(false)}
+          aria-hidden="true"
+        />
+      )}
       <Sidebar
         theme={theme}
         onToggleTheme={toggleTheme}
