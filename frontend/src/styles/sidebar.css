@@ -70,6 +70,19 @@
   border-color: var(--accent-primary);
 }
 
+/* Phone-only control in main-content; desktop keeps the sidebar visible. */
+.main-content .sidebar-toggle {
+  display: none;
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 5;
+}
+
+.sidebar-backdrop {
+  display: none;
+}
+
 /* ── Logo ────────────────────────────────────────────────────── */
 .logo {
   display: flex;

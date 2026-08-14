@@ -265,15 +265,18 @@ from gateway import routes  # noqa: E402, F401 — registers routes on `app`
 frontend_dir = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 mobile_dir = Path(__file__).resolve().parent.parent / "mobile"
 
-if frontend_dir.exists():
-    app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
-
+# /m and /mobile must be registered BEFORE the SPA catch-all at "/".
+# Starlette matches mounts in order; a "/" StaticFiles mount would otherwise
+# swallow GET /m (404 in the built image) and /mobile/*.
 if mobile_dir.exists():
-    app.mount("/mobile", StaticFiles(directory=str(mobile_dir), html=True), name="mobile")
-
     @app.get("/m")
     async def mobile_shortcut():
         return RedirectResponse(url="/mobile/")
+
+    app.mount("/mobile", StaticFiles(directory=str(mobile_dir), html=True), name="mobile")
+
+if frontend_dir.exists():
+    app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
 
 
 # ============================================================================

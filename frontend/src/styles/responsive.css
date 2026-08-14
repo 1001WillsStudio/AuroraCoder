@@ -17,10 +17,46 @@
 @media (max-width: 768px) {
   .sidebar {
     display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(320px, 86vw);
+    flex: none;
+    z-index: 400;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .app.sidebar-open .sidebar {
+    display: flex;
+  }
+
+  .main-content .sidebar-toggle {
+    display: flex;
+  }
+
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    border: none;
+    padding: 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 350;
+    cursor: pointer;
+  }
+
+  .history-drawer,
+  .task-instructions-drawer,
+  .app.sidebar-collapsed .history-drawer,
+  .app.sidebar-collapsed .task-instructions-drawer {
+    left: 0;
+    width: min(320px, 86vw);
+    z-index: 450;
   }
 
   .messages-container {
-    padding: 16px;
+    padding: 56px 16px 16px;
   }
 
   .message {
@@ -33,12 +69,34 @@
     height: 32px;
   }
 
+  .welcome-screen {
+    justify-content: flex-start;
+    height: auto;
+    min-height: 100%;
+    padding: 56px 16px 16px;
+  }
+
+  .welcome-header {
+    margin-bottom: 20px;
+  }
+
   .welcome-header h1 {
     font-size: 2rem;
   }
 
+  .welcome-logo {
+    width: 64px;
+    height: 64px;
+    margin-bottom: 12px;
+  }
+
   .examples-grid {
     grid-template-columns: 1fr;
+    margin-bottom: 16px;
+  }
+
+  .example-card {
+    padding: 12px;
   }
 
   .input-container {

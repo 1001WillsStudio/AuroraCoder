@@ -85,6 +85,11 @@ msw (reuses the existing Vite config). Prime targets: `utils/streamUtils.js`,
 `hooks/createStreamCallbacks.js`. Extract pure helpers from `SettingsPanel.jsx`
 /`FileTree.jsx`/`ToolActivity.jsx` before component testing. — ⬜ (separate PR recommended).
 
+Hermetic source-contract coverage (no browser): `tests/test_mobile_sidebar_reachable.py`
+locks the phone-width sidebar drawer (`.sidebar-toggle` in `App.jsx`, open-state
+rule in `responsive.css`) and that gateway `GET /m` is registered before the SPA
+catch-all mount. — ✅
+
 ## 4. Coverage gate (target)
 
 ```
