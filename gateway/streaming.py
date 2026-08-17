@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from src.config import WORKSPACE_DIR, MAX_FILE_READ_SIZE
-from gateway.conversation_store import store
+from gateway.conversation_store import store, sanitize_frontend_messages
 from gateway.workspace import (
     file_snapshots,
     mark_file_touched,
@@ -546,6 +546,7 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                             stream.status = edata.get("status", stream.status)
                             stream.provider = edata.get("provider", stream.provider)
                             if edata.get("messages"):
+                                edata["messages"] = sanitize_frontend_messages(edata["messages"])
                                 stream.latest_frontend_messages = edata["messages"]
 
 

@@ -143,6 +143,7 @@ const LANG = {
     // ── Chat message ───────────────────────────────────────────────
     'chat.thinking': 'Thinking…',
     'chat.reasoningShort': 'Reasoning',
+    'chat.taskInstructionChip': 'Task instruction',
     'chat.retryRequest': 'Retry Request',
     'chat.tryAgain': 'Try Again',
     'chat.timeoutHint': 'The request timed out. Click to retry.',
@@ -404,6 +405,7 @@ const LANG = {
     // ── Chat message ───────────────────────────────────────────────
     'chat.thinking': '思考中…',
     'chat.reasoningShort': '推理',
+    'chat.taskInstructionChip': '任务指令',
     'chat.retryRequest': '重试请求',
     'chat.tryAgain': '再试一次',
     'chat.timeoutHint': '请求超时。点击重试。',
