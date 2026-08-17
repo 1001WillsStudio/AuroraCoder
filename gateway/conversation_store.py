@@ -10,7 +10,6 @@ Thread-safe: all public methods acquire self._lock before mutating state.
 
 import json
 import os
-import re
 import uuid
 import threading
 import tempfile
@@ -19,20 +18,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
+from gateway.task_instruction_display import (
+    TASK_INSTRUCTION_START,
+    sanitize_frontend_messages,
+    strip_task_instruction,
+    user_message_for_frontend,
+)
+
 logger = logging.getLogger(__name__)
 
-# Distinctive markers for task instruction blocks injected by the frontend.
-# Real users will never type these, so stripping is reliable and does not
-# affect the agent's behaviour (the markers flow to the LLM as natural text).
-TASK_INSTRUCTION_START = "[TASK INSTRUCTION]"
-TASK_INSTRUCTION_END = "[/TASK INSTRUCTION]"
-
-# Regex that removes a task-instruction block (any content between the
-# start/end markers, including newlines) and the blank line that follows it.
-_TASK_BLOCK_RE = re.compile(
-    re.escape(TASK_INSTRUCTION_START) + r".*?" + re.escape(TASK_INSTRUCTION_END) + r"\s*",
-    re.DOTALL,
-)
 
 def _default_storage_dir() -> Path:
     if os.environ.get("AURORACODER_DOCKER", "0") == "1":
@@ -49,15 +43,6 @@ TERMINAL_STATUSES = frozenset({
 })
 
 TITLE_MAX_LENGTH = 100
-
-
-def strip_task_instruction(content: str) -> str:
-    """Remove a task instruction marker block and trailing whitespace from *content*.
-
-    Returns the cleaned string.  If no markers are present the input is
-    returned unchanged (apart from leading/trailing whitespace).
-    """
-    return _TASK_BLOCK_RE.sub("", content).strip()
 
 
 def _extract_title(messages: List[Dict]) -> str:
@@ -472,6 +457,7 @@ class ConversationStore:
         stays time-consistent across both files.
         """
         now = datetime.now(timezone.utc).isoformat()
+        sanitize_frontend_messages(messages)
         for msg in messages:
             if isinstance(msg, dict) and not msg.get("ts"):
                 msg["ts"] = now
@@ -487,6 +473,21 @@ class ConversationStore:
 
         _atomic_write_json(self._frontend_messages_path(conversation_id), messages)
 
+    def seed_frontend_user_message(self, conversation_id: str, raw_content: str) -> None:
+        """Persist a user bubble before the first SSE event.
+
+        Strips the transport wrapper from the visible text and keeps the
+        inner prompt on ``taskInstruction``, so a reload still shows what
+        repeating command was applied.
+        """
+        new_user_msg = user_message_for_frontend(raw_content)
+        existing = self.get_frontend_messages(conversation_id)
+        if existing:
+            existing.append(new_user_msg)
+            self.save_frontend_messages(conversation_id, existing)
+        else:
+            self.save_frontend_messages(conversation_id, [new_user_msg])
+
     def get_frontend_messages(self, conversation_id: str) -> List[Dict]:
         """Read frontend-formatted messages, returning [] if not persisted."""
         path = self._frontend_messages_path(conversation_id)
@@ -494,7 +495,10 @@ class ConversationStore:
             return []
         try:
             with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                loaded = json.load(f)
+            if isinstance(loaded, list):
+                return sanitize_frontend_messages(loaded)
+            return loaded
         except (json.JSONDecodeError, OSError) as e:
             logger.error(f"Failed to read frontend messages for {conversation_id}: {e}")
             return []

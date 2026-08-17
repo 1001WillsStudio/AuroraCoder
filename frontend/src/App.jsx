@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { STATUS } from './constants'
 import { useAutoScroll } from './hooks/useAutoScroll'
-import { RotateCcw, X, ArrowDown } from 'lucide-react'
+import { RotateCcw, X, ArrowDown, Menu } from 'lucide-react'
 import ChatMessage from './components/ChatMessage'
 import ChatInput from './components/ChatInput'
 import LoginScreen from './components/LoginScreen'
@@ -124,6 +124,7 @@ function App() {
   // subagent_event notifications and their originating tool calls.
   const [subagentChildIds, setSubagentChildIds] = useState({})
   const [showSettings, setShowSettings] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [forkWarning, setForkWarning] = useState(null)
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
@@ -142,6 +143,15 @@ function App() {
     document.documentElement.setAttribute('data-theme', theme)
     localStorage.setItem('theme', theme)
   }, [theme])
+
+  useEffect(() => {
+    if (!sidebarOpen) return undefined
+    const onKey = (e) => {
+      if (e.key === 'Escape') setSidebarOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [sidebarOpen])
 
   // ── Load task instruction from server (not localStorage — follows the instance, not the port) ──
   useEffect(() => {
@@ -270,8 +280,11 @@ function App() {
     setActiveConvoWarning(false)
 
     const userMessageText = messageToSend
-    const apiMessage = (systemPrompt.trim() && !conversationId)
-      ? `${TASK_MARKER_START}\n${systemPrompt.trim()}\n${TASK_MARKER_END}\n\n${userMessageText}`
+    const appliedInstruction = (systemPrompt.trim() && !conversationId)
+      ? systemPrompt.trim()
+      : ''
+    const apiMessage = appliedInstruction
+      ? `${TASK_MARKER_START}\n${appliedInstruction}\n${TASK_MARKER_END}\n\n${userMessageText}`
       : userMessageText
 
     const isInterrupt = interruptMessages !== null && interruptMessages.length > 0
@@ -303,7 +316,11 @@ function App() {
     }
 
     log('setState batch (messages, streaming, etc.)')
-    setMessages(prev => [...prev, { role: 'user', content: userMessageText }, { role: 'assistant', content: '' }])
+    const userBubble = { role: 'user', content: userMessageText }
+    if (appliedInstruction) {
+      userBubble.taskInstruction = appliedInstruction
+    }
+    setMessages(prev => [...prev, userBubble, { role: 'assistant', content: '' }])
     setInputValue('')
     setIsStreaming(true)
     setSseReceived(false)
@@ -451,6 +468,7 @@ function App() {
   const handleForkDismiss = useCallback(() => setForkWarning(null), [])
 
     const handleClear = () => {
+    setSidebarOpen(false)
     if (inputValue.trim()) draftInputsRef.current.set(conversationId ?? '__new__', inputValue)
     if (abortControllerRef.current) abortControllerRef.current.abort()
     setMessages([])
@@ -516,6 +534,7 @@ function App() {
   }, [lastRequest, isStreaming, selectedProvider])
 
   const handleLoadConversation = useCallback(async (targetConversationId) => {
+    setSidebarOpen(false)
     if (inputValueRef.current.trim()) draftInputsRef.current.set(conversationId ?? '__new__', inputValueRef.current)
     if (abortControllerRef.current) {
       abortControllerRef.current.abort()
@@ -606,7 +625,28 @@ function App() {
   }
 
   return (
-    <div className={`app ${(showCodePanel && editedFiles.length > 0) ? 'code-mode' : ''}`}>
+    <div className={`app ${(showCodePanel && editedFiles.length > 0) ? 'code-mode' : ''}${sidebarOpen ? ' sidebar-open' : ''}`}>
+      <header className="mobile-header">
+        <button
+          type="button"
+          className="sidebar-toggle"
+          onClick={() => setSidebarOpen(open => !open)}
+          aria-label={sidebarOpen ? t('sidebar.closeMenu') : t('sidebar.openMenu')}
+          aria-expanded={sidebarOpen}
+          aria-controls="app-sidebar"
+        >
+          {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
+        </button>
+        <span className="mobile-header-title">AuroraCoder</span>
+      </header>
+      {sidebarOpen && (
+        <button
+          type="button"
+          className="sidebar-backdrop"
+          aria-label={t('sidebar.closeMenu')}
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
       <Sidebar
         theme={theme}
         onToggleTheme={toggleTheme}
@@ -636,7 +676,7 @@ function App() {
         onSelectProvider={(id) => { setSelectedProvider(id); setShowProviderDropdown(false) }}
         showProviderDropdown={showProviderDropdown}
         onToggleProviderDropdown={() => setShowProviderDropdown(!showProviderDropdown)}
-        onOpenSettings={() => setShowSettings(true)}
+        onOpenSettings={() => { setShowSettings(true); setSidebarOpen(false) }}
       />
 
       <main className="main-content">
