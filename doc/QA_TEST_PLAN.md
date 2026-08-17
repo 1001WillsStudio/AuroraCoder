@@ -84,6 +84,7 @@ msw (reuses the existing Vite config). Prime targets: `utils/streamUtils.js`,
 `utils/auth.js`, `services/api.js`, `i18n/translations.js` (key-completeness),
 `hooks/createStreamCallbacks.js`. Extract pure helpers from `SettingsPanel.jsx`
 /`FileTree.jsx`/`ToolActivity.jsx` before component testing. — ⬜ (separate PR recommended).
+The Settings `/m` page is covered in `tests/test_mobile_routes.py`.
 
 | File | Status | Notes |
 |---|---|---|
