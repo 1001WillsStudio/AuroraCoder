@@ -85,6 +85,10 @@ msw (reuses the existing Vite config). Prime targets: `utils/streamUtils.js`,
 `hooks/createStreamCallbacks.js`. Extract pure helpers from `SettingsPanel.jsx`
 /`FileTree.jsx`/`ToolActivity.jsx` before component testing. — ⬜ (separate PR recommended).
 
+| File | Status | Notes |
+|---|---|---|
+| `tests/test_mobile_sidebar_toggle.py` | ✅ | Source-level regression: at `max-width: 768px` the sidebar may stay `display: none` only if App.jsx renders a `.sidebar-toggle` *outside* the aside and `.app.sidebar-open .sidebar` reveals it. Locks the explorer finding that a 375px resize hid New Chat / History / Settings / model with no hamburger. |
+
 ## 4. Coverage gate (target)
 
 ```

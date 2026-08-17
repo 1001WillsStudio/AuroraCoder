@@ -162,6 +162,8 @@ const LANG = {
     'sidebar.selectModel': 'Select Model',
     'sidebar.noProviders': 'No providers available. Add an API key in Settings ⚙',
     'sidebar.thinkingBadge': 'Thinking',
+    'sidebar.openMenu': 'Open menu',
+    'sidebar.closeMenu': 'Close menu',
 
     // ── File tree ──────────────────────────────────────────────────
     'fileTree.workspace': 'Workspace',
@@ -424,6 +426,8 @@ const LANG = {
     'sidebar.selectModel': '选择模型',
     'sidebar.noProviders': '没有可用的提供者。请在设置中添加 API 密钥 ⚙',
     'sidebar.thinkingBadge': '思考',
+    'sidebar.openMenu': '打开菜单',
+    'sidebar.closeMenu': '关闭菜单',
 
     // ── File tree ──────────────────────────────────────────────────
     'fileTree.workspace': '工作区',

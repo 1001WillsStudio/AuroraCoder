@@ -17,6 +17,68 @@
 @media (max-width: 768px) {
   .sidebar {
     display: none;
+    position: fixed;
+    top: 52px;
+    left: 0;
+    height: calc(100% - 52px);
+    width: min(300px, 86vw);
+    flex: none;
+    z-index: 400;
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.3);
+  }
+
+  .app.sidebar-open .sidebar {
+    display: flex;
+  }
+
+  .mobile-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 52px;
+    padding: 0 12px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-subtle);
+    z-index: 450;
+  }
+
+  .mobile-header-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .sidebar-toggle {
+    display: flex;
+  }
+
+  .app.sidebar-open .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    top: 52px;
+    border: none;
+    padding: 0;
+    margin: 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 350;
+    cursor: pointer;
+  }
+
+  .main-content {
+    padding-top: 52px;
+  }
+
+  .history-drawer,
+  .task-instructions-drawer {
+    top: 52px;
+    left: 0;
+    width: 100%;
+    height: calc(100% - 52px);
   }
 
   .messages-container {
