@@ -83,6 +83,7 @@ function CurrentSession({ currentConversationId, conversations, activeIds, onSel
         className={`current-session-main${mainId === currentConversationId ? ' selected' : ''}`}
         onClick={() => onSelect(mainId)}
         title={main.title}
+        data-testid="conversation-item"
       >
         {main.title || t('history.untitled')}
       </button>
@@ -98,6 +99,7 @@ function CurrentSession({ currentConversationId, conversations, activeIds, onSel
                 className={`current-session-child${childActive ? ' active' : ''}${isSelected ? ' selected' : ''}`}
                 onClick={() => onSelect(child.id)}
                 title={child.title}
+                data-testid="conversation-item"
               >
                 <span className="subagent-prefix">↳</span>
                 <span className="current-session-child-title">
@@ -188,6 +190,7 @@ function HistoryDrawer({ conversations, activeIds, currentConversationId, onSele
                 key={conv.id}
                 className={`history-drawer-item${isCurrent ? ' current' : ''}${isSubagent ? ' subagent' : ''}`}
                 onClick={() => { onSelect(conv.id); onClose() }}
+                data-testid="conversation-item"
               >
                 {dotClass && <span className={dotClass} />}
                 <div className="history-drawer-item-body">

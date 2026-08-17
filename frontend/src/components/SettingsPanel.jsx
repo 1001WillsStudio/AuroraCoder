@@ -313,7 +313,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
 
   return (
     <div className="settings-overlay" onClick={onClose}>
-      <div className="settings-modal" onClick={e => e.stopPropagation()}>
+      <div className="settings-modal" onClick={e => e.stopPropagation()} data-testid="settings-panel">
         {/* Header */}
         <div className="settings-header">
           <div className="settings-header-top">

@@ -290,7 +290,7 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0 }) => {
   }, [confirmDelete, fetchTree])
 
   return (
-    <div className="file-tree">
+    <div className="file-tree" data-testid="file-tree">
       <div className="file-tree-header">
         <span className="file-tree-title">{t('fileTree.workspace')}</span>
         <button

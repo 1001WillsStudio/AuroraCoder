@@ -16,7 +16,7 @@ function ThinkingBlock({ content, label, isActive, defaultOpen = false }) {
   if (!content) return null
   
   return (
-    <div className="thinking-block">
+    <div className="thinking-block" data-testid={isActive ? 'thinking-indicator' : undefined}>
       <button className="thinking-toggle" onClick={() => setIsOpen(!isOpen)}>
         {isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
         <Brain size={14} className="thinking-icon" />
@@ -116,7 +116,7 @@ function ChatMessage({ message, msgIdx, isLatest, isStreaming, onRetry, onStopTo
   
 
   return (
-    <div className={`message ${isUser ? 'user-message' : 'assistant-message'} ${message.isError ? 'error-message' : ''}`}>
+    <div className={`message ${isUser ? 'user-message' : 'assistant-message'} ${message.isError ? 'error-message' : ''}`} data-testid="chat-message">
       <div className="message-avatar">
         {isUser ? (
           <div className="avatar user-avatar">
@@ -129,7 +129,7 @@ function ChatMessage({ message, msgIdx, isLatest, isStreaming, onRetry, onStopTo
         )}
       </div>
 
-      <div className="message-content">
+      <div className="message-content" data-testid="chat-message-content">
         {senderLabel && (
           <div className="sender-label">{senderLabel}</div>
         )}
@@ -242,7 +242,7 @@ function ChatMessage({ message, msgIdx, isLatest, isStreaming, onRetry, onStopTo
             
             {/* Streaming indicator when no activities and no content */}
             {isStreaming && isLatest && activities.length === 0 && !hasContent && (
-              <div className="typing-indicator">
+              <div className="typing-indicator" data-testid="thinking-indicator">
                 <span></span>
                 <span></span>
                 <span></span>

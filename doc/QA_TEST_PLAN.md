@@ -94,6 +94,10 @@ covers that Save is not blocked for a blank stored or missing key.
 |---|---|---|
 | `tests/test_mobile_sidebar_toggle.py` | ✅ | Source-level regression: at `max-width: 768px` the sidebar may stay `display: none` only if App.jsx renders a `.sidebar-toggle` *outside* the aside and `.app.sidebar-open .sidebar` reveals it. Locks the explorer finding that a 375px resize hid New Chat / History / Settings / model with no hamburger. |
 
+Stable `data-testid` hooks on the desktop SPA (`chat-input`, `chat-send`,
+`chat-message`, …) are locked by `tests/test_frontend_testids.py` (source scan;
+no DOM). The mobile SPA is intentionally excluded.
+
 ## 4. Coverage gate (target)
 
 ```
