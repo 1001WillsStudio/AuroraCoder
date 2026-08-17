@@ -309,12 +309,13 @@ async def resume_stream(conversation_id: str, request: Request):
     except KeyError:
         raise HTTPException(status_code=404, detail="No active or stored conversation")
 
-    frontend_msgs = store.get_frontend_messages(conversation_id)
+    status = conv.get("status", "completed")
+    frontend_msgs = store.frontend_messages_for_status(conversation_id, status)
 
     async def _replay():
         yield _format_sse("done", {
             "conversation_id": conversation_id,
-            "status": conv.get("status", "completed"),
+            "status": status,
             "messages": frontend_msgs or conv.get("messages", []),
             "raw_messages": conv.get("messages", []),
         })
@@ -847,7 +848,9 @@ async def get_conversation(conversation_id: str):
         conv = store.get_conversation(conversation_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    conv["frontend_messages"] = store.get_frontend_messages(conversation_id)
+    conv["frontend_messages"] = store.frontend_messages_for_status(
+        conversation_id, conv.get("status")
+    )
     return conv
 
 

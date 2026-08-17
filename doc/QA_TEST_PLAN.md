@@ -72,6 +72,7 @@ Legend: ✅ done · 🟡 next · ⬜ later.
 | `src.tool_executor` | ✅ | partition batching, same-file guard, concurrency env knob (pure core) |
 | `src.providers` | 🟡 | patch `openai.OpenAI`, stream vs non-stream branching |
 | `gateway.streaming` | 🟡 | expand existing race/abort tests via injected provider |
+| `gateway` error-turn persist | ✅ | `tests/test_error_turn_persist.py` — failed provider turn is stored as an `isError`/`canRetry` frontend bubble; GET hydrates older `status=error` conversations that only have the user message |
 | `gateway.routes` / `api` | ⬜ | `TestClient` per endpoint, **auth** via `ACCESS_PASSWORD` |
 | `gateway.provider_registry` | ⬜ | lookup, model metadata, live-list fetch mocked |
 | `gateway.workspace` | ⬜ | git push behind `GITHUB_TOKEN` (mock; skip when absent) |

@@ -107,6 +107,18 @@ def _run_session_end_memory_ops(conversation_id: str, conv_type: str, status: st
         logger.exception(f"[memory-ops] Session-end distillation failed for {conversation_id[:8]}...")
 
 
+def _error_info_from_stream(stream: ActiveStream) -> Optional[Dict]:
+    """Pull a ``{message, type}`` dict from the last SSE event, if any."""
+    data = stream.latest_event_data
+    if not isinstance(data, dict):
+        return None
+    if stream.latest_event_type == "error":
+        return data
+    if data.get("error"):
+        return {"message": data["error"], "type": data.get("type", "")}
+    return None
+
+
 def _schedule_memory_distillation(conversation_id: str, conv_type: str, status: str) -> None:
     """Enqueue passive distillation for a just-finished conversation.
 
@@ -654,7 +666,13 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                 pass
             if current_status != "continued":
                 store.update_status(cid, persist_status)
-            if stream.latest_frontend_messages:
+            if persist_status == "error":
+                stream.latest_frontend_messages = store.persist_error_turn(
+                    cid,
+                    stream.latest_frontend_messages,
+                    _error_info_from_stream(stream),
+                )
+            elif stream.latest_frontend_messages:
                 store.save_frontend_messages(cid, stream.latest_frontend_messages)
             raw_msgs = stream.latest_event_data.get("raw_messages", []) if stream.latest_event_data else []
             if raw_msgs:

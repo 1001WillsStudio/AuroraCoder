@@ -506,14 +506,20 @@ function App() {
   }, [])
 
   const handleRetry = useCallback(() => {
-    if (!lastRequest || isStreaming) return
+    if (isStreaming) return
+    const lastUser = [...messages].reverse().find(m => m.role === 'user')
+    const message = lastRequest?.message || lastUser?.content
+    if (!message) return
+    const existing = lastRequest
+      ? lastRequest.existingMessages
+      : (rawMessages.length > 0 ? rawMessages : null)
     setMessages(prev => {
       const lastMsg = prev[prev.length - 1]
       if (lastMsg?.isError) return prev.slice(0, -1)
       return prev
     })
-    handleSend(lastRequest.existingMessages, lastRequest.message)
-  }, [lastRequest, isStreaming, selectedProvider])
+    handleSend(existing, message)
+  }, [lastRequest, isStreaming, selectedProvider, messages, rawMessages])
 
   const handleLoadConversation = useCallback(async (targetConversationId) => {
     if (inputValueRef.current.trim()) draftInputsRef.current.set(conversationId ?? '__new__', inputValueRef.current)

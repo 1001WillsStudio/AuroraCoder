@@ -518,6 +518,12 @@ data/                        ← host directory (git-ignored)
     └── YYYY-MM-DD.jsonl     ← daily training data logs
 ```
 
+A turn that ends in provider failure is stored as an assistant message
+with ``isError`` / ``canRetry`` (and conversation ``status=error``) so
+reopening the chat still shows the failure and a Try Again control.
+Without that bubble the store would keep only the seeded user message
+and reload would look like the turn was never answered.
+
 Key implementation files:
 - `gateway/conversation_store.py` — file-backed store (thread-safe, atomic writes)
 - `gateway/routes.py` — all route handlers proxying to the backend
