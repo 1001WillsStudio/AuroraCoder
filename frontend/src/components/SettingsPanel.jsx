@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { X, Plus, Trash2, Save, RefreshCw, Shield, Globe, LogOut, ExternalLink, Wrench, ChevronDown, ChevronRight, Search } from 'lucide-react'
 import { getSettings, updateSettings, getProviders, getToolStoreStatus, refreshToolStore, getMemories, deleteMemory } from '../services/api'
 import { isAuthRequired, isAuthenticated, logout as authLogout, clearToken } from '../utils/auth.js'
-import { encodeStoredApiKey } from '../utils/settingsValidation.js'
+import { encodeStoredApiKey, validateMaxIterations } from '../utils/settingsValidation.js'
 import useLanguage from '../hooks/useLanguage'
 import { LANG_LABELS } from '../i18n/translations'
 import '../styles/settings.css'
@@ -235,7 +235,14 @@ export default function SettingsPanel({ isOpen, onClose }) {
   // No completeness check: a provider without a key cannot discover models
   // and stays unused. encodeStoredApiKey keeps an already-stored secret
   // when the box is empty (the real key is never sent back to the browser).
+  // HTML min/max on number inputs are not checked by this button (no form
+  // submit), so Max Iterations Per Turn is validated here before PUT.
   const handleSave = async () => {
+    const iterErr = validateMaxIterations(settings?.other?.agent?.max_iterations)
+    if (iterErr) {
+      setMessage({ type: 'error', text: t(iterErr) })
+      return
+    }
     setSaving(true); setMessage(null)
     try {
       // Prune empty custom providers

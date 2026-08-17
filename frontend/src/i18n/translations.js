@@ -102,6 +102,7 @@ const LANG = {
 
     // ── Messages ──────────────────────────────────────────────────
     'msg.validationError': 'Fix validation errors before saving',
+    'msg.maxIterationsRange': 'Max Iterations Per Turn must be between 5 and 200',
     'msg.saved': 'Settings saved',
     'msg.saveFailed': 'Save failed',
     'msg.nameRequired': 'Name required',
@@ -364,6 +365,7 @@ const LANG = {
 
     // ── Messages ──────────────────────────────────────────────────
     'msg.validationError': '请先修正验证错误再保存',
+    'msg.maxIterationsRange': '每轮最大迭代次数必须在 5 到 200 之间',
     'msg.saved': '设置已保存',
     'msg.saveFailed': '保存失败',
     'msg.nameRequired': '名称不能为空',

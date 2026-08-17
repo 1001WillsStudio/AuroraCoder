@@ -37,6 +37,15 @@ else:
 SETTINGS_PATH = DATA_DIR / "settings.json"
 _lock = Lock()
 
+# Agent Behavior → Max Iterations Per Turn. Matches the Settings spinbutton
+# (min=5, max=200). HTML constraints are not enforced by the Save button, so
+# the store is the last line of defence against a persisted 0 (or 201, …).
+AGENT_MAX_ITERATIONS_MIN = 5
+AGENT_MAX_ITERATIONS_MAX = 200
+_MAX_ITERATIONS_RANGE_MSG = (
+    f"max_iterations must be between {AGENT_MAX_ITERATIONS_MIN} and {AGENT_MAX_ITERATIONS_MAX}"
+)
+
 
 # ── low-level file I/O ──────────────────────────────────────────────────────
 
@@ -105,7 +114,12 @@ def update_settings(partial: Dict[str, Any]) -> Dict[str, Any]:
     with the currently-stored value before saving.
 
     Returns the full merged dict (with API keys masked).
+
+    Raises:
+        ValueError: if ``other.agent.max_iterations`` is present and not an
+            integer in ``[5, 200]``. The on-disk file is not written.
     """
+    _validate_agent_max_iterations(partial)
     with _lock:
         current = _load_raw()
 
@@ -361,6 +375,70 @@ def get_other_settings() -> Dict[str, Any]:
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────
+
+def _parse_agent_max_iterations(raw: Any) -> Optional[int]:
+    """Return an int if *raw* is a whole number; None if empty; else raise.
+
+    Accepts int, integer-valued float (``5.0``), and digit strings
+    (``"30"``, ``"5.0"``). Rejects bools, non-numeric strings, and
+    non-integer floats. Range is checked by the caller.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        raise ValueError(_MAX_ITERATIONS_RANGE_MSG)
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, float):
+        if raw.is_integer():
+            return int(raw)
+        raise ValueError(_MAX_ITERATIONS_RANGE_MSG)
+    if isinstance(raw, str):
+        s = raw.strip()
+        if s == "":
+            return None
+        try:
+            n = float(s)
+        except ValueError:
+            raise ValueError(_MAX_ITERATIONS_RANGE_MSG) from None
+        if not n.is_integer():
+            raise ValueError(_MAX_ITERATIONS_RANGE_MSG)
+        return int(n)
+    raise ValueError(_MAX_ITERATIONS_RANGE_MSG)
+
+
+def _validate_agent_max_iterations(partial: Dict[str, Any]) -> None:
+    """Raise ValueError if the update sets max_iterations outside [5, 200]."""
+    other = partial.get("other")
+    if not isinstance(other, dict):
+        return
+    agent = other.get("agent")
+    if not isinstance(agent, dict) or "max_iterations" not in agent:
+        return
+    n = _parse_agent_max_iterations(agent["max_iterations"])
+    if n is None:
+        return
+    if n < AGENT_MAX_ITERATIONS_MIN or n > AGENT_MAX_ITERATIONS_MAX:
+        raise ValueError(_MAX_ITERATIONS_RANGE_MSG)
+
+
+def clamp_agent_max_iterations(raw: Any, default: int = 30) -> int:
+    """Coerce a stored/env value to an int in ``[5, 200]``.
+
+    Used when *reading* the setting so a leftover ``0`` (persisted before
+    this range was enforced) cannot stop the agent loop on the first turn.
+    """
+    try:
+        n = _parse_agent_max_iterations(raw)
+    except ValueError:
+        n = None
+    if n is None:
+        try:
+            n = int(default)
+        except (TypeError, ValueError):
+            n = 30
+    return max(AGENT_MAX_ITERATIONS_MIN, min(AGENT_MAX_ITERATIONS_MAX, n))
+
 
 def _deep_merge(base: Dict, updates: Dict) -> None:
     """Recursively merge *updates* into *base* (mutates base)."""
