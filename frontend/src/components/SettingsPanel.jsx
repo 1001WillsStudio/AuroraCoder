@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { X, Plus, Trash2, Save, RefreshCw, Shield, Globe, LogOut, ExternalLink, Wrench, ChevronDown, ChevronRight, Search } from 'lucide-react'
 import { getSettings, updateSettings, getProviders, getToolStoreStatus, refreshToolStore, getMemories, deleteMemory } from '../services/api'
 import { isAuthRequired, isAuthenticated, logout as authLogout, clearToken } from '../utils/auth.js'
+import { encodeStoredApiKey } from '../utils/settingsValidation.js'
 import useLanguage from '../hooks/useLanguage'
 import { LANG_LABELS } from '../i18n/translations'
 import '../styles/settings.css'
@@ -26,7 +27,6 @@ export default function SettingsPanel({ isOpen, onClose }) {
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState(null)
   const [apiKeysConfigured, setApiKeysConfigured] = useState({})
-  const [errorFields, setErrorFields] = useState({})
   const [authEnabled, setAuthEnabled] = useState(null)
   const [isAuthed, setIsAuthed] = useState(isAuthenticated())
   const [toolStoreStatus, setToolStoreStatus] = useState(null)
@@ -134,7 +134,6 @@ export default function SettingsPanel({ isOpen, onClose }) {
       const next = { ...prev.api_keys, [providerId]: value }
       return { ...prev, api_keys: next }
     })
-    setErrorFields(prev => ({ ...prev, [providerId]: false }))
   }
 
   const setOverride = (providerId, field, value) => {
@@ -169,8 +168,6 @@ export default function SettingsPanel({ isOpen, onClose }) {
       const cp = [...(prev.custom_providers || [])]; cp[index] = { ...cp[index], [field]: value }
       return { ...prev, custom_providers: cp }
     })
-    if (field === 'base_url')
-      setErrorFields(prev => ({ ...prev, [`custom-${index}`]: false }))
   }
 
   const removeCustomProvider = (idx) => {
@@ -234,44 +231,38 @@ export default function SettingsPanel({ isOpen, onClose }) {
     return (pm[pid] || []).map(m => typeof m === 'string' ? m : m.id)
   }
 
-  // ── Validation ──────────────────────────────────────────────────────────
-  const validate = () => {
-    const errors = {};
-    (settings?.custom_providers || []).forEach((cp, i) => {
-      const b = `custom-${i}`
-      if (!cp.name?.trim()) errors[b] = t('msg.nameRequired')
-      if (!cp.base_url?.trim()) errors[b] = errors[b] || t('msg.baseUrlRequired')
-      if (!cp.api_key?.trim()) errors[b] = errors[b] || t('msg.apiKeyRequired')
-    })
-    setErrorFields(errors)
-    return Object.keys(errors).length === 0
-  }
-
   // ── Save ────────────────────────────────────────────────────────────────
+  // No completeness check: a provider without a key cannot discover models
+  // and stays unused. encodeStoredApiKey keeps an already-stored secret
+  // when the box is empty (the real key is never sent back to the browser).
   const handleSave = async () => {
-    if (!validate()) { setMessage({ type: 'error', text: t('msg.validationError') }); return }
     setSaving(true); setMessage(null)
     try {
       // Prune empty custom providers
       const cp = (settings.custom_providers || []).filter(c => c.name?.trim() || c.base_url?.trim())
-      // Convert empty-kept keys back to boolean true so backend preserves the real key
       for (const c of cp) {
-        if (c.api_key === '' && c._key_configured) { c.api_key = true; delete c._key_configured }
+        const encoded = encodeStoredApiKey(c.api_key, c._key_configured)
+        if (encoded === undefined) c.api_key = ''
+        else c.api_key = encoded
+        delete c._key_configured
       }
-      // Convert api_keys: empty+configured → true, non-empty → actual value
       const outApiKeys = {}
       for (const [k, v] of Object.entries(settings.api_keys || {})) {
-        if (v === '' && apiKeysConfigured[k]) outApiKeys[k] = true   // keep existing
-        else if (v && v.trim()) outApiKeys[k] = v                     // new key
+        const encoded = encodeStoredApiKey(v, apiKeysConfigured[k])
+        if (encoded !== undefined) outApiKeys[k] = encoded
       }
-      // Prune empty 'other' sub-objects (also convert empty+configured for web_secondary api_key)
+      // Prune empty 'other' sub-objects (same stored-key encoding for api_key fields)
       const prunedOther = {}
       for (const [sec, fields] of Object.entries(settings.other || {})) {
         if (fields && typeof fields === 'object') {
           const clean = {}
           for (const [k, v] of Object.entries(fields)) {
-            if (v === '' && apiKeysConfigured[k]) clean[k] = true    // keep existing
-            else if (v !== '' && v !== null && v !== undefined) clean[k] = v
+            if (typeof v === 'string' || v === true) {
+              const encoded = encodeStoredApiKey(v, apiKeysConfigured[k])
+              if (encoded !== undefined) clean[k] = encoded
+            } else if (v !== '' && v !== null && v !== undefined) {
+              clean[k] = v
+            }
           }
           if (Object.keys(clean).length > 0) prunedOther[sec] = clean
         }
@@ -502,7 +493,6 @@ export default function SettingsPanel({ isOpen, onClose }) {
                     const pid = cp.id
                     const enabled = getEnabledModels(pid)
                     const isExpanded = expandedProvider === pid
-                    const hasError = errorFields[`custom-${ci}`]
                     return (
                       <div key={pid} className="settings-custom-provider">
                         <div className="settings-custom-header">
@@ -515,7 +505,6 @@ export default function SettingsPanel({ isOpen, onClose }) {
                             <Trash2 size={16} />
                           </button>
                         </div>
-                        {hasError && <div className="settings-field-error">{errorFields[`custom-${ci}`]}</div>}
 
                         {/* Display Name */}
                         <div className="settings-field-row">

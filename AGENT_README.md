@@ -38,7 +38,7 @@ frontend/                     ← UI + conversation ownership
     hooks/                    ← useAutoScroll, useFileTracking, useLanguage,
                                  createStreamCallbacks
     services/api.js           ← SSE streaming client
-    utils/                    ← auth, injectToolStop, streamUtils
+    utils/                    ← auth, injectToolStop, streamUtils, settingsValidation
     i18n/                     ← translations.js (27KB), LanguageContext
     styles/                   ← 12 domain CSS files (tokens, layout, messages,
                                  sidebar, settings, tool-activity, code-panel,
@@ -138,7 +138,7 @@ Aurora Coder/
 │   │   ├── hooks/              ← useAutoScroll, useFileTracking, useLanguage,
 │   │   │                          createStreamCallbacks
 │   │   ├── services/api.js     ← SSE streaming client
-│   │   ├── utils/              ← auth, injectToolStop, streamUtils
+│   │   ├── utils/              ← auth, injectToolStop, streamUtils, settingsValidation
 │   │   ├── i18n/               ← translations.js, LanguageContext
 │   │   └── styles/             ← 12 domain CSS files
 │   ├── server.py               ← Python static file server for production
