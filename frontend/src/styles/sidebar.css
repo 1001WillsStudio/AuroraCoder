@@ -53,7 +53,7 @@
 .sidebar-toggle {
   width: 36px;
   height: 36px;
-  display: flex;
+  display: none;
   align-items: center;
   justify-content: center;
   background: var(--bg-tertiary);
@@ -68,6 +68,14 @@
   background: var(--bg-hover);
   color: var(--accent-primary);
   border-color: var(--accent-primary);
+}
+
+.mobile-header {
+  display: none;
+}
+
+.sidebar-backdrop {
+  display: none;
 }
 
 /* ── Logo ────────────────────────────────────────────────────── */

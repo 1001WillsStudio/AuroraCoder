@@ -50,7 +50,7 @@ Legend: ✅ done · 🟡 next · ⬜ later.
 | `src.training_log` | ✅ | JSONL row shape, toggle, never-raise IO safety, flag loader corruption tolerance |
 | `memory.ops.prompts` | 🟡 | pure templates — cheap, next |
 | `memory.store` / `schema` | 🟡 | extend existing layer1 (migrations, embedding-null paths) |
-| `gateway.conversation_store` | ⬜ | SQLite CRUD/migrations in `tmp_path` |
+| `gateway.conversation_store` | 🟡 | task-instruction strip/title + chip field via `gateway.task_instruction_display` (`test_task_instruction_display.py`); CRUD still ⬜ |
 | `gateway.settings_store` | ⬜ | obfuscation round-trip, missing-file defaults |
 
 ### Side-effecting (subprocess / FS / network)
@@ -72,11 +72,11 @@ Legend: ✅ done · 🟡 next · ⬜ later.
 | `src.tool_executor` | ✅ | partition batching, same-file guard, concurrency env knob (pure core) |
 | `src.providers` | 🟡 | patch `openai.OpenAI`, stream vs non-stream branching |
 | `gateway.streaming` | 🟡 | expand existing race/abort tests via injected provider |
-| `gateway` error-turn persist | ✅ | `tests/test_error_turn_persist.py` — failed provider turn is stored as an `isError`/`canRetry` frontend bubble; GET hydrates older `status=error` conversations that only have the user message |
+| `gateway` error-turn persist | ✅ | `tests/test_error_turn_persist.py` — failed provider turn becomes an `isError`/`canRetry` bubble and survives a store round-trip |
 | `gateway.routes` / `api` | ⬜ | `TestClient` per endpoint, **auth** via `ACCESS_PASSWORD` |
 | `gateway.provider_registry` | ⬜ | lookup, model metadata, live-list fetch mocked |
 | `gateway.workspace` | ⬜ | git push behind `GITHUB_TOKEN` (mock; skip when absent) |
-| `src.web_api.app` | ⬜ | FastAPI app wiring smoke |
+| `src.web_api.app` | 🟡 | app wiring still ⬜ |
 | `src.main_flow` / `core_tools.subagent` | ⬜ | inject `FakeLLMClient` + fake tool_executor |
 
 ### Frontend (`frontend/`, `mobile/`)
@@ -85,6 +85,19 @@ msw (reuses the existing Vite config). Prime targets: `utils/streamUtils.js`,
 `utils/auth.js`, `services/api.js`, `i18n/translations.js` (key-completeness),
 `hooks/createStreamCallbacks.js`. Extract pure helpers from `SettingsPanel.jsx`
 /`FileTree.jsx`/`ToolActivity.jsx` before component testing. — ⬜ (separate PR recommended).
+The Settings `/m` page is covered in `tests/test_mobile_routes.py`.
+
+`frontend/src/utils/settingsValidation.js` is ``encodeStoredApiKey`` —
+empty field + stored key → keep. `tests/test_settings_validation.py`
+covers that Save is not blocked for a blank stored or missing key.
+
+| File | Status | Notes |
+|---|---|---|
+| `tests/test_mobile_sidebar_toggle.py` | ✅ | Source-level regression: at `max-width: 768px` the sidebar may stay `display: none` only if App.jsx renders a `.sidebar-toggle` *outside* the aside and `.app.sidebar-open .sidebar` reveals it. Locks the explorer finding that a 375px resize hid New Chat / History / Settings / model with no hamburger. |
+
+Stable `data-testid` hooks on the desktop SPA (`chat-input`, `chat-send`,
+`chat-message`, …) are locked by `tests/test_frontend_testids.py` (source scan;
+no DOM). The mobile SPA is intentionally excluded.
 
 ## 4. Coverage gate (target)
 

@@ -37,7 +37,7 @@ export default function Sidebar({
 }) {
   const { t } = useLanguage()
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" id="app-sidebar">
       <div className="sidebar-header">
         <div className="logo">
           <img src="/assets/logo.png" alt="1001 Wills AI Lab" className="logo-image" />
@@ -55,6 +55,7 @@ export default function Sidebar({
             className="settings-gear-btn"
             onClick={onOpenSettings}
             title={t('sidebar.settingsTitle')}
+            data-testid="settings-button"
           >
             <Settings size={18} />
           </button>
@@ -62,7 +63,7 @@ export default function Sidebar({
       </div>
       
       <div className="sidebar-actions">
-        <button className="new-chat-btn" onClick={onNewChat}>
+        <button className="new-chat-btn" onClick={onNewChat} data-testid="new-conversation">
           <span>{t('sidebar.newChat')}</span>
         </button>
         <button
@@ -112,7 +113,7 @@ export default function Sidebar({
         />
       </div>
 
-      <div className="sidebar-footer">
+      <div className="sidebar-footer" data-testid="conversation-list">
         <ConversationHistory
           currentConversationId={conversationId}
           onSelect={onLoadConversation}
@@ -127,6 +128,7 @@ export default function Sidebar({
               className="provider-dropdown-btn"
               onClick={onToggleProviderDropdown}
               disabled={isStreaming}
+              data-testid="provider-select"
             >
               <span className="provider-name">
                 {providers.find(p => p.id === selectedProvider)?.name || selectedProvider || t('sidebar.selectModel')}

@@ -143,6 +143,7 @@ const LANG = {
     // ── Chat message ───────────────────────────────────────────────
     'chat.thinking': 'Thinking…',
     'chat.reasoningShort': 'Reasoning',
+    'chat.taskInstructionChip': 'Task instruction',
     'chat.retryRequest': 'Retry Request',
     'chat.tryAgain': 'Try Again',
     'chat.timeoutHint': 'The request timed out. Click to retry.',
@@ -161,6 +162,8 @@ const LANG = {
     'sidebar.selectModel': 'Select Model',
     'sidebar.noProviders': 'No providers available. Add an API key in Settings ⚙',
     'sidebar.thinkingBadge': 'Thinking',
+    'sidebar.openMenu': 'Open menu',
+    'sidebar.closeMenu': 'Close menu',
 
     // ── File tree ──────────────────────────────────────────────────
     'fileTree.workspace': 'Workspace',
@@ -404,6 +407,7 @@ const LANG = {
     // ── Chat message ───────────────────────────────────────────────
     'chat.thinking': '思考中…',
     'chat.reasoningShort': '推理',
+    'chat.taskInstructionChip': '任务指令',
     'chat.retryRequest': '重试请求',
     'chat.tryAgain': '再试一次',
     'chat.timeoutHint': '请求超时。点击重试。',
@@ -422,6 +426,8 @@ const LANG = {
     'sidebar.selectModel': '选择模型',
     'sidebar.noProviders': '没有可用的提供者。请在设置中添加 API 密钥 ⚙',
     'sidebar.thinkingBadge': '思考',
+    'sidebar.openMenu': '打开菜单',
+    'sidebar.closeMenu': '关闭菜单',
 
     // ── File tree ──────────────────────────────────────────────────
     'fileTree.workspace': '工作区',

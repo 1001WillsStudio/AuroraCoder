@@ -10,7 +10,7 @@ function ThinkingIndicator({ content }) {
     : content
 
   return (
-    <div className="thinking-indicator">
+    <div className="thinking-indicator" data-testid="thinking-indicator">
       <div className="thinking-header">
         <Brain size={18} className="thinking-brain" />
         <span>{t('thinking.label')}</span>

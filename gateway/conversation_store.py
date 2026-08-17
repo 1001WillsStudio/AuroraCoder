@@ -10,7 +10,6 @@ Thread-safe: all public methods acquire self._lock before mutating state.
 
 import json
 import os
-import re
 import uuid
 import threading
 import tempfile
@@ -19,20 +18,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
+from gateway.task_instruction_display import (
+    TASK_INSTRUCTION_START,
+    sanitize_frontend_messages,
+    strip_task_instruction,
+    user_message_for_frontend,
+)
+
 logger = logging.getLogger(__name__)
 
-# Distinctive markers for task instruction blocks injected by the frontend.
-# Real users will never type these, so stripping is reliable and does not
-# affect the agent's behaviour (the markers flow to the LLM as natural text).
-TASK_INSTRUCTION_START = "[TASK INSTRUCTION]"
-TASK_INSTRUCTION_END = "[/TASK INSTRUCTION]"
-
-# Regex that removes a task-instruction block (any content between the
-# start/end markers, including newlines) and the blank line that follows it.
-_TASK_BLOCK_RE = re.compile(
-    re.escape(TASK_INSTRUCTION_START) + r".*?" + re.escape(TASK_INSTRUCTION_END) + r"\s*",
-    re.DOTALL,
-)
 
 def _default_storage_dir() -> Path:
     if os.environ.get("AURORACODER_DOCKER", "0") == "1":
@@ -51,22 +45,14 @@ TERMINAL_STATUSES = frozenset({
 TITLE_MAX_LENGTH = 100
 
 
-def strip_task_instruction(content: str) -> str:
-    """Remove a task instruction marker block and trailing whitespace from *content*.
-
-    Returns the cleaned string.  If no markers are present the input is
-    returned unchanged (apart from leading/trailing whitespace).
-    """
-    return _TASK_BLOCK_RE.sub("", content).strip()
-
-
-def build_error_frontend_message(error: Optional[Dict] = None) -> Dict[str, Any]:
-    """UI-shaped assistant bubble for a failed provider turn.
-
-    Matches the in-session error object the React client builds in
-    ``createStreamCallbacks`` so a reloaded conversation can render the
-    same failure text and Try Again control.
-    """
+def ensure_error_frontend_message(
+    messages: Optional[List[Dict]],
+    error: Optional[Dict] = None,
+) -> List[Dict]:
+    """Append a retryable error bubble unless the transcript already ends with one."""
+    msgs = list(messages or [])
+    if msgs and msgs[-1].get("isError"):
+        return msgs
     message = ""
     err_type = ""
     if isinstance(error, dict):
@@ -76,31 +62,13 @@ def build_error_frontend_message(error: Optional[Dict] = None) -> Dict[str, Any]
     if not text.startswith("Error:"):
         text = f"Error: {text}"
     lowered = f"{text} {err_type}".lower()
-    is_timeout = (
-        "timeout" in lowered
-        or "timed out" in lowered
-        or "504" in lowered
-        or "gateway timeout" in lowered
-        or err_type == "TimeoutError"
-    )
-    return {
+    msgs.append({
         "role": "assistant",
         "content": text,
         "isError": True,
-        "isTimeout": is_timeout,
+        "isTimeout": "timeout" in lowered or "504" in lowered or err_type == "TimeoutError",
         "canRetry": True,
-    }
-
-
-def ensure_error_frontend_message(
-    messages: Optional[List[Dict]],
-    error: Optional[Dict] = None,
-) -> List[Dict]:
-    """Append an error bubble unless the transcript already ends with one."""
-    msgs = list(messages or [])
-    if msgs and msgs[-1].get("isError"):
-        return msgs
-    msgs.append(build_error_frontend_message(error))
+    })
     return msgs
 
 
@@ -516,6 +484,7 @@ class ConversationStore:
         stays time-consistent across both files.
         """
         now = datetime.now(timezone.utc).isoformat()
+        sanitize_frontend_messages(messages)
         for msg in messages:
             if isinstance(msg, dict) and not msg.get("ts"):
                 msg["ts"] = now
@@ -531,6 +500,21 @@ class ConversationStore:
 
         _atomic_write_json(self._frontend_messages_path(conversation_id), messages)
 
+    def seed_frontend_user_message(self, conversation_id: str, raw_content: str) -> None:
+        """Persist a user bubble before the first SSE event.
+
+        Strips the transport wrapper from the visible text and keeps the
+        inner prompt on ``taskInstruction``, so a reload still shows what
+        repeating command was applied.
+        """
+        new_user_msg = user_message_for_frontend(raw_content)
+        existing = self.get_frontend_messages(conversation_id)
+        if existing:
+            existing.append(new_user_msg)
+            self.save_frontend_messages(conversation_id, existing)
+        else:
+            self.save_frontend_messages(conversation_id, [new_user_msg])
+
     def get_frontend_messages(self, conversation_id: str) -> List[Dict]:
         """Read frontend-formatted messages, returning [] if not persisted."""
         path = self._frontend_messages_path(conversation_id)
@@ -538,51 +522,13 @@ class ConversationStore:
             return []
         try:
             with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                loaded = json.load(f)
+            if isinstance(loaded, list):
+                return sanitize_frontend_messages(loaded)
+            return loaded
         except (json.JSONDecodeError, OSError) as e:
             logger.error(f"Failed to read frontend messages for {conversation_id}: {e}")
             return []
-
-    def frontend_messages_for_status(
-        self,
-        conversation_id: str,
-        status: Optional[str] = None,
-    ) -> List[Dict]:
-        """Frontend messages as the API should return them.
-
-        Conversations that ended in ``status=error`` must include an
-        ``isError`` / ``canRetry`` assistant bubble even when the on-disk
-        file still has only the seeded user message (older turns, or a
-        persist that never saw an assistant event).
-        """
-        fe = self.get_frontend_messages(conversation_id)
-        if status is None:
-            try:
-                status = self.get_conversation(conversation_id).get("status")
-            except KeyError:
-                status = None
-        if status == "error":
-            return ensure_error_frontend_message(fe)
-        return fe
-
-    def persist_error_turn(
-        self,
-        conversation_id: str,
-        frontend_messages: Optional[List[Dict]] = None,
-        error: Optional[Dict] = None,
-    ) -> List[Dict]:
-        """Write a failed turn as an error bubble the UI can retry after reload.
-
-        A provider failure often produces no assistant message — the store
-        then holds only the seeded user bubble. Without this, reopening the
-        conversation looks like the turn was never answered.
-        """
-        existing = frontend_messages
-        if not existing:
-            existing = self.get_frontend_messages(conversation_id)
-        updated = ensure_error_frontend_message(existing, error)
-        self.save_frontend_messages(conversation_id, updated)
-        return updated
 
     def delete_conversation(self, conversation_id: str) -> None:
         """Delete a conversation's metadata and message file."""

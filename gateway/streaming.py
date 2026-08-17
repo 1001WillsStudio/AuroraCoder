@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from src.config import WORKSPACE_DIR, MAX_FILE_READ_SIZE
-from gateway.conversation_store import store
+from gateway.conversation_store import store, sanitize_frontend_messages, ensure_error_frontend_message
 from gateway.workspace import (
     file_snapshots,
     mark_file_touched,
@@ -105,18 +105,6 @@ def _run_session_end_memory_ops(conversation_id: str, conv_type: str, status: st
         run_consolidation()
     except Exception:
         logger.exception(f"[memory-ops] Session-end distillation failed for {conversation_id[:8]}...")
-
-
-def _error_info_from_stream(stream: ActiveStream) -> Optional[Dict]:
-    """Pull a ``{message, type}`` dict from the last SSE event, if any."""
-    data = stream.latest_event_data
-    if not isinstance(data, dict):
-        return None
-    if stream.latest_event_type == "error":
-        return data
-    if data.get("error"):
-        return {"message": data["error"], "type": data.get("type", "")}
-    return None
 
 
 def _schedule_memory_distillation(conversation_id: str, conv_type: str, status: str) -> None:
@@ -558,6 +546,7 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                             stream.status = edata.get("status", stream.status)
                             stream.provider = edata.get("provider", stream.provider)
                             if edata.get("messages"):
+                                edata["messages"] = sanitize_frontend_messages(edata["messages"])
                                 stream.latest_frontend_messages = edata["messages"]
 
 
@@ -667,11 +656,16 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
             if current_status != "continued":
                 store.update_status(cid, persist_status)
             if persist_status == "error":
-                stream.latest_frontend_messages = store.persist_error_turn(
-                    cid,
-                    stream.latest_frontend_messages,
-                    _error_info_from_stream(stream),
+                data = stream.latest_event_data if isinstance(stream.latest_event_data, dict) else {}
+                err = data if stream.latest_event_type == "error" else (
+                    {"message": data["error"]} if data.get("error") else None
                 )
+                fe = ensure_error_frontend_message(
+                    stream.latest_frontend_messages or store.get_frontend_messages(cid),
+                    err,
+                )
+                stream.latest_frontend_messages = fe
+                store.save_frontend_messages(cid, fe)
             elif stream.latest_frontend_messages:
                 store.save_frontend_messages(cid, stream.latest_frontend_messages)
             raw_msgs = stream.latest_event_data.get("raw_messages", []) if stream.latest_event_data else []
