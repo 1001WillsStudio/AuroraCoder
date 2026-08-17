@@ -162,7 +162,7 @@ function ContextMenu({ x, y, node, onClose, onDelete, onDownload, onExport, t })
 // (re)fetched on real change events — initial mount, project upload, delete, and
 // agent file operations.  Expanding / collapsing / selecting is pure local UI
 // state and never hits the network.
-const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0 }) => {
+const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, onPathDeleted }) => {
   const { t } = useLanguage()
   const [tree, setTree] = useState([])
   const [, setRootPath] = useState(null)
@@ -279,6 +279,8 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0 }) => {
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
         alert(err.detail || 'Failed to delete')
+      } else {
+        onPathDeleted?.(confirmDelete.path)
       }
       await fetchTree()
     } catch (err) {
@@ -287,7 +289,7 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0 }) => {
     } finally {
       setConfirmDelete(null)
     }
-  }, [confirmDelete, fetchTree])
+  }, [confirmDelete, fetchTree, onPathDeleted])
 
   return (
     <div className="file-tree" data-testid="file-tree">
