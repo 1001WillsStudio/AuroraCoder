@@ -13,7 +13,7 @@ while the sidebar title correctly showed only ``Ping``.
 from __future__ import annotations
 
 from gateway.conversation_store import ConversationStore, _extract_title
-from src.task_instruction_display import (
+from gateway.task_instruction_display import (
     extract_task_instruction,
     sanitize_frontend_messages,
     strip_task_instruction,
@@ -131,7 +131,9 @@ def test_pre_sse_seed_appends_without_dropping_earlier_chip(tmp_path):
     assert "taskInstruction" not in reloaded[1]
 
 
-# --------------------------------------------------------------------------- UI conversion (the live SSE user-bubble path)
+# --------------------------------------------------------------------------- gateway user-bubble builder (seed + sanitize)
+# The agent core may still copy the wrapped first message through.  The
+# gateway is what strips it and attaches the chip before the UI sees it.
 def test_user_message_for_frontend_hides_wrapper_and_exposes_chip():
     out = user_message_for_frontend(WRAPPED_PING)
     assert out["role"] == "user"

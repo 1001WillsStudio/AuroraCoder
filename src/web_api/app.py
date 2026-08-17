@@ -27,7 +27,6 @@ from ..code_sandbox import shell, get_workspace, WORKSPACE
 from ..core_tools.subagent import cancel_active_subagents
 from ..config import DEFAULT_PROVIDER
 from ..providers import provider_manager
-from ..task_instruction_display import user_message_for_frontend
 from ..tool_definitions import (
     NATIVE_TOOL_DEFINITIONS, SUBAGENT_READ_ONLY_TOOLS, GAP_INVESTIGATION_TOOLS,
     MEMORY_MAINTENANCE_TOOLS, memory_filter_tools,
@@ -127,7 +126,7 @@ def convert_messages_for_frontend(messages: list) -> list:
             i += 1
             continue
         elif role == "user":
-            frontend_messages.append(user_message_for_frontend(msg.get("content", "")))
+            frontend_messages.append({"role": "user", "content": msg.get("content", "")})
             i += 1
         elif role == "assistant":
             activities = []

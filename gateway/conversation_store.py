@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
-from src.task_instruction_display import (
+from gateway.task_instruction_display import (
     TASK_INSTRUCTION_START,
     sanitize_frontend_messages,
     strip_task_instruction,

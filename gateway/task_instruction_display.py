@@ -4,8 +4,8 @@ The markers are an internal prefix so the model sees the instruction; they
 must never appear in the user bubble.  The inner text is kept on
 ``taskInstruction`` so the transcript can show a labeled context chip.
 
-Imported by both the gateway store and the agent web API — keep this module
-free of store/app imports.
+This is a gateway/UI concern.  The agent core in ``src/`` should keep
+copying user content through unchanged.
 """
 from __future__ import annotations
 
