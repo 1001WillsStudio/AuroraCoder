@@ -464,6 +464,13 @@ select.settings-input {
   font-weight: 500;
 }
 
+.settings-field-warning {
+  font-size: 12px;
+  color: #d97706;
+  margin-bottom: 6px;
+  font-weight: 500;
+}
+
 /* ── Discover Models ──────────────────────────────────────────────────────── */
 
 .settings-model-discover-row {
@@ -749,6 +756,10 @@ select.settings-input {
 
 .settings-msg-error {
   color: #ef4444;
+}
+
+.settings-msg-warning {
+  color: #d97706;
 }
 
 .settings-footer-actions {

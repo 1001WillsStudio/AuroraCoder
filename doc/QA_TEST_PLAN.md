@@ -87,8 +87,8 @@ msw (reuses the existing Vite config). Prime targets: `utils/streamUtils.js`,
 
 `frontend/src/utils/settingsValidation.js` is the shared Settings → Save
 check for built-in and custom providers. `tests/test_settings_validation.py`
-covers the bug: a stored key must not block Save just because the key
-field is empty (the UI never redisplays the secret).
+covers the bug: a stored or missing key must not block Save (a missing
+key is a warning; the provider stays unused until the user adds one).
 
 ## 4. Coverage gate (target)
 

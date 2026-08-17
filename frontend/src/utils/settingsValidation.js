@@ -6,8 +6,9 @@
  * usable-key and encode helpers: the server never sends the real secret
  * back, so an empty box plus keyConfigured means "keep the stored key."
  *
- * Pre-configured cards do not require a key — unused built-ins must not
- * block Save. A user-added custom card still does.
+ * A missing API key never blocks Save. Without a key the provider cannot
+ * discover models and stays unused in the main window; the user can add
+ * a key later. Custom cards still need a name and base URL.
  */
 
 /** True when the user typed a key, or a key is already stored server-side. */
@@ -28,9 +29,8 @@ export function encodeStoredApiKey(apiKey, keyConfigured) {
   return undefined
 }
 
-/** Custom (user-added) cards must have a key; pre-configured ones may not. */
-export function providerKeyIsRequired(provider) {
-  return !provider?.preconfigured
+function customCardStarted(p) {
+  return Boolean(String(p?.name || '').trim() || String(p?.base_url || '').trim())
 }
 
 /**
@@ -42,20 +42,30 @@ export function providerKeyIsRequired(provider) {
  *   keyConfigured?: boolean,
  *   preconfigured?: boolean
  * }>} providers
- * @param {{nameRequired: string, baseUrlRequired: string, apiKeyRequired: string}} messages
- * @returns {Record<string, string>}
+ * @param {{nameRequired: string, baseUrlRequired: string}} messages
+ * @returns {Record<string, string>} blocking field errors
  */
 export function validateProviders(providers, messages) {
   const errors = {}
   ;(providers || []).forEach((p) => {
+    if (p.preconfigured) return
     const k = p.errorKey
-    if (!p.preconfigured) {
-      if (!String(p?.name || '').trim()) errors[k] = messages.nameRequired
-      if (!String(p?.base_url || '').trim()) errors[k] = errors[k] || messages.baseUrlRequired
-    }
-    if (providerKeyIsRequired(p) && !providerHasUsableKey(p.api_key, p.keyConfigured)) {
-      errors[k] = errors[k] || messages.apiKeyRequired
-    }
+    if (!String(p?.name || '').trim()) errors[k] = messages.nameRequired
+    if (!String(p?.base_url || '').trim()) errors[k] = errors[k] || messages.baseUrlRequired
   })
   return errors
+}
+
+/**
+ * Non-blocking: a started custom card with no usable key.
+ * @returns {Record<string, string>}
+ */
+export function collectProviderKeyWarnings(providers, message) {
+  const warnings = {}
+  ;(providers || []).forEach((p) => {
+    if (p.preconfigured) return
+    if (!customCardStarted(p)) return
+    if (!providerHasUsableKey(p.api_key, p.keyConfigured)) warnings[p.errorKey] = message
+  })
+  return warnings
 }

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { X, Plus, Trash2, Save, RefreshCw, Shield, Globe, LogOut, ExternalLink, Wrench, ChevronDown, ChevronRight, Search } from 'lucide-react'
 import { getSettings, updateSettings, getProviders, getToolStoreStatus, refreshToolStore, getMemories, deleteMemory } from '../services/api'
 import { isAuthRequired, isAuthenticated, logout as authLogout, clearToken } from '../utils/auth.js'
-import { validateProviders, encodeStoredApiKey } from '../utils/settingsValidation.js'
+import { validateProviders, collectProviderKeyWarnings, encodeStoredApiKey } from '../utils/settingsValidation.js'
 import useLanguage from '../hooks/useLanguage'
 import { LANG_LABELS } from '../i18n/translations'
 import '../styles/settings.css'
@@ -28,6 +28,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
   const [message, setMessage] = useState(null)
   const [apiKeysConfigured, setApiKeysConfigured] = useState({})
   const [errorFields, setErrorFields] = useState({})
+  const [warningFields, setWarningFields] = useState({})
   const [authEnabled, setAuthEnabled] = useState(null)
   const [isAuthed, setIsAuthed] = useState(isAuthenticated())
   const [toolStoreStatus, setToolStoreStatus] = useState(null)
@@ -236,39 +237,44 @@ export default function SettingsPanel({ isOpen, onClose }) {
   }
 
   // ── Validation ──────────────────────────────────────────────────────────
-  // Built-in and custom cards share one helper. An empty key box is not
-  // missing when a key is already stored. Pre-configured (built-in) cards
-  // do not require a key, so unused defaults cannot block Save.
-  const validate = () => {
-    const errors = validateProviders([
-      ...BUILTIN_PROVIDERS.map(p => ({
-        errorKey: p.id,
-        name: p.name,
-        base_url: p.base_url,
-        api_key: settings?.api_keys?.[p.id],
-        keyConfigured: Boolean(apiKeysConfigured[p.id]),
-        preconfigured: true,
-      })),
-      ...(settings?.custom_providers || []).map((cp, i) => ({
-        errorKey: `custom-${i}`,
-        name: cp.name,
-        base_url: cp.base_url,
-        api_key: cp.api_key,
-        keyConfigured: Boolean(cp._key_configured),
-        preconfigured: false,
-      })),
-    ], {
+  // Built-in and custom cards share one helper. An empty stored key is not
+  // missing. A custom card with no key is a warning, not a Save blocker —
+  // that provider stays unused until the user adds a key.
+  const providerRecords = () => [
+    ...BUILTIN_PROVIDERS.map(p => ({
+      errorKey: p.id,
+      name: p.name,
+      base_url: p.base_url,
+      api_key: settings?.api_keys?.[p.id],
+      keyConfigured: Boolean(apiKeysConfigured[p.id]),
+      preconfigured: true,
+    })),
+    ...(settings?.custom_providers || []).map((cp, i) => ({
+      errorKey: `custom-${i}`,
+      name: cp.name,
+      base_url: cp.base_url,
+      api_key: cp.api_key,
+      keyConfigured: Boolean(cp._key_configured),
+      preconfigured: false,
+    })),
+  ]
+
+  const runChecks = () => {
+    const records = providerRecords()
+    const errors = validateProviders(records, {
       nameRequired: t('msg.nameRequired'),
       baseUrlRequired: t('msg.baseUrlRequired'),
-      apiKeyRequired: t('msg.apiKeyRequired'),
     })
+    const warnings = collectProviderKeyWarnings(records, t('msg.apiKeyMissingWarning'))
     setErrorFields(errors)
-    return Object.keys(errors).length === 0
+    setWarningFields(warnings)
+    return { ok: Object.keys(errors).length === 0, warnings }
   }
 
   // ── Save ────────────────────────────────────────────────────────────────
   const handleSave = async () => {
-    if (!validate()) { setMessage({ type: 'error', text: t('msg.validationError') }); return }
+    const { ok, warnings } = runChecks()
+    if (!ok) { setMessage({ type: 'error', text: t('msg.validationError') }); return }
     setSaving(true); setMessage(null)
     try {
       // Prune empty custom providers
@@ -305,7 +311,9 @@ export default function SettingsPanel({ isOpen, onClose }) {
         custom_providers: cp, other: prunedOther,
         provider_models: settings.provider_models || {},
       })
-      setMessage({ type: 'success', text: t('msg.saved') })
+      setMessage(Object.keys(warnings).length
+        ? { type: 'warning', text: t('msg.savedWithKeyWarning') }
+        : { type: 'success', text: t('msg.saved') })
       setTimeout(async () => { try { const p = await getProviders(); setProviders(p.providers || []); window.dispatchEvent(new Event('providers-changed')) } catch {} }, 800)
     } catch { setMessage({ type: 'error', text: t('msg.saveFailed') }) }
     finally { setSaving(false) }
@@ -527,6 +535,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
                     const enabled = getEnabledModels(pid)
                     const isExpanded = expandedProvider === pid
                     const hasError = errorFields[`custom-${ci}`]
+                    const hasWarning = warningFields[`custom-${ci}`]
                     return (
                       <div key={pid} className="settings-custom-provider">
                         <div className="settings-custom-header">
@@ -540,6 +549,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
                           </button>
                         </div>
                         {hasError && <div className="settings-field-error">{errorFields[`custom-${ci}`]}</div>}
+                        {!hasError && hasWarning && <div className="settings-field-warning">{warningFields[`custom-${ci}`]}</div>}
 
                         {/* Display Name */}
                         <div className="settings-field-row">
