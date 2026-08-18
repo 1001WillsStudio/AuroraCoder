@@ -64,9 +64,7 @@ from gateway.streaming import (
     _proxy_backend_stream,
     _subscriber_sse,
     _format_sse,
-    _start_continuation,
-    build_user_continuation_prompt,
-    handoff_to_new_conversation,
+    _is_internal_continue_instruction,
 )
 from memory.settings import memory_enabled, heavy_ops_enabled
 from memory.store import get_repository as get_memory_repository
@@ -127,13 +125,6 @@ class RememberRequest(BaseModel):
     ttl_days: Optional[int] = Field(None, description="Re-verify after this many days if volatile")
     supersedes: Optional[str] = Field(None, description="ID of an existing memory this replaces/updates")
     memory_id: Optional[str] = Field(None, description="Reuse this id to update an existing memory in place")
-
-
-class ContinueAsNewRequest(BaseModel):
-    """Optional extra composer text to include in a user-initiated handoff."""
-    message: Optional[str] = Field(None, description="Optional extra note from the composer")
-    provider: Optional[str] = None
-    provider_id: Optional[str] = None
 
 
 class LogGapRequest(BaseModel):
@@ -244,14 +235,17 @@ async def proxy_chat(request: Request):
     # (re-send / interrupt), APPEND instead of replacing — otherwise the
     # entire history is lost if the backend never produces events.
     if body.get("message"):
-        clean_content = strip_task_instruction(body["message"]) or body["message"]
-        new_user_msg = {"role": "user", "content": clean_content.strip()}
-        existing_fe_msgs = store.get_frontend_messages(conversation_id)
-        if existing_fe_msgs:
-            existing_fe_msgs.append(new_user_msg)
-            store.save_frontend_messages(conversation_id, existing_fe_msgs)
-        else:
-            store.save_frontend_messages(conversation_id, [new_user_msg])
+        clean_content = strip_task_instruction(body["message"]) or ""
+        if _is_internal_continue_instruction(clean_content or body["message"]):
+            clean_content = ""
+        if clean_content:
+            new_user_msg = {"role": "user", "content": clean_content.strip()}
+            existing_fe_msgs = store.get_frontend_messages(conversation_id)
+            if existing_fe_msgs:
+                existing_fe_msgs.append(new_user_msg)
+                store.save_frontend_messages(conversation_id, existing_fe_msgs)
+            else:
+                store.save_frontend_messages(conversation_id, [new_user_msg])
     t5 = time.perf_counter()
     logger.info(f"[proxy] [{cid_tag}...] store_ops={t5-t4:.3f}s")
 
@@ -859,38 +853,6 @@ async def get_conversation(conversation_id: str):
         raise HTTPException(status_code=404, detail="Conversation not found")
     conv["frontend_messages"] = store.get_frontend_messages(conversation_id)
     return conv
-
-
-@app.post("/api/conversations/{conversation_id}/continue-as-new")
-async def continue_as_new_chat(conversation_id: str, body: Optional[ContinueAsNewRequest] = None):
-    """Hand the current task off to a fresh standalone conversation.
-
-    Used by the UI "Continue in new chat" control. Creates a new top-level
-    chat seeded with a deterministic progress summary (not an internal tool
-    instruction), marks the source conversation ``continued``, and auto-starts
-    generation on the new thread — the same shape as an agent-initiated
-    ``continue_as_new_chat`` tool call, but without waiting for the model.
-    """
-    body = body or ContinueAsNewRequest()
-    try:
-        conv = store.get_conversation(conversation_id)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-
-    raw = conv.get("messages") or []
-    prompt = build_user_continuation_prompt(raw, extra_note=body.message or "")
-    provider_id = body.provider_id or body.provider or conv.get("provider_id")
-    new_cid, user_msg = handoff_to_new_conversation(
-        source_cid=conversation_id,
-        prompt=prompt,
-        provider_id=provider_id,
-    )
-    await _start_continuation(new_cid, provider_id, user_msg)
-    return {
-        "new_conversation_id": new_cid,
-        "conversation_id": new_cid,
-        "source_conversation_id": conversation_id,
-    }
 
 
 @app.get("/api/conversations/{conversation_id}/children")

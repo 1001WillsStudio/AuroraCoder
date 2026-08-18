@@ -97,7 +97,40 @@ def unregister_stream(conversation_id: str, cancel_event: threading.Event):
 # Helpers
 # ============================================================================
 
+# Injected on a user-clicked "Continue in new chat" turn. System role so it
+# never appears as a message the user typed.
+FORCE_CONTINUATION_INSTRUCTION = (
+    "The user clicked Continue in new chat. "
+    "Call continue_as_new_chat now as your only tool call. "
+    "In the prompt argument, write a comprehensive summary of: "
+    "(1) what has been accomplished so far, "
+    "(2) what remains to be done, "
+    "(3) key files and decisions made, and "
+    "(4) any important context the next agent needs to continue effectively."
+)
+
+
+def apply_force_continuation_instruction(messages: list) -> list:
+    """Append the handoff instruction unless this turn already has it."""
+    marker = "Call continue_as_new_chat now"
+    for msg in messages:
+        if msg.get("role") == "system" and marker in (msg.get("content") or ""):
+            return messages
+    messages.append({"role": "system", "content": FORCE_CONTINUATION_INSTRUCTION})
+    return messages
+
+
+def _is_leaked_continue_instruction(text: str) -> bool:
+    """True if *text* is the old UI 'please call this tool' user prompt."""
+    return bool(text) and "`continue_as_new_chat`" in text and "Please use the" in text
+
+
 def get_filtered_tools(mode: str):
+    if mode == "force_continuation":
+        return [
+            td for td in NATIVE_TOOL_DEFINITIONS
+            if td["function"]["name"] == "continue_as_new_chat"
+        ]
     defs = []
     for td in NATIVE_TOOL_DEFINITIONS:
         name = td["function"]["name"]
@@ -126,7 +159,11 @@ def convert_messages_for_frontend(messages: list) -> list:
             i += 1
             continue
         elif role == "user":
-            frontend_messages.append({"role": "user", "content": msg.get("content", "")})
+            content = msg.get("content", "")
+            if _is_leaked_continue_instruction(content):
+                i += 1
+                continue
+            frontend_messages.append({"role": "user", "content": content})
             i += 1
         elif role == "assistant":
             activities = []
@@ -363,6 +400,8 @@ async def chat(chat_request: ChatRequest, request: Request):
     messages = (chat_request.messages or []).copy()
     if chat_request.message:
         messages.append({"role": "user", "content": chat_request.message})
+    if chat_request.tools == "force_continuation":
+        apply_force_continuation_instruction(messages)
 
     provider = chat_request.provider_id or chat_request.provider or DEFAULT_PROVIDER
     tools_override = get_filtered_tools(chat_request.tools) if chat_request.tools else None

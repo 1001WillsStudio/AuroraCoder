@@ -71,7 +71,7 @@ Legend: ✅ done · 🟡 next · ⬜ later.
 |---|---|---|
 | `src.tool_executor` | ✅ | partition batching, same-file guard, concurrency env knob (pure core) |
 | `src.providers` | 🟡 | patch `openai.OpenAI`, stream vs non-stream branching |
-| `gateway.streaming` | ✅ | race/abort + user-initiated continue-as-new handoff (no tool-prompt leak) |
+| `gateway.streaming` | ✅ | race/abort + user-initiated continue-as-new (agent summary, no tool-prompt leak) |
 | `gateway.routes` / `api` | ⬜ | `TestClient` per endpoint, **auth** via `ACCESS_PASSWORD` |
 | `gateway.provider_registry` | ⬜ | lookup, model metadata, live-list fetch mocked |
 | `gateway.workspace` | ⬜ | git push behind `GITHUB_TOKEN` (mock; skip when absent) |

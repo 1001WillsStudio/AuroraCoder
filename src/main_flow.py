@@ -78,6 +78,14 @@ def _filter_tools_by_context(tools: list, total_tokens: int, context_window: int
     return tools
 
 
+def _tool_choice_for(tools_for_iteration: list):
+    """Force continue_as_new_chat when that is the only tool (UI handoff turn)."""
+    names = [t.get("function", {}).get("name") for t in tools_for_iteration or []]
+    if names == ["continue_as_new_chat"]:
+        return {"type": "function", "function": {"name": "continue_as_new_chat"}}
+    return "auto"
+
+
 def _has_continuation_notice_been_shown(messages: List[Dict]) -> bool:
     """Check whether the continuation notice has already been injected."""
     for msg in messages:
@@ -207,7 +215,7 @@ def generate_chat_responses_stream_native(
             "model": model_name,
             "messages": messages,
             "tools": tools_for_iteration,
-            "tool_choice": "auto",
+            "tool_choice": _tool_choice_for(tools_for_iteration),
             "max_tokens": api_max_tokens,
             "stream": True,
             "stream_options": {"include_usage": True},

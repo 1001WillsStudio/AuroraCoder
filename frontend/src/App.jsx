@@ -8,7 +8,7 @@ import LoginScreen from './components/LoginScreen'
 import Sidebar from './components/Sidebar'
 import WelcomeScreen from './components/WelcomeScreen'
 import SettingsPanel from './components/SettingsPanel'
-import { streamChat, getProviders, cancelConversation, getConversation, getActiveStreams, resumeStream, getTaskInstruction, setTaskInstruction, getInstanceInfo, continueAsNewChat } from './services/api'
+import { streamChat, getProviders, cancelConversation, getConversation, getActiveStreams, resumeStream, getTaskInstruction, setTaskInstruction, getInstanceInfo } from './services/api'
 import { isInterruptible, TASK_MARKER_START, TASK_MARKER_END } from './utils/streamUtils'
 import { checkAuth, isAuthRequired } from './utils/auth.js'
 import CodePanel from './components/CodePanel'
@@ -397,6 +397,42 @@ function App() {
       setIsStreaming(false)
     }
   }
+
+  const handleContinueInNewChat = async () => {
+    if (!conversationId || isStreaming) return
+    const extra = inputValue.trim()
+    setInputValue('')
+    setIsStreaming(true)
+    setSseReceived(false)
+    setCanContinue(false)
+    setHistoryRefreshTrigger(prev => prev + 1)
+    resetToFollowing()
+    setMessages(prev => extra
+      ? [...prev, { role: 'user', content: extra }, { role: 'assistant', content: '' }]
+      : [...prev, { role: 'assistant', content: '' }])
+    try {
+      abortControllerRef.current = new AbortController()
+      const callbacks = createStreamCallbacks({
+        setMessages, setRawMessages, setConversationId, setCanContinue,
+        setIsStreaming, setHistoryRefreshTrigger, setSubagentChildIds,
+        handleSend: null, handleLoadConversation,
+        pendingInterruptRef: null, continuationNavigatedRef, abortControllerRef: null,
+        withInterrupt: false,
+        withRetry: true,
+        onMessagesRefresh: handleRefreshFiles,
+        onFirstSse: () => setSseReceived(true),
+        ensureAssistantTail: true,
+      })
+      const opts = {
+        ...resolveProviderOptions(providers, selectedProvider),
+        tools: 'force_continuation',
+      }
+      await streamChat(extra || null, conversationId, callbacks, abortControllerRef.current.signal, rawMessages, selectedProvider, opts)
+    } catch (error) {
+      if (error.name !== 'AbortError') console.error('Continue in new chat error:', error)
+      setIsStreaming(false)
+    }
+  }
   // ── Fork helpers ─────────────────────────────────────────────────
 
   /** Find the raw-message index of the Nth user message in frontend messages */
@@ -732,20 +768,7 @@ function App() {
               setPendingInterrupt(null)
               pendingInterruptRef.current = null
             }}
-            onContinueInNewChat={async () => {
-              if (!conversationId) return
-              const extra = inputValue.trim()
-              try {
-                const result = await continueAsNewChat(conversationId, extra)
-                setInputValue('')
-                setHistoryRefreshTrigger(prev => prev + 1)
-                if (result?.new_conversation_id) {
-                  handleLoadConversation(result.new_conversation_id)
-                }
-              } catch (e) {
-                console.error('[continueAsNewChat]', e)
-              }
-            }}
+            onContinueInNewChat={handleContinueInNewChat}
           />
         )}
       </main>

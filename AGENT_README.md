@@ -242,7 +242,7 @@ Defined in `tool_definitions.py`. 13 tools (plus 1 conditional):
 | 13 | `subagent` | `run_subagent` | ✅ | ❌ (recursive) |
 | * | `continue_as_new_chat` | `continue_chat_tool` | n/a | n/a |
 
-`continue_as_new_chat` is conditionally included — it only appears in the tool list when context usage exceeds ~80%. The UI "Continue in new chat" control does **not** ask the model to call this tool; it POSTs `/api/conversations/{id}/continue-as-new`, which creates a new standalone conversation with a progress summary and auto-starts it (same handoff shape as the tool).
+`continue_as_new_chat` is conditionally included — it only appears in the tool list when context usage exceeds ~80%. The UI "Continue in new chat" control asks the **current** agent to write the handoff brief: it streams with `tools: 'force_continuation'` (only that tool, `tool_choice` forced) and a system instruction the user never sees. When the agent calls the tool — or, on that forced turn, replies with text only — the gateway creates a new standalone chat seeded with the agent's summary and the UI switches to it. The old "Please use the `continue_as_new_chat` tool…" string is never posted as a user message.
 
 ### 4.2 Tool Parameter Signatures
 
@@ -461,7 +461,7 @@ generate_chat_responses_stream_native(
 ### Gateway Layer
 
 - `api.py` — FastAPI app factory with CORS middleware
-- `routes.py` — All route handlers: chat, continue, continue-as-new, conversations, files, settings, health
+- `routes.py` — All route handlers: chat, continue, conversations, files, settings, health
 - `streaming.py` — SSE stream registration, event queue management, keepalive, cancellation
 - `conversation_store.py` — File-backed store with thread-safe atomic writes and index management
 - `settings_store.py` — Provider and model settings persistence
@@ -585,7 +585,7 @@ Test files in `tests/`:
 - `test_context_fix_propagation.py` — ContextTracker display update tests
 - `test_edit_file_edge_cases.py` — Edit file matching edge cases
 - `test_streaming_race.py` — SSE streaming race condition tests
-- `test_continue_as_new_chat.py` — user-initiated continue-in-new-chat handoff (no tool-prompt leak)
+- `test_continue_as_new_chat.py` — user-initiated continue-in-new-chat: current agent summarizes, no tool-prompt leak
 - `test_mergePanelFiles.mjs` — Frontend panel merging tests
 
 ---

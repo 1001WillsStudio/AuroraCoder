@@ -137,7 +137,7 @@ const LANG = {
     'chat.title.interrupt': 'Send and interrupt current generation',
     'chat.title.cancelPending': 'Cancel pending interrupt',
     'chat.continueNewChat': 'Continue in new chat',
-    'chat.continueNewChatTitle': 'Summarize progress and continue in a fresh chat',
+    'chat.continueNewChatTitle': 'Ask the agent to summarize progress and continue in a fresh context',
     'chat.interruptQueued': 'Interrupt queued: "{msg}" — Waiting for tool calls to complete…',
 
     // ── Chat message ───────────────────────────────────────────────
@@ -398,7 +398,7 @@ const LANG = {
     'chat.title.interrupt': '发送并中断当前生成',
     'chat.title.cancelPending': '取消待处理的中断',
     'chat.continueNewChat': '在新对话中继续',
-    'chat.continueNewChatTitle': '总结进度并在新的对话中继续',
+    'chat.continueNewChatTitle': '要求智能体总结进度并在新的上下文中继续',
     'chat.interruptQueued': '中断已排队："{msg}" — 等待工具调用完成…',
 
     // ── Chat message ───────────────────────────────────────────────

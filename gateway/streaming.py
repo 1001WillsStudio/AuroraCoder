@@ -379,8 +379,8 @@ def _parse_sse_blocks(text: str) -> List[tuple]:
 # Prefix on the first user message of a handed-off conversation.
 CONTINUATION_USER_PREFIX = "[Continued from previous agent session]"
 _CONTINUE_TOOL_INSTRUCTION_MARKER = "`continue_as_new_chat`"
-_MAX_HANDOFF_CHARS = 8000
-_MAX_HANDOFF_MSG_CHARS = 1200
+_FORCE_CONTINUATION_TOOLS = "force_continuation"
+_HANDOFF_READY_STATUSES = frozenset({"completed", "max_iterations_reached"})
 
 
 def _is_internal_continue_instruction(text: str) -> bool:
@@ -388,49 +388,32 @@ def _is_internal_continue_instruction(text: str) -> bool:
     return bool(text) and _CONTINUE_TOOL_INSTRUCTION_MARKER in text and "Please use the" in text
 
 
-def build_user_continuation_prompt(raw_messages: list, extra_note: str = "") -> str:
-    """Deterministic progress dump for a user-initiated continue-in-new-chat.
+def _last_assistant_text(raw_messages: list) -> str:
+    for msg in reversed(raw_messages or []):
+        if msg.get("role") == "assistant":
+            return (msg.get("content") or "").strip()
+    return ""
 
-    Never includes the internal ``continue_as_new_chat`` instruction that used
-    to be posted as a user message.
+
+def continuation_prompt_from_turn(
+    raw_messages: list,
+    tools_mode: str | None = None,
+    status: str | None = None,
+) -> str | None:
+    """Return the current agent's handoff brief, or None if it has not written one.
+
+    Prefers the ``continue_as_new_chat`` tool argument. On a UI-forced
+    continuation turn, a text-only reply (mocks that ignore tool_choice)
+    is accepted as the agent's summary so the new chat still opens.
     """
-    parts: list[str] = []
-    extra = (extra_note or "").strip()
-    if extra and not _is_internal_continue_instruction(extra):
-        parts.append(extra)
-        parts.append("")
-    parts.append("Continue this task from where the previous session left off. Summary of progress:")
-    parts.append("")
-
-    for msg in raw_messages or []:
-        role = msg.get("role")
-        if role == "system":
-            continue
-        if role == "user":
-            content = (msg.get("content") or "").strip()
-            if not content or _is_internal_continue_instruction(content):
-                continue
-            if len(content) > _MAX_HANDOFF_MSG_CHARS:
-                content = content[:_MAX_HANDOFF_MSG_CHARS] + "…"
-            parts.append(f"User: {content}")
-        elif role == "assistant":
-            content = (msg.get("content") or "").strip()
-            if content:
-                if len(content) > _MAX_HANDOFF_MSG_CHARS:
-                    content = content[:_MAX_HANDOFF_MSG_CHARS] + "…"
-                parts.append(f"Assistant: {content}")
-            names = []
-            for tc in msg.get("tool_calls") or []:
-                name = (tc.get("function") or {}).get("name") or "?"
-                if name != "continue_as_new_chat":
-                    names.append(name)
-            if names:
-                parts.append(f"  [tools: {', '.join(names)}]")
-
-    text = "\n".join(parts).strip()
-    if len(text) > _MAX_HANDOFF_CHARS:
-        text = text[:_MAX_HANDOFF_CHARS] + "\n…"
-    return text
+    args = _scan_for_continuation(raw_messages)
+    if args is not None:
+        return args.get("prompt") or ""
+    if tools_mode == _FORCE_CONTINUATION_TOOLS and status in _HANDOFF_READY_STATUSES:
+        text = _last_assistant_text(raw_messages)
+        if text and not _is_internal_continue_instruction(text):
+            return text
+    return None
 
 
 def handoff_to_new_conversation(
@@ -443,8 +426,8 @@ def handoff_to_new_conversation(
     """Create a new standalone chat seeded with *prompt* and mark *source_cid* continued.
 
     Returns ``(new_cid, user_msg)``. Does not start generation — the caller
-    should invoke ``_start_continuation``. Shared by the agent tool-call
-    path and the user-clicked "Continue in new chat" control.
+    should invoke ``_start_continuation``. Used after the current agent
+    writes the handoff brief (tool call, or text on a forced UI turn).
     """
     conv_store = conv_store or store
     new_cid = str(uuid.uuid4())
@@ -482,7 +465,7 @@ def _scan_for_continuation(raw_messages: list) -> dict | None:
     tool call.  Returns its parsed arguments dict, or None if the most recent
     call is missing or has invalid JSON.  Earlier calls are never used.
     """
-    for msg in reversed(raw_messages):
+    for msg in reversed(raw_messages or []):
         if msg.get("role") != "assistant":
             continue
         for tc in msg.get("tool_calls", []):
@@ -587,9 +570,12 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                             # active streaming (delta) — tool-call arguments are still
                             # being built up during deltas, producing bogus warnings.
                             if not stream.new_conversation_id and etype == "messages":
-                                args = _scan_for_continuation(edata.get("raw_messages", []))
-                                if args:
-                                    prompt = args.get("prompt", "")
+                                prompt = continuation_prompt_from_turn(
+                                    edata.get("raw_messages", []),
+                                    tools_mode=request_body.get("tools"),
+                                    status=edata.get("status"),
+                                )
+                                if prompt is not None:
                                     new_cid, user_msg = handoff_to_new_conversation(
                                         source_cid=cid,
                                         prompt=prompt,
