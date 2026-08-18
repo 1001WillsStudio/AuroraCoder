@@ -95,12 +95,36 @@
     height: 32px;
   }
 
+  .welcome-screen {
+    padding: 24px 16px;
+  }
+
+  .welcome-header {
+    margin-bottom: 24px;
+  }
+
+  .welcome-logo {
+    width: 72px;
+    height: 72px;
+    margin-bottom: 16px;
+  }
+
   .welcome-header h1 {
     font-size: 2rem;
   }
 
+  .welcome-subtitle.typing-text {
+    min-height: 48px;
+  }
+
   .examples-grid {
     grid-template-columns: 1fr;
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+
+  .example-card {
+    padding: 14px;
   }
 
   .input-container {
@@ -121,5 +145,42 @@
     flex: 1 1 50%;
     min-width: 0;
     border-left: none;
+  }
+}
+
+/* Landscape phones / short windows: shrink chrome so the title stays
+   in the first paint and the cards remain reachable by scrolling. */
+@media (max-height: 500px) {
+  .welcome-screen {
+    padding: 12px 16px;
+    justify-content: flex-start;
+  }
+
+  .welcome-logo {
+    width: 48px;
+    height: 48px;
+    margin-bottom: 8px;
+  }
+
+  .welcome-header {
+    margin-bottom: 12px;
+  }
+
+  .welcome-header h1 {
+    font-size: 1.5rem;
+    margin-bottom: 8px;
+  }
+
+  .welcome-subtitle.typing-text {
+    min-height: 0;
+  }
+
+  .examples-grid {
+    margin-bottom: 12px;
+    gap: 8px;
+  }
+
+  .example-card {
+    padding: 10px 12px;
   }
 }

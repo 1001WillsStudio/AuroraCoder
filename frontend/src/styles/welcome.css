@@ -3,7 +3,10 @@
    ============================================================================ */
 
 .welcome-screen {
-  height: 100%;
+  /* Grow to fill a short pane (centering) but never shrink below the
+     column, so the title cannot sit above the chat pane's scroll origin. */
+  flex: 1 0 auto;
+  min-height: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -11,6 +14,7 @@
   padding: 48px 24px;
   max-width: 800px;
   margin: 0 auto;
+  width: 100%;
 }
 
 .welcome-header {
