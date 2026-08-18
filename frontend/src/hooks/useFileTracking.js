@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { CODE_TOOLS, FILE_SYSTEM_TOOLS } from '../utils/streamUtils'
 import { uploadWorkspace } from '../services/api'
+import { closePanelFilesForDeletedPath, applyViewOnlyReadResults } from '../utils/panelFiles'
 
 // ── Pure merge helper ─────────────────────────────────────────────────────
 
@@ -40,6 +41,8 @@ export function useFileTracking(conversationId, messages, isStreaming) {
   const [isUploading, setIsUploading] = useState(false)
   const uploadInputRef = useRef(null)
   const diffAbortRef = useRef(null)
+  const editedFilesRef = useRef(editedFiles)
+  editedFilesRef.current = editedFiles
 
   // Track which tool‑result IDs have already triggered a diff / tree refresh
   const processedResultsRef = useRef(new Set())
@@ -160,8 +163,65 @@ export function useFileTracking(conversationId, messages, isStreaming) {
     setShowCodePanel(false)
   }, [])
 
-  const handleRefreshFiles = useCallback(() => {
-    fetchFileDiffs()
+  const handlePathDeleted = useCallback((deletedPath) => {
+    if (!deletedPath) return
+    setEditedFiles(prev => {
+      const { files, nextActiveId } = closePanelFilesForDeletedPath(
+        prev, activeFileId, deletedPath,
+      )
+      if (files.length === prev.length) return prev
+      const removed = prev.filter(f => !files.some(n => n.id === f.id))
+      if (removed.length) {
+        setClosedFiles(cf => {
+          const next = new Set(cf)
+          for (const f of removed) next.add(f.id)
+          return next
+        })
+      }
+      setActiveFileId(nextActiveId)
+      return files
+    })
+  }, [activeFileId])
+
+  const handleRefreshFiles = useCallback(async () => {
+    const viewOnly = editedFilesRef.current.filter(f => f.isViewOnly)
+    await fetchFileDiffs()
+    if (viewOnly.length === 0) return
+
+    setIsLoadingFiles(true)
+    try {
+      const results = await Promise.all(viewOnly.map(async (f) => {
+        try {
+          const resp = await fetch(`/api/files/read?file_path=${encodeURIComponent(f.path)}`)
+          if (!resp.ok) return { id: f.id, missing: true }
+          const data = await resp.json()
+          return { id: f.id, content: data.content ?? '' }
+        } catch (error) {
+          console.error('Error refreshing file:', error)
+          return { id: f.id, missing: true }
+        }
+      }))
+
+      setEditedFiles(prev => {
+        const next = applyViewOnlyReadResults(prev, results)
+        const removedIds = prev
+          .filter(f => f.isViewOnly && !next.some(n => n.id === f.id))
+          .map(f => f.id)
+        if (removedIds.length) {
+          setClosedFiles(cf => {
+            const closed = new Set(cf)
+            for (const id of removedIds) closed.add(id)
+            return closed
+          })
+        }
+        setActiveFileId(aid => (
+          aid && next.some(f => f.id === aid) ? aid : (next[0]?.id ?? null)
+        ))
+        return next
+      })
+    } finally {
+      setIsLoadingFiles(false)
+    }
   }, [fetchFileDiffs])
 
   const handleFileTreeClick = useCallback(async (filePath) => {
@@ -229,6 +289,7 @@ export function useFileTracking(conversationId, messages, isStreaming) {
     handleFileClose,
     handleCloseCodePanel,
     handleRefreshFiles,
+    handlePathDeleted,
     handleFileTreeClick,
     handleUploadProject,
     setEditedFiles,

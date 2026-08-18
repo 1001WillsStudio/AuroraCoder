@@ -22,6 +22,7 @@ export default function Sidebar({
   fileTreeRefreshTrigger,
   isStreaming,
   onFileClick,
+  onPathDeleted,
   conversationId,
   onLoadConversation,
   historyRefreshTrigger,
@@ -110,6 +111,7 @@ export default function Sidebar({
           onFileClick={onFileClick}
           isStreaming={isStreaming}
           refreshTrigger={fileTreeRefreshTrigger}
+          onPathDeleted={onPathDeleted}
         />
       </div>
 

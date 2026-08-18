@@ -103,7 +103,7 @@ function App() {
     fileTreeRefreshTrigger, setFileTreeRefreshTrigger,
     isUploading, uploadInputRef,
     handleFileClose, handleCloseCodePanel,
-    handleRefreshFiles, handleFileTreeClick, handleUploadProject,
+    handleRefreshFiles, handlePathDeleted, handleFileTreeClick, handleUploadProject,
     setEditedFiles, setClosedFiles,
   } = useFileTracking(conversationId, messages, isStreaming)
 
@@ -665,6 +665,7 @@ function App() {
         fileTreeRefreshTrigger={fileTreeRefreshTrigger}
         isStreaming={isStreaming}
         onFileClick={handleFileTreeClick}
+        onPathDeleted={handlePathDeleted}
         conversationId={conversationId}
         onLoadConversation={handleLoadConversation}
         historyRefreshTrigger={historyRefreshTrigger}
