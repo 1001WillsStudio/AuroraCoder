@@ -6,6 +6,7 @@ persisted it. After reload the control still showed 0.
 
 These tests lock the store: out-of-range values raise and the on-disk
 file is left unchanged. Empty / omitted stays allowed (system default).
+The sentinel ``"unlimited"`` is accepted (Unlimited checkbox); 0 is not.
 """
 from __future__ import annotations
 
@@ -62,6 +63,12 @@ def test_update_settings_accepts_in_range_max_iterations(isolated_settings, raw)
     assert int(float(stored)) == int(float(raw))
 
 
+@pytest.mark.parametrize("raw", ["unlimited", "Unlimited", "UNLIMITED"])
+def test_update_settings_accepts_unlimited(isolated_settings, raw):
+    result = settings_store.update_settings({"other": {"agent": {"max_iterations": raw}}})
+    assert result["other"]["agent"]["max_iterations"] == raw
+
+
 def test_update_settings_allows_empty_max_iterations(isolated_settings):
     """Blank field means 'use the default' — do not reject Save."""
     settings_store.update_settings({"other": {"agent": {"max_iterations": ""}}})
@@ -83,3 +90,9 @@ def test_clamp_agent_max_iterations_lifts_stored_zero():
     assert settings_store.clamp_agent_max_iterations("30") == 30
     assert settings_store.clamp_agent_max_iterations(None) == 30
     assert settings_store.clamp_agent_max_iterations("abc") == 30
+    assert settings_store.clamp_agent_max_iterations("unlimited") == (
+        settings_store.UNLIMITED_AGENT_ITERATIONS
+    )
+    assert settings_store.clamp_agent_max_iterations("Unlimited") == (
+        settings_store.UNLIMITED_AGENT_ITERATIONS
+    )

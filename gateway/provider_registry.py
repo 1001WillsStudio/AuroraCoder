@@ -199,6 +199,8 @@ def get_max_iterations() -> int:
 
     Clamps a previously-persisted out-of-range value (the Settings control
     is 5–200) so a leftover ``0`` cannot stop the loop on the first turn.
+    The stored sentinel ``"unlimited"`` becomes a very large int so the
+    existing loop can run a long-lived turn.
     """
     settings = get_all_settings()
     raw = settings.get("other", {}).get("agent", {}).get("max_iterations")

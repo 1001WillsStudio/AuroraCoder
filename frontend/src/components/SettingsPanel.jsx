@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { X, Plus, Trash2, Save, RefreshCw, Shield, Globe, LogOut, ExternalLink, Wrench, ChevronDown, ChevronRight, Search } from 'lucide-react'
 import { getSettings, updateSettings, getProviders, getToolStoreStatus, refreshToolStore, getMemories, deleteMemory } from '../services/api'
 import { isAuthRequired, isAuthenticated, logout as authLogout, clearToken } from '../utils/auth.js'
-import { encodeStoredApiKey, validateMaxIterations } from '../utils/settingsValidation.js'
+import { encodeStoredApiKey, isUnlimitedMaxIterations, validateMaxIterations, MAX_ITERATIONS_UNLIMITED } from '../utils/settingsValidation.js'
 import useLanguage from '../hooks/useLanguage'
 import { LANG_LABELS } from '../i18n/translations'
 import '../styles/settings.css'
@@ -673,10 +673,18 @@ export default function SettingsPanel({ isOpen, onClose }) {
                   <div className="settings-field-col">
                     <label>{t('agent.maxIterations')}</label>
                     <input className="settings-input" type="number"
-                      value={other.agent?.max_iterations || ''}
+                      value={isUnlimitedMaxIterations(other.agent?.max_iterations) ? '' : (other.agent?.max_iterations || '')}
                       onChange={e => setOther('agent', 'max_iterations', e.target.value)}
                       placeholder="30" min="5" max="200"
+                      disabled={isUnlimitedMaxIterations(other.agent?.max_iterations)}
                     />
+                    <label className="settings-checkbox-label" style={{ marginTop: 8 }}>
+                      <input type="checkbox"
+                        checked={isUnlimitedMaxIterations(other.agent?.max_iterations)}
+                        onChange={e => setOther('agent', 'max_iterations', e.target.checked ? MAX_ITERATIONS_UNLIMITED : '30')}
+                      />
+                      {t('agent.maxIterationsUnlimited')}
+                    </label>
                   </div>
                 </div>
                 <div className="settings-field-row" style={{ marginTop: 12 }}>

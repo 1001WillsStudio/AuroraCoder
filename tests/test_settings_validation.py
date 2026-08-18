@@ -8,7 +8,8 @@ stays unused.
 
 Max Iterations Per Turn: the spinbutton has min=5 max=200, but HTML
 constraints are not enforced by the Save button. ``validateMaxIterations``
-rejects 0 (and any other out-of-range value) before PUT.
+rejects 0 (and any other out-of-range value) before PUT. The sentinel
+``unlimited`` is allowed (Unlimited checkbox).
 """
 from __future__ import annotations
 
@@ -68,6 +69,7 @@ def test_js_helper_exports_encode_and_max_iterations():
     src = _HELPER.read_text(encoding="utf-8")
     assert "export function encodeStoredApiKey" in src
     assert "export function validateMaxIterations" in src
+    assert "export function isUnlimitedMaxIterations" in src
     # Old "API key required" helpers must stay gone — a blank stored key
     # is not a reason to block Save.
     assert "export function validateProviders" not in src
@@ -98,6 +100,8 @@ def validate_max_iterations(value):
         return None
     if isinstance(value, str) and value.strip() == "":
         return None
+    if isinstance(value, str) and value.strip().lower() == "unlimited":
+        return None
     try:
         n = float(value)
     except (TypeError, ValueError):
@@ -123,6 +127,8 @@ def validate_max_iterations(value):
         ("", None),
         (None, None),
         ("   ", None),
+        ("unlimited", None),
+        ("Unlimited", None),
     ],
 )
 def test_validate_max_iterations(value, expected):
@@ -142,6 +148,9 @@ def test_handle_save_rejects_out_of_range_iterations_before_put():
     assert "return" in body
     assert "min=\"5\"" in src
     assert "max=\"200\"" in src
+    assert "MAX_ITERATIONS_UNLIMITED" in src
+    assert "isUnlimitedMaxIterations" in src
+    assert "agent.maxIterationsUnlimited" in src
 
 
 def test_max_iterations_range_message_is_translated():

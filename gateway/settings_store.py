@@ -40,8 +40,12 @@ _lock = Lock()
 # Agent Behavior → Max Iterations Per Turn. Matches the Settings spinbutton
 # (min=5, max=200). HTML constraints are not enforced by the Save button, so
 # the store is the last line of defence against a persisted 0 (or 201, …).
+# "unlimited" is an explicit sentinel (not 0) for long-running turns.
 AGENT_MAX_ITERATIONS_MIN = 5
 AGENT_MAX_ITERATIONS_MAX = 200
+AGENT_MAX_ITERATIONS_UNLIMITED = "unlimited"
+# Runtime stand-in so the int-only agent loop does not need a None path.
+UNLIMITED_AGENT_ITERATIONS = 1_000_000
 _MAX_ITERATIONS_RANGE_MSG = (
     f"max_iterations must be between {AGENT_MAX_ITERATIONS_MIN} and {AGENT_MAX_ITERATIONS_MAX}"
 )
@@ -117,7 +121,8 @@ def update_settings(partial: Dict[str, Any]) -> Dict[str, Any]:
 
     Raises:
         ValueError: if ``other.agent.max_iterations`` is present and not an
-            integer in ``[5, 200]``. The on-disk file is not written.
+            integer in ``[5, 200]`` or the sentinel ``"unlimited"``.
+            The on-disk file is not written.
     """
     _validate_agent_max_iterations(partial)
     with _lock:
@@ -376,6 +381,10 @@ def get_other_settings() -> Dict[str, Any]:
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 
+def _is_unlimited_max_iterations(raw: Any) -> bool:
+    return isinstance(raw, str) and raw.strip().lower() == AGENT_MAX_ITERATIONS_UNLIMITED
+
+
 def _parse_agent_max_iterations(raw: Any) -> Optional[int]:
     """Return an int if *raw* is a whole number; None if empty; else raise.
 
@@ -415,7 +424,10 @@ def _validate_agent_max_iterations(partial: Dict[str, Any]) -> None:
     agent = other.get("agent")
     if not isinstance(agent, dict) or "max_iterations" not in agent:
         return
-    n = _parse_agent_max_iterations(agent["max_iterations"])
+    raw = agent["max_iterations"]
+    if _is_unlimited_max_iterations(raw):
+        return
+    n = _parse_agent_max_iterations(raw)
     if n is None:
         return
     if n < AGENT_MAX_ITERATIONS_MIN or n > AGENT_MAX_ITERATIONS_MAX:
@@ -425,14 +437,19 @@ def _validate_agent_max_iterations(partial: Dict[str, Any]) -> None:
 def clamp_agent_max_iterations(raw: Any, default: int = 30) -> int:
     """Coerce a stored/env value to an int in ``[5, 200]``.
 
-    Used when *reading* the setting so a leftover ``0`` (persisted before
-    this range was enforced) cannot stop the agent loop on the first turn.
+    ``"unlimited"`` becomes ``UNLIMITED_AGENT_ITERATIONS`` so the agent
+    loop (which takes an int) can run a long-lived turn. A leftover ``0``
+    is lifted to 5 so it cannot stop the loop on the first turn.
     """
+    if _is_unlimited_max_iterations(raw):
+        return UNLIMITED_AGENT_ITERATIONS
     try:
         n = _parse_agent_max_iterations(raw)
     except ValueError:
         n = None
     if n is None:
+        if _is_unlimited_max_iterations(default):
+            return UNLIMITED_AGENT_ITERATIONS
         try:
             n = int(default)
         except (TypeError, ValueError):

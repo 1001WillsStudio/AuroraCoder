@@ -89,9 +89,10 @@ The Settings `/m` page is covered in `tests/test_mobile_routes.py`.
 `frontend/src/utils/settingsValidation.js` is ``encodeStoredApiKey``
 (empty field + stored key → keep) plus ``validateMaxIterations`` (Save
 rejects a Max Iterations Per Turn value outside 5–200; HTML ``min``/``max``
-are not enforced by the Save button). `tests/test_settings_validation.py`
-covers both. `tests/test_settings_max_iterations.py` locks the store:
-``update_settings`` raises on ``"0"`` and leaves the on-disk value unchanged.
+are not enforced by the Save button; the sentinel ``unlimited`` is allowed).
+`tests/test_settings_validation.py` covers both. `tests/test_settings_max_iterations.py`
+locks the store: ``update_settings`` raises on ``"0"`` and leaves the on-disk
+value unchanged, and accepts ``"unlimited"``.
 
 | File | Status | Notes |
 |---|---|---|
