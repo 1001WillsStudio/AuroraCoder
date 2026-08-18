@@ -9,7 +9,7 @@ import Sidebar from './components/Sidebar'
 import WelcomeScreen from './components/WelcomeScreen'
 import SettingsPanel from './components/SettingsPanel'
 import { streamChat, getProviders, cancelConversation, getConversation, getActiveStreams, resumeStream, getTaskInstruction, setTaskInstruction, getInstanceInfo } from './services/api'
-import { isInterruptible, TASK_MARKER_START, TASK_MARKER_END } from './utils/streamUtils'
+import { isInterruptible, TASK_MARKER_START, TASK_MARKER_END, newConversationId } from './utils/streamUtils'
 import { checkAuth, isAuthRequired } from './utils/auth.js'
 import CodePanel from './components/CodePanel'
 import { createStreamCallbacks } from './hooks/createStreamCallbacks'
@@ -284,6 +284,16 @@ function App() {
     const appliedInstruction = (systemPrompt.trim() && !conversationId && !isRetry)
       ? systemPrompt.trim()
       : ''
+    // Mint an id before streamChat so a first-turn provider error still
+    // leaves Try Again on the same conversation (the 500 path never
+    // emits a messages/done event that would have set conversationId).
+    if (!conversationIdRef.current) {
+      conversationIdRef.current = conversationId || newConversationId()
+      if (conversationIdRef.current !== conversationId) {
+        setConversationId(conversationIdRef.current)
+      }
+    }
+    const cid = conversationIdRef.current
     const apiMessage = isRetry
       ? userMessageText
       : (appliedInstruction
@@ -306,9 +316,9 @@ function App() {
     // rawMessages state.  Without this the backend receives a stale
     // history with the assistant's ``content`` still at ``""``.
     let latestRawMessages = null
-    if (isInterrupt && conversationId) {
+    if (isInterrupt && cid) {
       try {
-        const result = await cancelConversation(conversationId)
+        const result = await cancelConversation(cid)
         if (result?.raw_messages?.length > 0) {
           latestRawMessages = result.raw_messages
         }
@@ -357,7 +367,7 @@ function App() {
       if (latestRawMessages) {
         setRawMessages(latestRawMessages)
       }
-    } else if (conversationId && rawMessages.length > 0) {
+    } else if (cid && rawMessages.length > 0) {
       messagesToSend = rawMessages
     }
 
@@ -368,7 +378,7 @@ function App() {
       ...options,
       ...resolveProviderOptions(providers, selectedProvider),
     }
-    setLastRequest({ message: userMessageText, conversationId, provider: selectedProvider, existingMessages: messagesToSend })
+    setLastRequest({ message: userMessageText, conversationId: cid, provider: selectedProvider, existingMessages: messagesToSend })
 
     log('about to call streamChat()')
     try {
@@ -386,7 +396,7 @@ function App() {
         onInterruptFired: () => setPendingInterrupt(null),
         ensureAssistantTail: true,
       })
-      await streamChat(apiMessage, conversationId, callbacks, abortControllerRef.current.signal, messagesToSend, selectedProvider, opts)
+      await streamChat(apiMessage, cid, callbacks, abortControllerRef.current.signal, messagesToSend, selectedProvider, opts)
     } catch (error) {
       if (error.name !== 'AbortError') console.error('Chat error:', error)
       setIsStreaming(false)
@@ -496,6 +506,7 @@ function App() {
     if (abortControllerRef.current) abortControllerRef.current.abort()
     setMessages([])
     setRawMessages([])
+    conversationIdRef.current = null
     setConversationId(null)
     setIsStreaming(false)
     setCanContinue(false)
