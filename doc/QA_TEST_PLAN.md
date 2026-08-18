@@ -104,6 +104,10 @@ Stable `data-testid` hooks on the desktop SPA (`chat-input`, `chat-send`,
 `chat-message`, …) are locked by `tests/test_frontend_testids.py` (source scan;
 no DOM). The mobile SPA is intentionally excluded.
 
+| Module | Status | Notes |
+|---|---|---|
+| `frontend/src/utils/uuid.js` | ✅ | `tests/test_fork_conversation_uuid.py` — fork button must not call `crypto.randomUUID()` (secure-context-only; throws on http:// non-localhost). Helper fallback executed via Node when present. |
+
 ## 4. Coverage gate (target)
 
 ```
