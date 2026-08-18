@@ -38,7 +38,7 @@ frontend/                     ← UI + conversation ownership
     hooks/                    ← useAutoScroll, useFileTracking, useLanguage,
                                  createStreamCallbacks
     services/api.js           ← SSE streaming client
-    utils/                    ← auth, injectToolStop, streamUtils, settingsValidation
+    utils/                    ← auth, injectToolStop, streamUtils, settingsValidation, uuid
     i18n/                     ← translations.js (27KB), LanguageContext
     styles/                   ← 12 domain CSS files (tokens, layout, messages,
                                  sidebar, settings, tool-activity, code-panel,
@@ -138,7 +138,7 @@ Aurora Coder/
 │   │   ├── hooks/              ← useAutoScroll, useFileTracking, useLanguage,
 │   │   │                          createStreamCallbacks
 │   │   ├── services/api.js     ← SSE streaming client
-│   │   ├── utils/              ← auth, injectToolStop, streamUtils, settingsValidation
+│   │   ├── utils/              ← auth, injectToolStop, streamUtils, settingsValidation, uuid
 │   │   ├── i18n/               ← translations.js, LanguageContext
 │   │   └── styles/             ← 12 domain CSS files
 │   ├── server.py               ← Python static file server for production
@@ -594,6 +594,7 @@ Test files in `tests/`:
 - `test_edit_file_edge_cases.py` — Edit file matching edge cases
 - `test_streaming_race.py` — SSE streaming race condition tests
 - `test_mergePanelFiles.mjs` — Frontend panel merging tests
+- `test_fork_conversation_uuid.py` — Fork button UUID helper (insecure-context fallback)
 - `test_mobile_routes.py` — Settings `/m` link serves the other frontend page
 
 ---
