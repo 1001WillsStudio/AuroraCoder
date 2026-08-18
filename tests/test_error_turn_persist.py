@@ -15,6 +15,15 @@ from gateway.conversation_store import (
 )
 
 
+# Exact string the OpenAI client produces for the mock-provider 500 that the
+# explorer triggers by sending "e2e:error". Shown verbatim in the assistant
+# bubble before sanitisation.
+_RAW_PROVIDER_500 = (
+    "Error code: 500 - {'error': {'message': 'mock provider: simulated "
+    "upstream failure', 'type': 'mock_error'}}"
+)
+
+
 def test_reported_error_payload_gets_retry_bubble():
     """The explorer payload: status=error and only the user bubble."""
     raw = [{"role": "user", "content": "e2e:error"}]
@@ -23,6 +32,22 @@ def test_reported_error_payload_gets_retry_bubble():
     assert fe[-1]["isError"] is True
     assert fe[-1]["canRetry"] is True
     assert "provider exploded" in fe[-1]["content"]
+
+
+def test_raw_openai_error_blob_is_not_shown_in_error_bubble():
+    """Provider 500s must not leak the SDK/JSON dump into the chat bubble."""
+    fe = ensure_error_frontend_message(
+        [{"role": "user", "content": "e2e:error"}],
+        {"message": _RAW_PROVIDER_500, "type": "InternalServerError"},
+    )
+    content = fe[-1]["content"]
+    assert fe[-1]["isError"] is True
+    assert fe[-1]["canRetry"] is True
+    assert "mock provider" not in content
+    assert "simulated upstream" not in content
+    assert "Error code:" not in content
+    assert "{'error'" not in content
+    assert "model provider failed" in content.lower()
 
 
 def test_ensure_error_frontend_message_is_idempotent():

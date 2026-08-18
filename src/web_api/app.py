@@ -23,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from ..main_flow import generate_chat_responses_stream_native
+from ..user_visible_errors import user_visible_error_message
 from ..code_sandbox import shell, get_workspace, WORKSPACE
 from ..core_tools.subagent import cancel_active_subagents
 from ..config import DEFAULT_PROVIDER
@@ -272,7 +273,7 @@ async def stream_chat_response(
                     logger.exception("Error in generator thread")
                     loop.call_soon_threadsafe(
                         queue.put_nowait,
-                        ("error", {"message": str(e), "type": type(e).__name__})
+                        ("error", {"message": user_visible_error_message(e), "type": type(e).__name__})
                     )
             finally:
                 loop.call_soon_threadsafe(queue.put_nowait, None)

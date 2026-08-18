@@ -20,6 +20,7 @@ import httpx
 
 from src.config import WORKSPACE_DIR, MAX_FILE_READ_SIZE
 from gateway.conversation_store import store, sanitize_frontend_messages, ensure_error_frontend_message
+from src.user_visible_errors import user_visible_error_message
 from gateway.workspace import (
     file_snapshots,
     mark_file_touched,
@@ -463,7 +464,12 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                 logger.info(f"[proxy] [{cid[:8]}...] backend_connect={backend_connect_elapsed:.3f}s status={response.status_code}")
                 if response.status_code != 200:
                     body = (await response.aread()).decode(errors="replace")
-                    err = {"message": f"Backend returned {response.status_code}: {body[:500]}", "type": "BackendError"}
+                    err = {
+                        "message": user_visible_error_message(
+                            f"Backend returned {response.status_code}: {body[:500]}"
+                        ),
+                        "type": "BackendError",
+                    }
                     stream.latest_event_type = "error"
                     stream.latest_event_data = err
                     for q in list(stream.subscribers):
@@ -479,6 +485,13 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                     while "\n\n" in buffer:
                         raw, buffer = buffer.split("\n\n", 1)
                         for etype, edata in _parse_sse_blocks(raw + "\n\n"):
+                            if etype == "error" and isinstance(edata, dict):
+                                edata = {
+                                    **edata,
+                                    "message": user_visible_error_message(
+                                        edata.get("message")
+                                    ),
+                                }
                             stream.latest_event_type = etype
                             stream.latest_event_data = edata
 
@@ -623,7 +636,7 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
 
     except Exception as e:
         logger.exception(f"[proxy] Error for {cid[:8]}...")
-        err = {"message": str(e), "type": type(e).__name__}
+        err = {"message": user_visible_error_message(e), "type": type(e).__name__}
         stream.latest_event_type = "error"
         stream.latest_event_data = err
         for q in list(stream.subscribers):

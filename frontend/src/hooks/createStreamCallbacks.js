@@ -1,5 +1,6 @@
 import { STATUS } from '../constants'
 import { isInterruptible } from '../utils/streamUtils'
+import { userVisibleErrorMessage } from '../utils/providerError'
 
 /**
  * Plain factory (NOT a hook).  Called inside handler bodies so closures
@@ -65,7 +66,7 @@ export function createStreamCallbacks({
         error.type === 'TimeoutError' || error.message?.toLowerCase().includes('timed out') ||
         error.message?.toLowerCase().includes('504') || error.message?.toLowerCase().includes('gateway timeout')
       setMessages(prev => [...prev, {
-        role: 'assistant', content: `Error: ${error.message}`,
+        role: 'assistant', content: `Error: ${userVisibleErrorMessage(error.message)}`,
         isError: true, isTimeout, canRetry: true
       }])
     }

@@ -6,6 +6,7 @@ import remarkGfm from 'remark-gfm'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import ToolActivity from './ToolActivity'
+import { userVisibleErrorMessage } from '../utils/providerError'
 
 /**
  * Collapsible thinking block
@@ -108,10 +109,13 @@ function ChatMessage({ message, msgIdx, isLatest, isStreaming, onRetry, onStopTo
   const isError = message.isError
   const isTimeout = message.isTimeout
   const canRetry = message.canRetry && onRetry
+  const displayContent = isError
+    ? `Error: ${userVisibleErrorMessage(message.content)}`
+    : message.content
   
   // Group consecutive activities for better display
   // Each block follows: thinking → content → tool_calls/results
-  const groupedActivities = useMemo(() => groupActivities(activities, message.content), [activities, message.content])
+  const groupedActivities = useMemo(() => groupActivities(activities, displayContent), [activities, displayContent])
   const lastThinkingIdx = groupedActivities.findLastIndex(g => g.type === 'thinking')
   
 

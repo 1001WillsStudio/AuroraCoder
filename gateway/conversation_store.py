@@ -24,6 +24,7 @@ from gateway.task_instruction_display import (
     strip_task_instruction,
     user_message_for_frontend,
 )
+from src.user_visible_errors import user_visible_error_message
 
 logger = logging.getLogger(__name__)
 
@@ -75,10 +76,10 @@ def ensure_error_frontend_message(
     if isinstance(error, dict):
         message = str(error.get("message") or error.get("error") or "")
         err_type = str(error.get("type") or "")
-    text = message or "The provider failed before a reply was produced."
+    text = user_visible_error_message(message)
     if not text.startswith("Error:"):
         text = f"Error: {text}"
-    lowered = f"{text} {err_type}".lower()
+    lowered = f"{message} {text} {err_type}".lower()
     msgs.append({
         "role": "assistant",
         "content": text,

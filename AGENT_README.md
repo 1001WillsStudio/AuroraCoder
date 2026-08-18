@@ -521,6 +521,9 @@ data/                        ← host directory (git-ignored)
 A turn that ends in provider failure is stored as an assistant message
 with ``isError`` / ``canRetry`` (and conversation ``status=error``) so
 reopening the chat still shows the failure and a Try Again control.
+SDK and JSON error dumps (``Error code: 500 - {'error': ...}``) are
+replaced with a short sentence — ``The model provider failed.`` — before
+they reach the chat bubble (`src/user_visible_errors.py`).
 Without that bubble the store would keep only the seeded user message
 and reload would look like the turn was never answered. Try Again
 resends the current transcript without a new user message; incomplete
