@@ -14,3 +14,33 @@ export function encodeStoredApiKey(apiKey, keyConfigured) {
   if (apiKey === true || Boolean(keyConfigured)) return true
   return undefined
 }
+
+/** Matches the Max Iterations Per Turn spinbutton (min=5, max=200). */
+export const MAX_ITERATIONS_MIN = 5
+export const MAX_ITERATIONS_MAX = 200
+/** Stored sentinel — not 0, which is the invalid value this control rejects. */
+export const MAX_ITERATIONS_UNLIMITED = 'unlimited'
+
+export function isUnlimitedMaxIterations(value) {
+  return typeof value === 'string' && value.trim().toLowerCase() === MAX_ITERATIONS_UNLIMITED
+}
+
+/**
+ * HTML min/max on a number input are not checked when Save is a <button>
+ * onclick (no form submit). Reject out-of-range values before PUT.
+ *
+ * Empty / omitted is valid — the server default (30) is used.
+ * The string ``unlimited`` is valid (Unlimited checkbox). 0 is not.
+ *
+ * @returns {string|null} translation key, or null if the value is allowed
+ */
+export function validateMaxIterations(value) {
+  if (value === '' || value === null || value === undefined) return null
+  if (typeof value === 'string' && value.trim() === '') return null
+  if (isUnlimitedMaxIterations(value)) return null
+  const n = typeof value === 'number' ? value : Number(String(value).trim())
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n < MAX_ITERATIONS_MIN || n > MAX_ITERATIONS_MAX) {
+    return 'msg.maxIterationsRange'
+  }
+  return null
+}
