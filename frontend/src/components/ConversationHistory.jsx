@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { History, X, Search } from 'lucide-react'
 import { listConversations, getActiveStreams } from '../services/api'
 import useLanguage from '../hooks/useLanguage'
@@ -284,7 +285,7 @@ export default function ConversationHistory({ currentConversationId, onSelect, r
         {mainCount > 0 && <span className="history-trigger-count">{mainCount}</span>}
       </button>
 
-      {drawerOpen && (
+      {drawerOpen && createPortal(
         <HistoryDrawer
           conversations={conversations}
           activeIds={activeIds}
@@ -293,7 +294,8 @@ export default function ConversationHistory({ currentConversationId, onSelect, r
           onClose={() => setDrawerOpen(false)}
           triggerRef={triggerRef}
           t={t}
-        />
+        />,
+        document.body,
       )}
     </>
   )

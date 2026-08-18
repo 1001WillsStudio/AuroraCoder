@@ -79,6 +79,8 @@
     left: 0;
     width: 100%;
     height: calc(100% - 52px);
+    /* Above .sidebar (400) and .sidebar-backdrop (350). Desktop drawers stay at 200. */
+    z-index: 500;
   }
 
   .messages-container {

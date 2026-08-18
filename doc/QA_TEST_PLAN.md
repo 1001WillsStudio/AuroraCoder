@@ -98,6 +98,7 @@ value unchanged, and accepts ``"unlimited"``.
 | File | Status | Notes |
 |---|---|---|
 | `tests/test_mobile_sidebar_toggle.py` | ✅ | Source-level regression: at `max-width: 768px` the sidebar may stay `display: none` only if App.jsx renders a `.sidebar-toggle` *outside* the aside and `.app.sidebar-open .sidebar` reveals it. Locks the explorer finding that a 375px resize hid New Chat / History / Settings / model with no hamburger. |
+| `tests/test_mobile_drawer_stacking.py` | ✅ | Source-level regression: at `max-width: 768px` Task Instructions and All History must use a z-index above the slide-over sidebar (400) and Close-menu backdrop (350). History is portaled to `document.body` so it is not trapped in the sidebar stacking context or hidden when the menu closes. Locks the explorer finding that a 390px viewport showed only a sliver of the drawer; taps on the X hit the backdrop and taps on the textarea hit the sidebar. |
 | `tests/test_stale_viewer_after_delete.py` | ✅ | Deleting an open Workspace file must close its viewer tab; Refresh re-reads view-only tabs and drops them on 404. Helpers in `frontend/src/utils/panelFiles.js` run via Node; source scan locks FileTree → panel wiring. |
 
 Stable `data-testid` hooks on the desktop SPA (`chat-input`, `chat-send`,
