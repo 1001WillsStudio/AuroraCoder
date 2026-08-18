@@ -97,7 +97,7 @@ value unchanged, and accepts ``"unlimited"``.
 
 | File | Status | Notes |
 |---|---|---|
-| `tests/test_mobile_sidebar_toggle.py` | ✅ | Source-level regression: at `max-width: 768px` the sidebar may stay `display: none` only if App.jsx renders a `.sidebar-toggle` *outside* the aside and `.app.sidebar-open .sidebar` reveals it. Locks the explorer finding that a 375px resize hid New Chat / History / Settings / model with no hamburger. |
+| `tests/test_mobile_sidebar_toggle.py` | ✅ | Source-level regression: at `max-width: 768px` the sidebar may stay `display: none` only if App.jsx renders a `.sidebar-toggle` *outside* the aside and `.app.sidebar-open .sidebar` reveals it. Locks the explorer finding that a 375px resize hid New Chat / History / Settings / model with no hamburger. Also locks 844×390 phone landscape: the same hamburger/drawer query must match that viewport (width-only 768px treats it as desktop and crushes the 16% sidebar) and `.sidebar` must be `overflow-y: auto` so History and Model can be scrolled into view. |
 | `tests/test_stale_viewer_after_delete.py` | ✅ | Deleting an open Workspace file must close its viewer tab; Refresh re-reads view-only tabs and drops them on 404. Helpers in `frontend/src/utils/panelFiles.js` run via Node; source scan locks FileTree → panel wiring. |
 
 Stable `data-testid` hooks on the desktop SPA (`chat-input`, `chat-send`,

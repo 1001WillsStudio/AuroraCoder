@@ -14,7 +14,11 @@
   }
 }
 
-@media (max-width: 768px) {
+/* Phone portrait (≤768px) and short viewports (phone landscape ~844×390):
+   a width-only 768px rule treats landscape phones as desktop, so the 16%
+   sidebar collapses to ~135px with overflow:hidden and History/Model sit
+   below the fold. */
+@media (max-width: 768px), (max-height: 500px) {
   .sidebar {
     display: none;
     position: fixed;
@@ -25,6 +29,8 @@
     flex: none;
     z-index: 400;
     box-shadow: 4px 0 24px rgba(0, 0, 0, 0.3);
+    overflow-x: hidden;
+    overflow-y: auto;
   }
 
   .app.sidebar-open .sidebar {
