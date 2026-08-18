@@ -1,6 +1,7 @@
-import React, { forwardRef } from 'react'
+import React, { forwardRef, useLayoutEffect } from 'react'
 import { Send, RotateCcw, ArrowRightFromLine } from 'lucide-react'
 import useLanguage from '../hooks/useLanguage'
+import { applyComposerResize } from '../utils/composerResize.js'
 
 /**
  * Chat input area with 4 visual modes:
@@ -23,6 +24,13 @@ const ChatInput = forwardRef(({
   onContinueInNewChat,
 }, ref) => {
   const { t } = useLanguage()
+
+  // Grow with the draft up to CSS max-height so multiline text is not clipped.
+  useLayoutEffect(() => {
+    const node = ref && typeof ref !== 'function' ? ref.current : null
+    applyComposerResize(node)
+  }, [value, ref])
+
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()

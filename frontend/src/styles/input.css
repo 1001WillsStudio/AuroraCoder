@@ -42,6 +42,7 @@
   outline: none;
   min-height: 56px;
   max-height: 200px;
+  overflow-y: auto;
 }
 
 .chat-input::placeholder {
