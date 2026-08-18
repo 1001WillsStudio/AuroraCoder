@@ -70,6 +70,7 @@ const LANG = {
     'agent.systemDefault': '(system default)',
     'agent.customSuffix': ' (custom)',
     'agent.maxIterations': 'Max Iterations Per Turn',
+    'agent.maxIterationsUnlimited': 'Unlimited',
     'agent.maxToolConcurrency': 'Max Tool Concurrency',
     'agent.terminalMaxOutput': 'Terminal Max Output',
     'agent.saveTrainingData': 'Save Training Data',
@@ -102,6 +103,7 @@ const LANG = {
 
     // ── Messages ──────────────────────────────────────────────────
     'msg.validationError': 'Fix validation errors before saving',
+    'msg.maxIterationsRange': 'Max Iterations Per Turn must be between 5 and 200',
     'msg.saved': 'Settings saved',
     'msg.saveFailed': 'Save failed',
     'msg.nameRequired': 'Name required',
@@ -333,6 +335,7 @@ const LANG = {
     'agent.systemDefault': '(系统默认)',
     'agent.customSuffix': '（自定义）',
     'agent.maxIterations': '每轮最大迭代次数',
+    'agent.maxIterationsUnlimited': '无限制',
     'agent.maxToolConcurrency': '最大工具并发数',
     'agent.terminalMaxOutput': '终端最大输出',
     'agent.saveTrainingData': '保存训练数据',
@@ -365,6 +368,7 @@ const LANG = {
 
     // ── Messages ──────────────────────────────────────────────────
     'msg.validationError': '请先修正验证错误再保存',
+    'msg.maxIterationsRange': '每轮最大迭代次数必须在 5 到 200 之间',
     'msg.saved': '设置已保存',
     'msg.saveFailed': '保存失败',
     'msg.nameRequired': '名称不能为空',

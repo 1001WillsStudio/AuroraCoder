@@ -51,7 +51,7 @@ Legend: ✅ done · 🟡 next · ⬜ later.
 | `memory.ops.prompts` | 🟡 | pure templates — cheap, next |
 | `memory.store` / `schema` | 🟡 | extend existing layer1 (migrations, embedding-null paths) |
 | `gateway.conversation_store` | 🟡 | task-instruction strip/title + chip field via `gateway.task_instruction_display` (`test_task_instruction_display.py`); CRUD still ⬜ |
-| `gateway.settings_store` | ⬜ | obfuscation round-trip, missing-file defaults |
+| `gateway.settings_store` | 🟡 | max_iterations range on update (`test_settings_max_iterations.py`); obfuscation round-trip still ⬜ |
 
 ### Side-effecting (subprocess / FS / network)
 | Module | Status | Notes |
@@ -72,6 +72,7 @@ Legend: ✅ done · 🟡 next · ⬜ later.
 | `src.tool_executor` | ✅ | partition batching, same-file guard, concurrency env knob (pure core) |
 | `src.providers` | 🟡 | patch `openai.OpenAI`, stream vs non-stream branching |
 | `gateway.streaming` | 🟡 | expand existing race/abort tests via injected provider |
+| `gateway` error-turn persist | ✅ | `tests/test_error_turn_persist.py` — failed turn stored as `isError`/`canRetry`; retry keeps the transcript and does not append a user message |
 | `gateway.routes` / `api` | ⬜ | `TestClient` per endpoint, **auth** via `ACCESS_PASSWORD` |
 | `gateway.provider_registry` | ⬜ | lookup, model metadata, live-list fetch mocked |
 | `gateway.workspace` | ⬜ | git push behind `GITHUB_TOKEN` (mock; skip when absent) |
@@ -86,9 +87,13 @@ msw (reuses the existing Vite config). Prime targets: `utils/streamUtils.js`,
 /`FileTree.jsx`/`ToolActivity.jsx` before component testing. — ⬜ (separate PR recommended).
 The Settings `/m` page is covered in `tests/test_mobile_routes.py`.
 
-`frontend/src/utils/settingsValidation.js` is ``encodeStoredApiKey`` —
-empty field + stored key → keep. `tests/test_settings_validation.py`
-covers that Save is not blocked for a blank stored or missing key.
+`frontend/src/utils/settingsValidation.js` is ``encodeStoredApiKey``
+(empty field + stored key → keep) plus ``validateMaxIterations`` (Save
+rejects a Max Iterations Per Turn value outside 5–200; HTML ``min``/``max``
+are not enforced by the Save button; the sentinel ``unlimited`` is allowed).
+`tests/test_settings_validation.py` covers both. `tests/test_settings_max_iterations.py`
+locks the store: ``update_settings`` raises on ``"0"`` and leaves the on-disk
+value unchanged, and accepts ``"unlimited"``.
 
 | File | Status | Notes |
 |---|---|---|
@@ -99,6 +104,10 @@ covers that Save is not blocked for a blank stored or missing key.
 Stable `data-testid` hooks on the desktop SPA (`chat-input`, `chat-send`,
 `chat-message`, …) are locked by `tests/test_frontend_testids.py` (source scan;
 no DOM). The mobile SPA is intentionally excluded.
+
+| Module | Status | Notes |
+|---|---|---|
+| `frontend/src/utils/uuid.js` | ✅ | `tests/test_fork_conversation_uuid.py` — fork button must not call `crypto.randomUUID()` (secure-context-only; throws on http:// non-localhost). Helper fallback executed via Node when present. |
 
 ## 4. Coverage gate (target)
 

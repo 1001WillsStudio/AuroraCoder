@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from src.config import WORKSPACE_DIR, MAX_FILE_READ_SIZE
-from gateway.conversation_store import store, sanitize_frontend_messages
+from gateway.conversation_store import store, sanitize_frontend_messages, ensure_error_frontend_message
 from gateway.workspace import (
     file_snapshots,
     mark_file_touched,
@@ -655,7 +655,18 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                 pass
             if current_status != "continued":
                 store.update_status(cid, persist_status)
-            if stream.latest_frontend_messages:
+            if persist_status == "error":
+                data = stream.latest_event_data if isinstance(stream.latest_event_data, dict) else {}
+                err = data if stream.latest_event_type == "error" else (
+                    {"message": data["error"]} if data.get("error") else None
+                )
+                fe = ensure_error_frontend_message(
+                    stream.latest_frontend_messages or store.get_frontend_messages(cid),
+                    err,
+                )
+                stream.latest_frontend_messages = fe
+                store.save_frontend_messages(cid, fe)
+            elif stream.latest_frontend_messages:
                 store.save_frontend_messages(cid, stream.latest_frontend_messages)
             raw_msgs = stream.latest_event_data.get("raw_messages", []) if stream.latest_event_data else []
             if raw_msgs:
