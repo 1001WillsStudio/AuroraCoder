@@ -19,7 +19,7 @@ function ToolActivity({ toolCalls, toolResults, onStopTool, onLoadConversation, 
   const fallbackIds = subagentChildIds?._fallback || []
   let fallbackIdx = 0
   return (
-    <div className="tool-activity-section">
+    <div className="tool-activity-section" data-testid="tool-activity">
       {toolCalls.map((tc, idx) => {
         const toolResult = toolResults?.find(r => r.tool_call_id === tc.id)
         // Use tool_call_id → child_id map, fall back to index-based if no mapping

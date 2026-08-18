@@ -38,7 +38,7 @@ frontend/                     ← UI + conversation ownership
     hooks/                    ← useAutoScroll, useFileTracking, useLanguage,
                                  createStreamCallbacks
     services/api.js           ← SSE streaming client
-    utils/                    ← auth, injectToolStop, streamUtils, uuid
+    utils/                    ← auth, injectToolStop, streamUtils, settingsValidation, uuid
     i18n/                     ← translations.js (27KB), LanguageContext
     styles/                   ← 12 domain CSS files (tokens, layout, messages,
                                  sidebar, settings, tool-activity, code-panel,
@@ -138,7 +138,7 @@ Aurora Coder/
 │   │   ├── hooks/              ← useAutoScroll, useFileTracking, useLanguage,
 │   │   │                          createStreamCallbacks
 │   │   ├── services/api.js     ← SSE streaming client
-│   │   ├── utils/              ← auth, injectToolStop, streamUtils, uuid
+│   │   ├── utils/              ← auth, injectToolStop, streamUtils, settingsValidation, uuid
 │   │   ├── i18n/               ← translations.js, LanguageContext
 │   │   └── styles/             ← 12 domain CSS files
 │   ├── server.py               ← Python static file server for production
@@ -518,6 +518,14 @@ data/                        ← host directory (git-ignored)
     └── YYYY-MM-DD.jsonl     ← daily training data logs
 ```
 
+A turn that ends in provider failure is stored as an assistant message
+with ``isError`` / ``canRetry`` (and conversation ``status=error``) so
+reopening the chat still shows the failure and a Try Again control.
+Without that bubble the store would keep only the seeded user message
+and reload would look like the turn was never answered. Try Again
+resends the current transcript without a new user message; incomplete
+tool calls are filled in by the existing orphan-tool fixer.
+
 Key implementation files:
 - `gateway/conversation_store.py` — file-backed store (thread-safe, atomic writes)
 - `gateway/routes.py` — all route handlers proxying to the backend
@@ -587,6 +595,7 @@ Test files in `tests/`:
 - `test_streaming_race.py` — SSE streaming race condition tests
 - `test_mergePanelFiles.mjs` — Frontend panel merging tests
 - `test_fork_conversation_uuid.py` — Fork button UUID helper (insecure-context fallback)
+- `test_mobile_routes.py` — Settings `/m` link serves the other frontend page
 
 ---
 

@@ -1,7 +1,7 @@
 # AuroraCoder — QA Unit-Test Plan
 
 Status: **whole suite GREEN** — branch `test/add-unit-test-suite` (pushed).
-Final: `242 passed, 1 xfailed, 0 failed, 0 errors` hermetically. This document is
+Final: hermetic unit suite green (0 xfailed). This document is
 the QA-engineer design for "unit tests that ensure every module works right," the
 implementation map, and how all pre-existing failures were diagnosed and fixed.
 
@@ -50,14 +50,14 @@ Legend: ✅ done · 🟡 next · ⬜ later.
 | `src.training_log` | ✅ | JSONL row shape, toggle, never-raise IO safety, flag loader corruption tolerance |
 | `memory.ops.prompts` | 🟡 | pure templates — cheap, next |
 | `memory.store` / `schema` | 🟡 | extend existing layer1 (migrations, embedding-null paths) |
-| `gateway.conversation_store` | ⬜ | SQLite CRUD/migrations in `tmp_path` |
+| `gateway.conversation_store` | 🟡 | task-instruction strip/title + chip field via `gateway.task_instruction_display` (`test_task_instruction_display.py`); CRUD still ⬜ |
 | `gateway.settings_store` | ⬜ | obfuscation round-trip, missing-file defaults |
 
 ### Side-effecting (subprocess / FS / network)
 | Module | Status | Notes |
 |---|---|---|
 | `src.code_tools.grep_search` | ✅ | exact cmd build + tool contract via `FakeSubprocess` |
-| `src.code_tools.file_operations` | ✅ | read/write/delete/list/search, large-file guard, wrappers, **xfail: path traversal gap** |
+| `src.code_tools.file_operations` | ✅ | read/write/delete/list/search, large-file guard, wrappers, ``_resolve_path`` rejects ``..`` and symlink escapes |
 | `src.code_tools.terminal_runner` | 🟡 | persistent-shell state + `subprocess.run` paths |
 | `src.code_sandbox.sandbox` | 🟡 | timeout/resource/cwd isolation, exit codes (Docker branch = integration) |
 | `src.config` | 🟡 | env→defaults, `.env` load, reload safety (env read at import) |
@@ -72,10 +72,11 @@ Legend: ✅ done · 🟡 next · ⬜ later.
 | `src.tool_executor` | ✅ | partition batching, same-file guard, concurrency env knob (pure core) |
 | `src.providers` | 🟡 | patch `openai.OpenAI`, stream vs non-stream branching |
 | `gateway.streaming` | 🟡 | expand existing race/abort tests via injected provider |
+| `gateway` error-turn persist | ✅ | `tests/test_error_turn_persist.py` — failed turn stored as `isError`/`canRetry`; retry keeps the transcript and does not append a user message |
 | `gateway.routes` / `api` | ⬜ | `TestClient` per endpoint, **auth** via `ACCESS_PASSWORD` |
 | `gateway.provider_registry` | ⬜ | lookup, model metadata, live-list fetch mocked |
 | `gateway.workspace` | ⬜ | git push behind `GITHUB_TOKEN` (mock; skip when absent) |
-| `src.web_api.app` | ⬜ | FastAPI app wiring smoke |
+| `src.web_api.app` | 🟡 | app wiring still ⬜ |
 | `src.main_flow` / `core_tools.subagent` | ⬜ | inject `FakeLLMClient` + fake tool_executor |
 
 ### Frontend (`frontend/`, `mobile/`)
@@ -84,6 +85,20 @@ msw (reuses the existing Vite config). Prime targets: `utils/streamUtils.js`,
 `utils/auth.js`, `services/api.js`, `i18n/translations.js` (key-completeness),
 `hooks/createStreamCallbacks.js`. Extract pure helpers from `SettingsPanel.jsx`
 /`FileTree.jsx`/`ToolActivity.jsx` before component testing. — ⬜ (separate PR recommended).
+The Settings `/m` page is covered in `tests/test_mobile_routes.py`.
+
+`frontend/src/utils/settingsValidation.js` is ``encodeStoredApiKey`` —
+empty field + stored key → keep. `tests/test_settings_validation.py`
+covers that Save is not blocked for a blank stored or missing key.
+
+| File | Status | Notes |
+|---|---|---|
+| `tests/test_mobile_sidebar_toggle.py` | ✅ | Source-level regression: at `max-width: 768px` the sidebar may stay `display: none` only if App.jsx renders a `.sidebar-toggle` *outside* the aside and `.app.sidebar-open .sidebar` reveals it. Locks the explorer finding that a 375px resize hid New Chat / History / Settings / model with no hamburger. |
+| `tests/test_stale_viewer_after_delete.py` | ✅ | Deleting an open Workspace file must close its viewer tab; Refresh re-reads view-only tabs and drops them on 404. Helpers in `frontend/src/utils/panelFiles.js` run via Node; source scan locks FileTree → panel wiring. |
+
+Stable `data-testid` hooks on the desktop SPA (`chat-input`, `chat-send`,
+`chat-message`, …) are locked by `tests/test_frontend_testids.py` (source scan;
+no DOM). The mobile SPA is intentionally excluded.
 
 | Module | Status | Notes |
 |---|---|---|
@@ -111,7 +126,7 @@ pytest --cov=src --cov=gateway --cov=memory --cov-fail-under=85   # target
 
 The untouched `dev` branch was **42 failed, 112 passed**. As QA owner of the whole
 suite I traced every failure to its root cause and fixed it (not masked). The full
-suite now passes hermetically: **242 passed, 1 xfailed, 0 failed, 0 errors**.
+suite now passes hermetically (the former ``_resolve_path`` xfail is a real gate).
 
 ### 6.1 `test_streaming_race.py` — 1 collection ERROR
 **Cause:** the file defined `async def test(scenario, subscriber_fn)` as a plain
@@ -151,9 +166,5 @@ converted the three assert helpers to REAL (raising) pytest assertions so the
 suite genuinely verifies the context-fix channel.
 
 ### 6.5 Persistent QA findings (still open, low priority)
-- **`file_operations._resolve_path` performs no path-escape validation** — a
-  relative `../../x` resolves outside `WORKSPACE`. Captured as an `xfail` test
-  (`test_resolve_path_blocks_traversal`); fix is a prod change (out of test
-  scope) but the contract is now locked.
 - `check()` helper in `test_edit_file_edge_cases.py` is dead code (defined, never
   called) — safe to delete.

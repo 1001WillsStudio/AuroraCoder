@@ -8,13 +8,18 @@ file display, settings, providers, workspace management.
     Browser  ←HTTP/SSE→  Frontend (:3000)  ←proxy→  Gateway (:8081)  ←SSE→  Backend (:8080)
 """
 
-import httpx
-from fastapi import FastAPI, Request
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import StreamingResponse
 from pathlib import Path
 
+import httpx
+from fastapi import FastAPI, Request
+from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+
 GATEWAY_URL = "http://localhost:8081"
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_DEFAULT_FRONTEND_DIR = Path(__file__).resolve().parent / "dist"
+_DEFAULT_MOBILE_DIR = _REPO_ROOT / "mobile"
 
 app = FastAPI(title="AuroraCoder Frontend")
 
@@ -75,21 +80,38 @@ async def proxy_health(request: Request):
     return await _proxy(request, "/health")
 
 
-@app.get("/m")
-async def proxy_m_redirect(request: Request):
-    return await _proxy(request, "/m")
+def mount_static_assets(
+    application: FastAPI,
+    frontend_dir: Path | None = None,
+    mobile_dir: Path | None = None,
+) -> None:
+    """Desktop at ``/``. ``/m`` is the other page when that tree is present."""
+    if frontend_dir is None:
+        frontend_dir = _DEFAULT_FRONTEND_DIR
+    if mobile_dir is None:
+        mobile_dir = _DEFAULT_MOBILE_DIR
+
+    if mobile_dir.exists():
+        files = StaticFiles(directory=str(mobile_dir), html=True)
+
+        async def _m_index():
+            return RedirectResponse(url="/m/", status_code=307)
+
+        async def _m_path(path: str, request: Request):
+            return await files.get_response(path, request.scope)
+
+        application.add_api_route("/m", _m_index, methods=["GET", "HEAD"])
+        application.add_api_route("/m/{path:path}", _m_path, methods=["GET", "HEAD"])
+
+    if frontend_dir.exists():
+        application.mount(
+            "/",
+            StaticFiles(directory=str(frontend_dir), html=True),
+            name="frontend",
+        )
 
 
-@app.api_route("/mobile/{path:path}", methods=["GET", "POST"])
-async def proxy_mobile(request: Request, path: str):
-    return await _proxy(request, f"/mobile/{path}")
-
-
-# ── Static files (catch-all SPA — mounted last so routes above win) ───────
-
-frontend_dist = Path(__file__).resolve().parent / "dist"
-if frontend_dist.exists():
-    app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")
+mount_static_assets(app)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────

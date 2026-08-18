@@ -22,7 +22,7 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from pydantic import BaseModel
@@ -120,15 +120,15 @@ async def auth_middleware(request: Request, call_next):
     """Require Bearer token for all /api/* routes (except /api/auth/*, /health).
 
     If ACCESS_PASSWORD is not set, no auth is required.
-    Public paths: /health, /api/auth/*, /mobile/*, /m
+    Public paths: /health, /api/auth/*
     """
     path = request.url.path
 
     if not AUTH_PASSWORD:
         return await call_next(request)
 
-    public_prefixes = ("/health", "/api/auth/", "/mobile", "/m/")
-    if any(path.startswith(p) for p in public_prefixes) or path == "/m":
+    public_prefixes = ("/health", "/api/auth/")
+    if any(path.startswith(p) for p in public_prefixes):
         return await call_next(request)
 
     if not path.startswith("/api/"):
@@ -263,17 +263,8 @@ from gateway import routes  # noqa: E402, F401 — registers routes on `app`
 # ============================================================================
 
 frontend_dir = Path(__file__).resolve().parent.parent / "frontend" / "dist"
-mobile_dir = Path(__file__).resolve().parent.parent / "mobile"
-
 if frontend_dir.exists():
     app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
-
-if mobile_dir.exists():
-    app.mount("/mobile", StaticFiles(directory=str(mobile_dir), html=True), name="mobile")
-
-    @app.get("/m")
-    async def mobile_shortcut():
-        return RedirectResponse(url="/mobile/")
 
 
 # ============================================================================

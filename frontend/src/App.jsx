@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { STATUS } from './constants'
 import { useAutoScroll } from './hooks/useAutoScroll'
-import { RotateCcw, X, ArrowDown } from 'lucide-react'
+import { RotateCcw, X, ArrowDown, Menu } from 'lucide-react'
 import ChatMessage from './components/ChatMessage'
 import ChatInput from './components/ChatInput'
 import LoginScreen from './components/LoginScreen'
@@ -104,7 +104,7 @@ function App() {
     fileTreeRefreshTrigger, setFileTreeRefreshTrigger,
     isUploading, uploadInputRef,
     handleFileClose, handleCloseCodePanel,
-    handleRefreshFiles, handleFileTreeClick, handleUploadProject,
+    handleRefreshFiles, handlePathDeleted, handleFileTreeClick, handleUploadProject,
     setEditedFiles, setClosedFiles,
   } = useFileTracking(conversationId, messages, isStreaming)
 
@@ -125,6 +125,7 @@ function App() {
   // subagent_event notifications and their originating tool calls.
   const [subagentChildIds, setSubagentChildIds] = useState({})
   const [showSettings, setShowSettings] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [forkWarning, setForkWarning] = useState(null)
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
@@ -143,6 +144,15 @@ function App() {
     document.documentElement.setAttribute('data-theme', theme)
     localStorage.setItem('theme', theme)
   }, [theme])
+
+  useEffect(() => {
+    if (!sidebarOpen) return undefined
+    const onKey = (e) => {
+      if (e.key === 'Escape') setSidebarOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [sidebarOpen])
 
   // ── Load task instruction from server (not localStorage — follows the instance, not the port) ──
   useEffect(() => {
@@ -270,12 +280,18 @@ function App() {
     }
     setActiveConvoWarning(false)
 
+    const isRetry = Boolean(options.retry)
     const userMessageText = messageToSend
-    const apiMessage = (systemPrompt.trim() && !conversationId)
-      ? `${TASK_MARKER_START}\n${systemPrompt.trim()}\n${TASK_MARKER_END}\n\n${userMessageText}`
-      : userMessageText
+    const appliedInstruction = (systemPrompt.trim() && !conversationId && !isRetry)
+      ? systemPrompt.trim()
+      : ''
+    const apiMessage = isRetry
+      ? userMessageText
+      : (appliedInstruction
+        ? `${TASK_MARKER_START}\n${appliedInstruction}\n${TASK_MARKER_END}\n\n${userMessageText}`
+        : userMessageText)
 
-    const isInterrupt = interruptMessages !== null && interruptMessages.length > 0
+    const isInterrupt = !isRetry && interruptMessages !== null && interruptMessages.length > 0
 
     if (abortControllerRef.current) {
       log('aborting previous controller')
@@ -304,7 +320,26 @@ function App() {
     }
 
     log('setState batch (messages, streaming, etc.)')
-    setMessages(prev => [...prev, { role: 'user', content: userMessageText }, { role: 'assistant', content: '' }])
+    if (isRetry) {
+      setMessages(prev => {
+        let next = prev
+        if (next[next.length - 1]?.isError) next = next.slice(0, -1)
+        const tail = next[next.length - 1]
+        if (tail?.role === 'assistant' && !tail.content && !(tail.activities || []).length) {
+          next = next.slice(0, -1)
+        }
+        if (next[next.length - 1]?.role !== 'assistant') {
+          return [...next, { role: 'assistant', content: '' }]
+        }
+        return next
+      })
+    } else {
+      const userBubble = { role: 'user', content: userMessageText }
+      if (appliedInstruction) {
+        userBubble.taskInstruction = appliedInstruction
+      }
+      setMessages(prev => [...prev, userBubble, { role: 'assistant', content: '' }])
+    }
     setInputValue('')
     setIsStreaming(true)
     setSseReceived(false)
@@ -313,7 +348,12 @@ function App() {
     resetToFollowing()
 
     let messagesToSend = null
-    if (isInterrupt) {
+    if (isRetry) {
+      // Prefer live raw history so completed tool rounds are not discarded.
+      messagesToSend = (rawMessages.length > 0)
+        ? rawMessages
+        : ((interruptMessages && interruptMessages.length > 0) ? interruptMessages : [])
+    } else if (isInterrupt) {
       messagesToSend = latestRawMessages || interruptMessages
       if (latestRawMessages) {
         setRawMessages(latestRawMessages)
@@ -452,6 +492,7 @@ function App() {
   const handleForkDismiss = useCallback(() => setForkWarning(null), [])
 
     const handleClear = () => {
+    setSidebarOpen(false)
     if (inputValue.trim()) draftInputsRef.current.set(conversationId ?? '__new__', inputValue)
     if (abortControllerRef.current) abortControllerRef.current.abort()
     setMessages([])
@@ -507,16 +548,18 @@ function App() {
   }, [])
 
   const handleRetry = useCallback(() => {
-    if (!lastRequest || isStreaming) return
-    setMessages(prev => {
-      const lastMsg = prev[prev.length - 1]
-      if (lastMsg?.isError) return prev.slice(0, -1)
-      return prev
-    })
-    handleSend(lastRequest.existingMessages, lastRequest.message)
-  }, [lastRequest, isStreaming, selectedProvider])
+    if (isStreaming) return
+    const lastUser = [...messages].reverse().find(m => m.role === 'user')
+    const message = lastRequest?.message || lastUser?.content
+    if (!message) return
+    const existing = lastRequest
+      ? lastRequest.existingMessages
+      : (rawMessages.length > 0 ? rawMessages : null)
+    handleSend(existing, message, { retry: true })
+  }, [lastRequest, isStreaming, selectedProvider, messages, rawMessages])
 
   const handleLoadConversation = useCallback(async (targetConversationId) => {
+    setSidebarOpen(false)
     if (inputValueRef.current.trim()) draftInputsRef.current.set(conversationId ?? '__new__', inputValueRef.current)
     if (abortControllerRef.current) {
       abortControllerRef.current.abort()
@@ -607,7 +650,28 @@ function App() {
   }
 
   return (
-    <div className={`app ${(showCodePanel && editedFiles.length > 0) ? 'code-mode' : ''}`}>
+    <div className={`app ${(showCodePanel && editedFiles.length > 0) ? 'code-mode' : ''}${sidebarOpen ? ' sidebar-open' : ''}`}>
+      <header className="mobile-header">
+        <button
+          type="button"
+          className="sidebar-toggle"
+          onClick={() => setSidebarOpen(open => !open)}
+          aria-label={sidebarOpen ? t('sidebar.closeMenu') : t('sidebar.openMenu')}
+          aria-expanded={sidebarOpen}
+          aria-controls="app-sidebar"
+        >
+          {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
+        </button>
+        <span className="mobile-header-title">AuroraCoder</span>
+      </header>
+      {sidebarOpen && (
+        <button
+          type="button"
+          className="sidebar-backdrop"
+          aria-label={t('sidebar.closeMenu')}
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
       <Sidebar
         theme={theme}
         onToggleTheme={toggleTheme}
@@ -626,6 +690,7 @@ function App() {
         fileTreeRefreshTrigger={fileTreeRefreshTrigger}
         isStreaming={isStreaming}
         onFileClick={handleFileTreeClick}
+        onPathDeleted={handlePathDeleted}
         conversationId={conversationId}
         onLoadConversation={handleLoadConversation}
         historyRefreshTrigger={historyRefreshTrigger}
@@ -637,7 +702,7 @@ function App() {
         onSelectProvider={(id) => { setSelectedProvider(id); setShowProviderDropdown(false) }}
         showProviderDropdown={showProviderDropdown}
         onToggleProviderDropdown={() => setShowProviderDropdown(!showProviderDropdown)}
-        onOpenSettings={() => setShowSettings(true)}
+        onOpenSettings={() => { setShowSettings(true); setSidebarOpen(false) }}
       />
 
       <main className="main-content">

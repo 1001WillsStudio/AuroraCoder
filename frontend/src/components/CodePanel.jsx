@@ -59,7 +59,7 @@ function CodePanel({ files, activeFileId, onFileSelect, onFileClose, onClose, on
   }, [activeFile])
 
   return (
-    <div className="code-panel">
+    <div className="code-panel" data-testid="code-panel">
       {/* Header with tabs */}
       <div className="code-panel-header">
         <div className="code-tabs" ref={tabsRef} onWheel={(e) => { if (tabsRef.current) { e.preventDefault(); tabsRef.current.scrollLeft += e.deltaY } }}>

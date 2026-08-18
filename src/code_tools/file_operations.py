@@ -170,7 +170,20 @@ class FileOperations:
 
     def _resolve_path(self, path: str) -> Path:
         path_obj = Path(path)
-        return path_obj if path_obj.is_absolute() else self.workspace_root / path
+        candidate = path_obj if path_obj.is_absolute() else self.workspace_root / path
+        workspace = Path(self.workspace_root).resolve()
+        resolved = candidate.resolve()
+        if resolved.is_relative_to(workspace):
+            return candidate
+        # Relative inputs always originate in the workspace. Absolute inputs
+        # only do if they were addressed under it (so /tmp/... still passes
+        # through; /workspace/../etc and workspace symlinks do not).
+        if path_obj.is_absolute():
+            ws_s = str(workspace)
+            cand_s = str(candidate)
+            if cand_s != ws_s and not cand_s.startswith(ws_s + os.sep):
+                return candidate
+        raise ValueError("Path is outside the workspace")
 
     def _apply_edit(self, current_content: str, code_edit: str) -> str:
         return code_edit
