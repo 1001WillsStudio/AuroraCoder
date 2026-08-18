@@ -202,8 +202,8 @@ async def proxy_chat(request: Request):
         parent_id=parent_id,
     )
 
-    # Retry the failed user turn rather than appending another user
-    # message (which would look like a new ReAct turn to the model).
+    # Retry the last failed ReAct round (usually a tool call / result),
+    # not a new user message and not a rewind to the start of the turn.
     if body.pop("retry", False):
         user_text = body.get("message") or ""
         prior = body.get("messages") or store.get_messages(conversation_id)

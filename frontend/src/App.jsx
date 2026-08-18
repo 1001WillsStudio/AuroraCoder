@@ -348,9 +348,10 @@ function App() {
 
     let messagesToSend = null
     if (isRetry) {
-      messagesToSend = (interruptMessages && interruptMessages.length > 0)
-        ? interruptMessages
-        : (rawMessages.length > 0 ? rawMessages : [])
+      // Prefer live raw history so completed tool rounds are not discarded.
+      messagesToSend = (rawMessages.length > 0)
+        ? rawMessages
+        : ((interruptMessages && interruptMessages.length > 0) ? interruptMessages : [])
     } else if (isInterrupt) {
       messagesToSend = latestRawMessages || interruptMessages
       if (latestRawMessages) {
