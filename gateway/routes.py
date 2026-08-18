@@ -409,7 +409,10 @@ async def update_settings(update: _SettingsUpdate):
         payload["provider_models"] = update.provider_models
     if update.other is not None:
         payload["other"] = update.other
-    result = _store_update_settings(payload)
+    try:
+        result = _store_update_settings(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     sync_tool_env_vars()
 
     # ── GitHub PAT: auto-configure git (only when github key provided) ─

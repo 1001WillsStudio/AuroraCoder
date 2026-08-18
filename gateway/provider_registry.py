@@ -20,6 +20,7 @@ from openai import OpenAI
 
 from src.config import MODEL_PROVIDERS, DEFAULT_PROVIDER, PROVIDER_DESCRIPTIONS, PROVIDER_DEFAULT_MODELS
 from gateway.settings_store import (
+    clamp_agent_max_iterations,
     get_api_key,
     get_custom_providers,
     get_other_settings,
@@ -194,12 +195,18 @@ def get_available_providers() -> List[dict]:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def get_max_iterations() -> int:
-    """Return the maximum number of agent iterations."""
+    """Return the maximum number of agent iterations.
+
+    Clamps a previously-persisted out-of-range value (the Settings control
+    is 5–200) so a leftover ``0`` cannot stop the loop on the first turn.
+    The stored sentinel ``"unlimited"`` becomes a very large int so the
+    existing loop can run a long-lived turn.
+    """
     settings = get_all_settings()
-    return settings.get("other", {}).get("agent", {}).get(
-        "max_iterations",
-        int(os.environ.get("MAX_ITERATIONS", "30")),
-    )
+    raw = settings.get("other", {}).get("agent", {}).get("max_iterations")
+    if raw is None or raw == "":
+        raw = os.environ.get("MAX_ITERATIONS", "30")
+    return clamp_agent_max_iterations(raw, default=int(os.environ.get("MAX_ITERATIONS", "30")))
 
 
 def get_max_concurrent_tools() -> int:
