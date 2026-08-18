@@ -190,6 +190,11 @@ def get_file_diffs_for_conversation(
 # File Tree — with caching to avoid rebuilding on every request
 # ============================================================================
 
+# Enough levels to show a file six directories under an uploaded project
+# (sample-project/a/b/c/d/e/f/deep.txt). The Workspace UI fetches this
+# same cap; raise both together if a deeper tree is needed.
+FILE_TREE_MAX_DEPTH = 32
+
 # In-memory cache: rebuilt lazily, invalidated by file writes + a short TTL
 # (the TTL catches file changes made by terminal commands that bypass
 # mark_file_touched).
@@ -198,6 +203,7 @@ _tree_cache: Dict[str, Any] = {
     "root": "",          # root path string (cache key)
     "timestamp": 0.0,    # time.time() when built
     "version": 0,        # monotonic counter (useful for ETag)
+    "max_depth": None,   # depth the cached tree was built with
 }
 _tree_cache_ttl = 5.0     # seconds — safety net for terminal-created files
 _files_changed = True      # start True to force initial build
@@ -212,12 +218,13 @@ def invalidate_tree_cache():
 def get_cached_file_tree(
     directory: Path,
     base_path: Path,
-    max_depth: int = 5,
+    max_depth: int = FILE_TREE_MAX_DEPTH,
 ) -> tuple:
     """Return (tree, root_str, version) — with caching.
 
     Rebuilds the tree only when *directory* has changed (cached root
-    differs) OR the cache was explicitly invalidated OR the TTL expired.
+    differs), *max_depth* differs from the cached tree, the cache was
+    explicitly invalidated, or the TTL expired.
     """
     global _tree_cache, _files_changed
 
@@ -227,6 +234,7 @@ def get_cached_file_tree(
         not _files_changed
         and _tree_cache["tree"]
         and _tree_cache["root"] == root_str
+        and _tree_cache.get("max_depth") == max_depth
         and (now - _tree_cache["timestamp"]) < _tree_cache_ttl
     )
 
@@ -239,6 +247,7 @@ def get_cached_file_tree(
     _tree_cache["root"] = root_str
     _tree_cache["timestamp"] = now
     _tree_cache["version"] += 1
+    _tree_cache["max_depth"] = max_depth
     _files_changed = False
 
     return tree, root_str, _tree_cache["version"]
@@ -246,7 +255,7 @@ def get_cached_file_tree(
 def build_file_tree(
     directory: Path,
     base_path: Path,
-    max_depth: int = 5,
+    max_depth: int = FILE_TREE_MAX_DEPTH,
     current_depth: int = 0,
 ) -> list:
     """Recursively build a file-tree structure for *directory*.

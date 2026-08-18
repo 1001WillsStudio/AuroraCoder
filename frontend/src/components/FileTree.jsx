@@ -6,6 +6,10 @@ import {
 } from 'lucide-react'
 import useLanguage from '../hooks/useLanguage'
 
+// Must stay in sync with gateway.workspace.FILE_TREE_MAX_DEPTH so a file
+// six directories under an uploaded project (a/b/c/d/e/f/deep.txt) appears.
+const FILE_TREE_MAX_DEPTH = 32
+
 // ── File-type icon ──────────────────────────────────────────────────────────
 const getFileIcon = (extension) => {
   const iconProps = { size: 14 }
@@ -180,7 +184,7 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, onPathDeleted 
     setLoading(true)
     setError(null)
     try {
-      const response = await fetch('/api/files/tree?max_depth=5')
+      const response = await fetch(`/api/files/tree?max_depth=${FILE_TREE_MAX_DEPTH}`)
       const data = await response.json()
       if (data.error) {
         setError(data.error)

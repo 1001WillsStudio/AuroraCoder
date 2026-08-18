@@ -48,6 +48,7 @@ from gateway.provider_registry import (
     sync_tool_env_vars,
 )
 from gateway.workspace import (
+    FILE_TREE_MAX_DEPTH,
     clear_conversation_snapshots,
     get_file_diffs_for_conversation,
     get_cached_file_tree,
@@ -901,7 +902,7 @@ async def create_snapshot(conversation_id: str):
 
 
 @app.get("/api/files/tree")
-async def get_file_tree(max_depth: int = 5):
+async def get_file_tree(max_depth: int = FILE_TREE_MAX_DEPTH):
     """Get the folder structure of the agent's working space.
 
     Uses a server-side cache (invalidated on file writes + short TTL)
