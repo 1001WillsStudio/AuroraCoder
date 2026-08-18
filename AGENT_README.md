@@ -523,8 +523,8 @@ with ``isError`` / ``canRetry`` (and conversation ``status=error``) so
 reopening the chat still shows the failure and a Try Again control.
 Without that bubble the store would keep only the seeded user message
 and reload would look like the turn was never answered. Try Again
-retries the last failed ReAct round (usually a tool call / result),
-not a new user message and not a rewind to the start of the turn.
+resends the current transcript without a new user message; incomplete
+tool calls are filled in by the existing orphan-tool fixer.
 
 Key implementation files:
 - `gateway/conversation_store.py` — file-backed store (thread-safe, atomic writes)

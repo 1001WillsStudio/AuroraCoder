@@ -45,70 +45,21 @@ TERMINAL_STATUSES = frozenset({
 TITLE_MAX_LENGTH = 100
 
 
-def _user_text_key(content: Any) -> str:
-    text = content if isinstance(content, str) else ""
-    return (strip_task_instruction(text) or text).strip()
-
-
-def _keep_complete_react_rounds(after_user: List[Dict]) -> List[Dict]:
-    """Keep finished tool-call/result rounds; drop an unfinished last round."""
-    if not after_user:
-        return []
-    msgs = list(after_user)
-    last = msgs[-1]
-    if last.get("role") == "assistant":
-        return msgs[:-1]
-    if last.get("role") != "tool":
-        return msgs
-    assistant_idx = None
-    for i in range(len(msgs) - 1, -1, -1):
-        if msgs[i].get("role") == "assistant" and msgs[i].get("tool_calls"):
-            assistant_idx = i
-            break
-    if assistant_idx is None:
-        return msgs
-    expected = {
-        tc.get("id")
-        for tc in (msgs[assistant_idx].get("tool_calls") or [])
-        if tc.get("id")
-    }
-    got = {
-        m.get("tool_call_id")
-        for m in msgs[assistant_idx + 1 :]
-        if m.get("role") == "tool" and m.get("tool_call_id")
-    }
-    if expected and expected <= got:
-        return msgs
-    return msgs[:assistant_idx]
-
-
 def messages_for_retry(
     messages: Optional[List[Dict]],
-    user_text: str,
+    user_text: str = "",
 ) -> List[Dict]:
-    """History for retrying the last failed ReAct round.
+    """Keep the existing transcript for retry; seed the user line only if empty.
 
-    Does not rewind to the user message. Completed tool-call / tool-result
-    rounds stay; only an incomplete trailing assistant (or unmatched tools)
-    is dropped. If the failing user line never reached raw history, it is
-    appended once — never a second copy.
+    Incomplete tool rounds are made sendable by ``_fix_orphan_tool_calls``
+    on the chat path — this helper does not re-trim them.
     """
-    text = _user_text_key(user_text)
     msgs = list(messages or [])
-    last_user_idx = -1
-    last_user_text = ""
-    for i in range(len(msgs) - 1, -1, -1):
-        if msgs[i].get("role") != "user":
-            continue
-        last_user_idx = i
-        last_user_text = _user_text_key(msgs[i].get("content"))
-        break
-    if last_user_idx >= 0 and last_user_text == text:
-        head = msgs[: last_user_idx + 1]
-        return head + _keep_complete_react_rounds(msgs[last_user_idx + 1 :])
-    if text:
-        msgs.append({"role": "user", "content": user_text})
-    return msgs
+    if msgs:
+        return msgs
+    if user_text:
+        return [{"role": "user", "content": user_text}]
+    return []
 
 
 def ensure_error_frontend_message(

@@ -72,7 +72,7 @@ Legend: ✅ done · 🟡 next · ⬜ later.
 | `src.tool_executor` | ✅ | partition batching, same-file guard, concurrency env knob (pure core) |
 | `src.providers` | 🟡 | patch `openai.OpenAI`, stream vs non-stream branching |
 | `gateway.streaming` | 🟡 | expand existing race/abort tests via injected provider |
-| `gateway` error-turn persist | ✅ | `tests/test_error_turn_persist.py` — failed turn stored as `isError`/`canRetry`; Try Again retries the last failed ReAct round (keeps completed tool rounds) |
+| `gateway` error-turn persist | ✅ | `tests/test_error_turn_persist.py` — failed turn stored as `isError`/`canRetry`; retry keeps the transcript and does not append a user message |
 | `gateway.routes` / `api` | ⬜ | `TestClient` per endpoint, **auth** via `ACCESS_PASSWORD` |
 | `gateway.provider_registry` | ⬜ | lookup, model metadata, live-list fetch mocked |
 | `gateway.workspace` | ⬜ | git push behind `GITHUB_TOKEN` (mock; skip when absent) |

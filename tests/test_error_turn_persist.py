@@ -49,78 +49,33 @@ def test_error_bubble_survives_store_round_trip(tmp_path):
     assert "Cannot connect to backend" in fe[-1]["content"]
 
 
-def test_retry_does_not_append_a_second_user_turn():
-    """Fail-fast after a prior completed turn: add the new user line once."""
+def test_retry_keeps_existing_transcript():
     history = [
         {"role": "user", "content": "hello"},
         {"role": "assistant", "content": "hi"},
-    ]
-    retried = messages_for_retry(history, "e2e:error")
-    assert [m["role"] for m in retried] == ["user", "assistant", "user"]
-    assert [m["content"] for m in retried if m["role"] == "user"] == ["hello", "e2e:error"]
-    assert messages_for_retry(retried, "e2e:error") == retried
-
-
-def test_retry_keeps_completed_tool_round():
-    """A finished tool-call / tool-result round is the history to retry from."""
-    history = [
         {"role": "user", "content": "e2e:error"},
         {
             "role": "assistant",
             "content": "",
             "tool_calls": [{"id": "c1", "function": {"name": "read_file", "arguments": "{}"}}],
         },
-        {"role": "tool", "tool_call_id": "c1", "content": "file contents"},
+        {"role": "tool", "tool_call_id": "c1", "content": "ok"},
     ]
     assert messages_for_retry(history, "e2e:error") == history
 
 
-def test_retry_drops_incomplete_tool_round():
-    history = [
-        {"role": "user", "content": "e2e:error"},
-        {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [
-                {"id": "c1", "function": {"name": "read_file", "arguments": "{}"}},
-                {"id": "c2", "function": {"name": "grep_search", "arguments": "{}"}},
-            ],
-        },
-        {"role": "tool", "tool_call_id": "c1", "content": "ok"},
-    ]
-    assert messages_for_retry(history, "e2e:error") == history[:1]
-
-
-def test_retry_drops_partial_assistant_keeps_prior_tool_round():
-    history = [
-        {"role": "user", "content": "e2e:error"},
-        {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [{"id": "c1", "function": {"name": "read_file", "arguments": "{}"}}],
-        },
-        {"role": "tool", "tool_call_id": "c1", "content": "ok"},
-        {"role": "assistant", "content": "partial..."},
-    ]
-    assert messages_for_retry(history, "e2e:error") == history[:3]
-
-
-def test_retry_first_turn_when_raw_history_is_empty():
+def test_retry_seeds_user_only_when_raw_history_is_empty():
     assert messages_for_retry([], "e2e:error") == [
+        {"role": "user", "content": "e2e:error"}
+    ]
+    assert messages_for_retry([{"role": "user", "content": "e2e:error"}], "e2e:error") == [
         {"role": "user", "content": "e2e:error"}
     ]
 
 
-def test_try_again_uses_retry_flag_and_live_raw_history():
+def test_try_again_uses_retry_flag():
     src = (Path(__file__).resolve().parent.parent / "frontend" / "src" / "App.jsx").read_text(
         encoding="utf-8"
     )
     assert "retry: true" in src
     assert "const isRetry = Boolean(options.retry)" in src
-    assert "Prefer live raw history" in src
-
-
-def test_retry_matches_user_text_after_task_instruction_wrapper():
-    wrapped = "[TASK INSTRUCTION]\nbe brief\n[/TASK INSTRUCTION]\n\ne2e:error"
-    history = [{"role": "user", "content": wrapped}]
-    assert messages_for_retry(history, "e2e:error") == history

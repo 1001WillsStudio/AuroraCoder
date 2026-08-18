@@ -202,12 +202,11 @@ async def proxy_chat(request: Request):
         parent_id=parent_id,
     )
 
-    # Retry the last failed ReAct round (usually a tool call / result),
-    # not a new user message and not a rewind to the start of the turn.
+    # Retry: keep the current transcript (orphan tool calls are filled in
+    # below) and do not append another user message.
     if body.pop("retry", False):
-        user_text = body.get("message") or ""
         prior = body.get("messages") or store.get_messages(conversation_id)
-        body["messages"] = messages_for_retry(prior, user_text)
+        body["messages"] = messages_for_retry(prior, body.get("message") or "")
         body["message"] = None
 
     # ── Fix orphan tool calls before forwarding to the backend ────────────
