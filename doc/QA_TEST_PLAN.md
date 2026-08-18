@@ -94,6 +94,7 @@ covers that Save is not blocked for a blank stored or missing key.
 |---|---|---|
 | `tests/test_mobile_sidebar_toggle.py` | ✅ | Source-level regression: at `max-width: 768px` the sidebar may stay `display: none` only if App.jsx renders a `.sidebar-toggle` *outside* the aside and `.app.sidebar-open .sidebar` reveals it. Locks the explorer finding that a 375px resize hid New Chat / History / Settings / model with no hamburger. |
 | `tests/test_stale_viewer_after_delete.py` | ✅ | Deleting an open Workspace file must close its viewer tab; Refresh re-reads view-only tabs and drops them on 404. Helpers in `frontend/src/utils/panelFiles.js` run via Node; source scan locks FileTree → panel wiring. |
+| `tests/test_file_tree_keyboard.py` | ✅ | Workspace file/folder rows must be real buttons (Tab + Enter/Space), show a focus ring, and expose a keyboard path to Download / Export / Delete. Helpers in `frontend/src/utils/treeKeyboard.js` run via Node; source scan locks FileTree.jsx + file-tree.css. |
 
 Stable `data-testid` hooks on the desktop SPA (`chat-input`, `chat-send`,
 `chat-message`, …) are locked by `tests/test_frontend_testids.py` (source scan;

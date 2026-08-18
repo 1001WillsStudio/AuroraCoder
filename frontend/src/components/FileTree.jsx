@@ -2,9 +2,10 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Folder, FolderOpen, File, ChevronRight, ChevronDown,
   RefreshCw, FileCode, FileText, Image, Database, Settings,
-  FileJson, Braces, Download, Trash2, FolderArchive
+  FileJson, Braces, Download, Trash2, FolderArchive, MoreVertical
 } from 'lucide-react'
 import useLanguage from '../hooks/useLanguage'
+import { isTreeContextMenuKey, menuCoordsFromRect } from '../utils/treeKeyboard'
 
 // ── File-type icon ──────────────────────────────────────────────────────────
 const getFileIcon = (extension) => {
@@ -54,7 +55,7 @@ const getFileIcon = (extension) => {
 // Deliberately NOT memoised on expansion: the whole *visible* subtree must
 // re-render whenever the expanded set changes so nested folders open instantly.
 // Collapsed folders render no children, so the visible node count stays small.
-function TreeNode({ node, level, onFileClick, expandedFolders, toggleFolder, onContextMenu }) {
+function TreeNode({ node, level, onFileClick, expandedFolders, toggleFolder, onContextMenu, t }) {
   const isFolder = node.type === 'folder'
   const isExpanded = isFolder && expandedFolders.has(node.path)
   const hasChildren = isFolder && Array.isArray(node.children) && node.children.length > 0
@@ -64,32 +65,60 @@ function TreeNode({ node, level, onFileClick, expandedFolders, toggleFolder, onC
     else onFileClick?.(node.path)
   }
 
+  const openMenuAt = (el) => {
+    if (!el) return
+    const { x, y } = menuCoordsFromRect(el.getBoundingClientRect())
+    onContextMenu?.({ clientX: x, clientY: y, preventDefault() {}, stopPropagation() {} }, node)
+  }
+
+  const handleKeyDown = (e) => {
+    if (!isTreeContextMenuKey(e)) return
+    e.preventDefault()
+    e.stopPropagation()
+    openMenuAt(e.currentTarget)
+  }
+
   return (
     <div className="tree-node">
-      <div
-        className={`tree-item ${isFolder ? 'folder' : 'file'}`}
-        style={{ paddingLeft: `${level * 16 + 8}px` }}
-        onClick={handleClick}
-        onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContextMenu?.(e, node) }}
-      >
-        {isFolder ? (
-          <>
-            <span className="tree-chevron">
-              {hasChildren
-                ? (isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />)
-                : <span style={{ width: 14 }} />}
-            </span>
-            <span className="tree-icon folder-icon">
-              {isExpanded ? <FolderOpen size={14} /> : <Folder size={14} />}
-            </span>
-          </>
-        ) : (
-          <>
-            <span className="tree-chevron" style={{ width: 14 }} />
-            <span className="tree-icon file-icon">{getFileIcon(node.extension)}</span>
-          </>
-        )}
-        <span className="tree-name">{node.name}</span>
+      <div className="tree-item-row">
+        <button
+          type="button"
+          className={`tree-item ${isFolder ? 'folder' : 'file'}`}
+          style={{ paddingLeft: `${level * 16 + 8}px` }}
+          onClick={handleClick}
+          onKeyDown={handleKeyDown}
+          onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContextMenu?.(e, node) }}
+          aria-expanded={isFolder ? isExpanded : undefined}
+        >
+          {isFolder ? (
+            <>
+              <span className="tree-chevron">
+                {hasChildren
+                  ? (isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />)
+                  : <span style={{ width: 14 }} />}
+              </span>
+              <span className="tree-icon folder-icon">
+                {isExpanded ? <FolderOpen size={14} /> : <Folder size={14} />}
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="tree-chevron" style={{ width: 14 }} />
+              <span className="tree-icon file-icon">{getFileIcon(node.extension)}</span>
+            </>
+          )}
+          <span className="tree-name">{node.name}</span>
+        </button>
+        <button
+          type="button"
+          className="tree-item-menu"
+          aria-haspopup="menu"
+          aria-label={t('fileTree.moreActions', { name: node.name })}
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); openMenuAt(e.currentTarget) }}
+          onKeyDown={handleKeyDown}
+        >
+          <MoreVertical size={14} />
+        </button>
       </div>
 
       {isExpanded && hasChildren && (
@@ -103,6 +132,7 @@ function TreeNode({ node, level, onFileClick, expandedFolders, toggleFolder, onC
               expandedFolders={expandedFolders}
               toggleFolder={toggleFolder}
               onContextMenu={onContextMenu}
+              t={t}
             />
           ))}
         </div>
@@ -136,8 +166,12 @@ function ContextMenu({ x, y, node, onClose, onDelete, onDownload, onExport, t })
     if (rect.bottom > window.innerHeight) menuRef.current.style.top = `${y - rect.height}px`
   }, [x, y])
 
+  useEffect(() => {
+    menuRef.current?.querySelector('button')?.focus()
+  }, [])
+
   return (
-    <div ref={menuRef} className="tree-context-menu" style={{ left: x, top: y }}>
+    <div ref={menuRef} className="tree-context-menu" role="menu" style={{ left: x, top: y }}>
       {isFolder ? (
         <button className="context-menu-item" onClick={() => { onExport(node); onClose() }}>
           <FolderArchive size={14} />
@@ -333,6 +367,7 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, onPathDeleted 
                 expandedFolders={expandedFolders}
                 toggleFolder={toggleFolder}
                 onContextMenu={handleContextMenu}
+                t={t}
               />
             ))}
           </div>

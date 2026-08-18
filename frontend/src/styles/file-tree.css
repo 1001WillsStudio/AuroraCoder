@@ -135,11 +135,30 @@
   user-select: none;
 }
 
+.tree-item-row {
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-sm);
+}
+
+.tree-item-row:hover,
+.tree-item-row:focus-within {
+  background: var(--bg-tertiary);
+}
+
 .tree-item {
   display: flex;
   align-items: center;
   gap: 4px;
+  flex: 1;
+  min-width: 0;
+  width: 100%;
   padding: 4px 8px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  color: inherit;
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all var(--transition-fast);
@@ -147,6 +166,48 @@
 
 .tree-item:hover {
   background: var(--bg-tertiary);
+}
+
+.tree-item:focus {
+  outline: none;
+}
+
+.tree-item:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -2px;
+  background: var(--bg-tertiary);
+}
+
+.tree-item-menu {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  margin-right: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.tree-item-row:hover .tree-item-menu,
+.tree-item-row:focus-within .tree-item-menu,
+.tree-item-menu:focus-visible {
+  opacity: 1;
+}
+
+.tree-item-menu:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.tree-item-menu:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -2px;
 }
 
 .tree-item.folder {
@@ -221,6 +282,11 @@
 
 .context-menu-item:hover:not(:disabled) {
   background: var(--bg-hover);
+}
+
+.context-menu-item:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -2px;
 }
 
 .context-menu-item:disabled {
