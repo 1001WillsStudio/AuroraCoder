@@ -35,7 +35,7 @@ try:
 except ImportError:
     ConfigManager = None
 
-from gateway.conversation_store import store, ensure_error_frontend_message
+from gateway.conversation_store import store, ensure_error_frontend_message, messages_for_retry
 from gateway.settings_store import (
     get_all_settings,
     update_settings as _store_update_settings,
@@ -201,6 +201,14 @@ async def proxy_chat(request: Request):
         conv_type=conv_type,
         parent_id=parent_id,
     )
+
+    # Retry the failed user turn rather than appending another user
+    # message (which would look like a new ReAct turn to the model).
+    if body.pop("retry", False):
+        user_text = body.get("message") or ""
+        prior = body.get("messages") or store.get_messages(conversation_id)
+        body["messages"] = messages_for_retry(prior, user_text)
+        body["message"] = None
 
     # ── Fix orphan tool calls before forwarding to the backend ────────────
     # If the previous stream was cancelled mid-tool-execution, the

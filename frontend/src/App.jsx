@@ -279,15 +279,18 @@ function App() {
     }
     setActiveConvoWarning(false)
 
+    const isRetry = Boolean(options.retry)
     const userMessageText = messageToSend
-    const appliedInstruction = (systemPrompt.trim() && !conversationId)
+    const appliedInstruction = (systemPrompt.trim() && !conversationId && !isRetry)
       ? systemPrompt.trim()
       : ''
-    const apiMessage = appliedInstruction
-      ? `${TASK_MARKER_START}\n${appliedInstruction}\n${TASK_MARKER_END}\n\n${userMessageText}`
-      : userMessageText
+    const apiMessage = isRetry
+      ? userMessageText
+      : (appliedInstruction
+        ? `${TASK_MARKER_START}\n${appliedInstruction}\n${TASK_MARKER_END}\n\n${userMessageText}`
+        : userMessageText)
 
-    const isInterrupt = interruptMessages !== null && interruptMessages.length > 0
+    const isInterrupt = !isRetry && interruptMessages !== null && interruptMessages.length > 0
 
     if (abortControllerRef.current) {
       log('aborting previous controller')
@@ -316,11 +319,26 @@ function App() {
     }
 
     log('setState batch (messages, streaming, etc.)')
-    const userBubble = { role: 'user', content: userMessageText }
-    if (appliedInstruction) {
-      userBubble.taskInstruction = appliedInstruction
+    if (isRetry) {
+      setMessages(prev => {
+        let next = prev
+        if (next[next.length - 1]?.isError) next = next.slice(0, -1)
+        const tail = next[next.length - 1]
+        if (tail?.role === 'assistant' && !tail.content && !(tail.activities || []).length) {
+          next = next.slice(0, -1)
+        }
+        if (next[next.length - 1]?.role !== 'assistant') {
+          return [...next, { role: 'assistant', content: '' }]
+        }
+        return next
+      })
+    } else {
+      const userBubble = { role: 'user', content: userMessageText }
+      if (appliedInstruction) {
+        userBubble.taskInstruction = appliedInstruction
+      }
+      setMessages(prev => [...prev, userBubble, { role: 'assistant', content: '' }])
     }
-    setMessages(prev => [...prev, userBubble, { role: 'assistant', content: '' }])
     setInputValue('')
     setIsStreaming(true)
     setSseReceived(false)
@@ -329,7 +347,11 @@ function App() {
     resetToFollowing()
 
     let messagesToSend = null
-    if (isInterrupt) {
+    if (isRetry) {
+      messagesToSend = (interruptMessages && interruptMessages.length > 0)
+        ? interruptMessages
+        : (rawMessages.length > 0 ? rawMessages : [])
+    } else if (isInterrupt) {
       messagesToSend = latestRawMessages || interruptMessages
       if (latestRawMessages) {
         setRawMessages(latestRawMessages)
@@ -531,12 +553,7 @@ function App() {
     const existing = lastRequest
       ? lastRequest.existingMessages
       : (rawMessages.length > 0 ? rawMessages : null)
-    setMessages(prev => {
-      const lastMsg = prev[prev.length - 1]
-      if (lastMsg?.isError) return prev.slice(0, -1)
-      return prev
-    })
-    handleSend(existing, message)
+    handleSend(existing, message, { retry: true })
   }, [lastRequest, isStreaming, selectedProvider, messages, rawMessages])
 
   const handleLoadConversation = useCallback(async (targetConversationId) => {

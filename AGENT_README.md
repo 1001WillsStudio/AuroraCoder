@@ -522,7 +522,9 @@ A turn that ends in provider failure is stored as an assistant message
 with ``isError`` / ``canRetry`` (and conversation ``status=error``) so
 reopening the chat still shows the failure and a Try Again control.
 Without that bubble the store would keep only the seeded user message
-and reload would look like the turn was never answered.
+and reload would look like the turn was never answered. Try Again
+re-runs that same user turn; it does not append a second copy of the
+user message.
 
 Key implementation files:
 - `gateway/conversation_store.py` — file-backed store (thread-safe, atomic writes)

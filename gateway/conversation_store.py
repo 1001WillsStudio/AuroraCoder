@@ -45,6 +45,33 @@ TERMINAL_STATUSES = frozenset({
 TITLE_MAX_LENGTH = 100
 
 
+def messages_for_retry(
+    messages: Optional[List[Dict]],
+    user_text: str,
+) -> List[Dict]:
+    """History for retrying a failed user turn — never a second user copy.
+
+    Keeps everything through the last matching user message and drops a
+    failed assistant/tool tail. If that user turn is missing (fail-fast
+    before raw persist), appends it once.
+    """
+    text = (strip_task_instruction(user_text) or user_text or "").strip()
+    msgs = list(messages or [])
+    last_idx = -1
+    for i in range(len(msgs) - 1, -1, -1):
+        if msgs[i].get("role") != "user":
+            continue
+        content = msgs[i].get("content") or ""
+        if (strip_task_instruction(content) or content).strip() == text:
+            last_idx = i
+            break
+    if last_idx >= 0:
+        return msgs[: last_idx + 1]
+    if text:
+        msgs.append({"role": "user", "content": user_text})
+    return msgs
+
+
 def ensure_error_frontend_message(
     messages: Optional[List[Dict]],
     error: Optional[Dict] = None,
