@@ -45,6 +45,50 @@ TERMINAL_STATUSES = frozenset({
 TITLE_MAX_LENGTH = 100
 
 
+def messages_for_retry(
+    messages: Optional[List[Dict]],
+    user_text: str = "",
+) -> List[Dict]:
+    """Keep the existing transcript for retry; seed the user line only if empty.
+
+    Incomplete tool rounds are made sendable by ``_fix_orphan_tool_calls``
+    on the chat path — this helper does not re-trim them.
+    """
+    msgs = list(messages or [])
+    if msgs:
+        return msgs
+    if user_text:
+        return [{"role": "user", "content": user_text}]
+    return []
+
+
+def ensure_error_frontend_message(
+    messages: Optional[List[Dict]],
+    error: Optional[Dict] = None,
+) -> List[Dict]:
+    """Append a retryable error bubble unless the transcript already ends with one."""
+    msgs = list(messages or [])
+    if msgs and msgs[-1].get("isError"):
+        return msgs
+    message = ""
+    err_type = ""
+    if isinstance(error, dict):
+        message = str(error.get("message") or error.get("error") or "")
+        err_type = str(error.get("type") or "")
+    text = message or "The provider failed before a reply was produced."
+    if not text.startswith("Error:"):
+        text = f"Error: {text}"
+    lowered = f"{text} {err_type}".lower()
+    msgs.append({
+        "role": "assistant",
+        "content": text,
+        "isError": True,
+        "isTimeout": "timeout" in lowered or "504" in lowered or err_type == "TimeoutError",
+        "canRetry": True,
+    })
+    return msgs
+
+
 def _extract_title(messages: List[Dict]) -> str:
     """Extract a title from the first user message.
 

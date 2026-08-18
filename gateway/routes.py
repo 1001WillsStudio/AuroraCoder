@@ -35,7 +35,7 @@ try:
 except ImportError:
     ConfigManager = None
 
-from gateway.conversation_store import store
+from gateway.conversation_store import store, ensure_error_frontend_message, messages_for_retry
 from gateway.settings_store import (
     get_all_settings,
     update_settings as _store_update_settings,
@@ -202,6 +202,13 @@ async def proxy_chat(request: Request):
         parent_id=parent_id,
     )
 
+    # Retry: keep the current transcript (orphan tool calls are filled in
+    # below) and do not append another user message.
+    if body.pop("retry", False):
+        prior = body.get("messages") or store.get_messages(conversation_id)
+        body["messages"] = messages_for_retry(prior, body.get("message") or "")
+        body["message"] = None
+
     # ── Fix orphan tool calls before forwarding to the backend ────────────
     # If the previous stream was cancelled mid-tool-execution, the
     # conversation history may contain assistant ``tool_calls`` with no
@@ -302,12 +309,15 @@ async def resume_stream(conversation_id: str, request: Request):
     except KeyError:
         raise HTTPException(status_code=404, detail="No active or stored conversation")
 
+    status = conv.get("status", "completed")
     frontend_msgs = store.get_frontend_messages(conversation_id)
+    if status == "error":
+        frontend_msgs = ensure_error_frontend_message(frontend_msgs)
 
     async def _replay():
         yield _format_sse("done", {
             "conversation_id": conversation_id,
-            "status": conv.get("status", "completed"),
+            "status": status,
             "messages": frontend_msgs or conv.get("messages", []),
             "raw_messages": conv.get("messages", []),
         })
@@ -840,7 +850,10 @@ async def get_conversation(conversation_id: str):
         conv = store.get_conversation(conversation_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    conv["frontend_messages"] = store.get_frontend_messages(conversation_id)
+    frontend_messages = store.get_frontend_messages(conversation_id)
+    if conv.get("status") == "error":
+        frontend_messages = ensure_error_frontend_message(frontend_messages)
+    conv["frontend_messages"] = frontend_messages
     return conv
 
 
