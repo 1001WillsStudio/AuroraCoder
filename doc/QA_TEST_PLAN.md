@@ -170,6 +170,17 @@ the broken `[TO]`-propagation verification.
 converted the three assert helpers to REAL (raising) pytest assertions so the
 suite genuinely verifies the context-fix channel.
 
+### 6.6 `execute_tool_call` body dropped (post-merge, 5 red tests)
+**Cause:** the aurora/normal `edit_file` swap in `src/tool_definitions.py` replaced
+`TOOL_FUNCTION_MAP[tool_name]` with `function_map[tool_name]` and omitted the
+actual `function(arguments)` call and return. Native tools (edit, write, read, …)
+looked up their handler and returned `None`; `_execute_single_tool` swallowed
+that as an error string, so conversation args never received `[TO]` / line-number
+corrections and `write_file` never created the file.
+**Fix:** restore the invoke + `(arguments, result)` return, including subagent
+`tool_call_id` / `conversation_id` injection. Locked by
+`tests/test_execute_tool_call.py` plus the existing context-fix suite.
+
 ### 6.5 Persistent QA findings (still open, low priority)
 - `check()` helper in `test_edit_file_edge_cases.py` is dead code (defined, never
   called) — safe to delete.
