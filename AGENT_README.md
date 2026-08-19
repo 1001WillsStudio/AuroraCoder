@@ -591,6 +591,7 @@ Frontend dependencies:
 
 Test files in `tests/`:
 - `test_context_fix_propagation.py` — ContextTracker display update tests
+- `test_execute_tool_call.py` — native tool dispatch actually invokes the handler
 - `test_edit_file_edge_cases.py` — Edit file matching edge cases
 - `test_streaming_race.py` — SSE streaming race condition tests
 - `test_mergePanelFiles.mjs` — Frontend panel merging tests
