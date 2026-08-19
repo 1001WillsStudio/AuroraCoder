@@ -5,16 +5,7 @@ import {
   FileJson, Braces, Download, Trash2, FolderArchive
 } from 'lucide-react'
 import useLanguage from '../hooks/useLanguage'
-
-function setFolderChildren(tree, path, children) {
-  return (tree || []).map((node) => {
-    if (node.path === path) return { ...node, children: children || [] }
-    if (node.children?.length) {
-      return { ...node, children: setFolderChildren(node.children, path, children) }
-    }
-    return node
-  })
-}
+import { expandedEmptyFolderPaths, setFolderChildren } from '../utils/fileTree'
 
 // ── File-type icon ──────────────────────────────────────────────────────────
 const getFileIcon = (extension) => {
@@ -170,8 +161,8 @@ function ContextMenu({ x, y, node, onClose, onDelete, onDownload, onExport, t })
 // ── Main component ──────────────────────────────────────────────────────────
 // First listing is the unchanged depth-5 snapshot. Clicking a folder that
 // has no children listed fetches one level of that folder. Closing it
-// drops those children; they are not stored and not scanned again until
-// the next click.
+// drops those children. Refresh / end-of-stream refetch the snapshot, then
+// re-open any folder that is still expanded (one level at a time).
 const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, onPathDeleted }) => {
   const { t } = useLanguage()
   const [tree, setTree] = useState([])
@@ -189,24 +180,53 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, onPathDeleted 
   const onDemandRef = useRef(new Set())
   expandedRef.current = expandedFolders
 
+  const loadOneLevel = useCallback(async (path) => {
+    const response = await fetch(
+      `/api/files/tree?path=${encodeURIComponent(path)}&max_depth=1`
+    )
+    const data = await response.json()
+    if (data.error) return null
+    return data.tree || []
+  }, [])
+
   const fetchOneLevel = useCallback(async (path) => {
     try {
-      const response = await fetch(
-        `/api/files/tree?path=${encodeURIComponent(path)}&max_depth=1`
-      )
-      const data = await response.json()
-      if (data.error) return
+      const children = await loadOneLevel(path)
+      if (children == null) return
       if (!expandedRef.current.has(path)) return
       onDemandRef.current.add(path)
       setTree((prev) => {
-        const next = setFolderChildren(prev, path, data.tree || [])
+        const next = setFolderChildren(prev, path, children)
         lastTreeJsonRef.current = JSON.stringify(next)
         return next
       })
     } catch (err) {
       console.error('File tree one-level error:', err)
     }
-  }, [])
+  }, [loadOneLevel])
+
+  const restoreExpanded = useCallback(async (snapshot) => {
+    let tree = snapshot
+    const loaded = new Set()
+    for (;;) {
+      const pending = expandedEmptyFolderPaths(tree, expandedRef.current)
+        .filter((path) => !loaded.has(path))
+      if (!pending.length) break
+      const path = pending[0]
+      loaded.add(path)
+      let children
+      try {
+        children = await loadOneLevel(path)
+      } catch (err) {
+        console.error('File tree restore error:', err)
+        break
+      }
+      if (children == null || !expandedRef.current.has(path)) continue
+      tree = setFolderChildren(tree, path, children)
+      onDemandRef.current.add(path)
+    }
+    return tree
+  }, [loadOneLevel])
 
   const fetchTree = useCallback(async () => {
     setLoading(true)
@@ -219,13 +239,10 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, onPathDeleted 
         setTree([])
         lastTreeJsonRef.current = ''
       } else {
-        const nextTree = data.tree || []
-        const nextJson = JSON.stringify(nextTree)
-        if (nextJson !== lastTreeJsonRef.current) {
-          lastTreeJsonRef.current = nextJson
-          onDemandRef.current = new Set()
-          setTree(nextTree)
-        }
+        onDemandRef.current = new Set()
+        const restored = await restoreExpanded(data.tree || [])
+        lastTreeJsonRef.current = JSON.stringify(restored)
+        setTree(restored)
         setRootPath(data.root)
       }
     } catch (err) {
@@ -234,7 +251,7 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, onPathDeleted 
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [restoreExpanded])
 
   // Initial load.
   useEffect(() => { fetchTree() }, [fetchTree])

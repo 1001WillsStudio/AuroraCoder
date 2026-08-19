@@ -8,7 +8,8 @@ that folder one level (``e``); clicking ``e`` then ``f`` reaches
 """
 from __future__ import annotations
 
-import re
+import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,7 @@ from gateway import workspace as ws
 
 ROOT = Path(__file__).resolve().parent.parent
 TREE_JSX = ROOT / "frontend" / "src" / "components" / "FileTree.jsx"
+TREE_UTIL = ROOT / "frontend" / "src" / "utils" / "fileTree.js"
 DEEP_REL = "sample-project/a/b/c/d/e/f/deep.txt"
 FOLDER_D = "sample-project/a/b/c/d"
 FOLDER_E = "sample-project/a/b/c/d/e"
@@ -29,6 +31,25 @@ def _plant_deep_project(root: Path) -> None:
     deep.write_text("deep file\n", encoding="utf-8")
     (root / "sample-project" / "src").mkdir()
     (root / "sample-project" / "config.json").write_text("{}\n", encoding="utf-8")
+
+
+def _eval_js(expr: str):
+    script = (
+        "import { expandedEmptyFolderPaths, setFolderChildren } from "
+        f"{json.dumps(TREE_UTIL.resolve().as_uri())}\n"
+        f"const out = {expr}\n"
+        "console.log(JSON.stringify(out))\n"
+    )
+    proc = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise AssertionError(proc.stderr or proc.stdout or "node helper failed")
+    return json.loads(proc.stdout)
 
 
 def _find_node(tree: list, path: str):
@@ -101,16 +122,60 @@ def test_one_level_scan_does_not_write_the_tree_cache(tmp_workspace, reset_tree_
 
 
 @pytest.mark.unit
+def test_refetch_restores_expanded_empty_folders_shallowest_first():
+    """After Refresh, expanded d/e/f must be reopened parent-first (d then e then f)."""
+    snapshot = [{
+        "name": "d",
+        "path": FOLDER_D,
+        "type": "folder",
+        "children": [],
+    }]
+    expanded = [FOLDER_D, FOLDER_E, FOLDER_F]
+    assert _eval_js(
+        f"expandedEmptyFolderPaths({json.dumps(snapshot)}, {json.dumps(expanded)})"
+    ) == [FOLDER_D]
+
+    with_e = _eval_js(
+        f"setFolderChildren({json.dumps(snapshot)}, {json.dumps(FOLDER_D)}, "
+        f"{json.dumps([{'name': 'e', 'path': FOLDER_E, 'type': 'folder', 'children': []}])})"
+    )
+    assert _eval_js(
+        f"expandedEmptyFolderPaths({json.dumps(with_e)}, {json.dumps(expanded)})"
+    ) == [FOLDER_E]
+
+    with_f = _eval_js(
+        f"setFolderChildren({json.dumps(with_e)}, {json.dumps(FOLDER_E)}, "
+        f"{json.dumps([{'name': 'f', 'path': FOLDER_F, 'type': 'folder', 'children': []}])})"
+    )
+    assert _eval_js(
+        f"expandedEmptyFolderPaths({json.dumps(with_f)}, {json.dumps(expanded)})"
+    ) == [FOLDER_F]
+
+
+@pytest.mark.unit
+def test_closed_folder_is_not_restored_after_refetch():
+    snapshot = [{
+        "name": "d",
+        "path": FOLDER_D,
+        "type": "folder",
+        "children": [],
+    }]
+    assert _eval_js(
+        f"expandedEmptyFolderPaths({json.dumps(snapshot)}, [])"
+    ) == []
+
+
+@pytest.mark.unit
 def test_file_tree_client_fetches_one_level_on_click_and_drops_on_close():
     src = TREE_JSX.read_text(encoding="utf-8")
     assert "max_depth=5" in src
     assert "/api/files/tree?path=" in src
     assert "max_depth=1" in src
-    assert "setFolderChildren" in src
+    assert "restoreExpanded" in src
+    assert "expandedEmptyFolderPaths" in src
     assert "onDemandRef" in src
     # Closing an on-demand folder clears children; first-paint folders stay.
     assert "onDemandRef.current.has(path)" in src
-    assert "setFolderChildren(prev, path, [])" in src or 'setFolderChildren(prev, path, [])' in src
-    assert "hydrateExpanded" not in src
+    assert "setFolderChildren(prev, path, [])" in src
     assert "FILE_TREE_MAX_NODES" not in src
     assert "truncated" not in src
