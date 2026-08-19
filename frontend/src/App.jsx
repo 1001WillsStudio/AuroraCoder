@@ -108,7 +108,6 @@ function App() {
   } = useFileTracking(conversationId, messages, isStreaming)
 
   // Other state
-  const [lastRequest, setLastRequest] = useState(null)
   const [showTaskInstructions, setShowTaskInstructions] = useState(false)
   const taskInstructionsRef = useRef(null)
   const taskInstructionsBtnRef = useRef(null)
@@ -347,8 +346,6 @@ function App() {
       ...options,
       ...resolveProviderOptions(providers, selectedProvider),
     }
-    setLastRequest({ message: userMessageText, conversationId: cid, provider: selectedProvider, existingMessages: messagesToSend })
-
     log('about to call streamChat()')
     try {
       abortControllerRef.current = new AbortController()
@@ -598,46 +595,28 @@ function App() {
   }, [conversationId, resetToFollowing])
 
   const handleRetry = useCallback(async () => {
-    // Try Again is not a new send: it must reuse the conversation the
-    // gateway already created. Falling through handleSend would treat a
-    // first-turn 500 like a brand-new chat (null id + another user line).
+    // Same as Continue: post the transcript the user already has. Do not
+    // go through handleSend — that appends another user bubble and, on a
+    // first turn, would omit conversation_id and open a second chat.
     if (isStreaming) return
-    const cid = conversationIdRef.current || conversationId || lastRequest?.conversationId
+    const cid = conversationIdRef.current || conversationId
     if (!cid) return
     const lastUser = [...messages].reverse().find(m => m.role === 'user')
-    const message = lastRequest?.message || lastUser?.content
-    if (!message) return
-    const existing = (rawMessages.length > 0)
+    const history = rawMessages.length > 0
       ? rawMessages
-      : (lastRequest?.existingMessages || [])
+      : (lastUser?.content ? [{ role: 'user', content: lastUser.content }] : [])
+    if (history.length === 0) return
 
-    setMessages(prev => {
-      let next = prev
-      if (next[next.length - 1]?.isError) next = next.slice(0, -1)
-      const tail = next[next.length - 1]
-      if (tail?.role === 'assistant' && !tail.content && !(tail.activities || []).length) {
-        next = next.slice(0, -1)
-      }
-      if (next[next.length - 1]?.role !== 'assistant') {
-        return [...next, { role: 'assistant', content: '' }]
-      }
-      return next
-    })
+    if (messages[messages.length - 1]?.isError) {
+      setMessages(prev => prev.slice(0, -1))
+    }
     setIsStreaming(true)
     setSseReceived(false)
     setCanContinue(false)
-    setHistoryRefreshTrigger(prev => prev + 1)
-    resetToFollowing()
-
     try {
       abortControllerRef.current = new AbortController()
       const callbacks = createStreamCallbacks({
-        setMessages, setRawMessages,
-        setConversationId: (id) => {
-          if (id) conversationIdRef.current = id
-          setConversationId(id)
-        },
-        setCanContinue,
+        setMessages, setRawMessages, setConversationId, setCanContinue,
         setIsStreaming, setHistoryRefreshTrigger, setSubagentChildIds,
         handleSend: null, handleLoadConversation,
         pendingInterruptRef: null, continuationNavigatedRef, abortControllerRef: null,
@@ -647,16 +626,13 @@ function App() {
         onFirstSse: () => setSseReceived(true),
         ensureAssistantTail: true,
       })
-      const opts = {
-        retry: true,
-        ...resolveProviderOptions(providers, selectedProvider),
-      }
-      await streamChat(message, cid, callbacks, abortControllerRef.current.signal, existing, selectedProvider, opts)
+      const opts = resolveProviderOptions(providers, selectedProvider)
+      await streamChat(null, cid, callbacks, abortControllerRef.current.signal, history, selectedProvider, opts)
     } catch (error) {
       if (error.name !== 'AbortError') console.error('Retry error:', error)
       setIsStreaming(false)
     }
-  }, [lastRequest, isStreaming, selectedProvider, messages, rawMessages, conversationId, handleLoadConversation, handleRefreshFiles, providers, resetToFollowing])
+  }, [isStreaming, selectedProvider, messages, rawMessages, conversationId, handleLoadConversation, handleRefreshFiles, providers])
 
   // ── Render ──────────────────────────────────────────────────────────────
 

@@ -73,11 +73,12 @@ def test_retry_seeds_user_only_when_raw_history_is_empty():
     ]
 
 
-def test_try_again_uses_retry_flag():
+def test_try_again_resends_transcript_without_new_user_message():
     src = (Path(__file__).resolve().parent.parent / "frontend" / "src" / "App.jsx").read_text(
         encoding="utf-8"
     )
     start = src.index("const handleRetry =")
     retry = src[start:src.index("// ── Render", start)]
-    assert "retry: true" in retry
+    assert "streamChat(null," in retry
+    assert "retry: true" not in retry
     assert "handleSend(" not in retry
