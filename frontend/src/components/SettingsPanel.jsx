@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { X, Plus, Trash2, Save, RefreshCw, Shield, Globe, LogOut, ExternalLink, Wrench, ChevronDown, ChevronRight, Search } from 'lucide-react'
 import { getSettings, updateSettings, getProviders, getToolStoreStatus, refreshToolStore, getMemories, deleteMemory } from '../services/api'
 import { isAuthRequired, isAuthenticated, logout as authLogout, clearToken } from '../utils/auth.js'
-import { encodeStoredApiKey, isUnlimitedMaxIterations, validateMaxIterations, MAX_ITERATIONS_UNLIMITED } from '../utils/settingsValidation.js'
+import { encodeStoredApiKey, isUnlimitedMaxIterations, validateMaxIterations, validateCustomProviderBaseUrl, MAX_ITERATIONS_UNLIMITED } from '../utils/settingsValidation.js'
 import useLanguage from '../hooks/useLanguage'
 import { LANG_LABELS } from '../i18n/translations'
 import '../styles/settings.css'
@@ -241,6 +241,11 @@ export default function SettingsPanel({ isOpen, onClose }) {
     const iterErr = validateMaxIterations(settings?.other?.agent?.max_iterations)
     if (iterErr) {
       setMessage({ type: 'error', text: t(iterErr) })
+      return
+    }
+    const urlErr = (settings?.custom_providers || []).map(c => validateCustomProviderBaseUrl(c.base_url)).find(Boolean)
+    if (urlErr) {
+      setMessage({ type: 'error', text: t(urlErr) })
       return
     }
     setSaving(true); setMessage(null)

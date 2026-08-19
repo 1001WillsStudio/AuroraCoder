@@ -44,3 +44,13 @@ export function validateMaxIterations(value) {
   }
   return null
 }
+
+/** Non-empty custom-provider Base URL must be http(s) with a host. */
+export function validateCustomProviderBaseUrl(value) {
+  if (value == null || String(value).trim() === '') return null
+  try {
+    const parsed = new URL(String(value).trim())
+    if ((parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.hostname) return null
+  } catch { /* invalid */ }
+  return 'msg.baseUrlHttp'
+}

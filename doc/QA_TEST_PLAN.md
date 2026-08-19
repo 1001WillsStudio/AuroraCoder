@@ -89,10 +89,12 @@ msw (reuses the existing Vite config). Prime targets: `utils/streamUtils.js`,
 The Settings `/m` page is covered in `tests/test_mobile_routes.py`.
 
 `frontend/src/utils/settingsValidation.js` is ``encodeStoredApiKey``
-(empty field + stored key → keep) plus ``validateMaxIterations`` (Save
+(empty field + stored key → keep), ``validateMaxIterations`` (Save
 rejects a Max Iterations Per Turn value outside 5–200; HTML ``min``/``max``
-are not enforced by the Save button; the sentinel ``unlimited`` is allowed).
-`tests/test_settings_validation.py` covers both. `tests/test_settings_max_iterations.py`
+are not enforced by the Save button; the sentinel ``unlimited`` is allowed),
+and ``validateCustomProviderBaseUrl`` (Save rejects a typed Base URL that
+is not http(s); empty stays allowed).
+`tests/test_settings_validation.py` covers the helpers. `tests/test_settings_max_iterations.py`
 locks the store: ``update_settings`` raises on ``"0"`` and leaves the on-disk
 value unchanged, and accepts ``"unlimited"``.
 

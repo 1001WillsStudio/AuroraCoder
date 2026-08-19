@@ -70,6 +70,7 @@ def test_js_helper_exports_encode_and_max_iterations():
     assert "export function encodeStoredApiKey" in src
     assert "export function validateMaxIterations" in src
     assert "export function isUnlimitedMaxIterations" in src
+    assert "export function validateCustomProviderBaseUrl" in src
     # Old "API key required" helpers must stay gone — a blank stored key
     # is not a reason to block Save.
     assert "export function validateProviders" not in src
@@ -158,3 +159,23 @@ def test_max_iterations_range_message_is_translated():
     src = translations.read_text(encoding="utf-8")
     assert "msg.maxIterationsRange" in src
     assert "must be between 5 and 200" in src
+
+
+def test_handle_save_rejects_non_http_base_url_before_put():
+    """Save must not PUT when a custom provider Base URL lacks http(s)."""
+    src = _PANEL.read_text(encoding="utf-8")
+    save_start = src.index("const handleSave = async () =>")
+    save_end = src.index("const builtIn = providers.filter")
+    body = src[save_start:save_end]
+    assert "validateCustomProviderBaseUrl" in body
+    assert "updateSettings" in body
+    assert body.index("validateCustomProviderBaseUrl") < body.index("updateSettings")
+    assert "return" in body
+
+
+def test_base_url_http_message_is_translated():
+    translations = _ROOT / "frontend" / "src" / "i18n" / "translations.js"
+    src = translations.read_text(encoding="utf-8")
+    assert "msg.baseUrlHttp" in src
+    assert "http://" in src
+    assert "https://" in src
