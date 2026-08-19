@@ -20,7 +20,6 @@ from pathlib import Path
 import subprocess
 from threading import Lock
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -122,12 +121,10 @@ def update_settings(partial: Dict[str, Any]) -> Dict[str, Any]:
 
     Raises:
         ValueError: if ``other.agent.max_iterations`` is present and not an
-            integer in ``[5, 200]`` or the sentinel ``"unlimited"``, or if
-            a custom provider ``base_url`` is not an http(s) URL.
+            integer in ``[5, 200]`` or the sentinel ``"unlimited"``.
             The on-disk file is not written.
     """
     _validate_agent_max_iterations(partial)
-    _validate_custom_provider_base_urls(partial)
     with _lock:
         current = _load_raw()
 
@@ -417,20 +414,6 @@ def _parse_agent_max_iterations(raw: Any) -> Optional[int]:
             raise ValueError(_MAX_ITERATIONS_RANGE_MSG)
         return int(n)
     raise ValueError(_MAX_ITERATIONS_RANGE_MSG)
-
-
-def _validate_custom_provider_base_urls(partial: Dict[str, Any]) -> None:
-    """Raise if a typed custom-provider Base URL is not http(s) with a host."""
-    providers = partial.get("custom_providers")
-    if not isinstance(providers, list):
-        return
-    for cp in providers:
-        raw = cp.get("base_url") if isinstance(cp, dict) else None
-        if not isinstance(raw, str) or not raw.strip():
-            continue
-        parsed = urlparse(raw.strip())
-        if parsed.scheme not in ("http", "https") or not parsed.netloc:
-            raise ValueError("base_url must be an http:// or https:// URL")
 
 
 def _validate_agent_max_iterations(partial: Dict[str, Any]) -> None:
