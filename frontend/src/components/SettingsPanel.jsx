@@ -280,6 +280,9 @@ export default function SettingsPanel({ isOpen, onClose }) {
         provider_models: settings.provider_models || {},
       })
       setMessage({ type: 'success', text: t('msg.saved') })
+      // Apply Default Model to the sidebar immediately; the delayed
+      // refresh still waits for provider clients (API keys) to settle.
+      window.dispatchEvent(new Event('providers-changed'))
       setTimeout(async () => { try { const p = await getProviders(); setProviders(p.providers || []); window.dispatchEvent(new Event('providers-changed')) } catch {} }, 800)
     } catch { setMessage({ type: 'error', text: t('msg.saveFailed') }) }
     finally { setSaving(false) }
