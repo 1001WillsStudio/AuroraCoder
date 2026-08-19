@@ -5,10 +5,11 @@ import {
   FileJson, Braces, Download, Trash2, FolderArchive
 } from 'lucide-react'
 import useLanguage from '../hooks/useLanguage'
+import { mergeFolderChildren } from '../utils/fileTree'
 
-// Must stay in sync with gateway.workspace.FILE_TREE_MAX_DEPTH so a file
-// six directories under an uploaded project (a/b/c/d/e/f/deep.txt) appears.
-const FILE_TREE_MAX_DEPTH = 32
+// Historic first-paint cap (same as today). Opening a truncated folder
+// requests that folder with this same depth so deeper files appear then.
+const FILE_TREE_MAX_DEPTH = 5
 
 // ── File-type icon ──────────────────────────────────────────────────────────
 const getFileIcon = (extension) => {
@@ -66,7 +67,7 @@ function TreeNode({ node, level, onFileClick, expandedFolders, toggleFolder, onC
   const hasChildren = listedChildren.length > 0 || isTruncated
 
   const handleClick = () => {
-    if (isFolder) toggleFolder(node.path)
+    if (isFolder) toggleFolder(node)
     else onFileClick?.(node.path)
   }
 
@@ -173,10 +174,9 @@ function ContextMenu({ x, y, node, onClose, onDelete, onDownload, onExport, t })
 }
 
 // ── Main component ──────────────────────────────────────────────────────────
-// The tree DATA is treated as a constant snapshot of the workspace.  It is only
-// (re)fetched on real change events — initial mount, project upload, delete, and
-// agent file operations.  Expanding / collapsing / selecting is pure local UI
-// state and never hits the network.
+// The first listing is the historic depth-5 snapshot. Expanding a folder
+// that still has unlisted contents fetches that folder (same depth cap
+// from there) and merges the children. Other expand/collapse is local.
 const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, onPathDeleted }) => {
   const { t } = useLanguage()
   const [tree, setTree] = useState([])
@@ -190,6 +190,50 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, onPathDeleted 
   // Last structure we rendered — skip setState when a refetch is identical so
   // an in-progress expansion never flickers or collapses.
   const lastTreeJsonRef = useRef('')
+  const treeRef = useRef([])
+  const expandedRef = useRef(expandedFolders)
+  const subtreeInflightRef = useRef(new Set())
+  treeRef.current = tree
+  expandedRef.current = expandedFolders
+
+  const applyTree = useCallback((nextTree) => {
+    const nextJson = JSON.stringify(nextTree)
+    if (nextJson !== lastTreeJsonRef.current) {
+      lastTreeJsonRef.current = nextJson
+      setTree(nextTree)
+    }
+  }, [])
+
+  const fetchSubtree = useCallback(async (path) => {
+    if (!path || subtreeInflightRef.current.has(path)) return
+    subtreeInflightRef.current.add(path)
+    try {
+      const response = await fetch(
+        `/api/files/tree?path=${encodeURIComponent(path)}&max_depth=${FILE_TREE_MAX_DEPTH}`
+      )
+      const data = await response.json()
+      if (data.error) return
+      applyTree(mergeFolderChildren(
+        treeRef.current,
+        path,
+        data.tree || [],
+        Boolean(data.truncated),
+      ))
+    } catch (err) {
+      console.error('File tree subtree error:', err)
+    } finally {
+      subtreeInflightRef.current.delete(path)
+    }
+  }, [applyTree])
+
+  const hydrateExpanded = useCallback((nodes) => {
+    for (const node of nodes || []) {
+      if (node.type === 'folder' && node.truncated && expandedRef.current.has(node.path)) {
+        fetchSubtree(node.path)
+      }
+      if (node.children?.length) hydrateExpanded(node.children)
+    }
+  }, [fetchSubtree])
 
   const fetchTree = useCallback(async () => {
     setLoading(true)
@@ -203,12 +247,9 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, onPathDeleted 
         lastTreeJsonRef.current = ''
       } else {
         const nextTree = data.tree || []
-        const nextJson = JSON.stringify(nextTree)
-        if (nextJson !== lastTreeJsonRef.current) {
-          lastTreeJsonRef.current = nextJson
-          setTree(nextTree)
-        }
+        applyTree(nextTree)
         setRootPath(data.root)
+        hydrateExpanded(nextTree)
       }
     } catch (err) {
       setError('Failed to load file tree')
@@ -216,7 +257,7 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, onPathDeleted 
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [applyTree, hydrateExpanded])
 
   // Initial load.
   useEffect(() => { fetchTree() }, [fetchTree])
@@ -249,15 +290,17 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, onPathDeleted 
     }
   }, [isStreaming, fetchTree])
 
-  // ── Pure-local interactions (no network) ──────────────────────────────────
-  const toggleFolder = useCallback((path) => {
+  const toggleFolder = useCallback((node) => {
+    const path = node.path
     setExpandedFolders((prev) => {
       const next = new Set(prev)
       if (next.has(path)) next.delete(path)
       else next.add(path)
       return next
     })
-  }, [])
+    const opening = !expandedRef.current.has(path)
+    if (opening && node.truncated) fetchSubtree(path)
+  }, [fetchSubtree])
 
   const handleContextMenu = useCallback((e, node) => {
     setContextMenu({ x: e.clientX, y: e.clientY, node })

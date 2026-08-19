@@ -99,7 +99,7 @@ value unchanged, and accepts ``"unlimited"``.
 |---|---|---|
 | `tests/test_mobile_sidebar_toggle.py` | ✅ | Source-level regression: at `max-width: 768px` the sidebar may stay `display: none` only if App.jsx renders a `.sidebar-toggle` *outside* the aside and `.app.sidebar-open .sidebar` reveals it. Locks the explorer finding that a 375px resize hid New Chat / History / Settings / model with no hamburger. |
 | `tests/test_stale_viewer_after_delete.py` | ✅ | Deleting an open Workspace file must close its viewer tab; Refresh re-reads view-only tabs and drops them on 404. Helpers in `frontend/src/utils/panelFiles.js` run via Node; source scan locks FileTree → panel wiring. |
-| `tests/test_file_tree_depth.py` | ✅ | Workspace tree must list `sample-project/a/b/c/d/e/f/deep.txt` (six dirs under the project). Locks default `build_file_tree` depth, cache keying on `max_depth` (a depth-5 snapshot must not be reused for a deeper request), the FileTree fetch depth, a `FILE_TREE_MAX_NODES` budget so a wide folder is truncated, and that directory symlinks are not walked. |
+| `tests/test_file_tree_depth.py` | ✅ | First-paint tree stays at historic `max_depth=5` (folder `d` truncated). Opening `d` lists `e`/`deep.txt`. Cache must not reuse the root snapshot for that folder. FileTree fetches `path=` on expand; `fileTree.js` merge is executed with Node. Also locks the node budget and that directory symlinks are not walked. |
 
 Stable `data-testid` hooks on the desktop SPA (`chat-input`, `chat-send`,
 `chat-message`, …) are locked by `tests/test_frontend_testids.py` (source scan;

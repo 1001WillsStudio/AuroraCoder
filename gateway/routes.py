@@ -905,19 +905,36 @@ async def create_snapshot(conversation_id: str):
 
 
 @app.get("/api/files/tree")
-async def get_file_tree(max_depth: int = FILE_TREE_MAX_DEPTH):
+async def get_file_tree(max_depth: int = FILE_TREE_MAX_DEPTH, path: str = ""):
     """Get the folder structure of the agent's working space.
 
-    Uses a server-side cache (invalidated on file writes + short TTL)
-    so that repeated calls during the same streaming session don't
-    re-scan the entire workspace.
+    ``path`` (optional) lists one folder so the client can open a level
+    that the first-paint depth cap left truncated. Uses a server-side
+    cache (invalidated on file writes + short TTL) so that repeated
+    calls during the same streaming session don't re-scan the entire
+    workspace.
     """
     work_dir = _get_workspace()
     if not work_dir or not work_dir.exists():
-        return {"tree": [], "root": None, "error": "No active session"}
+        return {"tree": [], "root": None, "truncated": False, "error": "No active session"}
 
-    tree, root, _version = get_cached_file_tree(work_dir, work_dir, max_depth=max_depth)
-    return {"tree": tree, "root": root, "error": None}
+    target = work_dir
+    if path:
+        try:
+            target = (work_dir / path).resolve()
+            if not str(target).startswith(str(work_dir.resolve())):
+                raise HTTPException(status_code=403, detail="Access denied: path outside working directory")
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid path")
+        if not target.exists() or not target.is_dir():
+            raise HTTPException(status_code=404, detail="Folder not found")
+
+    tree, root, _version, truncated = get_cached_file_tree(
+        target, work_dir, max_depth=max_depth
+    )
+    return {"tree": tree, "root": root, "truncated": truncated, "error": None}
 
 
 @app.get("/api/files/read")

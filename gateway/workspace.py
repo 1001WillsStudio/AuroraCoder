@@ -190,11 +190,11 @@ def get_file_diffs_for_conversation(
 # File Tree — with caching to avoid rebuilding on every request
 # ============================================================================
 
-# Depth is high enough for a file six directories under an uploaded project
-# (sample-project/a/b/c/d/e/f/deep.txt). Width is capped separately so a
-# large workspace cannot turn that depth into an unbounded walk — the
-# original max_depth=5 existed as a latency guard.
-FILE_TREE_MAX_DEPTH = 32
+# First-paint and per-open cap. The historic depth of 5 is the latency
+# guard: the initial listing and each "open this folder" request walk at
+# most this many levels from their root. Deeper files appear when the
+# user opens the truncated folder. Width is capped separately.
+FILE_TREE_MAX_DEPTH = 5
 FILE_TREE_MAX_NODES = 2000
 _TREE_SKIP_NAMES = {"__pycache__", "node_modules", ".git", ".venv", "venv"}
 
@@ -208,6 +208,7 @@ _tree_cache: Dict[str, Any] = {
     "version": 0,        # monotonic counter (useful for ETag)
     "max_depth": None,   # depth the cached tree was built with
     "max_nodes": None,   # node budget the cached tree was built with
+    "truncated": False,  # True when the cached root listing was incomplete
 }
 _tree_cache_ttl = 5.0     # seconds — safety net for terminal-created files
 _files_changed = True      # start True to force initial build
@@ -225,7 +226,7 @@ def get_cached_file_tree(
     max_depth: int = FILE_TREE_MAX_DEPTH,
     max_nodes: int = FILE_TREE_MAX_NODES,
 ) -> tuple:
-    """Return (tree, root_str, version) — with caching.
+    """Return (tree, root_str, version, truncated) — with caching.
 
     Rebuilds the tree only when *directory* has changed (cached root
     differs), *max_depth* or *max_nodes* differ from the cached tree, the
@@ -245,19 +246,27 @@ def get_cached_file_tree(
     )
 
     if cache_hit:
-        return _tree_cache["tree"], _tree_cache["root"], _tree_cache["version"]
+        return (
+            _tree_cache["tree"],
+            _tree_cache["root"],
+            _tree_cache["version"],
+            bool(_tree_cache.get("truncated")),
+        )
 
     # Rebuild
-    tree = build_file_tree(directory, base_path, max_depth, max_nodes=max_nodes)
+    tree, truncated = _build_file_tree(
+        directory, base_path, max_depth, 0, max_nodes, None
+    )
     _tree_cache["tree"] = tree
     _tree_cache["root"] = root_str
     _tree_cache["timestamp"] = now
     _tree_cache["version"] += 1
     _tree_cache["max_depth"] = max_depth
     _tree_cache["max_nodes"] = max_nodes
+    _tree_cache["truncated"] = truncated
     _files_changed = False
 
-    return tree, root_str, _tree_cache["version"]
+    return tree, root_str, _tree_cache["version"], truncated
 
 
 def _tree_name_skipped(name: str) -> bool:
