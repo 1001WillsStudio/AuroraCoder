@@ -524,10 +524,10 @@ reopening the chat still shows the failure and a Try Again control.
 Without that bubble the store would keep only the seeded user message
 and reload would look like the turn was never answered. Try Again
 resends the current transcript without a new user message; incomplete
-tool calls are filled in by the existing orphan-tool fixer. The UI
-allocates a conversation id on the first send (and error SSE events
-echo it) so a first-turn provider failure still retries in-place
-instead of opening a second history item.
+tool calls are filled in by the existing orphan-tool fixer. The first
+send still omits ``conversation_id`` so the gateway allocates it; the
+UI then keeps the ``X-Conversation-ID`` from that response so Try
+Again can retry in-place after a first-turn provider failure.
 
 Key implementation files:
 - `gateway/conversation_store.py` — file-backed store (thread-safe, atomic writes)

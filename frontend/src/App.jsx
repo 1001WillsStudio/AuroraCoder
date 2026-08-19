@@ -9,7 +9,7 @@ import Sidebar from './components/Sidebar'
 import WelcomeScreen from './components/WelcomeScreen'
 import SettingsPanel from './components/SettingsPanel'
 import { streamChat, getProviders, cancelConversation, getConversation, getActiveStreams, resumeStream, getTaskInstruction, setTaskInstruction, getInstanceInfo } from './services/api'
-import { isInterruptible, TASK_MARKER_START, TASK_MARKER_END, newConversationId } from './utils/streamUtils'
+import { isInterruptible, TASK_MARKER_START, TASK_MARKER_END } from './utils/streamUtils'
 import { checkAuth, isAuthRequired } from './utils/auth.js'
 import CodePanel from './components/CodePanel'
 import { createStreamCallbacks } from './hooks/createStreamCallbacks'
@@ -284,16 +284,10 @@ function App() {
     const appliedInstruction = (systemPrompt.trim() && !conversationId && !isRetry)
       ? systemPrompt.trim()
       : ''
-    // Mint an id before streamChat so a first-turn provider error still
-    // leaves Try Again on the same conversation (the 500 path never
-    // emits a messages/done event that would have set conversationId).
-    if (!conversationIdRef.current) {
-      conversationIdRef.current = conversationId || newConversationId()
-      if (conversationIdRef.current !== conversationId) {
-        setConversationId(conversationIdRef.current)
-      }
-    }
-    const cid = conversationIdRef.current
+    // First send keeps conversation_id null so the gateway allocates it.
+    // After that, streamChat copies X-Conversation-ID into this ref so
+    // Try Again can reuse it even when the 500 path never emits messages/done.
+    const cid = conversationIdRef.current || conversationId || null
     const apiMessage = isRetry
       ? userMessageText
       : (appliedInstruction
@@ -384,7 +378,12 @@ function App() {
     try {
       abortControllerRef.current = new AbortController()
       const callbacks = createStreamCallbacks({
-        setMessages, setRawMessages, setConversationId, setCanContinue,
+        setMessages, setRawMessages,
+        setConversationId: (id) => {
+          if (id) conversationIdRef.current = id
+          setConversationId(id)
+        },
+        setCanContinue,
         setIsStreaming, setHistoryRefreshTrigger, setSubagentChildIds,
         handleSend, handleLoadConversation,
         pendingInterruptRef, continuationNavigatedRef, abortControllerRef,

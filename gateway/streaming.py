@@ -463,11 +463,7 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                 logger.info(f"[proxy] [{cid[:8]}...] backend_connect={backend_connect_elapsed:.3f}s status={response.status_code}")
                 if response.status_code != 200:
                     body = (await response.aread()).decode(errors="replace")
-                    err = {
-                        "message": f"Backend returned {response.status_code}: {body[:500]}",
-                        "type": "BackendError",
-                        "conversation_id": cid,
-                    }
+                    err = {"message": f"Backend returned {response.status_code}: {body[:500]}", "type": "BackendError"}
                     stream.latest_event_type = "error"
                     stream.latest_event_data = err
                     for q in list(stream.subscribers):
@@ -613,11 +609,7 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                                             pass
 
     except httpx.ConnectError:
-        err = {
-            "message": f"Cannot connect to backend at {BACKEND_URL}",
-            "type": "ConnectionError",
-            "conversation_id": cid,
-        }
+        err = {"message": f"Cannot connect to backend at {BACKEND_URL}", "type": "ConnectionError"}
         stream.latest_event_type = "error"
         stream.latest_event_data = err
         for q in list(stream.subscribers):
@@ -631,7 +623,7 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
 
     except Exception as e:
         logger.exception(f"[proxy] Error for {cid[:8]}...")
-        err = {"message": str(e), "type": type(e).__name__, "conversation_id": cid}
+        err = {"message": str(e), "type": type(e).__name__}
         stream.latest_event_type = "error"
         stream.latest_event_data = err
         for q in list(stream.subscribers):
