@@ -99,6 +99,7 @@ value unchanged, and accepts ``"unlimited"``.
 |---|---|---|
 | `tests/test_mobile_sidebar_toggle.py` | ✅ | Source-level regression: at `max-width: 768px` the sidebar may stay `display: none` only if App.jsx renders a `.sidebar-toggle` *outside* the aside and `.app.sidebar-open .sidebar` reveals it. Locks the explorer finding that a 375px resize hid New Chat / History / Settings / model with no hamburger. |
 | `tests/test_stale_viewer_after_delete.py` | ✅ | Deleting an open Workspace file must close its viewer tab; Refresh re-reads view-only tabs and drops them on 404. Helpers in `frontend/src/utils/panelFiles.js` run via Node; source scan locks FileTree → panel wiring. |
+| `tests/test_user_message_newlines.py` | ✅ | Source-level regression: a user bubble must interpolate the raw string inside `.message-text` and `messages.css` must set `white-space: pre-wrap` on `.user-message-row .message-text`. Locks the explorer finding that Shift+Enter newlines collapsed to one line in the sent bubble. |
 
 Stable `data-testid` hooks on the desktop SPA (`chat-input`, `chat-send`,
 `chat-message`, …) are locked by `tests/test_frontend_testids.py` (source scan;
