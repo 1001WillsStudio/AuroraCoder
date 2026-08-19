@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { X, Plus, Trash2, Save, RefreshCw, Shield, Globe, LogOut, ExternalLink, Wrench, ChevronDown, ChevronRight, Search } from 'lucide-react'
 import { getSettings, updateSettings, getProviders, getToolStoreStatus, refreshToolStore, getMemories, deleteMemory } from '../services/api'
 import { isAuthRequired, isAuthenticated, logout as authLogout, clearToken } from '../utils/auth.js'
 import { encodeStoredApiKey, isUnlimitedMaxIterations, validateMaxIterations, MAX_ITERATIONS_UNLIMITED } from '../utils/settingsValidation.js'
+import { initialFocusTarget, moveFocus, trapTabKey } from '../utils/focusTrap.js'
 import useLanguage from '../hooks/useLanguage'
 import { LANG_LABELS } from '../i18n/translations'
 import '../styles/settings.css'
@@ -116,6 +117,34 @@ export default function SettingsPanel({ isOpen, onClose }) {
     if (!isOpen || memoryBrowserCollapsed) return
     loadMemories()
   }, [isOpen, memoryBrowserCollapsed])
+
+  const dialogRef = useRef(null)
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+
+  // Take focus when the dialog opens (the gear otherwise keeps it) and
+  // trap Tab so + New Chat / Upload behind the overlay cannot be reached.
+  useEffect(() => {
+    if (!isOpen) return undefined
+    const previouslyFocused = typeof document !== 'undefined' ? document.activeElement : null
+    const focusDialog = () => moveFocus(initialFocusTarget(dialogRef.current))
+    focusDialog()
+    const frame = requestAnimationFrame(focusDialog)
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onCloseRef.current()
+        return
+      }
+      trapTabKey(event, dialogRef.current)
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      cancelAnimationFrame(frame)
+      document.removeEventListener('keydown', onKeyDown)
+      moveFocus(previouslyFocused)
+    }
+  }, [isOpen])
 
   const handleDeleteMemory = async (memoryId) => {
     try {
@@ -323,11 +352,20 @@ export default function SettingsPanel({ isOpen, onClose }) {
 
   return (
     <div className="settings-overlay" onClick={onClose}>
-      <div className="settings-modal" onClick={e => e.stopPropagation()} data-testid="settings-panel">
+      <div
+        className="settings-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-dialog-title"
+        tabIndex={-1}
+        ref={dialogRef}
+        onClick={e => e.stopPropagation()}
+        data-testid="settings-panel"
+      >
         {/* Header */}
         <div className="settings-header">
           <div className="settings-header-top">
-            <h2>{t('settings.title')}</h2>
+            <h2 id="settings-dialog-title">{t('settings.title')}</h2>
             <div className="settings-header-actions">
               {/* ── Language selector ────────────────────────────── */}
               <div className="settings-lang-selector">
