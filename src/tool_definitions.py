@@ -869,3 +869,16 @@ def execute_tool_call(tool_name: str, arguments: Dict[str, Any], tool_call_id: s
     # All tools in the function map have signature:
     #   (arguments: Dict[str, Any]) -> (result: str, arguments: Dict[str, Any])
     function = function_map[tool_name]
+
+    # Subagent: inject execution-only metadata.  The subagent function strips
+    # tool_call_id and conversation_id from the returned applied args so the
+    # LLM never sees them.
+    if tool_name == "subagent":
+        if tool_call_id:
+            arguments = {**arguments, "tool_call_id": tool_call_id}
+        if conversation_id:
+            arguments = {**arguments, "conversation_id": conversation_id}
+
+    result, arguments = function(arguments)
+    return arguments, result
+
