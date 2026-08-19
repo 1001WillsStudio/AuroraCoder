@@ -31,6 +31,10 @@ from ..tool_definitions import (
     NATIVE_TOOL_DEFINITIONS, SUBAGENT_READ_ONLY_TOOLS, GAP_INVESTIGATION_TOOLS,
     MEMORY_MAINTENANCE_TOOLS, memory_filter_tools,
 )
+from ..code_tools.tool_result_display import (
+    sanitize_tool_content_for_ui,
+    tool_result_is_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -142,13 +146,14 @@ def convert_messages_for_frontend(messages: list) -> list:
             j = i + 1
             while j < len(messages) and messages[j].get("role") == "tool":
                 tool_msg = messages[j]
-                content = tool_msg.get("content", "")
+                content = sanitize_tool_content_for_ui(tool_msg.get("content", "") or "")
                 if len(content) > 3000:
                     content = content[:3000] + "\n... [truncated]"
                 activities.append({
                     "type": "tool_result",
                     "tool_call_id": tool_msg.get("tool_call_id", ""),
                     "content": content,
+                    "isError": tool_result_is_error(content),
                 })
                 j += 1
             frontend_messages.append({

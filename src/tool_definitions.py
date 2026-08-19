@@ -879,5 +879,15 @@ def execute_tool_call(tool_name: str, arguments: Dict[str, Any], tool_call_id: s
         if conversation_id:
             arguments = {**arguments, "conversation_id": conversation_id}
 
-    result, arguments = function(arguments)
-    return arguments, result
+    raw = function(arguments)
+    # Handlers return (result, applied_arguments). A None or bare string
+    # must not raise — that leaked "cannot unpack non-iterable NoneType"
+    # into the tool-activity card and was marked as a successful complete.
+    if isinstance(raw, tuple) and len(raw) == 2:
+        result, arguments = raw
+        if result is None:
+            result = f"Error: tool '{tool_name}' failed"
+        return arguments, result
+    if isinstance(raw, str):
+        return arguments, raw
+    return arguments, f"Error: tool '{tool_name}' failed"

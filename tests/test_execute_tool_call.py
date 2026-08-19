@@ -57,3 +57,18 @@ def test_execute_tool_call_injects_subagent_metadata(monkeypatch):
     assert "conversation_id" not in args
     assert args["task"] == "look around"
     assert result == "done"
+
+
+def test_execute_tool_call_none_return_is_error_not_unpack_exception(monkeypatch):
+    """A handler that returns None must not leak ``cannot unpack NoneType``."""
+
+    monkeypatch.setattr(
+        "src.tool_definitions.get_tool_function_map",
+        lambda: {"read_file": lambda arguments: None},
+    )
+    args, result = execute_tool_call("read_file", {"file": "README.md"})
+    assert args == {"file": "README.md"}
+    assert "cannot unpack" not in result
+    assert "NoneType" not in result
+    assert result.startswith("Error")
+    assert "read_file" in result
