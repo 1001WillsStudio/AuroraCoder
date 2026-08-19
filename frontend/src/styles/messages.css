@@ -65,6 +65,8 @@
   color: var(--text-primary);
   font-size: 1rem;
   line-height: 1.7;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .message-text p {
