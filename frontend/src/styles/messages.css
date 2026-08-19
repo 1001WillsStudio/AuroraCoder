@@ -468,6 +468,7 @@
 .user-message-row .message-text {
   flex: 1;
   min-width: 0;
+  white-space: pre-wrap;
 }
 
 .fork-btn {
