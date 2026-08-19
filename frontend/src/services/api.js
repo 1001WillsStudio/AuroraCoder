@@ -4,6 +4,7 @@
  * Handles communication with the FastAPI backend, including SSE streaming.
  */
 import { getAuthHeader, clearToken } from '../utils/auth.js';
+import { workspaceUploadEntries } from '../utils/workspaceUpload.js';
 
 const API_BASE = '/api'
 
@@ -411,20 +412,14 @@ export async function getWorkspaceInfo() {
  * sent as one file.  This avoids Starlette's per-request multipart limits
  * (max_files, max_part_size) and drastically cuts upload size/time.
  *
- * Respects .gitignore: if the selected folder contains a .gitignore,
- * matched paths are excluded.  .git/ is always included so the agent
- * can use git in the workspace.
- *
- * Multiple projects can be uploaded — each lands in its own subfolder
- * under the workspace (named after the selected folder).
+ * Every selected file is packed, including paths a folder .gitignore
+ * would exclude.  Multiple projects can be uploaded — each lands in
+ * its own subfolder under the workspace (named after the selected folder).
  *
  * @param {FileList} fileList - Files from a webkitdirectory input
  */
 export async function uploadWorkspace(fileList) {
-  const [{ default: JSZip }, { default: ignore }] = await Promise.all([
-    import('jszip'),
-    import('ignore'),
-  ])
+  const { default: JSZip } = await import('jszip')
 
   const files = Array.from(fileList)
 
@@ -432,36 +427,10 @@ export async function uploadWorkspace(fileList) {
   // webkitRelativePath is "FolderName/sub/path/file.ext"
   const projectName = (files[0]?.webkitRelativePath || '').split('/')[0] || 'project'
 
-  // Find root .gitignore
-  let gitignoreContent = ''
-  for (const file of files) {
-    const parts = (file.webkitRelativePath || file.name).split('/')
-    if (parts.length === 2 && parts[1] === '.gitignore') {
-      gitignoreContent = await file.text()
-      break
-    }
-  }
-
-  const ig = ignore()
-  if (gitignoreContent) ig.add(gitignoreContent)
-
   // Build zip — read files in parallel batches for speed
   const zip = new JSZip()
   const BATCH = 200
-  const toZip = []
-
-  for (const file of files) {
-    const rel = file.webkitRelativePath || file.name
-    const inProject = rel.split('/').slice(1).join('/')
-    if (!inProject) continue
-
-    // .git/ is always included so the agent has full git history
-    if (!inProject.startsWith('.git/') && inProject !== '.git') {
-      if (ig.ignores(inProject)) continue
-    }
-
-    toZip.push({ inProject, file })
-  }
+  const toZip = workspaceUploadEntries(files)
 
   for (let i = 0; i < toZip.length; i += BATCH) {
     const batch = toZip.slice(i, i + BATCH)

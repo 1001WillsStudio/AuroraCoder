@@ -102,6 +102,7 @@ value unchanged, and accepts ``"unlimited"``.
 | `tests/test_message_long_token_wrap.py` | ✅ | Source-level regression: `.message-text` must wrap or scroll unbreakable tokens (URLs, identifiers). Locks the explorer finding that a 390px send of `SUPERCALIFRAGILISTIC…` clipped at the column edge (`word-break`/`overflow-wrap` both `normal`, scrollWidth ≫ clientWidth). |
 | `tests/test_stale_viewer_after_delete.py` | ✅ | Deleting an open Workspace file must close its viewer tab; Refresh re-reads view-only tabs and drops them on 404. Helpers in `frontend/src/utils/panelFiles.js` run via Node; source scan locks FileTree → panel wiring. |
 | `tests/test_file_tree_depth.py` | ✅ | First-paint tree is still `max_depth=5` (folder `d` empty). `list_dir_level` on `d` returns only `e`; `f` then `deep.txt` are one-level clicks. On-demand listing does not write the tree cache. FileTree fetches `path=` + `max_depth=1` on click and drops those children on close. After Refresh, expanded empty folders are restored shallowest-first (`d` then `e` then `f`); a closed folder is not. |
+| `tests/test_upload_project_gitignore.py` | ✅ | Upload Project packs every selected file, including `secret.txt` / `.env` that a folder `.gitignore` would exclude. Helper in `frontend/src/utils/workspaceUpload.js` runs via Node; source scan locks `api.js` to that helper and forbids `ignore`. |
 
 Stable `data-testid` hooks on the desktop SPA (`chat-input`, `chat-send`,
 `chat-message`, …) are locked by `tests/test_frontend_testids.py` (source scan;
