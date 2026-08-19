@@ -56,6 +56,7 @@ def reset_tree_cache():
         "timestamp": 0.0,
         "version": 0,
         "max_depth": None,
+        "max_nodes": None,
     })
     ws._files_changed = True
     yield
@@ -85,6 +86,7 @@ def test_depth_five_still_truncates_at_folder_d(tmp_workspace):
     folder_d = _find_node(tree, "sample-project/a/b/c/d")
     assert folder_d is not None
     assert folder_d.get("children") == []
+    assert folder_d.get("truncated") is True
 
 
 @pytest.mark.unit
@@ -120,3 +122,52 @@ def test_file_tree_client_requests_depth_beyond_five():
     # eight path components from workspace root to deep.txt; need depth > 7
     assert depth >= 8
     assert depth == ws.FILE_TREE_MAX_DEPTH
+    src_ws = (ROOT / "gateway" / "workspace.py").read_text(encoding="utf-8")
+    assert re.search(r"FILE_TREE_MAX_NODES\s*=\s*(\d+)", src_ws)
+    assert ws.FILE_TREE_MAX_NODES < 10_000
+    assert "truncated" in TREE_JSX.read_text(encoding="utf-8")
+
+
+def _count_nodes(tree: list) -> int:
+    return sum(1 + _count_nodes(node.get("children") or []) for node in tree)
+
+
+@pytest.mark.unit
+def test_node_budget_caps_a_wide_tree(tmp_workspace):
+    """A large flat folder must not be walked in full — that is the latency guard."""
+    wide = tmp_workspace / "wide"
+    wide.mkdir()
+    for i in range(50):
+        (wide / f"f{i:02d}.txt").write_text("x", encoding="utf-8")
+    tree = ws.build_file_tree(tmp_workspace, tmp_workspace, max_nodes=10)
+    assert _count_nodes(tree) <= 10
+    folder = _find_node(tree, "wide")
+    assert folder is not None
+    assert folder.get("truncated") is True
+    assert len(folder.get("children") or []) < 50
+
+
+@pytest.mark.unit
+def test_node_budget_still_lists_the_reported_deep_file(tmp_workspace):
+    """The explorer upload is a handful of nodes; the budget must not hide it."""
+    _plant_deep_project(tmp_workspace)
+    tree = ws.build_file_tree(tmp_workspace, tmp_workspace, max_nodes=20)
+    assert _find_node(tree, DEEP_REL) is not None
+
+
+@pytest.mark.unit
+def test_directory_symlink_is_not_walked(tmp_workspace):
+    """A symlink to a large tree must not be followed during the walk."""
+    real = tmp_workspace / "real"
+    real.mkdir()
+    (real / "secret.txt").write_text("x", encoding="utf-8")
+    link = tmp_workspace / "link"
+    try:
+        link.symlink_to(real, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks not supported here")
+    tree = ws.build_file_tree(tmp_workspace, tmp_workspace)
+    linked = _find_node(tree, "link")
+    assert linked is not None
+    assert linked.get("children") == []
+    assert _find_node(tree, "link/secret.txt") is None

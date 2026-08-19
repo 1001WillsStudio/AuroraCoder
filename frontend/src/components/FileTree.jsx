@@ -61,7 +61,9 @@ const getFileIcon = (extension) => {
 function TreeNode({ node, level, onFileClick, expandedFolders, toggleFolder, onContextMenu }) {
   const isFolder = node.type === 'folder'
   const isExpanded = isFolder && expandedFolders.has(node.path)
-  const hasChildren = isFolder && Array.isArray(node.children) && node.children.length > 0
+  const listedChildren = isFolder && Array.isArray(node.children) ? node.children : []
+  const isTruncated = Boolean(node.truncated)
+  const hasChildren = listedChildren.length > 0 || isTruncated
 
   const handleClick = () => {
     if (isFolder) toggleFolder(node.path)
@@ -98,7 +100,7 @@ function TreeNode({ node, level, onFileClick, expandedFolders, toggleFolder, onC
 
       {isExpanded && hasChildren && (
         <div className="tree-children">
-          {node.children.map((child) => (
+          {listedChildren.map((child) => (
             <TreeNode
               key={child.path}
               node={child}
@@ -109,6 +111,15 @@ function TreeNode({ node, level, onFileClick, expandedFolders, toggleFolder, onC
               onContextMenu={onContextMenu}
             />
           ))}
+          {isTruncated && (
+            <div
+              className="tree-item"
+              style={{ paddingLeft: `${(level + 1) * 16 + 8}px` }}
+            >
+              <span className="tree-chevron" style={{ width: 14 }} />
+              <span className="tree-name">…</span>
+            </div>
+          )}
         </div>
       )}
     </div>
