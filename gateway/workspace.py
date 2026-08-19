@@ -190,14 +190,6 @@ def get_file_diffs_for_conversation(
 # File Tree — with caching to avoid rebuilding on every request
 # ============================================================================
 
-# First-paint and per-open cap. The historic depth of 5 is the latency
-# guard: the initial listing and each "open this folder" request walk at
-# most this many levels from their root. Deeper files appear when the
-# user opens the truncated folder. Width is capped separately.
-FILE_TREE_MAX_DEPTH = 5
-FILE_TREE_MAX_NODES = 2000
-_TREE_SKIP_NAMES = {"__pycache__", "node_modules", ".git", ".venv", "venv"}
-
 # In-memory cache: rebuilt lazily, invalidated by file writes + a short TTL
 # (the TTL catches file changes made by terminal commands that bypass
 # mark_file_touched).
@@ -206,9 +198,6 @@ _tree_cache: Dict[str, Any] = {
     "root": "",          # root path string (cache key)
     "timestamp": 0.0,    # time.time() when built
     "version": 0,        # monotonic counter (useful for ETag)
-    "max_depth": None,   # depth the cached tree was built with
-    "max_nodes": None,   # node budget the cached tree was built with
-    "truncated": False,  # True when the cached root listing was incomplete
 }
 _tree_cache_ttl = 5.0     # seconds — safety net for terminal-created files
 _files_changed = True      # start True to force initial build
@@ -223,14 +212,12 @@ def invalidate_tree_cache():
 def get_cached_file_tree(
     directory: Path,
     base_path: Path,
-    max_depth: int = FILE_TREE_MAX_DEPTH,
-    max_nodes: int = FILE_TREE_MAX_NODES,
+    max_depth: int = 5,
 ) -> tuple:
-    """Return (tree, root_str, version, truncated) — with caching.
+    """Return (tree, root_str, version) — with caching.
 
     Rebuilds the tree only when *directory* has changed (cached root
-    differs), *max_depth* or *max_nodes* differ from the cached tree, the
-    cache was explicitly invalidated, or the TTL expired.
+    differs) OR the cache was explicitly invalidated OR the TTL expired.
     """
     global _tree_cache, _files_changed
 
@@ -240,135 +227,73 @@ def get_cached_file_tree(
         not _files_changed
         and _tree_cache["tree"]
         and _tree_cache["root"] == root_str
-        and _tree_cache.get("max_depth") == max_depth
-        and _tree_cache.get("max_nodes") == max_nodes
         and (now - _tree_cache["timestamp"]) < _tree_cache_ttl
     )
 
     if cache_hit:
-        return (
-            _tree_cache["tree"],
-            _tree_cache["root"],
-            _tree_cache["version"],
-            bool(_tree_cache.get("truncated")),
-        )
+        return _tree_cache["tree"], _tree_cache["root"], _tree_cache["version"]
 
     # Rebuild
-    tree, truncated = _build_file_tree(
-        directory, base_path, max_depth, 0, max_nodes, None
-    )
+    tree = build_file_tree(directory, base_path, max_depth)
     _tree_cache["tree"] = tree
     _tree_cache["root"] = root_str
     _tree_cache["timestamp"] = now
     _tree_cache["version"] += 1
-    _tree_cache["max_depth"] = max_depth
-    _tree_cache["max_nodes"] = max_nodes
-    _tree_cache["truncated"] = truncated
     _files_changed = False
 
-    return tree, root_str, _tree_cache["version"], truncated
+    return tree, root_str, _tree_cache["version"]
 
 
-def _tree_name_skipped(name: str) -> bool:
-    return name.startswith(".") or name in _TREE_SKIP_NAMES
-
-
-def _dir_has_visible_entries(directory: Path) -> bool:
-    """True when *directory* has at least one entry the tree would list."""
-    try:
-        for entry in directory.iterdir():
-            if not _tree_name_skipped(entry.name):
-                return True
-    except OSError:
-        return False
-    return False
+def list_dir_level(directory: Path, base_path: Path) -> list:
+    """Immediate children of *directory*. Not cached. Folders have empty children."""
+    return build_file_tree(directory, base_path, max_depth=1)
 
 
 def build_file_tree(
     directory: Path,
     base_path: Path,
-    max_depth: int = FILE_TREE_MAX_DEPTH,
+    max_depth: int = 5,
     current_depth: int = 0,
-    max_nodes: int = FILE_TREE_MAX_NODES,
-    _remaining: Optional[List[int]] = None,
 ) -> list:
     """Recursively build a file-tree structure for *directory*.
 
     Returns a list of dicts with ``name``, ``path``, ``type``
     (``"file"`` / ``"folder"``), ``children`` (folders), and
-    ``extension`` (files). Folders that still have unlisted contents
-    (depth or node budget) include ``truncated: True``.
+    ``extension`` (files).
     """
-    items, _truncated = _build_file_tree(
-        directory, base_path, max_depth, current_depth, max_nodes, _remaining
-    )
-    return items
-
-
-def _build_file_tree(
-    directory: Path,
-    base_path: Path,
-    max_depth: int,
-    current_depth: int,
-    max_nodes: int,
-    _remaining: Optional[List[int]],
-) -> tuple:
-    if _remaining is None:
-        _remaining = [max_nodes]
     if current_depth >= max_depth:
-        return [], _dir_has_visible_entries(directory)
-    if _remaining[0] <= 0:
-        return [], True
+        return []
 
+    items = []
     try:
         entries = sorted(
             directory.iterdir(),
             key=lambda e: (not e.is_dir(), e.name.lower()),
         )
     except PermissionError:
-        return [], False
+        return items
     except Exception as e:
         logger.warning(f"Error reading directory {directory}: {e}")
-        return [], False
+        return items
 
-    visible = [entry for entry in entries if not _tree_name_skipped(entry.name)]
-    items: List[Dict[str, Any]] = []
-    for entry in visible:
-        if _remaining[0] <= 0:
-            return items, True
-        _remaining[0] -= 1
-        try:
-            relative_path = str(entry.relative_to(base_path)).replace("\\", "/")
-        except ValueError:
-            continue
-        try:
-            is_dir = entry.is_dir()
-            is_symlink = entry.is_symlink()
-        except OSError:
+    SKIP_NAMES = {"__pycache__", "node_modules", ".git", ".venv", "venv"}
+
+    for entry in entries:
+        if entry.name.startswith(".") or entry.name in SKIP_NAMES:
             continue
 
-        if is_dir:
-            # Do not follow directory symlinks — they can point at a huge tree.
-            if is_symlink:
-                items.append({
-                    "name": entry.name,
-                    "path": relative_path,
-                    "type": "folder",
-                    "children": [],
-                })
-                continue
-            children, child_truncated = _build_file_tree(
-                entry, base_path, max_depth, current_depth + 1, max_nodes, _remaining
+        relative_path = str(entry.relative_to(base_path)).replace("\\", "/")
+
+        if entry.is_dir():
+            children = build_file_tree(
+                entry, base_path, max_depth, current_depth + 1
             )
-            node: Dict[str, Any] = {
+            items.append({
                 "name": entry.name,
                 "path": relative_path,
                 "type": "folder",
                 "children": children,
-            }
-            if child_truncated:
-                node["truncated"] = True
-            items.append(node)
+            })
         else:
             ext = entry.suffix.lower() if entry.suffix else ""
             items.append({
@@ -378,7 +303,7 @@ def _build_file_tree(
                 "extension": ext,
             })
 
-    return items, False
+    return items
 
 
 # ============================================================================

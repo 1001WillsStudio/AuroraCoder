@@ -5,11 +5,16 @@ import {
   FileJson, Braces, Download, Trash2, FolderArchive
 } from 'lucide-react'
 import useLanguage from '../hooks/useLanguage'
-import { mergeFolderChildren } from '../utils/fileTree'
 
-// Historic first-paint cap (same as today). Opening a truncated folder
-// requests that folder with this same depth so deeper files appear then.
-const FILE_TREE_MAX_DEPTH = 5
+function setFolderChildren(tree, path, children) {
+  return (tree || []).map((node) => {
+    if (node.path === path) return { ...node, children: children || [] }
+    if (node.children?.length) {
+      return { ...node, children: setFolderChildren(node.children, path, children) }
+    }
+    return node
+  })
+}
 
 // ── File-type icon ──────────────────────────────────────────────────────────
 const getFileIcon = (extension) => {
@@ -62,9 +67,7 @@ const getFileIcon = (extension) => {
 function TreeNode({ node, level, onFileClick, expandedFolders, toggleFolder, onContextMenu }) {
   const isFolder = node.type === 'folder'
   const isExpanded = isFolder && expandedFolders.has(node.path)
-  const listedChildren = isFolder && Array.isArray(node.children) ? node.children : []
-  const isTruncated = Boolean(node.truncated)
-  const hasChildren = listedChildren.length > 0 || isTruncated
+  const hasChildren = isFolder
 
   const handleClick = () => {
     if (isFolder) toggleFolder(node)
@@ -99,9 +102,9 @@ function TreeNode({ node, level, onFileClick, expandedFolders, toggleFolder, onC
         <span className="tree-name">{node.name}</span>
       </div>
 
-      {isExpanded && hasChildren && (
+      {isExpanded && (
         <div className="tree-children">
-          {listedChildren.map((child) => (
+          {(node.children || []).map((child) => (
             <TreeNode
               key={child.path}
               node={child}
@@ -112,15 +115,6 @@ function TreeNode({ node, level, onFileClick, expandedFolders, toggleFolder, onC
               onContextMenu={onContextMenu}
             />
           ))}
-          {isTruncated && (
-            <div
-              className="tree-item"
-              style={{ paddingLeft: `${(level + 1) * 16 + 8}px` }}
-            >
-              <span className="tree-chevron" style={{ width: 14 }} />
-              <span className="tree-name">…</span>
-            </div>
-          )}
         </div>
       )}
     </div>
@@ -174,9 +168,10 @@ function ContextMenu({ x, y, node, onClose, onDelete, onDownload, onExport, t })
 }
 
 // ── Main component ──────────────────────────────────────────────────────────
-// The first listing is the historic depth-5 snapshot. Expanding a folder
-// that still has unlisted contents fetches that folder (same depth cap
-// from there) and merges the children. Other expand/collapse is local.
+// First listing is the unchanged depth-5 snapshot. Clicking a folder that
+// has no children listed fetches one level of that folder. Closing it
+// drops those children; they are not stored and not scanned again until
+// the next click.
 const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, onPathDeleted }) => {
   const { t } = useLanguage()
   const [tree, setTree] = useState([])
@@ -190,56 +185,34 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, onPathDeleted 
   // Last structure we rendered — skip setState when a refetch is identical so
   // an in-progress expansion never flickers or collapses.
   const lastTreeJsonRef = useRef('')
-  const treeRef = useRef([])
   const expandedRef = useRef(expandedFolders)
-  const subtreeInflightRef = useRef(new Set())
-  treeRef.current = tree
+  const onDemandRef = useRef(new Set())
   expandedRef.current = expandedFolders
 
-  const applyTree = useCallback((nextTree) => {
-    const nextJson = JSON.stringify(nextTree)
-    if (nextJson !== lastTreeJsonRef.current) {
-      lastTreeJsonRef.current = nextJson
-      setTree(nextTree)
-    }
-  }, [])
-
-  const fetchSubtree = useCallback(async (path) => {
-    if (!path || subtreeInflightRef.current.has(path)) return
-    subtreeInflightRef.current.add(path)
+  const fetchOneLevel = useCallback(async (path) => {
     try {
       const response = await fetch(
-        `/api/files/tree?path=${encodeURIComponent(path)}&max_depth=${FILE_TREE_MAX_DEPTH}`
+        `/api/files/tree?path=${encodeURIComponent(path)}&max_depth=1`
       )
       const data = await response.json()
       if (data.error) return
-      applyTree(mergeFolderChildren(
-        treeRef.current,
-        path,
-        data.tree || [],
-        Boolean(data.truncated),
-      ))
+      if (!expandedRef.current.has(path)) return
+      onDemandRef.current.add(path)
+      setTree((prev) => {
+        const next = setFolderChildren(prev, path, data.tree || [])
+        lastTreeJsonRef.current = JSON.stringify(next)
+        return next
+      })
     } catch (err) {
-      console.error('File tree subtree error:', err)
-    } finally {
-      subtreeInflightRef.current.delete(path)
+      console.error('File tree one-level error:', err)
     }
-  }, [applyTree])
-
-  const hydrateExpanded = useCallback((nodes) => {
-    for (const node of nodes || []) {
-      if (node.type === 'folder' && node.truncated && expandedRef.current.has(node.path)) {
-        fetchSubtree(node.path)
-      }
-      if (node.children?.length) hydrateExpanded(node.children)
-    }
-  }, [fetchSubtree])
+  }, [])
 
   const fetchTree = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const response = await fetch(`/api/files/tree?max_depth=${FILE_TREE_MAX_DEPTH}`)
+      const response = await fetch('/api/files/tree?max_depth=5')
       const data = await response.json()
       if (data.error) {
         setError(data.error)
@@ -247,9 +220,13 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, onPathDeleted 
         lastTreeJsonRef.current = ''
       } else {
         const nextTree = data.tree || []
-        applyTree(nextTree)
+        const nextJson = JSON.stringify(nextTree)
+        if (nextJson !== lastTreeJsonRef.current) {
+          lastTreeJsonRef.current = nextJson
+          onDemandRef.current = new Set()
+          setTree(nextTree)
+        }
         setRootPath(data.root)
-        hydrateExpanded(nextTree)
       }
     } catch (err) {
       setError('Failed to load file tree')
@@ -257,7 +234,7 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, onPathDeleted 
     } finally {
       setLoading(false)
     }
-  }, [applyTree, hydrateExpanded])
+  }, [])
 
   // Initial load.
   useEffect(() => { fetchTree() }, [fetchTree])
@@ -292,15 +269,26 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, onPathDeleted 
 
   const toggleFolder = useCallback((node) => {
     const path = node.path
+    const closing = expandedRef.current.has(path)
     setExpandedFolders((prev) => {
       const next = new Set(prev)
-      if (next.has(path)) next.delete(path)
+      if (closing) next.delete(path)
       else next.add(path)
       return next
     })
-    const opening = !expandedRef.current.has(path)
-    if (opening && node.truncated) fetchSubtree(path)
-  }, [fetchSubtree])
+    if (closing && onDemandRef.current.has(path)) {
+      for (const p of [...onDemandRef.current]) {
+        if (p === path || p.startsWith(`${path}/`)) onDemandRef.current.delete(p)
+      }
+      setTree((prev) => {
+        const next = setFolderChildren(prev, path, [])
+        lastTreeJsonRef.current = JSON.stringify(next)
+        return next
+      })
+    } else if (!closing && !(node.children && node.children.length)) {
+      fetchOneLevel(path)
+    }
+  }, [fetchOneLevel])
 
   const handleContextMenu = useCallback((e, node) => {
     setContextMenu({ x: e.clientX, y: e.clientY, node })

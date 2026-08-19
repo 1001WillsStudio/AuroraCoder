@@ -48,10 +48,10 @@ from gateway.provider_registry import (
     sync_tool_env_vars,
 )
 from gateway.workspace import (
-    FILE_TREE_MAX_DEPTH,
     clear_conversation_snapshots,
     get_file_diffs_for_conversation,
     get_cached_file_tree,
+    list_dir_level,
     generate_workspace_tree_text,
     invalidate_tree_cache,
     count_workspace_files,
@@ -905,20 +905,16 @@ async def create_snapshot(conversation_id: str):
 
 
 @app.get("/api/files/tree")
-async def get_file_tree(max_depth: int = FILE_TREE_MAX_DEPTH, path: str = ""):
+async def get_file_tree(max_depth: int = 5, path: str = ""):
     """Get the folder structure of the agent's working space.
 
-    ``path`` (optional) lists one folder so the client can open a level
-    that the first-paint depth cap left truncated. Uses a server-side
-    cache (invalidated on file writes + short TTL) so that repeated
-    calls during the same streaming session don't re-scan the entire
-    workspace.
+    The default listing is the cached workspace tree. ``path`` lists one
+    level of that folder only and is not cached (on-demand open).
     """
     work_dir = _get_workspace()
     if not work_dir or not work_dir.exists():
-        return {"tree": [], "root": None, "truncated": False, "error": "No active session"}
+        return {"tree": [], "root": None, "error": "No active session"}
 
-    target = work_dir
     if path:
         try:
             target = (work_dir / path).resolve()
@@ -930,11 +926,14 @@ async def get_file_tree(max_depth: int = FILE_TREE_MAX_DEPTH, path: str = ""):
             raise HTTPException(status_code=400, detail="Invalid path")
         if not target.exists() or not target.is_dir():
             raise HTTPException(status_code=404, detail="Folder not found")
+        return {
+            "tree": list_dir_level(target, work_dir),
+            "root": str(target),
+            "error": None,
+        }
 
-    tree, root, _version, truncated = get_cached_file_tree(
-        target, work_dir, max_depth=max_depth
-    )
-    return {"tree": tree, "root": root, "truncated": truncated, "error": None}
+    tree, root, _version = get_cached_file_tree(work_dir, work_dir, max_depth=max_depth)
+    return {"tree": tree, "root": root, "error": None}
 
 
 @app.get("/api/files/read")
