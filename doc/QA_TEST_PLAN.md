@@ -99,6 +99,7 @@ value unchanged, and accepts ``"unlimited"``.
 |---|---|---|
 | `tests/test_mobile_sidebar_toggle.py` | ✅ | Source-level regression: at `max-width: 768px` the sidebar may stay `display: none` only if App.jsx renders a `.sidebar-toggle` *outside* the aside and `.app.sidebar-open .sidebar` reveals it. Locks the explorer finding that a 375px resize hid New Chat / History / Settings / model with no hamburger. |
 | `tests/test_stale_viewer_after_delete.py` | ✅ | Deleting an open Workspace file must close its viewer tab; Refresh re-reads view-only tabs and drops them on 404. Helpers in `frontend/src/utils/panelFiles.js` run via Node; source scan locks FileTree → panel wiring. |
+| `tests/test_sidebar_default_model.py` | ✅ | Settings → Default Model must drive the sidebar picker on load, after Save (`providers-changed` reloads providers), and on + New Chat. `pickSidebarProvider` prefers `GET /api/providers` `default` over localStorage last-used; source scan locks App.jsx load + `handleClear`. `get_default_model_entry` maps the saved agent default to the same picker id. |
 
 Stable `data-testid` hooks on the desktop SPA (`chat-input`, `chat-send`,
 `chat-message`, …) are locked by `tests/test_frontend_testids.py` (source scan;
