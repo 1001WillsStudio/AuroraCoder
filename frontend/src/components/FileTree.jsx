@@ -5,6 +5,7 @@ import {
   FileJson, Braces, Download, Trash2, FolderArchive
 } from 'lucide-react'
 import useLanguage from '../hooks/useLanguage'
+import { expandedEmptyFolderPaths, setFolderChildren } from '../utils/fileTree'
 
 // ── File-type icon ──────────────────────────────────────────────────────────
 const getFileIcon = (extension) => {
@@ -57,10 +58,10 @@ const getFileIcon = (extension) => {
 function TreeNode({ node, level, onFileClick, expandedFolders, toggleFolder, onContextMenu }) {
   const isFolder = node.type === 'folder'
   const isExpanded = isFolder && expandedFolders.has(node.path)
-  const hasChildren = isFolder && Array.isArray(node.children) && node.children.length > 0
+  const hasChildren = isFolder
 
   const handleClick = () => {
-    if (isFolder) toggleFolder(node.path)
+    if (isFolder) toggleFolder(node)
     else onFileClick?.(node.path)
   }
 
@@ -92,9 +93,9 @@ function TreeNode({ node, level, onFileClick, expandedFolders, toggleFolder, onC
         <span className="tree-name">{node.name}</span>
       </div>
 
-      {isExpanded && hasChildren && (
+      {isExpanded && (
         <div className="tree-children">
-          {node.children.map((child) => (
+          {(node.children || []).map((child) => (
             <TreeNode
               key={child.path}
               node={child}
@@ -158,10 +159,10 @@ function ContextMenu({ x, y, node, onClose, onDelete, onDownload, onExport, t })
 }
 
 // ── Main component ──────────────────────────────────────────────────────────
-// The tree DATA is treated as a constant snapshot of the workspace.  It is only
-// (re)fetched on real change events — initial mount, project upload, delete, and
-// agent file operations.  Expanding / collapsing / selecting is pure local UI
-// state and never hits the network.
+// First listing is the unchanged depth-5 snapshot. Clicking a folder that
+// has no children listed fetches one level of that folder. Closing it
+// drops those children. Refresh / end-of-stream refetch the snapshot, then
+// re-open any folder that is still expanded (one level at a time).
 const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, onPathDeleted }) => {
   const { t } = useLanguage()
   const [tree, setTree] = useState([])
@@ -175,6 +176,57 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, onPathDeleted 
   // Last structure we rendered — skip setState when a refetch is identical so
   // an in-progress expansion never flickers or collapses.
   const lastTreeJsonRef = useRef('')
+  const expandedRef = useRef(expandedFolders)
+  const onDemandRef = useRef(new Set())
+  expandedRef.current = expandedFolders
+
+  const loadOneLevel = useCallback(async (path) => {
+    const response = await fetch(
+      `/api/files/tree?path=${encodeURIComponent(path)}&max_depth=1`
+    )
+    const data = await response.json()
+    if (data.error) return null
+    return data.tree || []
+  }, [])
+
+  const fetchOneLevel = useCallback(async (path) => {
+    try {
+      const children = await loadOneLevel(path)
+      if (children == null) return
+      if (!expandedRef.current.has(path)) return
+      onDemandRef.current.add(path)
+      setTree((prev) => {
+        const next = setFolderChildren(prev, path, children)
+        lastTreeJsonRef.current = JSON.stringify(next)
+        return next
+      })
+    } catch (err) {
+      console.error('File tree one-level error:', err)
+    }
+  }, [loadOneLevel])
+
+  const restoreExpanded = useCallback(async (snapshot) => {
+    let tree = snapshot
+    const loaded = new Set()
+    for (;;) {
+      const pending = expandedEmptyFolderPaths(tree, expandedRef.current)
+        .filter((path) => !loaded.has(path))
+      if (!pending.length) break
+      const path = pending[0]
+      loaded.add(path)
+      let children
+      try {
+        children = await loadOneLevel(path)
+      } catch (err) {
+        console.error('File tree restore error:', err)
+        break
+      }
+      if (children == null || !expandedRef.current.has(path)) continue
+      tree = setFolderChildren(tree, path, children)
+      onDemandRef.current.add(path)
+    }
+    return tree
+  }, [loadOneLevel])
 
   const fetchTree = useCallback(async () => {
     setLoading(true)
@@ -187,12 +239,10 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, onPathDeleted 
         setTree([])
         lastTreeJsonRef.current = ''
       } else {
-        const nextTree = data.tree || []
-        const nextJson = JSON.stringify(nextTree)
-        if (nextJson !== lastTreeJsonRef.current) {
-          lastTreeJsonRef.current = nextJson
-          setTree(nextTree)
-        }
+        onDemandRef.current = new Set()
+        const restored = await restoreExpanded(data.tree || [])
+        lastTreeJsonRef.current = JSON.stringify(restored)
+        setTree(restored)
         setRootPath(data.root)
       }
     } catch (err) {
@@ -201,7 +251,7 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, onPathDeleted 
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [restoreExpanded])
 
   // Initial load.
   useEffect(() => { fetchTree() }, [fetchTree])
@@ -234,15 +284,28 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, onPathDeleted 
     }
   }, [isStreaming, fetchTree])
 
-  // ── Pure-local interactions (no network) ──────────────────────────────────
-  const toggleFolder = useCallback((path) => {
+  const toggleFolder = useCallback((node) => {
+    const path = node.path
+    const closing = expandedRef.current.has(path)
     setExpandedFolders((prev) => {
       const next = new Set(prev)
-      if (next.has(path)) next.delete(path)
+      if (closing) next.delete(path)
       else next.add(path)
       return next
     })
-  }, [])
+    if (closing && onDemandRef.current.has(path)) {
+      for (const p of [...onDemandRef.current]) {
+        if (p === path || p.startsWith(`${path}/`)) onDemandRef.current.delete(p)
+      }
+      setTree((prev) => {
+        const next = setFolderChildren(prev, path, [])
+        lastTreeJsonRef.current = JSON.stringify(next)
+        return next
+      })
+    } else if (!closing && !(node.children && node.children.length)) {
+      fetchOneLevel(path)
+    }
+  }, [fetchOneLevel])
 
   const handleContextMenu = useCallback((e, node) => {
     setContextMenu({ x: e.clientX, y: e.clientY, node })
