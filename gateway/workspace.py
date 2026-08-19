@@ -243,6 +243,12 @@ def get_cached_file_tree(
 
     return tree, root_str, _tree_cache["version"]
 
+
+def list_dir_level(directory: Path, base_path: Path) -> list:
+    """Immediate children of *directory*. Not cached. Folders have empty children."""
+    return build_file_tree(directory, base_path, max_depth=1)
+
+
 def build_file_tree(
     directory: Path,
     base_path: Path,

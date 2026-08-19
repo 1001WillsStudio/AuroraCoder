@@ -10,6 +10,7 @@ import WelcomeScreen from './components/WelcomeScreen'
 import SettingsPanel from './components/SettingsPanel'
 import { streamChat, getProviders, cancelConversation, getConversation, getActiveStreams, resumeStream, getTaskInstruction, setTaskInstruction, getInstanceInfo } from './services/api'
 import { isInterruptible, TASK_MARKER_START, TASK_MARKER_END } from './utils/streamUtils'
+import { createSendLock, shouldAcceptStop } from './utils/composerGuard'
 import { checkAuth, isAuthRequired } from './utils/auth.js'
 import { newConversationId } from './utils/uuid.js'
 import { pickSidebarProvider } from './utils/sidebarProvider.js'
@@ -133,6 +134,8 @@ function App() {
     const inputValueRef = useRef(inputValue)
     inputValueRef.current = inputValue
   const abortControllerRef = useRef(null)
+  const sendLockRef = useRef(createSendLock())
+  const sendStartedAtRef = useRef(0)
   const pendingInterruptRef = useRef(null)
   const conversationIdRef = useRef(null)
   const defaultProviderIdRef = useRef(null)
@@ -269,6 +272,12 @@ function App() {
     const messageToSend = overrideMessage || inputValue.trim()
     if (!messageToSend) return
 
+    const isInterrupt = interruptMessages !== null && interruptMessages.length > 0
+    const sendToken = sendLockRef.current.begin(isInterrupt)
+    if (sendToken == null) return
+    sendStartedAtRef.current = Date.now()
+    const releaseSend = () => sendLockRef.current.end(sendToken)
+
     if (!conversationId && !interruptMessages) {
       log('getActiveStreams check start')
       try {
@@ -276,24 +285,22 @@ function App() {
         log('getActiveStreams check done')
         if (active && active.length > 0) {
           setActiveConvoWarning(true)
+          releaseSend()
           return
         }
       } catch { /* server unreachable — allow send */ }
     }
     setActiveConvoWarning(false)
 
-    const isRetry = Boolean(options.retry)
     const userMessageText = messageToSend
-    const appliedInstruction = (systemPrompt.trim() && !conversationId && !isRetry)
+    const appliedInstruction = (systemPrompt.trim() && !conversationId)
       ? systemPrompt.trim()
       : ''
-    const apiMessage = isRetry
-      ? userMessageText
-      : (appliedInstruction
-        ? `${TASK_MARKER_START}\n${appliedInstruction}\n${TASK_MARKER_END}\n\n${userMessageText}`
-        : userMessageText)
-
-    const isInterrupt = !isRetry && interruptMessages !== null && interruptMessages.length > 0
+    // First send keeps conversation_id null so the gateway allocates it.
+    const cid = conversationIdRef.current || conversationId || null
+    const apiMessage = appliedInstruction
+      ? `${TASK_MARKER_START}\n${appliedInstruction}\n${TASK_MARKER_END}\n\n${userMessageText}`
+      : userMessageText
 
     if (abortControllerRef.current) {
       log('aborting previous controller')
@@ -309,9 +316,9 @@ function App() {
     // rawMessages state.  Without this the backend receives a stale
     // history with the assistant's ``content`` still at ``""``.
     let latestRawMessages = null
-    if (isInterrupt && conversationId) {
+    if (isInterrupt && cid) {
       try {
-        const result = await cancelConversation(conversationId)
+        const result = await cancelConversation(cid)
         if (result?.raw_messages?.length > 0) {
           latestRawMessages = result.raw_messages
         }
@@ -322,26 +329,11 @@ function App() {
     }
 
     log('setState batch (messages, streaming, etc.)')
-    if (isRetry) {
-      setMessages(prev => {
-        let next = prev
-        if (next[next.length - 1]?.isError) next = next.slice(0, -1)
-        const tail = next[next.length - 1]
-        if (tail?.role === 'assistant' && !tail.content && !(tail.activities || []).length) {
-          next = next.slice(0, -1)
-        }
-        if (next[next.length - 1]?.role !== 'assistant') {
-          return [...next, { role: 'assistant', content: '' }]
-        }
-        return next
-      })
-    } else {
-      const userBubble = { role: 'user', content: userMessageText }
-      if (appliedInstruction) {
-        userBubble.taskInstruction = appliedInstruction
-      }
-      setMessages(prev => [...prev, userBubble, { role: 'assistant', content: '' }])
+    const userBubble = { role: 'user', content: userMessageText }
+    if (appliedInstruction) {
+      userBubble.taskInstruction = appliedInstruction
     }
+    setMessages(prev => [...prev, userBubble, { role: 'assistant', content: '' }])
     setInputValue('')
     setIsStreaming(true)
     setSseReceived(false)
@@ -350,17 +342,12 @@ function App() {
     resetToFollowing()
 
     let messagesToSend = null
-    if (isRetry) {
-      // Prefer live raw history so completed tool rounds are not discarded.
-      messagesToSend = (rawMessages.length > 0)
-        ? rawMessages
-        : ((interruptMessages && interruptMessages.length > 0) ? interruptMessages : [])
-    } else if (isInterrupt) {
+    if (isInterrupt) {
       messagesToSend = latestRawMessages || interruptMessages
       if (latestRawMessages) {
         setRawMessages(latestRawMessages)
       }
-    } else if (conversationId && rawMessages.length > 0) {
+    } else if (cid && rawMessages.length > 0) {
       messagesToSend = rawMessages
     }
 
@@ -371,13 +358,18 @@ function App() {
       ...options,
       ...resolveProviderOptions(providers, selectedProvider),
     }
-    setLastRequest({ message: userMessageText, conversationId, provider: selectedProvider, existingMessages: messagesToSend })
+    setLastRequest({ message: userMessageText, conversationId: cid, provider: selectedProvider, existingMessages: messagesToSend })
 
     log('about to call streamChat()')
     try {
       abortControllerRef.current = new AbortController()
       const callbacks = createStreamCallbacks({
-        setMessages, setRawMessages, setConversationId, setCanContinue,
+        setMessages, setRawMessages,
+        setConversationId: (id) => {
+          if (id) conversationIdRef.current = id
+          setConversationId(id)
+        },
+        setCanContinue,
         setIsStreaming, setHistoryRefreshTrigger, setSubagentChildIds,
         handleSend, handleLoadConversation,
         pendingInterruptRef, continuationNavigatedRef, abortControllerRef,
@@ -389,10 +381,12 @@ function App() {
         onInterruptFired: () => setPendingInterrupt(null),
         ensureAssistantTail: true,
       })
-      await streamChat(apiMessage, conversationId, callbacks, abortControllerRef.current.signal, messagesToSend, selectedProvider, opts)
+      await streamChat(apiMessage, cid, callbacks, abortControllerRef.current.signal, messagesToSend, selectedProvider, opts)
     } catch (error) {
       if (error.name !== 'AbortError') console.error('Chat error:', error)
       setIsStreaming(false)
+    } finally {
+      releaseSend()
     }
   }
 
@@ -499,6 +493,7 @@ function App() {
     if (abortControllerRef.current) abortControllerRef.current.abort()
     setMessages([])
     setRawMessages([])
+    conversationIdRef.current = null
     setConversationId(null)
     setIsStreaming(false)
     setCanContinue(false)
@@ -529,6 +524,7 @@ function App() {
   }
 
   const handleStop = async () => {
+    if (!shouldAcceptStop(sendStartedAtRef.current)) return
     if (abortControllerRef.current) abortControllerRef.current.abort()
     if (conversationId) {
       try {
@@ -559,17 +555,6 @@ function App() {
     setPendingInterrupt(null)
     pendingInterruptRef.current = null
   }, [])
-
-  const handleRetry = useCallback(() => {
-    if (isStreaming) return
-    const lastUser = [...messages].reverse().find(m => m.role === 'user')
-    const message = lastRequest?.message || lastUser?.content
-    if (!message) return
-    const existing = lastRequest
-      ? lastRequest.existingMessages
-      : (rawMessages.length > 0 ? rawMessages : null)
-    handleSend(existing, message, { retry: true })
-  }, [lastRequest, isStreaming, selectedProvider, messages, rawMessages])
 
   const handleLoadConversation = useCallback(async (targetConversationId) => {
     setSidebarOpen(false)
@@ -636,6 +621,67 @@ function App() {
       }
     }
   }, [conversationId, resetToFollowing])
+
+  const handleRetry = useCallback(async () => {
+    // Try Again is not a new send: it must reuse the conversation the
+    // gateway already created. Falling through handleSend would treat a
+    // first-turn 500 like a brand-new chat (null id + another user line).
+    if (isStreaming) return
+    const cid = conversationIdRef.current || conversationId || lastRequest?.conversationId
+    if (!cid) return
+    const lastUser = [...messages].reverse().find(m => m.role === 'user')
+    const message = lastRequest?.message || lastUser?.content
+    if (!message) return
+    const existing = (rawMessages.length > 0)
+      ? rawMessages
+      : (lastRequest?.existingMessages || [])
+
+    setMessages(prev => {
+      let next = prev
+      if (next[next.length - 1]?.isError) next = next.slice(0, -1)
+      const tail = next[next.length - 1]
+      if (tail?.role === 'assistant' && !tail.content && !(tail.activities || []).length) {
+        next = next.slice(0, -1)
+      }
+      if (next[next.length - 1]?.role !== 'assistant') {
+        return [...next, { role: 'assistant', content: '' }]
+      }
+      return next
+    })
+    setIsStreaming(true)
+    setSseReceived(false)
+    setCanContinue(false)
+    setHistoryRefreshTrigger(prev => prev + 1)
+    resetToFollowing()
+
+    try {
+      abortControllerRef.current = new AbortController()
+      const callbacks = createStreamCallbacks({
+        setMessages, setRawMessages,
+        setConversationId: (id) => {
+          if (id) conversationIdRef.current = id
+          setConversationId(id)
+        },
+        setCanContinue,
+        setIsStreaming, setHistoryRefreshTrigger, setSubagentChildIds,
+        handleSend: null, handleLoadConversation,
+        pendingInterruptRef: null, continuationNavigatedRef, abortControllerRef: null,
+        withInterrupt: false,
+        withRetry: true,
+        onMessagesRefresh: handleRefreshFiles,
+        onFirstSse: () => setSseReceived(true),
+        ensureAssistantTail: true,
+      })
+      const opts = {
+        retry: true,
+        ...resolveProviderOptions(providers, selectedProvider),
+      }
+      await streamChat(message, cid, callbacks, abortControllerRef.current.signal, existing, selectedProvider, opts)
+    } catch (error) {
+      if (error.name !== 'AbortError') console.error('Retry error:', error)
+      setIsStreaming(false)
+    }
+  }, [lastRequest, isStreaming, selectedProvider, messages, rawMessages, conversationId, handleLoadConversation, handleRefreshFiles, providers, resetToFollowing])
 
   // ── Render ──────────────────────────────────────────────────────────────
 
