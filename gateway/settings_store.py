@@ -50,10 +50,6 @@ UNLIMITED_AGENT_ITERATIONS = 1_000_000
 _MAX_ITERATIONS_RANGE_MSG = (
     f"max_iterations must be between {AGENT_MAX_ITERATIONS_MIN} and {AGENT_MAX_ITERATIONS_MAX}"
 )
-# Custom-provider Base URL. Empty is allowed (incomplete, unused). A
-# typed value must be http:// or https:// with a host — otherwise
-# Discover/chat fail with a missing-protocol connection error.
-_BASE_URL_HTTP_MSG = "base_url must be an http:// or https:// URL"
 
 
 # ── low-level file I/O ──────────────────────────────────────────────────────
@@ -126,10 +122,9 @@ def update_settings(partial: Dict[str, Any]) -> Dict[str, Any]:
 
     Raises:
         ValueError: if ``other.agent.max_iterations`` is present and not an
-            integer in ``[5, 200]`` or the sentinel ``"unlimited"``.
-            Also raised if a custom provider ``base_url`` is present and
-            is not an ``http://`` or ``https://`` URL. The on-disk file
-            is not written.
+            integer in ``[5, 200]`` or the sentinel ``"unlimited"``, or if
+            a custom provider ``base_url`` is not an http(s) URL.
+            The on-disk file is not written.
     """
     _validate_agent_max_iterations(partial)
     _validate_custom_provider_base_urls(partial)
@@ -424,35 +419,18 @@ def _parse_agent_max_iterations(raw: Any) -> Optional[int]:
     raise ValueError(_MAX_ITERATIONS_RANGE_MSG)
 
 
-def _is_http_url(value: str) -> bool:
-    """True if *value* is an http:// or https:// URL with a host."""
-    try:
-        parsed = urlparse(value.strip())
-    except Exception:
-        return False
-    return parsed.scheme in ("http", "https") and bool(parsed.netloc)
-
-
 def _validate_custom_provider_base_urls(partial: Dict[str, Any]) -> None:
-    """Raise ValueError if any custom provider Base URL is not http(s).
-
-    Empty / omitted is allowed. A typed value must parse as http:// or
-    https:// with a host so Discover and chat are not given a protocol-less
-    string (the reported ``not-a-valid-url`` case).
-    """
+    """Raise if a typed custom-provider Base URL is not http(s) with a host."""
     providers = partial.get("custom_providers")
     if not isinstance(providers, list):
         return
     for cp in providers:
-        if not isinstance(cp, dict) or "base_url" not in cp:
+        raw = cp.get("base_url") if isinstance(cp, dict) else None
+        if not isinstance(raw, str) or not raw.strip():
             continue
-        raw = cp.get("base_url")
-        if raw is None:
-            continue
-        if isinstance(raw, str) and raw.strip() == "":
-            continue
-        if not isinstance(raw, str) or not _is_http_url(raw):
-            raise ValueError(_BASE_URL_HTTP_MSG)
+        parsed = urlparse(raw.strip())
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise ValueError("base_url must be an http:// or https:// URL")
 
 
 def _validate_agent_max_iterations(partial: Dict[str, Any]) -> None:

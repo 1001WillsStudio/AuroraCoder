@@ -237,19 +237,16 @@ export default function SettingsPanel({ isOpen, onClose }) {
   // when the box is empty (the real key is never sent back to the browser).
   // HTML min/max on number inputs are not checked by this button (no form
   // submit), so Max Iterations Per Turn is validated here before PUT.
-  // Custom-provider Base URL is the same: a typed value must be http(s).
   const handleSave = async () => {
     const iterErr = validateMaxIterations(settings?.other?.agent?.max_iterations)
     if (iterErr) {
       setMessage({ type: 'error', text: t(iterErr) })
       return
     }
-    for (const c of settings?.custom_providers || []) {
-      const urlErr = validateCustomProviderBaseUrl(c.base_url)
-      if (urlErr) {
-        setMessage({ type: 'error', text: t(urlErr) })
-        return
-      }
+    const urlErr = (settings?.custom_providers || []).map(c => validateCustomProviderBaseUrl(c.base_url)).find(Boolean)
+    if (urlErr) {
+      setMessage({ type: 'error', text: t(urlErr) })
+      return
     }
     setSaving(true); setMessage(null)
     try {

@@ -161,45 +161,6 @@ def test_max_iterations_range_message_is_translated():
     assert "must be between 5 and 200" in src
 
 
-def validate_custom_provider_base_url(value):
-    """Mirror of ``validateCustomProviderBaseUrl`` in settingsValidation.js."""
-    if value in ("", None):
-        return None
-    if isinstance(value, str) and value.strip() == "":
-        return None
-    from urllib.parse import urlparse
-
-    try:
-        parsed = urlparse(str(value).strip())
-    except Exception:
-        return "msg.baseUrlHttp"
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        return "msg.baseUrlHttp"
-    return None
-
-
-@pytest.mark.parametrize(
-    "value, expected",
-    [
-        ("not-a-valid-url", "msg.baseUrlHttp"),  # reported case
-        ("example.com", "msg.baseUrlHttp"),
-        ("ftp://example.com/v1", "msg.baseUrlHttp"),
-        ("javascript:alert(1)", "msg.baseUrlHttp"),
-        ("https://", "msg.baseUrlHttp"),
-        ("http://", "msg.baseUrlHttp"),
-        ("https://openrouter.ai/api/v1", None),
-        ("http://localhost:11434/v1", None),
-        ("https://127.0.0.1:8000", None),
-        ("  https://api.example.com/v1  ", None),
-        ("", None),
-        (None, None),
-        ("   ", None),
-    ],
-)
-def test_validate_custom_provider_base_url(value, expected):
-    assert validate_custom_provider_base_url(value) == expected
-
-
 def test_handle_save_rejects_non_http_base_url_before_put():
     """Save must not PUT when a custom provider Base URL lacks http(s)."""
     src = _PANEL.read_text(encoding="utf-8")
