@@ -105,7 +105,7 @@ export async function streamChat(message, conversationId, callbacks, signal, exi
   const t0 = performance.now()
   _tlog('streamChat() called', seq)
 
-  const { onMessages, onDone, onError, onSubagentEvent, onDelta } = callbacks
+  const { onMessages, onDone, onError, onSubagentEvent, onDelta, onConversationId } = callbacks
   let _lastSeq = 0
   let _needsFullRefresh = false
   
@@ -133,6 +133,8 @@ export async function streamChat(message, conversationId, callbacks, signal, exi
     })
     _tlog(`fetch() resolved, status=${response.status}`, seq, t0)
     console.log('[streamChat] Response status:', response.status)
+    const headerCid = response.headers.get('X-Conversation-ID')
+    if (headerCid) onConversationId?.(headerCid)
     
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`)
