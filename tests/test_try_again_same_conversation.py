@@ -1,10 +1,9 @@
 """Try Again after a first-turn provider 500 must stay on the same chat.
 
-The first send still omits conversation_id (the gateway allocates it).
-A 500 never emits messages/done, so the UI used to retry with a null id
-and the gateway minted a second history item. The fix is frontend-only:
-keep the X-Conversation-ID the gateway already returns, and send retry
-without a second user bubble.
+Try Again is its own path (not handleSend with a flag). A regular send
+still omits conversation_id so the gateway allocates it; the UI keeps
+X-Conversation-ID. Retry requires that id, sends retry:true, and does
+not append another user bubble.
 """
 from __future__ import annotations
 
@@ -20,7 +19,18 @@ from gateway.conversation_store import (
 ROOT = Path(__file__).resolve().parent.parent
 APP_JSX = ROOT / "frontend" / "src" / "App.jsx"
 API_JS = ROOT / "frontend" / "src" / "services" / "api.js"
-STREAM_UTILS = ROOT / "frontend" / "src" / "utils" / "streamUtils.js"
+
+
+def _handle_retry_src() -> str:
+    src = APP_JSX.read_text(encoding="utf-8")
+    start = src.index("const handleRetry =")
+    end = src.index("// ── Render", start)
+    return src[start:end]
+
+
+def _handle_send_src() -> str:
+    src = APP_JSX.read_text(encoding="utf-8")
+    return src.split("const handleSend =", 1)[1].split("const handleInterruptSend", 1)[0]
 
 
 def test_retry_same_id_does_not_fork_or_duplicate_user(tmp_path):
@@ -58,15 +68,16 @@ def test_retry_same_id_does_not_fork_or_duplicate_user(tmp_path):
     assert [m.get("content") for m in user_msgs] == ["e2e:error"]
 
 
-def test_first_send_does_not_mint_a_client_conversation_id():
-    """First message of a chat still sends conversation_id null."""
-    src = APP_JSX.read_text(encoding="utf-8")
-    send_fn = src.split("const handleSend =", 1)[1].split("const handleInterruptSend", 1)[0]
-    assert "newConversationId" not in send_fn
-    assert "crypto.randomUUID()" not in send_fn
-    assert "conversationIdRef.current || conversationId" in send_fn
-    utils = STREAM_UTILS.read_text(encoding="utf-8")
-    assert "function newConversationId" not in utils
+def test_try_again_is_not_a_flagged_regular_send():
+    """Try Again must not call handleSend — that path is for a new user turn."""
+    retry = _handle_retry_src()
+    send = _handle_send_src()
+    assert "handleSend(" not in retry
+    assert "retry: true" in retry
+    assert "if (!cid) return" in retry
+    assert "streamChat(message, cid," in retry
+    assert "const isRetry" not in send
+    assert "retry: true" not in send
 
 
 def test_stream_chat_adopts_conversation_id_from_response_header():
@@ -76,10 +87,8 @@ def test_stream_chat_adopts_conversation_id_from_response_header():
     assert "onConversationId" in src
 
 
-def test_try_again_uses_retry_flag_and_does_not_append_user_bubble():
-    src = APP_JSX.read_text(encoding="utf-8")
-    assert "retry: true" in src
-    assert "const isRetry = Boolean(options.retry)" in src
-    send_fn = src.split("const handleSend =", 1)[1].split("const handleInterruptSend", 1)[0]
-    retry_branch = send_fn.split("if (isRetry)", 1)[1].split("} else {", 1)[0]
-    assert "role: 'user'" not in retry_branch
+def test_try_again_does_not_append_user_bubble():
+    retry = _handle_retry_src()
+    assert "role: 'user'" not in retry
+    send = _handle_send_src()
+    assert "role: 'user'" in send

@@ -279,22 +279,17 @@ function App() {
     }
     setActiveConvoWarning(false)
 
-    const isRetry = Boolean(options.retry)
     const userMessageText = messageToSend
-    const appliedInstruction = (systemPrompt.trim() && !conversationId && !isRetry)
+    const appliedInstruction = (systemPrompt.trim() && !conversationId)
       ? systemPrompt.trim()
       : ''
     // First send keeps conversation_id null so the gateway allocates it.
-    // After that, streamChat copies X-Conversation-ID into this ref so
-    // Try Again can reuse it even when the 500 path never emits messages/done.
     const cid = conversationIdRef.current || conversationId || null
-    const apiMessage = isRetry
-      ? userMessageText
-      : (appliedInstruction
-        ? `${TASK_MARKER_START}\n${appliedInstruction}\n${TASK_MARKER_END}\n\n${userMessageText}`
-        : userMessageText)
+    const apiMessage = appliedInstruction
+      ? `${TASK_MARKER_START}\n${appliedInstruction}\n${TASK_MARKER_END}\n\n${userMessageText}`
+      : userMessageText
 
-    const isInterrupt = !isRetry && interruptMessages !== null && interruptMessages.length > 0
+    const isInterrupt = interruptMessages !== null && interruptMessages.length > 0
 
     if (abortControllerRef.current) {
       log('aborting previous controller')
@@ -323,26 +318,11 @@ function App() {
     }
 
     log('setState batch (messages, streaming, etc.)')
-    if (isRetry) {
-      setMessages(prev => {
-        let next = prev
-        if (next[next.length - 1]?.isError) next = next.slice(0, -1)
-        const tail = next[next.length - 1]
-        if (tail?.role === 'assistant' && !tail.content && !(tail.activities || []).length) {
-          next = next.slice(0, -1)
-        }
-        if (next[next.length - 1]?.role !== 'assistant') {
-          return [...next, { role: 'assistant', content: '' }]
-        }
-        return next
-      })
-    } else {
-      const userBubble = { role: 'user', content: userMessageText }
-      if (appliedInstruction) {
-        userBubble.taskInstruction = appliedInstruction
-      }
-      setMessages(prev => [...prev, userBubble, { role: 'assistant', content: '' }])
+    const userBubble = { role: 'user', content: userMessageText }
+    if (appliedInstruction) {
+      userBubble.taskInstruction = appliedInstruction
     }
+    setMessages(prev => [...prev, userBubble, { role: 'assistant', content: '' }])
     setInputValue('')
     setIsStreaming(true)
     setSseReceived(false)
@@ -351,12 +331,7 @@ function App() {
     resetToFollowing()
 
     let messagesToSend = null
-    if (isRetry) {
-      // Prefer live raw history so completed tool rounds are not discarded.
-      messagesToSend = (rawMessages.length > 0)
-        ? rawMessages
-        : ((interruptMessages && interruptMessages.length > 0) ? interruptMessages : [])
-    } else if (isInterrupt) {
+    if (isInterrupt) {
       messagesToSend = latestRawMessages || interruptMessages
       if (latestRawMessages) {
         setRawMessages(latestRawMessages)
@@ -556,17 +531,6 @@ function App() {
     pendingInterruptRef.current = null
   }, [])
 
-  const handleRetry = useCallback(() => {
-    if (isStreaming) return
-    const lastUser = [...messages].reverse().find(m => m.role === 'user')
-    const message = lastRequest?.message || lastUser?.content
-    if (!message) return
-    const existing = lastRequest
-      ? lastRequest.existingMessages
-      : (rawMessages.length > 0 ? rawMessages : null)
-    handleSend(existing, message, { retry: true })
-  }, [lastRequest, isStreaming, selectedProvider, messages, rawMessages])
-
   const handleLoadConversation = useCallback(async (targetConversationId) => {
     setSidebarOpen(false)
     if (inputValueRef.current.trim()) draftInputsRef.current.set(conversationId ?? '__new__', inputValueRef.current)
@@ -632,6 +596,67 @@ function App() {
       }
     }
   }, [conversationId, resetToFollowing])
+
+  const handleRetry = useCallback(async () => {
+    // Try Again is not a new send: it must reuse the conversation the
+    // gateway already created. Falling through handleSend would treat a
+    // first-turn 500 like a brand-new chat (null id + another user line).
+    if (isStreaming) return
+    const cid = conversationIdRef.current || conversationId || lastRequest?.conversationId
+    if (!cid) return
+    const lastUser = [...messages].reverse().find(m => m.role === 'user')
+    const message = lastRequest?.message || lastUser?.content
+    if (!message) return
+    const existing = (rawMessages.length > 0)
+      ? rawMessages
+      : (lastRequest?.existingMessages || [])
+
+    setMessages(prev => {
+      let next = prev
+      if (next[next.length - 1]?.isError) next = next.slice(0, -1)
+      const tail = next[next.length - 1]
+      if (tail?.role === 'assistant' && !tail.content && !(tail.activities || []).length) {
+        next = next.slice(0, -1)
+      }
+      if (next[next.length - 1]?.role !== 'assistant') {
+        return [...next, { role: 'assistant', content: '' }]
+      }
+      return next
+    })
+    setIsStreaming(true)
+    setSseReceived(false)
+    setCanContinue(false)
+    setHistoryRefreshTrigger(prev => prev + 1)
+    resetToFollowing()
+
+    try {
+      abortControllerRef.current = new AbortController()
+      const callbacks = createStreamCallbacks({
+        setMessages, setRawMessages,
+        setConversationId: (id) => {
+          if (id) conversationIdRef.current = id
+          setConversationId(id)
+        },
+        setCanContinue,
+        setIsStreaming, setHistoryRefreshTrigger, setSubagentChildIds,
+        handleSend: null, handleLoadConversation,
+        pendingInterruptRef: null, continuationNavigatedRef, abortControllerRef: null,
+        withInterrupt: false,
+        withRetry: true,
+        onMessagesRefresh: handleRefreshFiles,
+        onFirstSse: () => setSseReceived(true),
+        ensureAssistantTail: true,
+      })
+      const opts = {
+        retry: true,
+        ...resolveProviderOptions(providers, selectedProvider),
+      }
+      await streamChat(message, cid, callbacks, abortControllerRef.current.signal, existing, selectedProvider, opts)
+    } catch (error) {
+      if (error.name !== 'AbortError') console.error('Retry error:', error)
+      setIsStreaming(false)
+    }
+  }, [lastRequest, isStreaming, selectedProvider, messages, rawMessages, conversationId, handleLoadConversation, handleRefreshFiles, providers, resetToFollowing])
 
   // ── Render ──────────────────────────────────────────────────────────────
 

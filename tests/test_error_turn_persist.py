@@ -77,5 +77,7 @@ def test_try_again_uses_retry_flag():
     src = (Path(__file__).resolve().parent.parent / "frontend" / "src" / "App.jsx").read_text(
         encoding="utf-8"
     )
-    assert "retry: true" in src
-    assert "const isRetry = Boolean(options.retry)" in src
+    start = src.index("const handleRetry =")
+    retry = src[start:src.index("// ── Render", start)]
+    assert "retry: true" in retry
+    assert "handleSend(" not in retry
