@@ -73,6 +73,7 @@ Legend: ✅ done · 🟡 next · ⬜ later.
 | `src.providers` | 🟡 | patch `openai.OpenAI`, stream vs non-stream branching |
 | `gateway.streaming` | 🟡 | expand existing race/abort tests via injected provider |
 | `gateway` error-turn persist | ✅ | `tests/test_error_turn_persist.py` — failed turn stored as `isError`/`canRetry`; retry keeps the transcript and does not append a user message |
+| Try Again after provider 500 | ✅ | `tests/test_try_again_same_conversation.py` — Try Again is its own path (not `handleSend`); first send still omits `conversation_id`; the UI keeps `X-Conversation-ID` so retry stays on one history item with one user line |
 | `gateway.routes` / `api` | ⬜ | `TestClient` per endpoint, **auth** via `ACCESS_PASSWORD` |
 | `gateway.provider_registry` | ⬜ | lookup, model metadata, live-list fetch mocked |
 | `gateway.workspace` | ⬜ | git push behind `GITHUB_TOKEN` (mock; skip when absent) |
@@ -98,8 +99,12 @@ value unchanged, and accepts ``"unlimited"``.
 | File | Status | Notes |
 |---|---|---|
 | `tests/test_mobile_sidebar_toggle.py` | ✅ | Source-level regression: at `max-width: 768px` the sidebar may stay `display: none` only if App.jsx renders a `.sidebar-toggle` *outside* the aside and `.app.sidebar-open .sidebar` reveals it. Locks the explorer finding that a 375px resize hid New Chat / History / Settings / model with no hamburger. |
+| `tests/test_message_long_token_wrap.py` | ✅ | Source-level regression: `.message-text` must wrap or scroll unbreakable tokens (URLs, identifiers). Locks the explorer finding that a 390px send of `SUPERCALIFRAGILISTIC…` clipped at the column edge (`word-break`/`overflow-wrap` both `normal`, scrollWidth ≫ clientWidth). |
 | `tests/test_stale_viewer_after_delete.py` | ✅ | Deleting an open Workspace file must close its viewer tab; Refresh re-reads view-only tabs and drops them on 404. Helpers in `frontend/src/utils/panelFiles.js` run via Node; source scan locks FileTree → panel wiring. |
 | `tests/test_conversation_url_restore.py` | ✅ | Reload after send must reopen the same chat. Address bar is `/c/{id}`; helpers in `frontend/src/utils/conversationUrl.js` run via Node; source scan locks App.jsx boot restore / popstate / push-vs-replace; production static server must serve the desktop SPA at `/c/{id}` (not JSON 404). |
+| `tests/test_user_message_newlines.py` | ✅ | Source-level regression: a user bubble must interpolate the raw string inside `.message-text` and `messages.css` must set `white-space: pre-wrap` on `.user-message-row .message-text`. Locks the explorer finding that Shift+Enter newlines collapsed to one line in the sent bubble. |
+| `tests/test_file_tree_depth.py` | ✅ | First-paint tree is still `max_depth=5` (folder `d` empty). `list_dir_level` on `d` returns only `e`; `f` then `deep.txt` are one-level clicks. On-demand listing does not write the tree cache. FileTree fetches `path=` + `max_depth=1` on click and drops those children on close. After Refresh, expanded empty folders are restored shallowest-first (`d` then `e` then `f`); a closed folder is not. |
+| `tests/test_double_click_send.py` | ✅ | Double-click Send / double Enter must not abort `/api/chat` or open a second History item. Helpers in `frontend/src/utils/composerGuard.js` run via Node; source scan locks `handleSend` claiming the send lock before `getActiveStreams`, and ChatInput ignoring `click.detail > 1` on Send and Stop. |
 
 Stable `data-testid` hooks on the desktop SPA (`chat-input`, `chat-send`,
 `chat-message`, …) are locked by `tests/test_frontend_testids.py` (source scan;
@@ -169,6 +174,17 @@ the broken `[TO]`-propagation verification.
 **Fix:** renamed params to the current contract; per-test autouse tmp WORKSPACE;
 converted the three assert helpers to REAL (raising) pytest assertions so the
 suite genuinely verifies the context-fix channel.
+
+### 6.6 `execute_tool_call` body dropped (post-merge, 5 red tests)
+**Cause:** the aurora/normal `edit_file` swap in `src/tool_definitions.py` replaced
+`TOOL_FUNCTION_MAP[tool_name]` with `function_map[tool_name]` and omitted the
+actual `function(arguments)` call and return. Native tools (edit, write, read, …)
+looked up their handler and returned `None`; `_execute_single_tool` swallowed
+that as an error string, so conversation args never received `[TO]` / line-number
+corrections and `write_file` never created the file.
+**Fix:** restore the invoke + `(arguments, result)` return, including subagent
+`tool_call_id` / `conversation_id` injection. Locked by
+`tests/test_execute_tool_call.py` plus the existing context-fix suite.
 
 ### 6.5 Persistent QA findings (still open, low priority)
 - `check()` helper in `test_edit_file_edge_cases.py` is dead code (defined, never

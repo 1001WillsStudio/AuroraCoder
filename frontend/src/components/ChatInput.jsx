@@ -1,6 +1,7 @@
 import React, { forwardRef } from 'react'
 import { Send, RotateCcw, ArrowRightFromLine } from 'lucide-react'
 import useLanguage from '../hooks/useLanguage'
+import { isPrimaryClick } from '../utils/composerGuard'
 
 /**
  * Chat input area with 4 visual modes:
@@ -26,6 +27,7 @@ const ChatInput = forwardRef(({
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
+      if (e.repeat) return
       if (isStreaming) {
         onInterruptSend()
       } else {
@@ -67,13 +69,13 @@ const ChatInput = forwardRef(({
               <RotateCcw size={18} />
             </button>
           ) : isStreaming && !hasText ? (
-            <button className="stop-btn" onClick={onStop} title={t('chat.title.stop')} data-testid="chat-stop">
+            <button className="stop-btn" onClick={(e) => { if (!isPrimaryClick(e)) return; onStop() }} title={t('chat.title.stop')} data-testid="chat-stop">
               <div className="stop-icon" />
             </button>
           ) : isStreaming && hasText ? (
             <button
               className="send-btn interrupt-btn"
-              onClick={onInterruptSend}
+              onClick={(e) => { if (!isPrimaryClick(e)) return; onInterruptSend() }}
               title={t('chat.title.interrupt')}
               data-testid="chat-send"
             >
@@ -82,7 +84,7 @@ const ChatInput = forwardRef(({
           ) : (
             <button
               className="send-btn"
-              onClick={() => onSend()}
+              onClick={(e) => { if (!isPrimaryClick(e)) return; onSend() }}
               disabled={!hasText}
               data-testid="chat-send"
             >

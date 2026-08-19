@@ -60,6 +60,7 @@ export function createStreamCallbacks({
   }
 
   const onError = (error) => {
+    if (error?.conversation_id) setConversationId(error.conversation_id)
     if (withRetry) {
       const isTimeout = error.message?.toLowerCase().includes('timeout') ||
         error.type === 'TimeoutError' || error.message?.toLowerCase().includes('timed out') ||
@@ -129,5 +130,6 @@ export function createStreamCallbacks({
     onError: overrides.onError || onError,
     onSubagentEvent: overrides.onSubagentEvent || onSubagentEvent,
     onDelta: overrides.onDelta || onDelta,
+    onConversationId: overrides.onConversationId || ((id) => { if (id) setConversationId(id) }),
   };
 }

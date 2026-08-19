@@ -65,6 +65,8 @@
   color: var(--text-primary);
   font-size: 1rem;
   line-height: 1.7;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .message-text p {
@@ -466,6 +468,7 @@
 .user-message-row .message-text {
   flex: 1;
   min-width: 0;
+  white-space: pre-wrap;
 }
 
 .fork-btn {

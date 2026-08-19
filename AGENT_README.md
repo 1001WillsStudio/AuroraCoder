@@ -523,8 +523,12 @@ with ``isError`` / ``canRetry`` (and conversation ``status=error``) so
 reopening the chat still shows the failure and a Try Again control.
 Without that bubble the store would keep only the seeded user message
 and reload would look like the turn was never answered. Try Again
-resends the current transcript without a new user message; incomplete
-tool calls are filled in by the existing orphan-tool fixer.
+is its own path (not a flagged ``handleSend``). It resends the current
+transcript without a new user message; incomplete tool calls are filled
+in by the existing orphan-tool fixer. The first send still omits
+``conversation_id`` so the gateway allocates it; the UI then keeps the
+``X-Conversation-ID`` from that response so Try Again can retry in-place
+after a first-turn provider failure.
 
 The desktop UI puts the open conversation in the address bar as `/c/{id}`
 so Reload reopens that chat and Back/Forward move between chats. New Chat
@@ -596,6 +600,7 @@ Frontend dependencies:
 
 Test files in `tests/`:
 - `test_context_fix_propagation.py` — ContextTracker display update tests
+- `test_execute_tool_call.py` — native tool dispatch actually invokes the handler
 - `test_edit_file_edge_cases.py` — Edit file matching edge cases
 - `test_streaming_race.py` — SSE streaming race condition tests
 - `test_mergePanelFiles.mjs` — Frontend panel merging tests
