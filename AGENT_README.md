@@ -30,7 +30,7 @@ gateway/         ← Middleware between frontend and backend (the "dirty work")
     workspace.py              ← File diff, tree, upload/delete/export utilities
 
 frontend/                     ← UI + conversation ownership
-    App.jsx                   ← React SPA, owns conversation state
+    App.jsx                   ← React SPA, owns conversation state; URL /c/{id} restores the open chat
     components/               ← 11 components (ChatInput, ChatMessage, CodePanel,
                                  ConversationHistory, FileTree, LoginScreen,
                                  SettingsPanel, Sidebar, ThinkingIndicator,
@@ -131,14 +131,14 @@ Aurora Coder/
 │   └── workspace.py            ← File diff, tree, upload/delete/export
 ├── frontend/                   ← React + Vite web UI
 │   ├── src/
-│   │   ├── App.jsx             ← Main app (~800 lines, refactored from ~1465)
+│   │   ├── App.jsx             ← Main app; conversation URL /c/{id} for reload/Back
 │   │   ├── main.jsx
 │   │   ├── constants.js
 │   │   ├── components/         ← 11 components
 │   │   ├── hooks/              ← useAutoScroll, useFileTracking, useLanguage,
 │   │   │                          createStreamCallbacks
 │   │   ├── services/api.js     ← SSE streaming client
-│   │   ├── utils/              ← auth, injectToolStop, streamUtils, settingsValidation, uuid
+│   │   ├── utils/              ← auth, injectToolStop, streamUtils, settingsValidation, uuid, conversationUrl
 │   │   ├── i18n/               ← translations.js, LanguageContext
 │   │   └── styles/             ← 12 domain CSS files
 │   ├── server.py               ← Python static file server for production
@@ -525,6 +525,11 @@ Without that bubble the store would keep only the seeded user message
 and reload would look like the turn was never answered. Try Again
 resends the current transcript without a new user message; incomplete
 tool calls are filled in by the existing orphan-tool fixer.
+
+The desktop UI puts the open conversation in the address bar as `/c/{id}`
+so Reload reopens that chat and Back/Forward move between chats. New Chat
+returns to `/`. The production static server serves the SPA at `/c/{id}`
+(see `frontend/src/utils/conversationUrl.js` and `frontend/server.py`).
 
 Key implementation files:
 - `gateway/conversation_store.py` — file-backed store (thread-safe, atomic writes)

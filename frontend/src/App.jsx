@@ -12,6 +12,7 @@ import { streamChat, getProviders, cancelConversation, getConversation, getActiv
 import { isInterruptible, TASK_MARKER_START, TASK_MARKER_END } from './utils/streamUtils'
 import { checkAuth, isAuthRequired } from './utils/auth.js'
 import { newConversationId } from './utils/uuid.js'
+import { parseConversationId, syncConversationUrl } from './utils/conversationUrl.js'
 import CodePanel from './components/CodePanel'
 import { createStreamCallbacks } from './hooks/createStreamCallbacks'
 import { useFileTracking } from './hooks/useFileTracking'
@@ -75,7 +76,12 @@ function App() {
   const [rawMessages, setRawMessages] = useState([])
   const [inputValue, setInputValue] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
-  const [conversationId, setConversationId] = useState(null)
+  const [conversationId, setConversationId] = useState(() => (
+    typeof window !== 'undefined' ? parseConversationId(window.location.pathname) : null
+  ))
+  const [urlRestorePending, setUrlRestorePending] = useState(() => (
+    typeof window !== 'undefined' && Boolean(parseConversationId(window.location.pathname))
+  ))
   const [canContinue, setCanContinue] = useState(false)
   const [pendingInterrupt, setPendingInterrupt] = useState(null)
   const [sseReceived, setSseReceived] = useState(false)
@@ -134,6 +140,8 @@ function App() {
   const abortControllerRef = useRef(null)
   const pendingInterruptRef = useRef(null)
   const conversationIdRef = useRef(null)
+  const handleLoadConversationRef = useRef(null)
+  const handleClearRef = useRef(null)
   const continuationNavigatedRef = useRef(new Set())
   const forkClickRef = useRef({ time: 0, idx: -1 })
 
@@ -233,6 +241,12 @@ function App() {
   // Keep conversationIdRef in sync so useCallback handlers always have the latest value
   useEffect(() => {
     conversationIdRef.current = conversationId
+  }, [conversationId])
+
+  // Implicit id assignment (first SSE conversation_id) writes /c/{id} without
+  // a new history row so Reload has something to restore.
+  useEffect(() => {
+    syncConversationUrl(conversationId, { mode: 'replace' })
   }, [conversationId])
 
   useEffect(() => {
@@ -476,7 +490,9 @@ function App() {
     }
     if (abortControllerRef.current) { abortControllerRef.current.abort(); abortControllerRef.current = null }
     if (inputValueRef.current.trim()) draftInputsRef.current.set(conversationId ?? '__new__', inputValueRef.current)
-    setConversationId(newConversationId())
+    const nextId = newConversationId()
+    syncConversationUrl(nextId, { mode: 'push' })
+    setConversationId(nextId)
     setRawMessages(rawMessages.slice(0, rawIdx))
     setMessages(messages.slice(0, frontendMsgIdx))
     setIsStreaming(false)
@@ -491,8 +507,11 @@ function App() {
 
   const handleForkDismiss = useCallback(() => setForkWarning(null), [])
 
-    const handleClear = () => {
+    const handleClear = (options = {}) => {
     setSidebarOpen(false)
+    if (!options?.skipNavigate) {
+      syncConversationUrl(null, { mode: 'push' })
+    }
     if (inputValue.trim()) draftInputsRef.current.set(conversationId ?? '__new__', inputValue)
     if (abortControllerRef.current) abortControllerRef.current.abort()
     setMessages([])
@@ -558,8 +577,11 @@ function App() {
     handleSend(existing, message, { retry: true })
   }, [lastRequest, isStreaming, selectedProvider, messages, rawMessages])
 
-  const handleLoadConversation = useCallback(async (targetConversationId) => {
+  const handleLoadConversation = useCallback(async (targetConversationId, options = {}) => {
     setSidebarOpen(false)
+    if (!options?.skipNavigate) {
+      syncConversationUrl(targetConversationId, { mode: 'push' })
+    }
     if (inputValueRef.current.trim()) draftInputsRef.current.set(conversationId ?? '__new__', inputValueRef.current)
     if (abortControllerRef.current) {
       abortControllerRef.current.abort()
@@ -615,6 +637,9 @@ function App() {
       }
     } catch (e) {
       console.error('[handleLoadConversation] Failed:', e)
+      if (options?.skipNavigate) {
+        setConversationId(prev => (prev === targetConversationId ? null : prev))
+      }
     } finally {
       // Scroll to bottom after loading a non-subagent conversation
       if (!isSubagent) {
@@ -623,6 +648,34 @@ function App() {
       }
     }
   }, [conversationId, resetToFollowing])
+
+  handleLoadConversationRef.current = handleLoadConversation
+  handleClearRef.current = handleClear
+
+  // Reload / shared link: open the conversation named in /c/{id}.
+  useEffect(() => {
+    const id = parseConversationId(window.location.pathname)
+    if (!id) {
+      setUrlRestorePending(false)
+      return undefined
+    }
+    let cancelled = false
+    Promise.resolve(handleLoadConversation(id, { skipNavigate: true }))
+      .finally(() => {
+        if (!cancelled) setUrlRestorePending(false)
+      })
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    const onPopState = () => {
+      const id = parseConversationId(window.location.pathname)
+      if (id) handleLoadConversationRef.current?.(id, { skipNavigate: true })
+      else handleClearRef.current?.({ skipNavigate: true })
+    }
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
 
   // ── Render ──────────────────────────────────────────────────────────────
 
@@ -707,7 +760,7 @@ function App() {
 
       <main className="main-content">
         <div className="chat-container" ref={chatContainerRef}>
-          {messages.length === 0 ? (
+          {messages.length === 0 && !urlRestorePending ? (
             <WelcomeScreen onExampleClick={(text) => setInputValue(text)} />
           ) : (
             <div className="messages-container">
