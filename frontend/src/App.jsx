@@ -13,6 +13,7 @@ import { isInterruptible, TASK_MARKER_START, TASK_MARKER_END } from './utils/str
 import { createSendLock, shouldAcceptStop } from './utils/composerGuard'
 import { checkAuth, isAuthRequired } from './utils/auth.js'
 import { newConversationId } from './utils/uuid.js'
+import { pickSidebarProvider } from './utils/sidebarProvider.js'
 import CodePanel from './components/CodePanel'
 import { createStreamCallbacks } from './hooks/createStreamCallbacks'
 import { useFileTracking } from './hooks/useFileTracking'
@@ -137,6 +138,7 @@ function App() {
   const sendStartedAtRef = useRef(0)
   const pendingInterruptRef = useRef(null)
   const conversationIdRef = useRef(null)
+  const defaultProviderIdRef = useRef(null)
   const continuationNavigatedRef = useRef(new Set())
   const forkClickRef = useRef({ time: 0, idx: -1 })
 
@@ -195,12 +197,12 @@ function App() {
         if (cancelled) return
         setProviders(data.providers || [])
         setProvidersLoading(false)
-        const savedProvider = localStorage.getItem('selectedProvider')
-        if (savedProvider && data.providers?.find(p => p.id === savedProvider)) {
-          setSelectedProvider(savedProvider)
-        } else {
-          setSelectedProvider(data.default || data.providers?.[0]?.id)
-        }
+        // Settings → Default Model (`data.default`) wins over last-used.
+        // Last-used localStorage is only a fallback when the providers
+        // request fails (catch below).
+        const next = pickSidebarProvider(data.providers, data.default, null)
+        defaultProviderIdRef.current = next
+        setSelectedProvider(next)
       } catch {
         if (cancelled) return
         // Keep providersLoading=true so the dropdown shows "Loading…"
@@ -507,6 +509,17 @@ function App() {
     setHistoryRefreshTrigger(prev => prev + 1)
     const draft = draftInputsRef.current.get('__new__') || ''
     setInputValue(draft)
+    // Re-read Default Model so New Chat is correct even if Settings Save's
+    // delayed providers-changed event has not fired yet.
+    setSelectedProvider(pickSidebarProvider(providers, defaultProviderIdRef.current, null))
+    getProviders()
+      .then((data) => {
+        const next = pickSidebarProvider(data.providers, data.default, null)
+        defaultProviderIdRef.current = next
+        setProviders(data.providers || [])
+        setSelectedProvider(next)
+      })
+      .catch(() => { /* keep the ref-based pick above */ })
     inputRef.current?.focus()
   }
 
