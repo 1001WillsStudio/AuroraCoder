@@ -51,6 +51,7 @@ from gateway.workspace import (
     clear_conversation_snapshots,
     get_file_diffs_for_conversation,
     get_cached_file_tree,
+    list_dir_level,
     generate_workspace_tree_text,
     invalidate_tree_cache,
     count_workspace_files,
@@ -904,16 +905,32 @@ async def create_snapshot(conversation_id: str):
 
 
 @app.get("/api/files/tree")
-async def get_file_tree(max_depth: int = 5):
+async def get_file_tree(max_depth: int = 5, path: str = ""):
     """Get the folder structure of the agent's working space.
 
-    Uses a server-side cache (invalidated on file writes + short TTL)
-    so that repeated calls during the same streaming session don't
-    re-scan the entire workspace.
+    The default listing is the cached workspace tree. ``path`` lists one
+    level of that folder only and is not cached (on-demand open).
     """
     work_dir = _get_workspace()
     if not work_dir or not work_dir.exists():
         return {"tree": [], "root": None, "error": "No active session"}
+
+    if path:
+        try:
+            target = (work_dir / path).resolve()
+            if not str(target).startswith(str(work_dir.resolve())):
+                raise HTTPException(status_code=403, detail="Access denied: path outside working directory")
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid path")
+        if not target.exists() or not target.is_dir():
+            raise HTTPException(status_code=404, detail="Folder not found")
+        return {
+            "tree": list_dir_level(target, work_dir),
+            "root": str(target),
+            "error": None,
+        }
 
     tree, root, _version = get_cached_file_tree(work_dir, work_dir, max_depth=max_depth)
     return {"tree": tree, "root": root, "error": None}

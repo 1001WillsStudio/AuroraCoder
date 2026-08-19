@@ -65,6 +65,8 @@
   color: var(--text-primary);
   font-size: 1rem;
   line-height: 1.7;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .message-text p {
@@ -467,7 +469,6 @@
   flex: 1;
   min-width: 0;
   white-space: pre-wrap;
-  word-break: break-word;
 }
 
 .fork-btn {
