@@ -51,7 +51,7 @@ Legend: ✅ done · 🟡 next · ⬜ later.
 | `memory.ops.prompts` | 🟡 | pure templates — cheap, next |
 | `memory.store` / `schema` | 🟡 | extend existing layer1 (migrations, embedding-null paths) |
 | `gateway.conversation_store` | 🟡 | task-instruction strip/title + chip field via `gateway.task_instruction_display` (`test_task_instruction_display.py`); CRUD still ⬜ |
-| `gateway.settings_store` | 🟡 | max_iterations range on update (`test_settings_max_iterations.py`); obfuscation round-trip still ⬜ |
+| `gateway.settings_store` | 🟡 | max_iterations range on update (`test_settings_max_iterations.py`); custom provider Base URL must be http(s) (`test_settings_custom_provider_url.py`); obfuscation round-trip still ⬜ |
 
 ### Side-effecting (subprocess / FS / network)
 | Module | Status | Notes |
@@ -88,12 +88,18 @@ msw (reuses the existing Vite config). Prime targets: `utils/streamUtils.js`,
 The Settings `/m` page is covered in `tests/test_mobile_routes.py`.
 
 `frontend/src/utils/settingsValidation.js` is ``encodeStoredApiKey``
-(empty field + stored key → keep) plus ``validateMaxIterations`` (Save
+(empty field + stored key → keep), ``validateMaxIterations`` (Save
 rejects a Max Iterations Per Turn value outside 5–200; HTML ``min``/``max``
-are not enforced by the Save button; the sentinel ``unlimited`` is allowed).
-`tests/test_settings_validation.py` covers both. `tests/test_settings_max_iterations.py`
+are not enforced by the Save button; the sentinel ``unlimited`` is allowed),
+and ``validateCustomProviderBaseUrl`` (Save rejects a custom provider
+Base URL that is not an ``http://`` or ``https://`` URL; empty stays
+allowed).
+`tests/test_settings_validation.py` covers all three. `tests/test_settings_max_iterations.py`
 locks the store: ``update_settings`` raises on ``"0"`` and leaves the on-disk
 value unchanged, and accepts ``"unlimited"``.
+`tests/test_settings_custom_provider_url.py` locks the store for Base URL:
+``update_settings`` raises on ``not-a-valid-url`` and leaves the on-disk
+value unchanged.
 
 | File | Status | Notes |
 |---|---|---|

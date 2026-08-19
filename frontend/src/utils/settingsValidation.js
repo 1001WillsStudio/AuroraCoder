@@ -44,3 +44,26 @@ export function validateMaxIterations(value) {
   }
   return null
 }
+
+/**
+ * Custom-provider Base URL. Empty / omitted is allowed — an incomplete
+ * provider cannot discover models and stays unused. A typed value must
+ * be an http:// or https:// URL with a host (Save is a <button>, so
+ * HTML type=url is not checked).
+ *
+ * @returns {string|null} translation key, or null if the value is allowed
+ */
+export function validateCustomProviderBaseUrl(value) {
+  if (value === '' || value === null || value === undefined) return null
+  if (typeof value === 'string' && value.trim() === '') return null
+  const s = String(value).trim()
+  try {
+    const parsed = new URL(s)
+    if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || !parsed.hostname) {
+      return 'msg.baseUrlHttp'
+    }
+    return null
+  } catch {
+    return 'msg.baseUrlHttp'
+  }
+}
