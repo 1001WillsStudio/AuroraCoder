@@ -10,6 +10,7 @@ import WelcomeScreen from './components/WelcomeScreen'
 import SettingsPanel from './components/SettingsPanel'
 import { streamChat, getProviders, cancelConversation, getConversation, getActiveStreams, resumeStream, getTaskInstruction, setTaskInstruction, getInstanceInfo } from './services/api'
 import { isInterruptible, TASK_MARKER_START, TASK_MARKER_END } from './utils/streamUtils'
+import { createSendLock, shouldAcceptStop } from './utils/composerGuard'
 import { checkAuth, isAuthRequired } from './utils/auth.js'
 import { newConversationId } from './utils/uuid.js'
 import CodePanel from './components/CodePanel'
@@ -132,6 +133,8 @@ function App() {
     const inputValueRef = useRef(inputValue)
     inputValueRef.current = inputValue
   const abortControllerRef = useRef(null)
+  const sendLockRef = useRef(createSendLock())
+  const sendStartedAtRef = useRef(0)
   const pendingInterruptRef = useRef(null)
   const conversationIdRef = useRef(null)
   const continuationNavigatedRef = useRef(new Set())
@@ -267,6 +270,12 @@ function App() {
     const messageToSend = overrideMessage || inputValue.trim()
     if (!messageToSend) return
 
+    const isInterrupt = interruptMessages !== null && interruptMessages.length > 0
+    const sendToken = sendLockRef.current.begin(isInterrupt)
+    if (sendToken == null) return
+    sendStartedAtRef.current = Date.now()
+    const releaseSend = () => sendLockRef.current.end(sendToken)
+
     if (!conversationId && !interruptMessages) {
       log('getActiveStreams check start')
       try {
@@ -274,6 +283,7 @@ function App() {
         log('getActiveStreams check done')
         if (active && active.length > 0) {
           setActiveConvoWarning(true)
+          releaseSend()
           return
         }
       } catch { /* server unreachable — allow send */ }
@@ -289,8 +299,6 @@ function App() {
     const apiMessage = appliedInstruction
       ? `${TASK_MARKER_START}\n${appliedInstruction}\n${TASK_MARKER_END}\n\n${userMessageText}`
       : userMessageText
-
-    const isInterrupt = interruptMessages !== null && interruptMessages.length > 0
 
     if (abortControllerRef.current) {
       log('aborting previous controller')
@@ -375,6 +383,8 @@ function App() {
     } catch (error) {
       if (error.name !== 'AbortError') console.error('Chat error:', error)
       setIsStreaming(false)
+    } finally {
+      releaseSend()
     }
   }
 
@@ -501,6 +511,7 @@ function App() {
   }
 
   const handleStop = async () => {
+    if (!shouldAcceptStop(sendStartedAtRef.current)) return
     if (abortControllerRef.current) abortControllerRef.current.abort()
     if (conversationId) {
       try {
