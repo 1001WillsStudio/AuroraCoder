@@ -73,6 +73,7 @@ Legend: ✅ done · 🟡 next · ⬜ later.
 | `src.providers` | 🟡 | patch `openai.OpenAI`, stream vs non-stream branching |
 | `gateway.streaming` | 🟡 | expand existing race/abort tests via injected provider |
 | `gateway` error-turn persist | ✅ | `tests/test_error_turn_persist.py` — failed turn stored as `isError`/`canRetry`; retry keeps the transcript and does not append a user message |
+| Try Again after provider 500 | ✅ | `tests/test_try_again_same_conversation.py` — Try Again is its own path (not `handleSend`); first send still omits `conversation_id`; the UI keeps `X-Conversation-ID` so retry stays on one history item with one user line |
 | `gateway.routes` / `api` | ⬜ | `TestClient` per endpoint, **auth** via `ACCESS_PASSWORD` |
 | `gateway.provider_registry` | ⬜ | lookup, model metadata, live-list fetch mocked |
 | `gateway.workspace` | ⬜ | git push behind `GITHUB_TOKEN` (mock; skip when absent) |
@@ -98,6 +99,7 @@ value unchanged, and accepts ``"unlimited"``.
 | File | Status | Notes |
 |---|---|---|
 | `tests/test_mobile_sidebar_toggle.py` | ✅ | Source-level regression: at `max-width: 768px` the sidebar may stay `display: none` only if App.jsx renders a `.sidebar-toggle` *outside* the aside and `.app.sidebar-open .sidebar` reveals it. Locks the explorer finding that a 375px resize hid New Chat / History / Settings / model with no hamburger. |
+| `tests/test_message_long_token_wrap.py` | ✅ | Source-level regression: `.message-text` must wrap or scroll unbreakable tokens (URLs, identifiers). Locks the explorer finding that a 390px send of `SUPERCALIFRAGILISTIC…` clipped at the column edge (`word-break`/`overflow-wrap` both `normal`, scrollWidth ≫ clientWidth). |
 | `tests/test_stale_viewer_after_delete.py` | ✅ | Deleting an open Workspace file must close its viewer tab; Refresh re-reads view-only tabs and drops them on 404. Helpers in `frontend/src/utils/panelFiles.js` run via Node; source scan locks FileTree → panel wiring. |
 
 Stable `data-testid` hooks on the desktop SPA (`chat-input`, `chat-send`,
