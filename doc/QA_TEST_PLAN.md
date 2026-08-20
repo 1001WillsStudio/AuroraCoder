@@ -49,7 +49,7 @@ Legend: ✅ done · 🟡 next · ⬜ later.
 | `memory.stance` | ✅ | empty state, `MAX_STANCE_ITEMS` cap, sort, labels, usage-bump scope |
 | `src.training_log` | ✅ | JSONL row shape, toggle, never-raise IO safety, flag loader corruption tolerance |
 | `memory.ops.prompts` | 🟡 | pure templates — cheap, next |
-| `memory.ops.boilerplate` | ✅ | task-instruction / session-handoff text is not persisted as durable memory (`test_memory_boilerplate.py`) |
+| `memory.ops.extractor` | ✅ | task-instruction / handoff wrappers omitted from the write-pass transcript (`test_memory_boilerplate.py`) |
 | `memory.store` / `schema` | 🟡 | extend existing layer1 (migrations, embedding-null paths) |
 | `gateway.conversation_store` | 🟡 | task-instruction strip/title + chip field via `gateway.task_instruction_display` (`test_task_instruction_display.py`); CRUD still ⬜ |
 | `gateway.settings_store` | 🟡 | max_iterations range on update (`test_settings_max_iterations.py`); obfuscation round-trip still ⬜ |

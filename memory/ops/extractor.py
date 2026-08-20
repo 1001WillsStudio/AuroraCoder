@@ -67,6 +67,11 @@ from typing import Any, Dict, List, Optional, Tuple
 from openai import OpenAI
 
 from gateway.provider_registry import get_memory_extraction_config
+from gateway.task_instruction_display import (
+    TASK_INSTRUCTION_START,
+    extract_task_instruction,
+    strip_task_instruction,
+)
 from memory.settings import passive_extraction_enabled
 from memory.schema import MemoryItem, MEMORY_PLANES, MEMORY_TYPES
 from memory.store import get_repository
@@ -75,11 +80,7 @@ from memory.ops.judge_io import (
     call_judge, EXTRACTION_PLAN_TOOL, EXTRACTION_PLAN_SCHEMA,
 )
 from memory.ops.conversation_search import search_conversations
-from memory.ops.boilerplate import (
-    is_scaffold_echo,
-    collect_scaffold_and_genuine,
-    render_user_for_extraction,
-)
+from memory.ops.similarity import tokens
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +93,84 @@ OTHER_CONVERSATIONS_PER_NOMINATION_LIMIT = 3
 # module docstring "Layer 2b reuses this same gate". Both leave a marker
 # in the transcript and do no I/O at call time.
 NOMINATION_TOOL_NAMES = ("remember", "report_findings")
+
+# Session wrappers the write-pass must not treat as user-stated standing rules.
+HANDOFF_PREFIX = "[Continued from previous agent session]"
+_ECHO_CONTAINMENT = 0.5
+_SENTENCE_RE = re.compile(r"[^\n.!?]+")
+
+
+def _is_handoff(content: str) -> bool:
+    return bool(content) and content.lstrip().startswith(HANDOFF_PREFIX)
+
+
+def _split_user_content(content: str) -> Tuple[str, str]:
+    """Return ``(scaffold_text, genuine_user_text)`` for one user message."""
+    if not content:
+        return "", ""
+    if _is_handoff(content):
+        return content.strip(), ""
+    if TASK_INSTRUCTION_START in content:
+        return (extract_task_instruction(content) or "").strip(), strip_task_instruction(content)
+    return "", content.strip()
+
+
+def _collect_scaffold_and_genuine(messages: List[Dict[str, Any]]) -> Tuple[str, str]:
+    scaffolds: List[str] = []
+    genuines: List[str] = []
+    for msg in messages:
+        if msg.get("role") != "user":
+            continue
+        scaffold, genuine = _split_user_content(msg.get("content") or "")
+        if scaffold:
+            scaffolds.append(scaffold)
+        if genuine:
+            genuines.append(genuine)
+    return "\n".join(scaffolds), "\n".join(genuines)
+
+
+def _render_user_for_extraction(content: str) -> List[str]:
+    """Omit task-instruction / handoff bodies from the judge transcript."""
+    scaffold, genuine = _split_user_content(content)
+    lines: List[str] = []
+    if _is_handoff(content):
+        lines.append(
+            "HANDOFF: agent-authored one-shot session context "
+            "(not a user standing rule; do not mine preferences from it)."
+        )
+    if genuine:
+        lines.append(f"USER: {genuine}")
+    elif scaffold and not _is_handoff(content):
+        lines.append("USER: (session task instruction only — not a user request)")
+    return lines
+
+
+def _token_containment(candidate: str, haystack: str) -> float:
+    cand, hay = tokens(candidate), tokens(haystack)
+    if not cand:
+        return 0.0
+    return len(cand & hay) / len(cand)
+
+
+def _is_scaffold_echo(candidate_text: str, scaffold: str, genuine: str) -> bool:
+    """True when the candidate restates scaffold and the user did not also say it.
+
+    Stripping wrappers from the transcript is the main fix. This gate is
+    only for leftover paths the strip cannot see: a mid-session ``remember``
+    nomination of the same text, or a later incremental turn whose judge
+    slice no longer includes the wrapped first message.
+    """
+    if not candidate_text.strip() or not scaffold.strip():
+        return False
+    if _token_containment(candidate_text, genuine) >= _ECHO_CONTAINMENT:
+        return False
+    if _token_containment(candidate_text, scaffold) >= _ECHO_CONTAINMENT:
+        return True
+    for raw in _SENTENCE_RE.findall(scaffold):
+        sent = raw.strip()
+        if len(sent) >= 8 and _token_containment(candidate_text, sent) >= _ECHO_CONTAINMENT:
+            return True
+    return False
 
 
 def _transcript_to_text(messages: List[Dict[str, Any]], max_chars: int = MAX_TRANSCRIPT_CHARS) -> str:
@@ -121,7 +200,7 @@ def _transcript_to_text(messages: List[Dict[str, Any]], max_chars: int = MAX_TRA
         if role == "user":
             content = (msg.get("content") or "").strip()
             if content:
-                lines.extend(render_user_for_extraction(content))
+                lines.extend(_render_user_for_extraction(content))
         elif role == "assistant":
             content = (msg.get("content") or "").strip()
             if content:
@@ -518,7 +597,7 @@ def apply_extraction_plan(
     "nominated"|"discovered"}`` entries for every candidate that passed
     validation. Never raises: bad candidates are skipped with a warning."""
     repo = repo or get_repository()
-    scaffold, genuine = collect_scaffold_and_genuine(messages or [])
+    scaffold, genuine = _collect_scaffold_and_genuine(messages or [])
     written: List[Dict[str, str]] = []
     for cand in candidates:
         if not isinstance(cand, dict):
@@ -532,7 +611,7 @@ def apply_extraction_plan(
             logger.warning("[memory-extract] [%s] Skipping candidate with invalid type %r", conversation_id[:8], mtype)
             continue
         echo_hay = f"{cand.get('description', '')} {cand.get('content', '')}"
-        if scaffold and is_scaffold_echo(echo_hay, scaffold, genuine):
+        if scaffold and _is_scaffold_echo(echo_hay, scaffold, genuine):
             logger.info(
                 "[memory-extract] [%s] Skipping scaffold-echo candidate %r",
                 conversation_id[:8], cand.get("description"),

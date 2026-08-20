@@ -14,7 +14,6 @@ pathlib.Path(os.environ["AURORACODER_DATA_DIR"], "settings.json").write_text(
     json.dumps({"other": {"memory": {"enabled": True}}}), encoding="utf-8"
 )
 
-from memory.schema import MemoryItem
 from memory.store import MemoryRepository
 from memory.ops import extractor
 from memory.ops.prompts import EXTRACTION_SYSTEM_PROMPT
@@ -130,6 +129,19 @@ def test_genuine_user_preference_outside_scaffold_is_still_saved(tmp_path):
     assert repo.get(written[0]["id"]).content.startswith("Run ruff")
 
 
+def test_remember_nomination_of_task_instruction_is_dropped(tmp_path):
+    """The agent still sees the live wrapped message and may call remember.
+    Transcript stripping cannot catch that — the write-pass must."""
+    repo = _isolated_repo(tmp_path)
+    cand = [_cand("world", "communication", "Always respond in Chinese.",
+                  "Language preference for project AuroraCoder")]
+    cand[0]["source"] = "nominated"
+    written = extractor.apply_extraction_plan(
+        cand, "conv-nom", repo=repo, messages=_msgs(_TASK_WRAPPED),
+    )
+    assert written == [], written
+
+
 def test_user_restatement_of_a_task_instruction_is_kept(tmp_path):
     repo = _isolated_repo(tmp_path)
     msgs = _msgs(_TASK_WRAPPED, extra_user="please always respond in Chinese for this project")
@@ -141,28 +153,6 @@ def test_user_restatement_of_a_task_instruction_is_kept(tmp_path):
     }]
     written = extractor.apply_extraction_plan(cand, "conv-restate", repo=repo, messages=msgs)
     assert len(written) == 1, written
-
-
-def test_existing_scaffold_echoes_are_purged_from_the_store(tmp_path):
-    from memory.ops.boilerplate import purge_scaffold_echoes
-
-    repo = _isolated_repo(tmp_path)
-    echo = MemoryItem(
-        content="Always respond in Chinese.",
-        description="Language preference for project AuroraCoder",
-        plane="world", type="communication", scope="project", confidence="high",
-    )
-    keep = MemoryItem(
-        content="Run ruff before declaring a task done.",
-        description="User preference: run ruff before finishing",
-        plane="stance", type="preference", scope="user", confidence="high",
-    )
-    repo.upsert(echo)
-    repo.upsert(keep)
-    deleted = purge_scaffold_echoes(repo, [_msgs(_TASK_WRAPPED)])
-    assert echo.id in deleted
-    assert repo.get(echo.id) is None
-    assert repo.get(keep.id) is not None
 
 
 def test_extraction_prompt_forbids_mining_session_scaffold():
