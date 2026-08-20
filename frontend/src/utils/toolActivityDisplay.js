@@ -1,7 +1,7 @@
 /**
  * Tool-activity card helpers. Living-tool-state panels append protocol
- * dumps (CODE_INTERPRETER / TOOLSTORE / MEMORY) to the LLM tool message;
- * the chat card must show only a readable result or a clear failure.
+ * dumps to the LLM tool message; the card should show only the tool's
+ * own result and mark an Error: result as failed.
  */
 
 const PANEL_START_MARKERS = [
@@ -9,8 +9,6 @@ const PANEL_START_MARKERS = [
   '<====TOOLSTORE_START====>',
   '<====MEMORY_START====>',
 ]
-
-const PY_INTERNAL = ['cannot unpack', 'nonetype', 'traceback']
 
 export function stripPanelMarkup(content) {
   if (!content) return ''
@@ -23,38 +21,14 @@ export function stripPanelMarkup(content) {
   return cut === -1 ? text : text.slice(0, cut).replace(/\s+$/, '')
 }
 
-function looksLikePythonException(detail) {
-  const lower = String(detail || '').toLowerCase()
-  return PY_INTERNAL.some((snippet) => lower.includes(snippet))
-}
-
-export function sanitizeToolResultContent(content) {
-  const raw = content == null ? '' : String(content)
-  const notFound = raw.match(/\[File not found: ([^\]]+)\]/)
-  const text = stripPanelMarkup(raw)
-  const exec = text.trim().match(/^Error executing tool '([^']+)': ([\s\S]*)/)
-  if (exec && looksLikePythonException(exec[2])) {
-    if (notFound) return `File not found: ${notFound[1]}`
-    return `Error: ${exec[1]} failed`
-  }
-  if (!text && notFound) return `File not found: ${notFound[1]}`
-  return text
-}
-
-export function isFailedToolOutput(content, isErrorFlag) {
-  if (isErrorFlag) return true
-  const text = String(content || '').trim()
-  if (!text) return false
-  if (/^Error\b/.test(text)) return true
-  if (/^File not found\b/i.test(text)) return true
-  if (text.includes('[File not found:')) return true
-  return false
+export function isFailedToolOutput(content) {
+  return /^Error\b/.test(String(content || '').trim())
 }
 
 export function toolActivityFinishClass(result) {
   if (!result) return ''
   if (result.isTerminated) return 'terminated'
-  const display = sanitizeToolResultContent(result.content)
-  if (isFailedToolOutput(display, result.isError)) return 'failed'
+  const display = stripPanelMarkup(result.content)
+  if (isFailedToolOutput(display)) return 'failed'
   return 'complete'
 }

@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 import useLanguage from '../hooks/useLanguage'
 import {
-  sanitizeToolResultContent,
+  stripPanelMarkup,
   toolActivityFinishClass,
 } from '../utils/toolActivityDisplay'
 
@@ -53,7 +53,7 @@ function ToolActivityItem({ toolCall, result, onStop, onLoadConversation, childC
   const isComplete = !!result
   const isTerminated = result?.isTerminated
   const displayResult = result
-    ? { ...result, content: sanitizeToolResultContent(result.content) }
+    ? { ...result, content: stripPanelMarkup(result.content) }
     : result
   const finishClass = toolActivityFinishClass(result)
   const isFailed = finishClass === 'failed'
