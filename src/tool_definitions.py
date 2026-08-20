@@ -881,3 +881,4 @@ def execute_tool_call(tool_name: str, arguments: Dict[str, Any], tool_call_id: s
 
     result, arguments = function(arguments)
     return arguments, result
+

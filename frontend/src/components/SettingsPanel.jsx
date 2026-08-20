@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { X, Plus, Trash2, Save, RefreshCw, Shield, Globe, LogOut, ExternalLink, Wrench, ChevronDown, ChevronRight, Search } from 'lucide-react'
 import { getSettings, updateSettings, getProviders, getToolStoreStatus, refreshToolStore, getMemories, deleteMemory } from '../services/api'
 import { isAuthRequired, isAuthenticated, logout as authLogout, clearToken } from '../utils/auth.js'
-import { encodeStoredApiKey, isUnlimitedMaxIterations, validateMaxIterations, validateMaxToolConcurrency, validateTerminalMaxOutput, validateWebSecondaryMaxTokens, MAX_ITERATIONS_UNLIMITED } from '../utils/settingsValidation.js'
+import { encodeStoredApiKey, isUnlimitedMaxIterations, validateMaxIterations, validateSettingsIntRanges, MAX_ITERATIONS_UNLIMITED } from '../utils/settingsValidation.js'
 import useLanguage from '../hooks/useLanguage'
 import { LANG_LABELS } from '../i18n/translations'
 import '../styles/settings.css'
@@ -240,9 +240,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
   const handleSave = async () => {
     const rangeErr =
       validateMaxIterations(settings?.other?.agent?.max_iterations) ||
-      validateMaxToolConcurrency(settings?.other?.agent?.max_tool_concurrency) ||
-      validateTerminalMaxOutput(settings?.other?.agent?.terminal_max_output) ||
-      validateWebSecondaryMaxTokens(settings?.other?.web_secondary?.max_tokens)
+      validateSettingsIntRanges(settings)
     if (rangeErr) {
       setMessage({ type: 'error', text: t(rangeErr) })
       return

@@ -37,10 +37,9 @@ else:
 SETTINGS_PATH = DATA_DIR / "settings.json"
 _lock = Lock()
 
-# Agent Behavior / Web Secondary numeric ranges. Match the Settings
-# spinbuttons. HTML constraints are not enforced by the Save button, so
-# the store is the last line of defence against persisted out-of-range
-# values (concurrency 50, terminal output 1, …).
+# Agent Behavior → Max Iterations Per Turn. Matches the Settings spinbutton
+# (min=5, max=200). HTML constraints are not enforced by the Save button, so
+# the store is the last line of defence against a persisted 0 (or 201, …).
 # "unlimited" is an explicit sentinel (not 0) for long-running turns.
 AGENT_MAX_ITERATIONS_MIN = 5
 AGENT_MAX_ITERATIONS_MAX = 200
@@ -50,26 +49,11 @@ UNLIMITED_AGENT_ITERATIONS = 1_000_000
 _MAX_ITERATIONS_RANGE_MSG = (
     f"max_iterations must be between {AGENT_MAX_ITERATIONS_MIN} and {AGENT_MAX_ITERATIONS_MAX}"
 )
-
-AGENT_MAX_TOOL_CONCURRENCY_MIN = 1
-AGENT_MAX_TOOL_CONCURRENCY_MAX = 20
-_MAX_TOOL_CONCURRENCY_RANGE_MSG = (
-    f"max_tool_concurrency must be between "
-    f"{AGENT_MAX_TOOL_CONCURRENCY_MIN} and {AGENT_MAX_TOOL_CONCURRENCY_MAX}"
-)
-
-AGENT_TERMINAL_MAX_OUTPUT_MIN = 1000
-AGENT_TERMINAL_MAX_OUTPUT_MAX = 100000
-_TERMINAL_MAX_OUTPUT_RANGE_MSG = (
-    f"terminal_max_output must be between "
-    f"{AGENT_TERMINAL_MAX_OUTPUT_MIN} and {AGENT_TERMINAL_MAX_OUTPUT_MAX}"
-)
-
-WEB_SECONDARY_MAX_TOKENS_MIN = 256
-WEB_SECONDARY_MAX_TOKENS_MAX = 32768
-_WEB_SECONDARY_MAX_TOKENS_RANGE_MSG = (
-    f"max_tokens must be between "
-    f"{WEB_SECONDARY_MAX_TOKENS_MIN} and {WEB_SECONDARY_MAX_TOKENS_MAX}"
+# Same Save-button gap as max_iterations: concurrency 50, terminal 1, tokens 10.
+_OTHER_INT_RANGES = (
+    ("agent", "max_tool_concurrency", 1, 20, "max_tool_concurrency must be between 1 and 20"),
+    ("agent", "terminal_max_output", 1000, 100000, "terminal_max_output must be between 1000 and 100000"),
+    ("web_secondary", "max_tokens", 256, 32768, "max_tokens must be between 256 and 32768"),
 )
 
 
@@ -142,13 +126,14 @@ def update_settings(partial: Dict[str, Any]) -> Dict[str, Any]:
     Returns the full merged dict (with API keys masked).
 
     Raises:
-        ValueError: if a present numeric Agent / Web Secondary field is
-            outside its advertised range (``max_iterations`` ``[5, 200]``
-            or ``"unlimited"``; ``max_tool_concurrency`` ``[1, 20]``;
-            ``terminal_max_output`` ``[1000, 100000]``; ``max_tokens``
-            ``[256, 32768]``). The on-disk file is not written.
+        ValueError: if ``other.agent.max_iterations`` is present and not an
+            integer in ``[5, 200]`` or the sentinel ``"unlimited"``, or if
+            concurrency / terminal output / web-secondary tokens are outside
+            the ranges advertised on the Settings inputs. The on-disk file
+            is not written.
     """
-    _validate_agent_numeric_ranges(partial)
+    _validate_agent_max_iterations(partial)
+    _validate_other_int_ranges(partial)
     with _lock:
         current = _load_raw()
 
@@ -409,7 +394,7 @@ def _is_unlimited_max_iterations(raw: Any) -> bool:
     return isinstance(raw, str) and raw.strip().lower() == AGENT_MAX_ITERATIONS_UNLIMITED
 
 
-def _parse_optional_int(raw: Any, range_msg: str) -> Optional[int]:
+def _parse_agent_max_iterations(raw: Any) -> Optional[int]:
     """Return an int if *raw* is a whole number; None if empty; else raise.
 
     Accepts int, integer-valued float (``5.0``), and digit strings
@@ -419,13 +404,13 @@ def _parse_optional_int(raw: Any, range_msg: str) -> Optional[int]:
     if raw is None:
         return None
     if isinstance(raw, bool):
-        raise ValueError(range_msg)
+        raise ValueError(_MAX_ITERATIONS_RANGE_MSG)
     if isinstance(raw, int):
         return raw
     if isinstance(raw, float):
         if raw.is_integer():
             return int(raw)
-        raise ValueError(range_msg)
+        raise ValueError(_MAX_ITERATIONS_RANGE_MSG)
     if isinstance(raw, str):
         s = raw.strip()
         if s == "":
@@ -433,64 +418,46 @@ def _parse_optional_int(raw: Any, range_msg: str) -> Optional[int]:
         try:
             n = float(s)
         except ValueError:
-            raise ValueError(range_msg) from None
+            raise ValueError(_MAX_ITERATIONS_RANGE_MSG) from None
         if not n.is_integer():
-            raise ValueError(range_msg)
+            raise ValueError(_MAX_ITERATIONS_RANGE_MSG)
         return int(n)
-    raise ValueError(range_msg)
+    raise ValueError(_MAX_ITERATIONS_RANGE_MSG)
 
 
-def _parse_agent_max_iterations(raw: Any) -> Optional[int]:
-    return _parse_optional_int(raw, _MAX_ITERATIONS_RANGE_MSG)
-
-
-def _validate_int_range(raw: Any, min_v: int, max_v: int, range_msg: str) -> None:
-    """Raise ValueError if *raw* is present and outside ``[min_v, max_v]``."""
-    n = _parse_optional_int(raw, range_msg)
-    if n is None:
-        return
-    if n < min_v or n > max_v:
-        raise ValueError(range_msg)
-
-
-def _validate_agent_numeric_ranges(partial: Dict[str, Any]) -> None:
-    """Raise ValueError if a present numeric field is outside its range."""
+def _validate_agent_max_iterations(partial: Dict[str, Any]) -> None:
+    """Raise ValueError if the update sets max_iterations outside [5, 200]."""
     other = partial.get("other")
     if not isinstance(other, dict):
         return
     agent = other.get("agent")
-    if isinstance(agent, dict):
-        if "max_iterations" in agent:
-            raw = agent["max_iterations"]
-            if not _is_unlimited_max_iterations(raw):
-                _validate_int_range(
-                    raw,
-                    AGENT_MAX_ITERATIONS_MIN,
-                    AGENT_MAX_ITERATIONS_MAX,
-                    _MAX_ITERATIONS_RANGE_MSG,
-                )
-        if "max_tool_concurrency" in agent:
-            _validate_int_range(
-                agent["max_tool_concurrency"],
-                AGENT_MAX_TOOL_CONCURRENCY_MIN,
-                AGENT_MAX_TOOL_CONCURRENCY_MAX,
-                _MAX_TOOL_CONCURRENCY_RANGE_MSG,
-            )
-        if "terminal_max_output" in agent:
-            _validate_int_range(
-                agent["terminal_max_output"],
-                AGENT_TERMINAL_MAX_OUTPUT_MIN,
-                AGENT_TERMINAL_MAX_OUTPUT_MAX,
-                _TERMINAL_MAX_OUTPUT_RANGE_MSG,
-            )
-    ws = other.get("web_secondary")
-    if isinstance(ws, dict) and "max_tokens" in ws:
-        _validate_int_range(
-            ws["max_tokens"],
-            WEB_SECONDARY_MAX_TOKENS_MIN,
-            WEB_SECONDARY_MAX_TOKENS_MAX,
-            _WEB_SECONDARY_MAX_TOKENS_RANGE_MSG,
-        )
+    if not isinstance(agent, dict) or "max_iterations" not in agent:
+        return
+    raw = agent["max_iterations"]
+    if _is_unlimited_max_iterations(raw):
+        return
+    n = _parse_agent_max_iterations(raw)
+    if n is None:
+        return
+    if n < AGENT_MAX_ITERATIONS_MIN or n > AGENT_MAX_ITERATIONS_MAX:
+        raise ValueError(_MAX_ITERATIONS_RANGE_MSG)
+
+
+def _validate_other_int_ranges(partial: Dict[str, Any]) -> None:
+    """Raise ValueError if concurrency / terminal / token fields are out of range."""
+    other = partial.get("other")
+    if not isinstance(other, dict):
+        return
+    for section, key, lo, hi, msg in _OTHER_INT_RANGES:
+        block = other.get(section)
+        if not isinstance(block, dict) or key not in block:
+            continue
+        try:
+            n = _parse_agent_max_iterations(block[key])
+        except ValueError:
+            raise ValueError(msg) from None
+        if n is not None and (n < lo or n > hi):
+            raise ValueError(msg)
 
 
 def clamp_agent_max_iterations(raw: Any, default: int = 30) -> int:

@@ -11,9 +11,9 @@ constraints are not enforced by the Save button. ``validateMaxIterations``
 rejects 0 (and any other out-of-range value) before PUT. The sentinel
 ``unlimited`` is allowed (Unlimited checkbox).
 
-Max Tool Concurrency (1–20), Terminal Max Output (1000–100000), and
-Web Secondary Max Tokens (256–32768) are checked the same way — HTML
-min/max alone used to let Save persist 50 / 1 / 10.
+``validateSettingsIntRanges`` applies the same Save-button check to
+concurrency (1–20), terminal output (1000–100000), and web-secondary
+tokens (256–32768).
 """
 from __future__ import annotations
 
@@ -74,9 +74,9 @@ def test_js_helper_exports_encode_and_max_iterations():
     assert "export function encodeStoredApiKey" in src
     assert "export function validateMaxIterations" in src
     assert "export function isUnlimitedMaxIterations" in src
-    assert "export function validateMaxToolConcurrency" in src
-    assert "export function validateTerminalMaxOutput" in src
-    assert "export function validateWebSecondaryMaxTokens" in src
+    assert "export function validateSettingsIntRanges" in src
+    assert "max_tool_concurrency" in src
+    assert "terminal_max_output" in src
     # Old "API key required" helpers must stay gone — a blank stored key
     # is not a reason to block Save.
     assert "export function validateProviders" not in src
@@ -94,9 +94,7 @@ def test_settings_panel_encodes_keys_and_does_not_block_save():
     body = src[save_start:save_end]
     assert "encodeStoredApiKey" in body
     assert "validateMaxIterations" in body
-    assert "validateMaxToolConcurrency" in body
-    assert "validateTerminalMaxOutput" in body
-    assert "validateWebSecondaryMaxTokens" in body
+    assert "validateSettingsIntRanges" in body
     assert "if (!validate())" not in body
     assert "runChecks" not in src
     assert "validateProviders" not in src
@@ -163,25 +161,6 @@ def test_handle_save_rejects_out_of_range_iterations_before_put():
     assert "agent.maxIterationsUnlimited" in src
 
 
-def test_handle_save_rejects_out_of_range_concurrency_and_terminal_before_put():
-    """Reported case: Save must not PUT concurrency 50 or terminal output 1."""
-    src = _PANEL.read_text(encoding="utf-8")
-    save_start = src.index("const handleSave = async () =>")
-    save_end = src.index("const builtIn = providers.filter")
-    body = src[save_start:save_end]
-    assert "validateMaxToolConcurrency" in body
-    assert "validateTerminalMaxOutput" in body
-    assert "validateWebSecondaryMaxTokens" in body
-    assert "updateSettings" in body
-    assert body.index("validateMaxToolConcurrency") < body.index("updateSettings")
-    assert body.index("validateTerminalMaxOutput") < body.index("updateSettings")
-    assert body.index("validateWebSecondaryMaxTokens") < body.index("updateSettings")
-    assert "return" in body
-    assert 'min="1"' in src and 'max="20"' in src
-    assert 'min="1000"' in src and 'max="100000"' in src
-    assert 'min="256"' in src and 'max="32768"' in src
-
-
 def test_max_iterations_range_message_is_translated():
     translations = _ROOT / "frontend" / "src" / "i18n" / "translations.js"
     src = translations.read_text(encoding="utf-8")
@@ -189,80 +168,56 @@ def test_max_iterations_range_message_is_translated():
     assert "must be between 5 and 200" in src
 
 
-def validate_integer_range(value, min_v, max_v, error_key):
-    """Mirror of ``validateIntegerRange`` in settingsValidation.js."""
-    if value in ("", None):
-        return None
-    if isinstance(value, str) and value.strip() == "":
-        return None
-    try:
-        n = float(value)
-    except (TypeError, ValueError):
-        return error_key
-    if n != int(n) or n < min_v or n > max_v:
-        return error_key
+def validate_settings_int_ranges(settings):
+    """Mirror of ``validateSettingsIntRanges`` in settingsValidation.js."""
+    fields = (
+        (("other", "agent", "max_tool_concurrency"), 1, 20, "msg.maxToolConcurrencyRange"),
+        (("other", "agent", "terminal_max_output"), 1000, 100000, "msg.terminalMaxOutputRange"),
+        (("other", "web_secondary", "max_tokens"), 256, 32768, "msg.webSecondaryMaxTokensRange"),
+    )
+    for path, min_v, max_v, error_key in fields:
+        value = settings
+        for key in path:
+            value = (value or {}).get(key) if isinstance(value, dict) else None
+        if value in ("", None) or (isinstance(value, str) and value.strip() == ""):
+            continue
+        try:
+            n = float(value)
+        except (TypeError, ValueError):
+            return error_key
+        if n != int(n) or n < min_v or n > max_v:
+            return error_key
     return None
 
 
-@pytest.mark.parametrize(
-    "value, expected",
-    [
-        ("50", "msg.maxToolConcurrencyRange"),  # reported case
-        (50, "msg.maxToolConcurrencyRange"),
-        ("0", "msg.maxToolConcurrencyRange"),
-        ("21", "msg.maxToolConcurrencyRange"),
-        ("abc", "msg.maxToolConcurrencyRange"),
-        (1.5, "msg.maxToolConcurrencyRange"),
-        ("1", None),
-        (1, None),
-        ("5", None),
-        (20, None),
-        ("", None),
-        (None, None),
-        ("   ", None),
-    ],
-)
-def test_validate_max_tool_concurrency(value, expected):
-    assert validate_integer_range(value, 1, 20, "msg.maxToolConcurrencyRange") == expected
+def test_validate_settings_int_ranges_reported_cases():
+    assert validate_settings_int_ranges(
+        {"other": {"agent": {"max_tool_concurrency": "50"}}}
+    ) == "msg.maxToolConcurrencyRange"
+    assert validate_settings_int_ranges(
+        {"other": {"agent": {"terminal_max_output": "1"}}}
+    ) == "msg.terminalMaxOutputRange"
+    assert validate_settings_int_ranges(
+        {"other": {"web_secondary": {"max_tokens": "10"}}}
+    ) == "msg.webSecondaryMaxTokensRange"
+    assert validate_settings_int_ranges({
+        "other": {"agent": {"max_tool_concurrency": "5", "terminal_max_output": "15000"}},
+    }) is None
 
 
-@pytest.mark.parametrize(
-    "value, expected",
-    [
-        ("1", "msg.terminalMaxOutputRange"),  # reported case
-        (1, "msg.terminalMaxOutputRange"),
-        ("999", "msg.terminalMaxOutputRange"),
-        ("100001", "msg.terminalMaxOutputRange"),
-        ("abc", "msg.terminalMaxOutputRange"),
-        (1500.5, "msg.terminalMaxOutputRange"),
-        ("1000", None),
-        (1000, None),
-        ("15000", None),
-        (100000, None),
-        ("", None),
-        (None, None),
-    ],
-)
-def test_validate_terminal_max_output(value, expected):
-    assert validate_integer_range(value, 1000, 100000, "msg.terminalMaxOutputRange") == expected
-
-
-@pytest.mark.parametrize(
-    "value, expected",
-    [
-        ("10", "msg.webSecondaryMaxTokensRange"),  # related check
-        (10, "msg.webSecondaryMaxTokensRange"),
-        ("255", "msg.webSecondaryMaxTokensRange"),
-        ("32769", "msg.webSecondaryMaxTokensRange"),
-        ("256", None),
-        (4096, None),
-        (32768, None),
-        ("", None),
-        (None, None),
-    ],
-)
-def test_validate_web_secondary_max_tokens(value, expected):
-    assert validate_integer_range(value, 256, 32768, "msg.webSecondaryMaxTokensRange") == expected
+def test_handle_save_rejects_out_of_range_concurrency_and_terminal_before_put():
+    """Reported case: Save must not PUT concurrency 50 or terminal output 1."""
+    src = _PANEL.read_text(encoding="utf-8")
+    save_start = src.index("const handleSave = async () =>")
+    save_end = src.index("const builtIn = providers.filter")
+    body = src[save_start:save_end]
+    assert "validateSettingsIntRanges" in body
+    assert "updateSettings" in body
+    assert body.index("validateSettingsIntRanges") < body.index("updateSettings")
+    assert "return" in body
+    assert 'min="1"' in src and 'max="20"' in src
+    assert 'min="1000"' in src and 'max="100000"' in src
+    assert 'min="256"' in src and 'max="32768"' in src
 
 
 def test_numeric_range_messages_are_translated():

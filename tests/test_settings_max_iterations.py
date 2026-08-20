@@ -82,6 +82,38 @@ def test_update_settings_without_agent_block_is_unchanged(isolated_settings):
     assert stored["other"]["memory"]["enabled"] is True
 
 
+@pytest.mark.parametrize(
+    "payload, match",
+    [
+        ({"agent": {"max_tool_concurrency": "50"}}, "between 1 and 20"),
+        ({"agent": {"terminal_max_output": "1"}}, "between 1000 and 100000"),
+        ({"web_secondary": {"max_tokens": "10"}}, "between 256 and 32768"),
+    ],
+)
+def test_update_settings_rejects_out_of_range_numeric_fields(isolated_settings, payload, match):
+    """Reported cases: concurrency 50, terminal output 1, web-secondary tokens 10."""
+    settings_store.update_settings({"other": {
+        "agent": {"max_tool_concurrency": "5", "terminal_max_output": "15000"},
+        "web_secondary": {"max_tokens": "4096"},
+    }})
+    with pytest.raises(ValueError, match=match):
+        settings_store.update_settings({"other": payload})
+    stored = _read_stored(isolated_settings)
+    assert stored["other"]["agent"]["max_tool_concurrency"] == "5"
+    assert stored["other"]["agent"]["terminal_max_output"] == "15000"
+    assert stored["other"]["web_secondary"]["max_tokens"] == "4096"
+
+
+def test_update_settings_accepts_in_range_numeric_fields(isolated_settings):
+    result = settings_store.update_settings({"other": {
+        "agent": {"max_tool_concurrency": "20", "terminal_max_output": "1000"},
+        "web_secondary": {"max_tokens": "256"},
+    }})
+    assert result["other"]["agent"]["max_tool_concurrency"] == "20"
+    assert result["other"]["agent"]["terminal_max_output"] == "1000"
+    assert result["other"]["web_secondary"]["max_tokens"] == "256"
+
+
 def test_clamp_agent_max_iterations_lifts_stored_zero():
     """A leftover 0 from before this fix must not run the agent for 0 turns."""
     assert settings_store.clamp_agent_max_iterations("0") == 5
