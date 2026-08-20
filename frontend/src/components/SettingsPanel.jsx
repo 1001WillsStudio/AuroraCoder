@@ -3,7 +3,6 @@ import { X, Plus, Trash2, Save, RefreshCw, Shield, Globe, LogOut, ExternalLink, 
 import { getSettings, updateSettings, getProviders, getToolStoreStatus, refreshToolStore, getMemories, deleteMemory } from '../services/api'
 import { isAuthRequired, isAuthenticated, logout as authLogout, clearToken } from '../utils/auth.js'
 import { encodeStoredApiKey, isUnlimitedMaxIterations, validateMaxIterations, MAX_ITERATIONS_UNLIMITED } from '../utils/settingsValidation.js'
-import { initialFocusTarget, moveFocus, trapTabKey } from '../utils/focusTrap.js'
 import useLanguage from '../hooks/useLanguage'
 import { LANG_LABELS } from '../i18n/translations'
 import '../styles/settings.css'
@@ -119,30 +118,46 @@ export default function SettingsPanel({ isOpen, onClose }) {
   }, [isOpen, memoryBrowserCollapsed])
 
   const dialogRef = useRef(null)
-  const onCloseRef = useRef(onClose)
-  onCloseRef.current = onClose
 
   // Take focus when the dialog opens (the gear otherwise keeps it) and
   // trap Tab so + New Chat / Upload behind the overlay cannot be reached.
   useEffect(() => {
     if (!isOpen) return undefined
+    const dialog = dialogRef.current
     const previouslyFocused = typeof document !== 'undefined' ? document.activeElement : null
-    const focusDialog = () => moveFocus(initialFocusTarget(dialogRef.current))
-    focusDialog()
-    const frame = requestAnimationFrame(focusDialog)
+    const tabbable = () => dialog
+      ? [...dialog.querySelectorAll(
+          'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])'
+        )]
+      : []
+    const focusFirst = () => {
+      const first = tabbable()[0]
+      ;(first || dialog)?.focus()
+    }
+    focusFirst()
+    const frame = requestAnimationFrame(focusFirst)
     const onKeyDown = (event) => {
-      if (event.key === 'Escape') {
+      if (event.key !== 'Tab' || !dialog) return
+      const list = tabbable()
+      if (!list.length) {
         event.preventDefault()
-        onCloseRef.current()
+        dialog.focus()
         return
       }
-      trapTabKey(event, dialogRef.current)
+      const firstEl = list[0]
+      const lastEl = list[list.length - 1]
+      const leaving = event.shiftKey
+        ? event.target === firstEl || !dialog.contains(event.target)
+        : event.target === lastEl || !dialog.contains(event.target)
+      if (!leaving) return
+      event.preventDefault()
+      ;(event.shiftKey ? lastEl : firstEl).focus()
     }
     document.addEventListener('keydown', onKeyDown)
     return () => {
       cancelAnimationFrame(frame)
       document.removeEventListener('keydown', onKeyDown)
-      moveFocus(previouslyFocused)
+      previouslyFocused?.focus?.()
     }
   }, [isOpen])
 
