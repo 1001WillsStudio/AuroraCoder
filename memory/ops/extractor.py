@@ -75,6 +75,11 @@ from memory.ops.judge_io import (
     call_judge, EXTRACTION_PLAN_TOOL, EXTRACTION_PLAN_SCHEMA,
 )
 from memory.ops.conversation_search import search_conversations
+from memory.ops.boilerplate import (
+    is_scaffold_echo,
+    collect_scaffold_and_genuine,
+    render_user_for_extraction,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +121,7 @@ def _transcript_to_text(messages: List[Dict[str, Any]], max_chars: int = MAX_TRA
         if role == "user":
             content = (msg.get("content") or "").strip()
             if content:
-                lines.append(f"USER: {content}")
+                lines.extend(render_user_for_extraction(content))
         elif role == "assistant":
             content = (msg.get("content") or "").strip()
             if content:
@@ -320,7 +325,10 @@ def run_extraction(conversation_id: str, messages: List[Dict[str, Any]]) -> List
     # failure case documented above.
     repo.set_extraction_checkpoint(conversation_id, len(messages))
 
-    written = _run_write_pass(conversation_id, new_messages, nomination_label="remember")
+    written = _run_write_pass(
+        conversation_id, new_messages, nomination_label="remember",
+        filter_messages=messages,
+    )
     return [w["id"] for w in written]
 
 
@@ -356,6 +364,7 @@ def _run_write_pass(
     conversation_id: str,
     messages: List[Dict[str, Any]],
     nomination_label: str = "remember",
+    filter_messages: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, str]]:
     """Shared core behind ``run_extraction`` and
     ``run_gap_investigation_extraction``: parse nominations, judge
@@ -367,7 +376,10 @@ def _run_write_pass(
     only the slice since that conversation's last extraction checkpoint —
     see that function's docstring for why — so ``MIN_MESSAGES_TO_BOTHER``
     below effectively means "this turn's own new content is trivial",
-    not "this conversation overall is short".
+    not "this conversation overall is short". ``filter_messages`` (the
+    full transcript) is what the scaffold-echo gate reads, so a later
+    turn cannot persist a task-instruction fact just because the
+    checkpoint already consumed the wrapped first message.
 
     Returns a list of ``{"id": memory_id, "source": "nominated"|"discovered"}``
     — richer than the plain id list ``run_extraction`` exposes publicly,
@@ -477,7 +489,10 @@ def _run_write_pass(
             logger.info("[memory-extract] [%s] No-op (0 candidates, %d nominated) — expected common case",
                         conversation_id[:8], len(nominated))
             return []
-        return apply_extraction_plan(candidates, conversation_id, nomination_label, repo)
+        return apply_extraction_plan(
+            candidates, conversation_id, nomination_label, repo,
+            messages=filter_messages if filter_messages is not None else messages,
+        )
 
     except Exception:
         logger.exception("[memory-extract] [%s] Extraction failed — treating as no-op", conversation_id[:8])
@@ -489,17 +504,21 @@ def apply_extraction_plan(
     conversation_id: str,
     nomination_label: str = "remember",
     repo=None,
+    messages: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, str]]:
     """Apply a parsed extraction plan (list of candidate dicts from the judge's
     ``emit_memory_plan`` call, whether the judge ran in-process via ``call_judge``
     or inside an isolated memory-maintenance worker via ``dispatch_memory_maintenance``).
 
-    Each candidate is validated, provenance-stamped, and upserted. The caller must
-    have already verified the judge returned a parseable plan — this function does
-    NOT make a second LLM call. Returns a list of ``{"id": memory_id, "source":
-    "nominated"|"discovered"}`` entries for every candidate that passed validation.
-    Never raises: bad candidates are skipped with a warning."""
+    Each candidate is validated, provenance-stamped, and upserted. When
+    ``messages`` is provided, task-instruction / handoff echoes the user
+    never restated are dropped. The caller must have already verified the
+    judge returned a parseable plan — this function does NOT make a second
+    LLM call. Returns a list of ``{"id": memory_id, "source":
+    "nominated"|"discovered"}`` entries for every candidate that passed
+    validation. Never raises: bad candidates are skipped with a warning."""
     repo = repo or get_repository()
+    scaffold, genuine = collect_scaffold_and_genuine(messages or [])
     written: List[Dict[str, str]] = []
     for cand in candidates:
         if not isinstance(cand, dict):
@@ -511,6 +530,13 @@ def apply_extraction_plan(
             continue
         if mtype not in MEMORY_TYPES:
             logger.warning("[memory-extract] [%s] Skipping candidate with invalid type %r", conversation_id[:8], mtype)
+            continue
+        echo_hay = f"{cand.get('description', '')} {cand.get('content', '')}"
+        if scaffold and is_scaffold_echo(echo_hay, scaffold, genuine):
+            logger.info(
+                "[memory-extract] [%s] Skipping scaffold-echo candidate %r",
+                conversation_id[:8], cand.get("description"),
+            )
             continue
 
         source = cand.get("source", "discovered")

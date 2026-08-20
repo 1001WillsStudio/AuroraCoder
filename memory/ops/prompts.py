@@ -86,6 +86,13 @@ categories:
   Stance that later turns out to be genuine will surface again and corroborate the world entry,
   at which point the agent (or consolidation) can lift it. This is exactly why the other-conversation
   snippets are shown to you — use them to require repeat, independent occurrence before stance.
+- Contents of a [TASK INSTRUCTION] block. That wrapper is session-scoped scaffolding the product
+  already re-injects on new chats (often marked "ignore if irrelevant"). It is NOT a user-stated
+  standing preference. Do not save language, git, docker, or other rules that appear only there.
+- Rules restated in a [Continued from previous agent session] handoff (or a HANDOFF: line). Those
+  are agent-authored one-shot context for the next session, not user standing rules. If a later
+  genuine USER line contradicts a handoff rule (e.g. the user asks to push after the handoff said
+  never push), the later user line wins — do not save the contradicted rule.
 
 ## The no-op default
 Silence is CORRECT and PREFERRED. Most sessions produce nothing — this applies just as much when

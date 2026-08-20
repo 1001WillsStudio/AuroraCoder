@@ -74,6 +74,7 @@ from memory.retrieval import rank_candidates
 from memory.gap_store import get_gap_ledger, GAP_PRIORITIES, GAP_STRATEGIES
 from memory.ops.dispatcher import dispatch_gap_investigation, dispatch_memory_maintenance
 from memory.ops.conversation_search import search_conversations
+from memory.ops.boilerplate import ensure_scaffold_echoes_purged
 
 # Import app after stream deps are resolved — app already exists in api.py's
 # namespace by the time api.py does ``from gateway import routes``.
@@ -565,6 +566,7 @@ async def get_memory_stance(scope: Optional[str] = None):
         return {"stance": ""}
     try:
         repo = get_memory_repository()
+        ensure_scaffold_echoes_purged(repo)
         return {"stance": build_stance_block(repo, scope=scope)}
     except Exception:
         logger.exception("[memory] Stance assembly failed — failing open")
@@ -627,6 +629,7 @@ async def recall_memory(query: str = "", plane: str = "world", scope: Optional[s
         raise HTTPException(status_code=400, detail=f"invalid plane: {plane}")
 
     repo = get_memory_repository()
+    ensure_scaffold_echoes_purged(repo)
     results = rank_candidates(repo, query=query, plane=plane, scope=scope, k=max(1, min(k, 20)))
     if results:
         repo.bump_usage([r["id"] for r in results])
@@ -643,6 +646,7 @@ async def list_memory(plane: Optional[str] = None, scope: Optional[str] = None, 
     (e.g. before deciding whether to clear it out or re-enable).
     """
     repo = get_memory_repository()
+    ensure_scaffold_echoes_purged(repo)
     items = repo.all_items(plane=plane, scope=scope)
     items.sort(key=lambda it: it.created, reverse=True)
     return {"memories": [it.to_dict() for it in items[:limit]]}
