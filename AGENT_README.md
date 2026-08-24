@@ -28,6 +28,7 @@ gateway/         ← Middleware between frontend and backend (the "dirty work")
     settings_store.py         ← Provider & model settings persistence
     provider_registry.py      ← Dynamic provider registration and listing
     workspace.py              ← File diff, tree, upload/delete/export utilities
+    paths.py                  ← Shared workspace path containment (is_relative_to)
 
 frontend/                     ← UI + conversation ownership
     App.jsx                   ← React SPA, owns conversation state; URL /c/{id} restores the open chat
@@ -128,7 +129,8 @@ Aurora Coder/
 │   ├── conversation_store.py   ← File-backed store (thread-safe, atomic writes)
 │   ├── settings_store.py       ← Provider/model settings persistence
 │   ├── provider_registry.py    ← Dynamic provider registration
-│   └── workspace.py            ← File diff, tree, upload/delete/export
+│   ├── workspace.py            ← File diff, tree, upload/delete/export
+│   └── paths.py                ← Shared workspace path containment
 ├── frontend/                   ← React + Vite web UI
 │   ├── src/
 │   │   ├── App.jsx             ← Main app; conversation URL /c/{id} for reload/Back
@@ -467,6 +469,7 @@ generate_chat_responses_stream_native(
 - `settings_store.py` — Provider and model settings persistence
 - `provider_registry.py` — Dynamic provider discovery and listing
 - `workspace.py` — File snapshots, diffs, tree building, upload/delete/export
+- `paths.py` — Shared ``resolve_under_workspace`` for HTTP file APIs and attachments
 
 ---
 
@@ -540,6 +543,7 @@ Key implementation files:
 - `gateway/routes.py` — all route handlers proxying to the backend
 - `gateway/streaming.py` — SSE stream lifecycle management
 - `gateway/workspace.py` — file snapshots, diffs, tree building, workspace upload/delete/export
+- `gateway/paths.py` — shared workspace path containment (``is_relative_to``)
 - `src/config.py` — `DATA_DIR` / `TRAINING_DATA_DIR` path resolution
 
 ---
