@@ -506,6 +506,8 @@ All conversations and training data survive container restarts via Docker volume
 
 Override the data path with the `AURORACODER_DATA_DIR` env var.
 
+Open **All History** to search or delete a chat. Deleting a conversation also removes its subagent children.
+
 ---
 
 ## 👥 Development

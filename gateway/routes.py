@@ -68,6 +68,7 @@ from gateway.streaming import (
     _proxy_backend_stream,
     _subscriber_sse,
     _format_sse,
+    _snapshotted_tool_calls,
 )
 from memory.settings import memory_enabled, heavy_ops_enabled
 from memory.store import get_repository as get_memory_repository
@@ -901,12 +902,26 @@ async def get_conversation_children(conversation_id: str):
 
 @app.delete("/api/conversations/{conversation_id}")
 async def delete_conversation(conversation_id: str):
-    """Delete a conversation and its stored messages."""
+    """Delete a conversation, its descendants, and in-memory snapshots.
+
+    Cancels any live stream first so the agent stops, then removes the
+    stored transcripts. Parent delete cascades to subagent children so
+    history cannot keep orphaned rows whose parent is gone.
+    """
     try:
-        store.delete_conversation(conversation_id)
+        subtree = store.ids_in_subtree(conversation_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    return {"deleted": conversation_id}
+    for cid in subtree:
+        await _cancel_active_stream(cid)
+    try:
+        deleted_ids = store.delete_conversation(conversation_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    for cid in deleted_ids:
+        clear_conversation_snapshots(cid)
+        _snapshotted_tool_calls.pop(cid, None)
+    return {"deleted": deleted_ids[0], "deleted_ids": deleted_ids}
 
 
 # ============================================================================

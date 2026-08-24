@@ -141,6 +141,35 @@ const App = (() => {
     }
   }
 
+  function _childCount(cid) {
+    return conversations.filter(c => c.parent_id === cid).length;
+  }
+
+  async function _deleteConversation(cid, event) {
+    if (event) event.stopPropagation();
+    const conv = conversations.find(c => c.id === cid);
+    const title = (conv && (conv.frontend_title || conv.title)) || 'Untitled';
+    const n = _childCount(cid);
+    const msg = n > 0
+      ? `Delete “${title}” and ${n} subagent chat(s)? This cannot be undone.`
+      : `Delete “${title}”? This cannot be undone.`;
+    if (!window.confirm(msg)) return;
+    try {
+      await API.deleteConversation(cid);
+      const openId = Chat.getConversationId();
+      const deletedOpen = openId === cid
+        || conversations.some(c => c.parent_id === cid && c.id === openId);
+      if (deletedOpen) {
+        if (Chat.isStreaming()) Chat.stopGeneration();
+        Chat.newChat();
+        activeConversationId = null;
+      }
+      await _loadConversations();
+    } catch (err) {
+      _showToast(err.message || 'Failed to delete conversation', true);
+    }
+  }
+
   function _renderConversationList() {
     if (conversations.length === 0) {
       conversationList.innerHTML = '<div class="conversation-list-empty">No conversations yet</div>';
@@ -159,14 +188,20 @@ const App = (() => {
       const date = conv.updated_at ? new Date(conv.updated_at).toLocaleDateString() : '';
 
       item.innerHTML = `
-        <span class="conversation-item-title">${_escapeHtml(title)}</span>
-        <span class="conversation-item-meta">
-          <span>${date}</span>
-          <span class="conversation-item-status ${conv.status || ''}">${conv.status || ''}</span>
-        </span>
+        <div class="conversation-item-body">
+          <span class="conversation-item-title">${_escapeHtml(title)}</span>
+          <span class="conversation-item-meta">
+            <span>${date}</span>
+            <span class="conversation-item-status ${conv.status || ''}">${conv.status || ''}</span>
+          </span>
+        </div>
+        <button type="button" class="conversation-item-delete" aria-label="Delete conversation">×</button>
       `;
 
       item.addEventListener('click', () => _selectConversation(conv.id));
+      item.querySelector('.conversation-item-delete').addEventListener('click', (event) => {
+        _deleteConversation(conv.id, event);
+      });
       conversationList.appendChild(item);
     }
   }

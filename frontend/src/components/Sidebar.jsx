@@ -26,6 +26,7 @@ export default function Sidebar({
   onAddToChat,
   conversationId,
   onLoadConversation,
+  onDeleteConversation,
   historyRefreshTrigger,
   historyCloseTrigger,
   onDrawerToggle,
@@ -121,6 +122,7 @@ export default function Sidebar({
         <ConversationHistory
           currentConversationId={conversationId}
           onSelect={onLoadConversation}
+          onDelete={onDeleteConversation}
           refreshTrigger={historyRefreshTrigger}
           closeTrigger={historyCloseTrigger}
           onDrawerToggle={onDrawerToggle}

@@ -803,8 +803,16 @@ body {
   cursor: pointer;
   transition: background 0.15s;
   display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.conversation-item-body {
+  display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
+  flex: 1;
 }
 .conversation-item:active {
   background: var(--bg-hover);
@@ -847,6 +855,23 @@ body {
 .conversation-item-status.interrupted {
   background: rgba(210,153,34,0.15);
   color: var(--warning);
+}
+
+.conversation-item-delete {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.conversation-item-delete:active {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--error, #ef4444);
 }
 
 /* ── Drawer Actions ────────────────────────────────────────────────────── */

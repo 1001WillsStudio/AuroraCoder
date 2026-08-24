@@ -465,7 +465,7 @@ generate_chat_responses_stream_native(
 - `api.py` — FastAPI app factory with CORS middleware
 - `routes.py` — All route handlers: chat, continue, conversations, files, settings, health
 - `streaming.py` — SSE stream registration, event queue management, keepalive, cancellation
-- `conversation_store.py` — File-backed store with thread-safe atomic writes and index management
+- `conversation_store.py` — File-backed store with thread-safe atomic writes; delete cascades to subagent children
 - `settings_store.py` — Provider and model settings persistence
 - `provider_registry.py` — Dynamic provider discovery and listing
 - `workspace.py` — File snapshots, diffs, tree building, upload/delete/export
@@ -538,8 +538,13 @@ so Reload reopens that chat and Back/Forward move between chats. New Chat
 returns to `/`. The production static server serves the SPA at `/c/{id}`
 (see `frontend/src/utils/conversationUrl.js` and `frontend/server.py`).
 
+Delete lives on the History drawer (and the mobile conversation list).
+``DELETE /api/conversations/{id}`` cancels any live stream for that id and
+its descendants, then removes the records so a parent delete cannot leave
+orphaned subagent transcripts.
+
 Key implementation files:
-- `gateway/conversation_store.py` — file-backed store (thread-safe, atomic writes)
+- `gateway/conversation_store.py` — file-backed store (thread-safe, atomic writes; subtree delete)
 - `gateway/routes.py` — all route handlers proxying to the backend
 - `gateway/streaming.py` — SSE stream lifecycle management
 - `gateway/workspace.py` — file snapshots, diffs, tree building, workspace upload/delete/export
@@ -597,6 +602,7 @@ Frontend dependencies:
 | Understand shell execution | `code_sandbox/sandbox.py` → `PersistentShell.run()` |
 | Understand SSE streaming | `gateway/streaming.py` |
 | Understand conversation persistence | `gateway/conversation_store.py` |
+| Delete a conversation from history | History drawer / current session trash control; `DELETE /api/conversations/{id}` cascades to subagent children |
 
 ---
 
@@ -609,6 +615,7 @@ Test files in `tests/`:
 - `test_streaming_race.py` — SSE streaming race condition tests
 - `test_mergePanelFiles.mjs` — Frontend panel merging tests
 - `test_fork_conversation_uuid.py` — Fork button UUID helper (insecure-context fallback)
+- `test_delete_conversation.py` — History delete cascades to subagent children; UI confirm wiring
 - `test_mobile_routes.py` — Settings `/m` link serves the other frontend page
 
 ---

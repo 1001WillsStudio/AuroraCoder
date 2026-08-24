@@ -215,6 +215,20 @@
   color: var(--text-tertiary);
 }
 
+.current-session-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.current-session-row .current-session-main,
+.current-session-row .current-session-child {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
 .current-session-main {
   display: block;
   width: 100%;
@@ -474,12 +488,26 @@
   text-align: center;
 }
 
+.history-drawer-item-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  border-radius: var(--radius-sm);
+}
+
+.history-drawer-item-row:hover,
+.history-drawer-item-row.current {
+  background: var(--bg-tertiary);
+}
+
 .history-drawer-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
-  padding: 10px 12px;
+  flex: 1;
+  min-width: 0;
+  padding: 10px 8px 10px 12px;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -487,16 +515,14 @@
   font-size: 0.8125rem;
   text-align: left;
   cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast);
+  transition: color var(--transition-fast);
 }
 
 .history-drawer-item:hover {
-  background: var(--bg-tertiary);
   color: var(--text-primary);
 }
 
 .history-drawer-item.current {
-  background: var(--bg-tertiary);
   color: var(--text-primary);
   font-weight: 500;
 }
@@ -505,6 +531,34 @@
   padding-left: 28px;
   font-size: 0.75rem;
   opacity: 0.85;
+}
+
+.history-delete-btn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-right: 4px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.history-delete-btn:hover,
+.history-delete-btn:focus-visible {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--error);
+}
+
+.history-delete-error {
+  color: var(--error);
+  font-size: 0.8125rem;
+  margin: 0 0 12px !important;
 }
 
 .history-drawer-item-body {
