@@ -58,6 +58,7 @@ from gateway.workspace import (
     search_workspace_files,
 )
 from gateway.attached_files import apply_request_attachments, AttachedFilesError
+from gateway.paths import WorkspacePathError, resolve_under_workspace
 from gateway.streaming import (
     ActiveStream,
     active_streams,
@@ -144,6 +145,24 @@ def _get_workspace() -> Optional[Path]:
         p.mkdir(parents=True, exist_ok=True)
         return p
     return None
+
+
+def _require_workspace_path(work_dir: Path, path: str) -> Path:
+    """Resolve a user-supplied path inside *work_dir*, or raise HTTPException.
+
+    Maps containment failure to 403 and unresolvable input to 400. Callers
+    must not wrap this in ``except Exception`` — that would swallow the 403
+    the same way the old copied ``startswith`` blocks did.
+    """
+    try:
+        return resolve_under_workspace(work_dir, path)
+    except WorkspacePathError as exc:
+        if exc.outside:
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied: path outside working directory",
+            ) from exc
+        raise HTTPException(status_code=400, detail="Invalid path") from exc
 
 
 # ============================================================================
@@ -928,14 +947,7 @@ async def get_file_tree(max_depth: int = 5, path: str = ""):
         return {"tree": [], "root": None, "error": "No active session"}
 
     if path:
-        try:
-            target = (work_dir / path).resolve()
-            if not str(target).startswith(str(work_dir.resolve())):
-                raise HTTPException(status_code=403, detail="Access denied: path outside working directory")
-        except HTTPException:
-            raise
-        except Exception:
-            raise HTTPException(status_code=400, detail="Invalid path")
+        target = _require_workspace_path(work_dir, path)
         if not target.exists() or not target.is_dir():
             raise HTTPException(status_code=404, detail="Folder not found")
         return {
@@ -966,12 +978,7 @@ async def read_file_content(file_path: str):
     if not work_dir or not work_dir.exists():
         raise HTTPException(status_code=400, detail="No active session")
 
-    try:
-        full_path = (work_dir / file_path).resolve()
-        if not str(full_path).startswith(str(work_dir.resolve())):
-            raise HTTPException(status_code=403, detail="Access denied: path outside working directory")
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid path")
+    full_path = _require_workspace_path(work_dir, file_path)
 
     if not full_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
@@ -1039,12 +1046,7 @@ async def delete_workspace_item(req: DeleteRequest):
     if not work_dir or not work_dir.exists():
         raise HTTPException(status_code=400, detail="No active session")
 
-    try:
-        full_path = (work_dir / req.path).resolve()
-        if not str(full_path).startswith(str(work_dir.resolve())):
-            raise HTTPException(status_code=403, detail="Access denied: path outside working directory")
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid path")
+    full_path = _require_workspace_path(work_dir, req.path)
 
     if not full_path.exists():
         raise HTTPException(status_code=404, detail="Path not found")
@@ -1067,12 +1069,7 @@ async def download_workspace_file(file_path: str):
     if not work_dir or not work_dir.exists():
         raise HTTPException(status_code=400, detail="No active session")
 
-    try:
-        full_path = (work_dir / file_path).resolve()
-        if not str(full_path).startswith(str(work_dir.resolve())):
-            raise HTTPException(status_code=403, detail="Access denied: path outside working directory")
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid path")
+    full_path = _require_workspace_path(work_dir, file_path)
 
     if not full_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
@@ -1089,12 +1086,7 @@ async def export_workspace_folder(folder_path: str):
     if not work_dir or not work_dir.exists():
         raise HTTPException(status_code=400, detail="No active session")
 
-    try:
-        full_path = (work_dir / folder_path).resolve()
-        if not str(full_path).startswith(str(work_dir.resolve())):
-            raise HTTPException(status_code=403, detail="Access denied: path outside working directory")
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid path")
+    full_path = _require_workspace_path(work_dir, folder_path)
 
     if not full_path.exists() or not full_path.is_dir():
         raise HTTPException(status_code=404, detail="Folder not found")

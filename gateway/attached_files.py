@@ -13,6 +13,8 @@ import re
 from pathlib import Path
 from typing import Any, Iterable, List, Optional, Sequence
 
+from gateway.paths import WorkspacePathError, resolve_under_workspace
+
 ATTACHED_FILES_START = "[ATTACHED FILES]"
 ATTACHED_FILES_END = "[/ATTACHED FILES]"
 ATTACHED_FILES_INSTRUCTION = (
@@ -201,20 +203,14 @@ def _paths_from_inner(inner: str) -> List[str]:
 
 def _safe_workspace_file(path: str, root: Path) -> Optional[str]:
     """Return a POSIX-relative path if *path* is a file inside *root*."""
-    if path.startswith("/") or re.match(r"^[A-Za-z]:[\\/]", path):
-        # Absolute inputs are only accepted when they already live under root.
-        candidate = Path(path)
-    else:
-        candidate = root / path
     try:
-        resolved = candidate.resolve()
-        if not resolved.is_relative_to(root):
-            return None
-        if not resolved.is_file():
-            return None
-        rel = resolved.relative_to(root).as_posix()
-    except (OSError, ValueError):
+        resolved = resolve_under_workspace(root, path)
+    except WorkspacePathError:
         return None
-    if not rel or rel.startswith(".."):
+    if not resolved.is_file():
         return None
-    return rel
+    try:
+        rel = resolved.relative_to(Path(root).resolve()).as_posix()
+    except ValueError:
+        return None
+    return rel or None

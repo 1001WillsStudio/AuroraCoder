@@ -75,9 +75,9 @@ Legend: ✅ done · 🟡 next · ⬜ later.
 | `gateway.streaming` | 🟡 | expand existing race/abort tests via injected provider |
 | `gateway` error-turn persist | ✅ | `tests/test_error_turn_persist.py` — failed turn stored as `isError`/`canRetry`; retry keeps the transcript and does not append a user message |
 | Try Again after provider 500 | ✅ | `tests/test_try_again_same_conversation.py` — Try Again is its own path (not `handleSend`); first send still omits `conversation_id`; the UI keeps `X-Conversation-ID` so retry stays on one history item with one user line |
-| `gateway.routes` / `api` | ⬜ | `TestClient` per endpoint, **auth** via `ACCESS_PASSWORD` |
+| `gateway.routes` / `api` | 🟡 | File read/tree/delete/download/export share ``_require_workspace_path`` (403 on escape, not swallowed 400). Remaining: TestClient per other endpoint, **auth** via `ACCESS_PASSWORD` |
 | `gateway.provider_registry` | ⬜ | lookup, model metadata, live-list fetch mocked |
-| `gateway.workspace` | ⬜ | git push behind `GITHUB_TOKEN` (mock; skip when absent) |
+| `gateway.workspace` / `gateway.paths` | ✅ | ``resolve_under_workspace`` rejects prefix-sibling and symlink escape (`tests/test_workspace_paths.py`); git push behind `GITHUB_TOKEN` still ⬜ |
 | `src.web_api.app` | 🟡 | app wiring still ⬜ |
 | `src.main_flow` / `core_tools.subagent` | ⬜ | inject `FakeLLMClient` + fake tool_executor |
 
@@ -111,6 +111,7 @@ helpers. `tests/test_settings_max_iterations.py` locks the store:
 | `tests/test_double_click_send.py` | ✅ | Double-click Send / double Enter must not abort `/api/chat` or open a second History item. Helpers in `frontend/src/utils/composerGuard.js` run via Node; source scan locks `handleSend` claiming the send lock before `getActiveStreams`, and ChatInput ignoring `click.detail > 1` on Send and Stop. |
 | `tests/test_settings_modal_focus.py` | ✅ | Settings overlay must be `role=dialog` `aria-modal=true`, move focus in from the gear, and trap Tab so + New Chat / Upload behind the dim cannot be reached. Source scan locks the dialog effect in SettingsPanel (no shared focusTrap helper). |
 | `tests/test_tool_activity_display.py` | ✅ | Tool-activity cards strip `CODE_INTERPRETER` (and other panel) markup and mark an `Error:` result as `failed`, not green `complete`. Node helpers in `toolActivityDisplay.js`; source scan of ToolActivity.jsx. |
+| `tests/test_workspace_paths.py` | ✅ | Shared workspace containment. Prefix-sibling ``ws-leaked`` next to ``ws`` must 403 on read/tree/delete/download/export (not 400, not leak). Attachments drop the same path. Locks the explorer finding that five HTTP file endpoints copied ``str.startswith`` and ``except Exception`` swallowed the 403. |
 
 Stable `data-testid` hooks on the desktop SPA (`chat-input`, `chat-send`,
 `chat-message`, …) are locked by `tests/test_frontend_testids.py` (source scan;
