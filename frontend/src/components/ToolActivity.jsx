@@ -1,11 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { 
   Search, Globe, FileText, FilePlus, FileEdit, Trash2, 
-  FolderOpen, Terminal, Package, CheckCircle, Loader2,
+  FolderOpen, Terminal, Package, CheckCircle, Loader2, XCircle,
   ChevronDown, ChevronRight, Eye, StopCircle,
   BookmarkPlus, BookmarkX, Brain, HelpCircle, ClipboardCheck
 } from 'lucide-react'
 import useLanguage from '../hooks/useLanguage'
+import {
+  stripPanelMarkup,
+  toolActivityFinishClass,
+} from '../utils/toolActivityDisplay'
 
 /**
  * User-friendly tool activity display
@@ -48,6 +52,11 @@ function ToolActivityItem({ toolCall, result, onStop, onLoadConversation, childC
   const startTimeRef = useRef(Date.now())
   const isComplete = !!result
   const isTerminated = result?.isTerminated
+  const displayResult = result
+    ? { ...result, content: stripPanelMarkup(result.content) }
+    : result
+  const finishClass = toolActivityFinishClass(result)
+  const isFailed = finishClass === 'failed'
   
   // Track elapsed time for running tools
   useEffect(() => {
@@ -74,7 +83,7 @@ function ToolActivityItem({ toolCall, result, onStop, onLoadConversation, childC
     args = {}
   }
 
-  const config = getToolConfig(toolCall.name, args, result, t)
+  const config = getToolConfig(toolCall.name, args, displayResult, t)
   
   const formatElapsed = (seconds) => {
     if (seconds < 60) return `${seconds}s`
@@ -98,7 +107,7 @@ function ToolActivityItem({ toolCall, result, onStop, onLoadConversation, childC
   const isClickable = (config.isSubagent && childConversationId) || config.hasExpandedView
 
   return (
-    <div className={`tool-activity-item ${isComplete ? (isTerminated ? 'terminated' : 'complete') : 'running'}`}>
+    <div className={`tool-activity-item ${isComplete ? (finishClass || 'complete') : 'running'}`}>
       <div
         className={`tool-activity-header${isClickable ? ' clickable' : ''}${(config.isSubagent && childConversationId) ? ' clickable-subagent' : ''}`}
         onClick={isClickable ? handleHeaderClick : undefined}
@@ -127,6 +136,8 @@ function ToolActivityItem({ toolCall, result, onStop, onLoadConversation, childC
           {isComplete ? (
             isTerminated ? (
               <StopCircle size={16} className="status-terminated" />
+            ) : isFailed ? (
+              <XCircle size={16} className="status-failed" />
             ) : (
               <CheckCircle size={16} className="status-complete" />
             )

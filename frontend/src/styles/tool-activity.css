@@ -25,6 +25,19 @@
   opacity: 0.85;
 }
 
+.tool-activity-item.failed {
+  opacity: 0.9;
+  border-color: rgba(239, 68, 68, 0.35);
+}
+
+.tool-activity-item.failed .tool-activity-header {
+  background: rgba(239, 68, 68, 0.05);
+}
+
+.status-failed {
+  color: var(--error);
+}
+
 .tool-activity-header {
   display: flex;
   align-items: center;
