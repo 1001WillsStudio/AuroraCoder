@@ -23,6 +23,7 @@ HISTORY = ROOT / "frontend" / "src" / "components" / "ConversationHistory.jsx"
 API_JS = ROOT / "frontend" / "src" / "services" / "api.js"
 MOBILE_APP = ROOT / "mobile" / "js" / "app.js"
 MOBILE_API = ROOT / "mobile" / "js" / "api.js"
+MOBILE_HELPER = ROOT / "mobile" / "js" / "conversationDelete.js"
 ROUTES = ROOT / "gateway" / "routes.py"
 
 
@@ -47,6 +48,22 @@ def _eval_js(expr: str):
     )
     if proc.returncode != 0:
         raise AssertionError(proc.stderr or proc.stdout or "node helper failed")
+    return json.loads(proc.stdout)
+
+
+def _eval_mobile(expr: str):
+    """Execute the mobile IIFE helper in Node (classic script, not ESM)."""
+    helper = MOBILE_HELPER.read_text(encoding="utf-8")
+    script = helper + f"\nconsole.log(JSON.stringify({expr}))\n"
+    proc = subprocess.run(
+        ["node", "-e", script],
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise AssertionError(proc.stderr or proc.stdout or "node mobile helper failed")
     return json.loads(proc.stdout)
 
 
@@ -191,6 +208,66 @@ def test_deleted_ids_from_response_shapes():
     assert _eval_js("deletedIdsFromResponse({}, 'z')") == ["z"]
 
 
+NESTED = [
+    {"id": "p", "parent_id": None, "title": "P"},
+    {"id": "c", "parent_id": "p", "title": "C"},
+    {"id": "g", "parent_id": "c", "title": "G"},
+]
+
+
+@pytest.mark.unit
+def test_mobile_nested_delete_counts_grandchildren_and_leaves_open_g():
+    """P→C→G: confirm must count both descendants; open G must not stay on screen."""
+    convs = json.dumps(NESTED)
+    server = json.dumps({"deleted": "p", "deleted_ids": ["p", "c", "g"]})
+    # Direct-children-only would be 1 (C). Transitive is C and G.
+    plan = _eval_mobile(
+        f"ConversationDelete.planAfterDelete('g', {convs}, {server}, 'p')"
+    )
+    assert plan["descendantCount"] == 2
+    assert set(plan["deletedIds"]) == {"p", "c", "g"}
+    assert plan["action"] == "new"
+    assert plan["next"] is None
+    msg = _eval_mobile(
+        "ConversationDelete.deleteConfirmMessage('P', "
+        f"ConversationDelete.childCountForDelete({convs}, 'p'))"
+    )
+    assert "2 subagent chat(s)" in msg
+    assert "1 subagent" not in msg
+    # Deleting C while C is open: parent P survives.
+    child_plan = _eval_mobile(
+        f"ConversationDelete.planAfterDelete('c', {convs}, "
+        f"{json.dumps({'deleted': 'c', 'deleted_ids': ['c', 'g']})}, 'c')"
+    )
+    assert child_plan["action"] == "parent"
+    assert child_plan["next"] == "p"
+    # Unrelated delete leaves G in place.
+    stay = _eval_mobile(
+        f"ConversationDelete.planAfterDelete('g', {convs}, "
+        f"{json.dumps({'deleted': 'other', 'deleted_ids': ['other']})}, 'other')"
+    )
+    assert stay["action"] == "stay"
+    assert stay["next"] == "g"
+    # Body without deleted_ids still walks P→C→G locally so G is treated as gone.
+    fallback = _eval_mobile(
+        f"ConversationDelete.planAfterDelete('g', {convs}, "
+        '{"deleted":"p"}, "p")'
+    )
+    assert fallback["action"] == "new"
+    assert set(fallback["deletedIds"]) == {"p", "c", "g"}
+
+
+@pytest.mark.unit
+def test_mobile_app_uses_helper_not_direct_children():
+    app = MOBILE_APP.read_text(encoding="utf-8")
+    index = (ROOT / "mobile" / "index.html").read_text(encoding="utf-8")
+    assert "js/conversationDelete.js" in index
+    assert "ConversationDelete.childCountForDelete" in app
+    assert "ConversationDelete.planAfterDelete" in app
+    assert "function _childCount" not in app
+    assert "c.parent_id === cid && c.id === openId" not in app
+
+
 @pytest.mark.unit
 def test_ui_wires_delete_through_history_and_api():
     app = APP.read_text(encoding="utf-8")
@@ -212,6 +289,7 @@ def test_ui_wires_delete_through_history_and_api():
     assert "store.delete_conversation" in routes
     assert "API.deleteConversation" in mobile_app
     assert "conversation-item-delete" in mobile_app
+    assert "ConversationDelete.planAfterDelete" in mobile_app
     assert "method: 'DELETE'" in mobile_api
     translations = (ROOT / "frontend" / "src" / "i18n" / "translations.js").read_text(
         encoding="utf-8"

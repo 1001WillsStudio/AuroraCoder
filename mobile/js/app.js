@@ -141,28 +141,26 @@ const App = (() => {
     }
   }
 
-  function _childCount(cid) {
-    return conversations.filter(c => c.parent_id === cid).length;
-  }
-
   async function _deleteConversation(cid, event) {
     if (event) event.stopPropagation();
     const conv = conversations.find(c => c.id === cid);
     const title = (conv && (conv.frontend_title || conv.title)) || 'Untitled';
-    const n = _childCount(cid);
-    const msg = n > 0
-      ? `Delete “${title}” and ${n} subagent chat(s)? This cannot be undone.`
-      : `Delete “${title}”? This cannot be undone.`;
+    const n = ConversationDelete.childCountForDelete(conversations, cid);
+    const msg = ConversationDelete.deleteConfirmMessage(title, n);
     if (!window.confirm(msg)) return;
     try {
-      await API.deleteConversation(cid);
+      const result = await API.deleteConversation(cid);
       const openId = Chat.getConversationId();
-      const deletedOpen = openId === cid
-        || conversations.some(c => c.parent_id === cid && c.id === openId);
-      if (deletedOpen) {
+      const plan = ConversationDelete.planAfterDelete(openId, conversations, result, cid);
+      if (plan.action !== 'stay') {
         if (Chat.isStreaming()) Chat.stopGeneration();
-        Chat.newChat();
-        activeConversationId = null;
+        if (plan.action === 'parent' && plan.next) {
+          await Chat.loadConversation(plan.next);
+          activeConversationId = plan.next;
+        } else {
+          Chat.newChat();
+          activeConversationId = null;
+        }
       }
       await _loadConversations();
     } catch (err) {
