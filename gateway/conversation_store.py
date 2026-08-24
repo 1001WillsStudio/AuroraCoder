@@ -437,6 +437,7 @@ class ConversationStore:
             self._save_index()
 
         _atomic_write_json(self._messages_path(conversation_id), messages)
+        self._unlink_if_missing_from_index(conversation_id)
         logger.info(
             f"[store] Saved {len(messages)} messages for {conversation_id[:8]}..."
         )
@@ -535,6 +536,21 @@ class ConversationStore:
                 stack.append(child)
         return ordered
 
+    def _unlink_if_missing_from_index(self, conversation_id: str) -> None:
+        """Drop files written after DELETE won the race against a late persist."""
+        with self._lock:
+            if conversation_id in self._index:
+                return
+        for path in (
+            self._messages_path(conversation_id),
+            self._frontend_messages_path(conversation_id),
+        ):
+            try:
+                if path.exists():
+                    path.unlink()
+            except OSError:
+                pass
+
     def save_frontend_messages(self, conversation_id: str, messages: List[Dict]) -> None:
         """Save frontend-formatted messages to a separate file.
 
@@ -570,6 +586,7 @@ class ConversationStore:
                 self._save_index()
 
         _atomic_write_json(self._frontend_messages_path(conversation_id), messages)
+        self._unlink_if_missing_from_index(conversation_id)
 
     def seed_frontend_user_message(self, conversation_id: str, raw_content: str) -> None:
         """Persist a user bubble before the first SSE event.

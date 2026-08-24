@@ -108,6 +108,20 @@ def test_late_frontend_persist_does_not_resurrect(tmp_path):
 
 
 @pytest.mark.unit
+def test_unlink_drops_files_written_after_delete_won_the_race(tmp_path):
+    store = ConversationStore(tmp_path / "conversations")
+    parent, _child = _plant(store)
+    store.delete_conversation(parent)
+    path = store._messages_path(parent)
+    path.write_text("[]", encoding="utf-8")
+    store._unlink_if_missing_from_index(parent)
+    assert not path.exists()
+    leftover = store.create_conversation()
+    store._unlink_if_missing_from_index(leftover)
+    assert leftover in {c["id"] for c in store.list_conversations()}
+
+
+@pytest.mark.unit
 def test_delete_route_cancels_subtree_and_clears_snapshots(tmp_path, monkeypatch):
     isolated = ConversationStore(tmp_path / "conversations")
     parent, child = _plant(isolated)
