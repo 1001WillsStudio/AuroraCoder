@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { X, Plus, Trash2, Save, RefreshCw, Shield, Globe, LogOut, ExternalLink, Wrench, ChevronDown, ChevronRight, Search } from 'lucide-react'
 import { getSettings, updateSettings, getProviders, getToolStoreStatus, refreshToolStore, getMemories, deleteMemory } from '../services/api'
 import { isAuthRequired, isAuthenticated, logout as authLogout, clearToken } from '../utils/auth.js'
-import { encodeStoredApiKey, isUnlimitedMaxIterations, validateMaxIterations, MAX_ITERATIONS_UNLIMITED } from '../utils/settingsValidation.js'
+import { encodeStoredApiKey, isUnlimitedMaxIterations, validateMaxIterations, validateSettingsIntRanges, MAX_ITERATIONS_UNLIMITED } from '../utils/settingsValidation.js'
 import useLanguage from '../hooks/useLanguage'
 import { LANG_LABELS } from '../i18n/translations'
 import '../styles/settings.css'
@@ -280,11 +280,13 @@ export default function SettingsPanel({ isOpen, onClose }) {
   // and stays unused. encodeStoredApiKey keeps an already-stored secret
   // when the box is empty (the real key is never sent back to the browser).
   // HTML min/max on number inputs are not checked by this button (no form
-  // submit), so Max Iterations Per Turn is validated here before PUT.
+  // submit), so advertised ranges are validated here before PUT.
   const handleSave = async () => {
-    const iterErr = validateMaxIterations(settings?.other?.agent?.max_iterations)
-    if (iterErr) {
-      setMessage({ type: 'error', text: t(iterErr) })
+    const rangeErr =
+      validateMaxIterations(settings?.other?.agent?.max_iterations) ||
+      validateSettingsIntRanges(settings)
+    if (rangeErr) {
+      setMessage({ type: 'error', text: t(rangeErr) })
       return
     }
     setSaving(true); setMessage(null)

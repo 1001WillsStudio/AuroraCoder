@@ -44,3 +44,28 @@ export function validateMaxIterations(value) {
   }
   return null
 }
+
+/**
+ * Other Settings number fields with the same Save-button gap as max iterations.
+ * Empty / omitted is valid — the server default is used.
+ */
+export const SETTINGS_INT_RANGES = [
+  { path: ['other', 'agent', 'max_tool_concurrency'], min: 1, max: 20, errorKey: 'msg.maxToolConcurrencyRange' },
+  { path: ['other', 'agent', 'terminal_max_output'], min: 1000, max: 100000, errorKey: 'msg.terminalMaxOutputRange' },
+  { path: ['other', 'web_secondary', 'max_tokens'], min: 256, max: 32768, errorKey: 'msg.webSecondaryMaxTokensRange' },
+]
+
+/** @returns {string|null} translation key, or null if every present value is allowed */
+export function validateSettingsIntRanges(settings) {
+  for (const { path, min, max, errorKey } of SETTINGS_INT_RANGES) {
+    let value = settings
+    for (const key of path) value = value?.[key]
+    if (value === '' || value === null || value === undefined) continue
+    if (typeof value === 'string' && value.trim() === '') continue
+    const n = typeof value === 'number' ? value : Number(String(value).trim())
+    if (!Number.isFinite(n) || !Number.isInteger(n) || n < min || n > max) {
+      return errorKey
+    }
+  }
+  return null
+}
