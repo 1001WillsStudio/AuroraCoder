@@ -53,3 +53,18 @@ export function applyAtPick(text, range) {
   }
   return `${before}${after}`
 }
+
+/**
+ * Enter (without Shift) while the @ picker may be open.
+ * Only intercept Enter to pick a hit when there is at least one result.
+ * An empty or no-match picker must not swallow send.
+ */
+export function enterActionForPicker(pickerOpen, hitCount) {
+  if (pickerOpen && Number(hitCount) > 0) return 'pick'
+  return 'send'
+}
+
+/** Ignore a stale workspace-search response that arrived after a newer query. */
+export function shouldApplySearchResults(requestId, latestId) {
+  return requestId === latestId
+}

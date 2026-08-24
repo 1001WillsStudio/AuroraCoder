@@ -105,29 +105,34 @@ def _extract_title(messages: List[Dict]) -> str:
     no markers are present (legacy compatibility).
     """
     for msg in messages:
-        if msg.get("role") == "user" and msg.get("content"):
-            content = msg["content"].strip()
-            original = content
+        if msg.get("role") != "user":
+            continue
+        files_field = msg.get("attachedFiles") if isinstance(msg.get("attachedFiles"), list) else []
+        raw_content = msg.get("content")
+        if not raw_content and not files_field:
+            continue
+        content = raw_content.strip() if isinstance(raw_content, str) else ""
+        original = content
 
-            # 1) Marked task instruction (new, reliable)
-            if TASK_INSTRUCTION_START in original:
-                content = strip_task_instruction(content)
+        # 1) Marked task instruction (new, reliable)
+        if TASK_INSTRUCTION_START in original:
+            content = strip_task_instruction(content)
 
-            # 1b) Marked attached-files block (per-turn workspace chips)
-            if ATTACHED_FILES_START in original:
-                content = strip_attached_files(content)
+        # 1b) Marked attached-files block (per-turn workspace chips)
+        if ATTACHED_FILES_START in original:
+            content = strip_attached_files(content)
 
-            # 2) Legacy fallback: frontend used plain \n\n separator
-            elif TASK_INSTRUCTION_START not in original and "\n\n" in original:
-                content = content.rsplit("\n\n", 1)[-1]
+        # 2) Legacy fallback: frontend used plain \n\n separator
+        elif TASK_INSTRUCTION_START not in original and "\n\n" in original:
+            content = content.rsplit("\n\n", 1)[-1]
 
-            title = content.replace("\n", " ").strip()
-            if not title:
-                files = extract_attached_files(original) or []
-                title = files[0] if files else "Untitled"
-            if len(title) > TITLE_MAX_LENGTH:
-                title = title[:TITLE_MAX_LENGTH] + "..."
-            return title or "Untitled"
+        title = content.replace("\n", " ").strip()
+        if not title:
+            files = files_field or extract_attached_files(original) or []
+            title = files[0] if files else "Untitled"
+        if len(title) > TITLE_MAX_LENGTH:
+            title = title[:TITLE_MAX_LENGTH] + "..."
+        return title or "Untitled"
     return "Untitled"
 
 

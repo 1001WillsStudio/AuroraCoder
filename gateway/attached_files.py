@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence
+from typing import Any, Iterable, List, Optional, Sequence
 
 ATTACHED_FILES_START = "[ATTACHED FILES]"
 ATTACHED_FILES_END = "[/ATTACHED FILES]"
@@ -20,6 +20,11 @@ ATTACHED_FILES_INSTRUCTION = (
 )
 MAX_ATTACHED_FILES = 8
 
+
+class AttachedFilesError(ValueError):
+    """Invalid ``attached_files`` payload, or no usable workspace files."""
+
+
 _ATTACHED_BLOCK_RE = re.compile(
     re.escape(ATTACHED_FILES_START)
     + r"(.*?)"
@@ -27,6 +32,51 @@ _ATTACHED_BLOCK_RE = re.compile(
     + r"\s*",
     re.DOTALL,
 )
+
+
+def coerce_attached_files(value: Any) -> Optional[List[str]]:
+    """Return a path list, ``None`` if omitted, or raise ``AttachedFilesError``.
+
+    A bare string must not be iterated (that would treat each character as
+    a path). Non-string items are also refused so the route can 400.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise AttachedFilesError("attached_files must be a list of paths")
+    out: List[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise AttachedFilesError("attached_files must be a list of paths")
+        out.append(item)
+    return out
+
+
+def apply_request_attachments(body: dict, workspace: Optional[Path]) -> List[str]:
+    """Validate ``attached_files`` on a chat body and rewrite ``message``.
+
+    Pops ``attached_files`` so it is not forwarded to the agent backend.
+    Raises ``AttachedFilesError`` when the field is the wrong type, or when
+    attachments were requested but none survived validation — the caller
+    should 400 rather than start a files-only turn with ``message=None``.
+    """
+    requested = coerce_attached_files(body.pop("attached_files", None))
+    message = body.get("message")
+    has_marker = isinstance(message, str) and ATTACHED_FILES_START in message
+    if not requested and not has_marker:
+        return []
+    text = message if isinstance(message, str) else ""
+    wrapped, kept = prepare_attached_message(text, requested, workspace)
+    wanted = list(requested or [])
+    if not wanted and has_marker:
+        wanted = extract_attached_files(text) or []
+    if wanted and not kept:
+        raise AttachedFilesError(
+            "None of the attached workspace files could be used. "
+            "They must be existing files inside the workspace."
+        )
+    body["message"] = wrapped if wrapped else None
+    return kept
 
 
 def strip_attached_files(content: str) -> str:

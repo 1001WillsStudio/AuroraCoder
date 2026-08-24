@@ -14,13 +14,16 @@ import pytest
 from gateway.attached_files import (
     ATTACHED_FILES_START,
     MAX_ATTACHED_FILES,
+    AttachedFilesError,
     apply_attached_files,
+    apply_request_attachments,
+    coerce_attached_files,
     extract_attached_files,
     normalize_attached_paths,
     prepare_attached_message,
     strip_attached_files,
 )
-from gateway.conversation_store import _extract_title
+from gateway.conversation_store import ConversationStore, _extract_title
 from gateway.task_instruction_display import (
     sanitize_frontend_messages,
     user_message_for_frontend,
@@ -209,3 +212,145 @@ def test_title_falls_back_to_filename_when_message_is_only_attachments():
     wrapped = apply_attached_files("", ["src/main.py"])
     title = _extract_title([{"role": "user", "content": wrapped}])
     assert title == "src/main.py"
+
+
+def test_title_uses_attached_files_field_after_sanitize():
+    """Reload sees the chip field, not the marked block."""
+    title = _extract_title([{
+        "role": "user",
+        "content": "",
+        "attachedFiles": ["src/main.py"],
+    }])
+    assert title == "src/main.py"
+
+
+# --------------------------------------------------------------------------- request body / type check / refusal
+def test_coerce_rejects_string_so_characters_are_not_paths():
+    with pytest.raises(AttachedFilesError, match="list of paths"):
+        coerce_attached_files("src/main.py")
+    with pytest.raises(AttachedFilesError, match="list of paths"):
+        coerce_attached_files(["src/main.py", 1])
+    assert coerce_attached_files(None) is None
+    assert coerce_attached_files(["src/main.py"]) == ["src/main.py"]
+
+
+def test_apply_request_refuses_when_every_path_is_unusable(tmp_workspace):
+    _plant(tmp_workspace)
+    body = {"message": "", "attached_files": ["missing.py", "../secret.txt"]}
+    with pytest.raises(AttachedFilesError, match="None of the attached"):
+        apply_request_attachments(body, tmp_workspace)
+    assert "attached_files" not in body
+
+
+def test_apply_request_keeps_valid_and_drops_stale(tmp_workspace):
+    _plant(tmp_workspace)
+    body = {"message": "please review", "attached_files": ["src/main.py", "missing.py"]}
+    kept = apply_request_attachments(body, tmp_workspace)
+    assert kept == ["src/main.py"]
+    assert "attached_files" not in body
+    assert extract_attached_files(body["message"]) == ["src/main.py"]
+    assert strip_attached_files(body["message"]) == "please review"
+
+
+def test_apply_request_plain_message_is_untouched(tmp_workspace):
+    _plant(tmp_workspace)
+    body = {"message": "hello"}
+    assert apply_request_attachments(body, tmp_workspace) == []
+    assert body["message"] == "hello"
+
+
+# --------------------------------------------------------------------------- ConversationStore seed / reload
+def test_seed_and_reload_keep_attached_file_chips(tmp_path):
+    store = ConversationStore(storage_dir=tmp_path)
+    cid = store.create_conversation()
+    wrapped = apply_attached_files("Please review", ["src/main.py"])
+    store.seed_frontend_user_message(cid, wrapped)
+
+    reloaded = store.get_frontend_messages(cid)
+    assert reloaded[0]["content"] == "Please review"
+    assert reloaded[0]["attachedFiles"] == ["src/main.py"]
+    assert ATTACHED_FILES_START not in reloaded[0]["content"]
+    assert store.get_conversation(cid)["title"] == "Please review"
+
+
+def test_seed_files_only_keeps_chips_and_filename_title(tmp_path):
+    store = ConversationStore(storage_dir=tmp_path)
+    cid = store.create_conversation()
+    wrapped = apply_attached_files("", ["src/main.py"])
+    store.seed_frontend_user_message(cid, wrapped)
+
+    reloaded = store.get_frontend_messages(cid)
+    assert reloaded[0]["content"] == ""
+    assert reloaded[0]["attachedFiles"] == ["src/main.py"]
+    assert store.get_conversation(cid)["title"] == "src/main.py"
+
+
+# --------------------------------------------------------------------------- /api/chat (runtime, mocked backend stream)
+def _chat_client(tmp_workspace, monkeypatch):
+    captured: list = []
+
+    async def fake_proxy(stream, body):
+        captured.append(dict(body))
+        stream.finished = True
+
+    async def fake_sse(stream, queue, request, replay_latest=False):
+        yield "data: {}\n\n"
+
+    monkeypatch.setattr("gateway.routes._get_workspace", lambda: tmp_workspace)
+    monkeypatch.setattr("gateway.routes.WORKSPACE", tmp_workspace)
+    monkeypatch.setattr("gateway.routes._proxy_backend_stream", fake_proxy)
+    monkeypatch.setattr("gateway.routes._subscriber_sse", fake_sse)
+
+    from fastapi.testclient import TestClient
+    from gateway.api import app
+
+    return TestClient(app), captured
+
+
+def test_chat_route_seeds_kept_attachments_and_drops_stale(tmp_workspace, monkeypatch):
+    _plant(tmp_workspace)
+    client, captured = _chat_client(tmp_workspace, monkeypatch)
+    response = client.post("/api/chat", json={
+        "message": "please review",
+        "attached_files": ["src/main.py", "missing.py"],
+    })
+    assert response.status_code == 200
+    cid = response.headers["x-conversation-id"]
+    assert cid
+    assert captured, "backend proxy should have been given a rewritten body"
+    assert "attached_files" not in captured[0]
+    assert extract_attached_files(captured[0]["message"]) == ["src/main.py"]
+    assert "missing.py" not in captured[0]["message"]
+
+    reloaded = client.get(f"/api/conversations/{cid}").json()
+    bubble = reloaded["frontend_messages"][0]
+    assert bubble["content"] == "please review"
+    assert bubble["attachedFiles"] == ["src/main.py"]
+    assert ATTACHED_FILES_START not in bubble["content"]
+
+
+def test_chat_route_refuses_files_only_when_all_paths_invalid(tmp_workspace, monkeypatch):
+    _plant(tmp_workspace)
+    client, captured = _chat_client(tmp_workspace, monkeypatch)
+    cid = "attach-refuse-all-invalid"
+    response = client.post("/api/chat", json={
+        "message": "",
+        "conversation_id": cid,
+        "attached_files": ["does-not-exist.py"],
+    })
+    assert response.status_code == 400
+    assert "None of the attached" in response.json()["detail"]
+    assert captured == []
+    assert client.get(f"/api/conversations/{cid}").status_code == 404
+
+
+def test_chat_route_rejects_non_list_attached_files(tmp_workspace, monkeypatch):
+    _plant(tmp_workspace)
+    client, captured = _chat_client(tmp_workspace, monkeypatch)
+    response = client.post("/api/chat", json={
+        "message": "please review",
+        "attached_files": "src/main.py",
+    })
+    assert response.status_code == 400
+    assert "list of paths" in response.json()["detail"]
+    assert captured == []

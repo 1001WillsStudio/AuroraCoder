@@ -20,7 +20,8 @@ def _eval_js(expr: str):
     script = (
         "import {\n"
         "  addAttachedFile, removeAttachedFile, parseAtQuery, applyAtPick,\n"
-        "  fileNameOf, MAX_ATTACHED_FILES,\n"
+        "  fileNameOf, MAX_ATTACHED_FILES, enterActionForPicker,\n"
+        "  shouldApplySearchResults,\n"
         "} from "
         f"{json.dumps(HELPER.resolve().as_uri())}\n"
         f"const out = {expr}\n"
@@ -91,8 +92,27 @@ def test_composer_and_tree_expose_attach_controls():
     assert 'data-testid="file-tree-add-to-chat"' in tree
     assert "attached_files:" in app
     assert "searchWorkspaceFiles" in app
-    assert "prepare_attached_message" in routes
+    assert "apply_request_attachments" in routes
     assert "/api/files/search" in routes
+
+
+@pytest.mark.unit
+def test_enter_sends_when_picker_has_no_hits():
+    """Empty / no-match @ picker must not swallow Enter."""
+    assert _eval_js("enterActionForPicker(true, 0)") == "send"
+    assert _eval_js("enterActionForPicker(true, 2)") == "pick"
+    assert _eval_js("enterActionForPicker(false, 0)") == "send"
+    chat = CHAT_INPUT.read_text(encoding="utf-8")
+    assert "enterActionForPicker" in chat
+    # The old swallow: pickerOpen + Enter + return without send.
+    assert "if (pickerOpen) {" not in chat
+
+
+@pytest.mark.unit
+def test_stale_search_results_are_ignored():
+    assert _eval_js("shouldApplySearchResults(1, 1)") is True
+    assert _eval_js("shouldApplySearchResults(1, 2)") is False
+    assert "shouldApplySearchResults" in CHAT_INPUT.read_text(encoding="utf-8")
 
 
 @pytest.mark.unit
@@ -119,6 +139,7 @@ def test_attach_strings_exist_in_both_languages():
         "chat.hint.attach",
         "chat.attachFileTitle",
         "chat.attachedFilesChip",
+        "chat.attachFileLimit",
         "fileTree.addToChat",
     ):
         assert src.count(f"'{key}'") >= 2, key

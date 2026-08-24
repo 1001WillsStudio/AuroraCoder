@@ -380,9 +380,6 @@ function App() {
     setCanContinue(false)
     setHistoryRefreshTrigger(prev => prev + 1)
     resetToFollowing()
-    for (const path of filesToAttach) {
-      handleFileTreeClick(path)
-    }
 
     let messagesToSend = null
     if (isInterrupt) {
@@ -959,8 +956,14 @@ function App() {
             onInterruptSend={handleInterruptSend}
             onStop={handleStop}
             onCancelPendingInterrupt={() => {
+              const pending = pendingInterruptRef.current
               setPendingInterrupt(null)
               pendingInterruptRef.current = null
+              if (!pending) return
+              if (pending.message) setInputValue(pending.message)
+              if (Array.isArray(pending.attachedFiles) && pending.attachedFiles.length) {
+                setAttachedFiles(pending.attachedFiles)
+              }
             }}
             attachedFiles={attachedFiles}
             onAttachFile={(path) => setAttachedFiles((prev) => addAttachedFile(prev, path))}

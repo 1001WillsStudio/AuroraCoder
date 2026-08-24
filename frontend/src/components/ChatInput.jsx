@@ -2,7 +2,7 @@ import React, { forwardRef, useEffect, useRef, useState } from 'react'
 import { Send, RotateCcw, ArrowRightFromLine, AtSign, X } from 'lucide-react'
 import useLanguage from '../hooks/useLanguage'
 import { isPrimaryClick } from '../utils/composerGuard'
-import { applyAtPick, fileNameOf, parseAtQuery } from '../utils/attachedFiles'
+import { applyAtPick, enterActionForPicker, fileNameOf, MAX_ATTACHED_FILES, parseAtQuery, shouldApplySearchResults } from '../utils/attachedFiles'
 
 /**
  * Chat input area with 4 visual modes:
@@ -38,6 +38,7 @@ const ChatInput = forwardRef(({
   const [searching, setSearching] = useState(false)
   const debounceRef = useRef(null)
   const pickerRef = useRef(null)
+  const searchGenRef = useRef(0)
 
   const attached = Array.isArray(attachedFiles) ? attachedFiles : []
   const hasText = value.trim().length > 0
@@ -60,28 +61,35 @@ const ChatInput = forwardRef(({
 
   useEffect(() => {
     if (!atQuery || !onSearchFiles) {
+      searchGenRef.current += 1
       setHits([])
       setSearching(false)
       return undefined
     }
     const query = atQuery.query
     if (!query) {
+      searchGenRef.current += 1
       setHits([])
       setSearching(false)
       return undefined
     }
     setSearching(true)
     if (debounceRef.current) clearTimeout(debounceRef.current)
+    const gen = ++searchGenRef.current
     debounceRef.current = setTimeout(async () => {
       try {
         const result = await onSearchFiles(query)
+        if (!shouldApplySearchResults(gen, searchGenRef.current)) return
         const files = Array.isArray(result?.files) ? result.files : []
         setHits(files.filter((f) => !attached.includes(f.path)))
         setActiveHit(0)
       } catch {
+        if (!shouldApplySearchResults(gen, searchGenRef.current)) return
         setHits([])
       } finally {
-        setSearching(false)
+        if (shouldApplySearchResults(gen, searchGenRef.current)) {
+          setSearching(false)
+        }
       }
     }, 120)
     return () => {
@@ -91,6 +99,7 @@ const ChatInput = forwardRef(({
 
   const pickHit = (hit) => {
     if (!hit?.path || !onAttachFile) return
+    if (attached.length >= MAX_ATTACHED_FILES && !attached.includes(hit.path)) return
     onAttachFile(hit.path)
     if (atQuery) onChange(applyAtPick(value, atQuery))
     setAtQuery(null)
@@ -111,26 +120,20 @@ const ChatInput = forwardRef(({
   }
 
   const handleKeyDown = (e) => {
-    if (pickerOpen) {
-      if (hits.length > 0) {
-        if (e.key === 'ArrowDown') {
-          e.preventDefault()
-          setActiveHit((i) => (i + 1) % hits.length)
-          return
-        }
-        if (e.key === 'ArrowUp') {
-          e.preventDefault()
-          setActiveHit((i) => (i - 1 + hits.length) % hits.length)
-          return
-        }
-        if ((e.key === 'Enter' && !e.shiftKey) || (e.key === 'Tab' && !e.shiftKey)) {
-          e.preventDefault()
-          pickHit(hits[activeHit])
-          return
-        }
-      }
-      if (e.key === 'Enter' && !e.shiftKey) {
+    if (pickerOpen && hits.length > 0) {
+      if (e.key === 'ArrowDown') {
         e.preventDefault()
+        setActiveHit((i) => (i + 1) % hits.length)
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setActiveHit((i) => (i - 1 + hits.length) % hits.length)
+        return
+      }
+      if ((e.key === 'Enter' && !e.shiftKey) || (e.key === 'Tab' && !e.shiftKey)) {
+        e.preventDefault()
+        pickHit(hits[activeHit])
         return
       }
     }
@@ -142,6 +145,8 @@ const ChatInput = forwardRef(({
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       if (e.repeat) return
+      if (enterActionForPicker(pickerOpen, hits.length) !== 'send') return
+      setAtQuery(null)
       if (isStreaming) {
         onInterruptSend()
       } else {
@@ -249,7 +254,7 @@ const ChatInput = forwardRef(({
                 type="button"
                 className="attach-file-btn"
                 onClick={handleAtButton}
-                title={t('chat.attachFileTitle')}
+                title={attached.length >= MAX_ATTACHED_FILES ? t('chat.attachFileLimit') : t('chat.attachFileTitle')}
                 data-testid="chat-attach"
               >
                 <AtSign size={18} />

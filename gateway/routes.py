@@ -57,7 +57,7 @@ from gateway.workspace import (
     count_workspace_files,
     search_workspace_files,
 )
-from gateway.attached_files import prepare_attached_message
+from gateway.attached_files import apply_request_attachments, AttachedFilesError
 from gateway.streaming import (
     ActiveStream,
     active_streams,
@@ -173,16 +173,13 @@ async def proxy_chat(request: Request):
 
     # Point the agent at files the user attached this turn.  Invalid or
     # out-of-workspace paths are dropped; the marked block is rewritten
-    # from the survivors so the transcript chips stay honest.
-    requested_files = body.pop("attached_files", None)
-    if requested_files or (isinstance(body.get("message"), str) and "[ATTACHED FILES]" in body["message"]):
-        work_dir = _get_workspace() or WORKSPACE
-        wrapped, _kept = prepare_attached_message(
-            body.get("message") or "",
-            requested_files,
-            work_dir,
-        )
-        body["message"] = wrapped or None
+    # from the survivors so the transcript chips stay honest.  If the
+    # user asked to attach files and none survived, refuse instead of
+    # starting a files-only turn with message=None.
+    try:
+        apply_request_attachments(body, _get_workspace() or WORKSPACE)
+    except AttachedFilesError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # ── Generate workspace tree for the agent's system message ──
     # Only on the *first* turn — continuations already carry the tree
