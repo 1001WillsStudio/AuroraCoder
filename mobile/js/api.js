@@ -57,6 +57,16 @@ const API = (() => {
     return _post(`/conversations/${cid}/cancel`);
   }
 
+  async function deleteConversation(cid) {
+    const resp = await fetch(`${BASE}/conversations/${encodeURIComponent(cid)}`, {
+      method: 'DELETE',
+      headers: _headers(),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+    return data;
+  }
+
   async function getActiveStreams() {
     return _get('/conversations/active');
   }
@@ -242,6 +252,7 @@ const API = (() => {
     listConversations,
     getConversation,
     cancelConversation,
+    deleteConversation,
     getActiveStreams,
     streamChat,
     resumeStream,

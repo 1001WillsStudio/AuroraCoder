@@ -311,6 +311,28 @@ export async function getConversation(conversationId) {
 }
 
 /**
+ * Delete a conversation and its descendant subagent chats.
+ * @param {string} conversationId
+ */
+export async function deleteConversation(conversationId) {
+  const response = await fetch(`${API_BASE}/conversations/${encodeURIComponent(conversationId)}`, {
+    method: 'DELETE',
+    headers: _headers(),
+  })
+  let data = {}
+  try {
+    data = await response.json()
+  } catch {
+    data = {}
+  }
+  if (!response.ok) {
+    const detail = data.detail || `HTTP error! status: ${response.status}`
+    throw new Error(typeof detail === 'string' ? detail : `HTTP error! status: ${response.status}`)
+  }
+  return data
+}
+
+/**
  * List currently active (streaming) conversations.
  */
 export async function getActiveStreams() {

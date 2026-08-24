@@ -8,13 +8,14 @@ import LoginScreen from './components/LoginScreen'
 import Sidebar from './components/Sidebar'
 import WelcomeScreen from './components/WelcomeScreen'
 import SettingsPanel from './components/SettingsPanel'
-import { streamChat, getProviders, cancelConversation, getConversation, getActiveStreams, resumeStream, getTaskInstruction, setTaskInstruction, getInstanceInfo, searchWorkspaceFiles } from './services/api'
+import { streamChat, getProviders, cancelConversation, getConversation, deleteConversation, getActiveStreams, resumeStream, getTaskInstruction, setTaskInstruction, getInstanceInfo, searchWorkspaceFiles } from './services/api'
 import { isInterruptible, TASK_MARKER_START, TASK_MARKER_END } from './utils/streamUtils'
 import { createSendLock, shouldAcceptStop } from './utils/composerGuard'
 import { addAttachedFile, removeAttachedFile } from './utils/attachedFiles'
 import { checkAuth, isAuthRequired } from './utils/auth.js'
 import { newConversationId } from './utils/uuid.js'
 import { parseConversationId, syncConversationUrl } from './utils/conversationUrl.js'
+import { deletedIdsFromResponse, nextOpenConversationId } from './utils/conversationDelete.js'
 import { pickSidebarProvider } from './utils/sidebarProvider.js'
 import CodePanel from './components/CodePanel'
 import { createStreamCallbacks } from './hooks/createStreamCallbacks'
@@ -751,6 +752,29 @@ function App() {
     }
   }, [lastRequest, isStreaming, selectedProvider, messages, rawMessages, conversationId, handleLoadConversation, handleRefreshFiles, providers, resetToFollowing])
 
+  const handleDeleteConversation = useCallback(async (targetId) => {
+    const openId = conversationIdRef.current || conversationId
+    if (openId === targetId && abortControllerRef.current) {
+      abortControllerRef.current.abort()
+      abortControllerRef.current = null
+    }
+    const result = await deleteConversation(targetId)
+    const deletedIds = deletedIdsFromResponse(result, targetId)
+    for (const id of deletedIds) {
+      draftInputsRef.current.delete(id)
+    }
+    setHistoryRefreshTrigger(prev => prev + 1)
+    const next = nextOpenConversationId(openId, parentConversationId, deletedIds)
+    if (next !== openId) {
+      if (next) await handleLoadConversation(next)
+      else handleClearRef.current?.()
+    }
+    for (const id of deletedIds) {
+      draftInputsRef.current.delete(id)
+    }
+    return deletedIds
+  }, [conversationId, parentConversationId, handleLoadConversation])
+
   handleLoadConversationRef.current = handleLoadConversation
   handleClearRef.current = handleClear
 
@@ -853,6 +877,7 @@ function App() {
         }}
         conversationId={conversationId}
         onLoadConversation={handleLoadConversation}
+        onDeleteConversation={handleDeleteConversation}
         historyRefreshTrigger={historyRefreshTrigger}
         historyCloseTrigger={historyCloseTrigger}
         onDrawerToggle={(open) => { if (open) setShowTaskInstructions(false) }}

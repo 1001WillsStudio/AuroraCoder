@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { History, X, Search } from 'lucide-react'
+import { History, X, Search, Trash2 } from 'lucide-react'
 import { listConversations, getActiveStreams } from '../services/api'
 import useLanguage from '../hooks/useLanguage'
+import { childCountForDelete } from '../utils/conversationDelete'
 
 function relativeTime(isoString, t) {
   if (!isoString) return ''
@@ -56,8 +57,26 @@ function groupConversations(conversations) {
   return result
 }
 
+function DeleteButton({ conv, onRequest, label }) {
+  return (
+    <button
+      type="button"
+      className="history-delete-btn"
+      data-testid="conversation-delete"
+      title={label}
+      aria-label={label}
+      onClick={(event) => {
+        event.stopPropagation()
+        onRequest(conv)
+      }}
+    >
+      <Trash2 size={14} />
+    </button>
+  )
+}
+
 // ─── Inline "current session" view (always visible in sidebar) ──────────
-function CurrentSession({ currentConversationId, conversations, activeIds, onSelect, t }) {
+function CurrentSession({ currentConversationId, conversations, activeIds, onSelect, onDeleteRequest, t }) {
   if (!currentConversationId) return null
 
   const current = conversations.find(c => c.id === currentConversationId)
@@ -79,14 +98,17 @@ function CurrentSession({ currentConversationId, conversations, activeIds, onSel
         <span className="current-session-label">{t('history.current')}</span>
         {mainActive && <span className="status-dot active" />}
       </div>
-      <button
-        className={`current-session-main${mainId === currentConversationId ? ' selected' : ''}`}
-        onClick={() => onSelect(mainId)}
-        title={main.title}
-        data-testid="conversation-item"
-      >
-        {main.title || t('history.untitled')}
-      </button>
+      <div className="current-session-row">
+        <button
+          className={`current-session-main${mainId === currentConversationId ? ' selected' : ''}`}
+          onClick={() => onSelect(mainId)}
+          title={main.title}
+          data-testid="conversation-item"
+        >
+          {main.title || t('history.untitled')}
+        </button>
+        <DeleteButton conv={main} onRequest={onDeleteRequest} label={t('history.delete')} />
+      </div>
 
       {children.length > 0 && (
         <div className="current-session-children">
@@ -94,19 +116,21 @@ function CurrentSession({ currentConversationId, conversations, activeIds, onSel
             const childActive = activeIds.has(child.id)
             const isSelected = child.id === currentConversationId
             return (
-              <button
-                key={child.id}
-                className={`current-session-child${childActive ? ' active' : ''}${isSelected ? ' selected' : ''}`}
-                onClick={() => onSelect(child.id)}
-                title={child.title}
-                data-testid="conversation-item"
-              >
-                <span className="subagent-prefix">↳</span>
-                <span className="current-session-child-title">
-                  {child.title || t('history.subagent')}
-                </span>
-                {childActive && <span className="status-dot active" />}
-              </button>
+              <div key={child.id} className="current-session-row">
+                <button
+                  className={`current-session-child${childActive ? ' active' : ''}${isSelected ? ' selected' : ''}`}
+                  onClick={() => onSelect(child.id)}
+                  title={child.title}
+                  data-testid="conversation-item"
+                >
+                  <span className="subagent-prefix">↳</span>
+                  <span className="current-session-child-title">
+                    {child.title || t('history.subagent')}
+                  </span>
+                  {childActive && <span className="status-dot active" />}
+                </button>
+                <DeleteButton conv={child} onRequest={onDeleteRequest} label={t('history.delete')} />
+              </div>
             )
           })}
         </div>
@@ -116,7 +140,7 @@ function CurrentSession({ currentConversationId, conversations, activeIds, onSel
 }
 
 // ─── Full history drawer (opens as a second panel) ──────────────────────
-function HistoryDrawer({ conversations, activeIds, currentConversationId, onSelect, onClose, triggerRef, t }) {
+function HistoryDrawer({ conversations, activeIds, currentConversationId, onSelect, onClose, onDeleteRequest, triggerRef, confirmOpen, t }) {
   const [searchQuery, setSearchQuery] = useState('')
   const searchRef = useRef(null)
   const panelRef = useRef(null)
@@ -128,6 +152,7 @@ function HistoryDrawer({ conversations, activeIds, currentConversationId, onSele
   useEffect(() => {
     function handleClick(e) {
       if (triggerRef?.current?.contains(e.target)) return
+      if (e.target.closest?.('.tree-confirm-overlay')) return
       if (panelRef.current && !panelRef.current.contains(e.target)) {
         onClose()
       }
@@ -141,11 +166,11 @@ function HistoryDrawer({ conversations, activeIds, currentConversationId, onSele
 
   useEffect(() => {
     function handleKey(e) {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape' && !confirmOpen) onClose()
     }
     document.addEventListener('keydown', handleKey)
     return () => document.removeEventListener('keydown', handleKey)
-  }, [onClose])
+  }, [onClose, confirmOpen])
 
   const grouped = groupConversations(conversations)
 
@@ -186,24 +211,29 @@ function HistoryDrawer({ conversations, activeIds, currentConversationId, onSele
             const isSubagent = !!conv.parent_id
 
             return (
-              <button
+              <div
                 key={conv.id}
-                className={`history-drawer-item${isCurrent ? ' current' : ''}${isSubagent ? ' subagent' : ''}`}
-                onClick={() => { onSelect(conv.id); onClose() }}
-                data-testid="conversation-item"
+                className={`history-drawer-item-row${isCurrent ? ' current' : ''}${isSubagent ? ' subagent' : ''}`}
               >
-                {dotClass && <span className={dotClass} />}
-                <div className="history-drawer-item-body">
-                  <span className="history-drawer-item-title">
-                    {isSubagent && <span className="subagent-prefix">↳ </span>}
-                    {conv.title || t('history.untitled')}
-                  </span>
-                  <span className="history-drawer-item-meta">
-                    {isActive && <span className="history-drawer-item-status">{t('history.running')}</span>}
-                    <span>{relativeTime(conv.updated_at, t)}</span>
-                  </span>
-                </div>
-              </button>
+                <button
+                  className={`history-drawer-item${isCurrent ? ' current' : ''}${isSubagent ? ' subagent' : ''}`}
+                  onClick={() => { onSelect(conv.id); onClose() }}
+                  data-testid="conversation-item"
+                >
+                  {dotClass && <span className={dotClass} />}
+                  <div className="history-drawer-item-body">
+                    <span className="history-drawer-item-title">
+                      {isSubagent && <span className="subagent-prefix">↳ </span>}
+                      {conv.title || t('history.untitled')}
+                    </span>
+                    <span className="history-drawer-item-meta">
+                      {isActive && <span className="history-drawer-item-status">{t('history.running')}</span>}
+                      <span>{relativeTime(conv.updated_at, t)}</span>
+                    </span>
+                  </div>
+                </button>
+                <DeleteButton conv={conv} onRequest={onDeleteRequest} label={t('history.delete')} />
+              </div>
             )
           })
         )}
@@ -213,12 +243,15 @@ function HistoryDrawer({ conversations, activeIds, currentConversationId, onSele
 }
 
 // ─── Exported wrapper ───────────────────────────────────────────────────
-export default function ConversationHistory({ currentConversationId, onSelect, refreshTrigger, onDrawerToggle, closeTrigger }) {
+export default function ConversationHistory({ currentConversationId, onSelect, onDelete, refreshTrigger, onDrawerToggle, closeTrigger }) {
   const { t } = useLanguage()
   const [conversations, setConversations] = useState([])
   const [activeIds, setActiveIds] = useState(new Set())
   const [loading, setLoading] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [pendingDelete, setPendingDelete] = useState(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
   const triggerRef = useRef(null)
 
   const loadTimerRef = useRef(null)
@@ -258,7 +291,45 @@ export default function ConversationHistory({ currentConversationId, onSelect, r
     setDrawerOpen(false)
   }, [closeTrigger])
 
+  useEffect(() => {
+    function handleKey(e) {
+      if (e.key === 'Escape' && pendingDelete) {
+        e.stopPropagation()
+        setPendingDelete(null)
+        setDeleteError('')
+      }
+    }
+    document.addEventListener('keydown', handleKey)
+    return () => document.removeEventListener('keydown', handleKey)
+  }, [pendingDelete])
+
   const mainCount = conversations.filter(c => !c.parent_id).length
+  const pendingChildCount = pendingDelete
+    ? childCountForDelete(conversations, pendingDelete.id)
+    : 0
+  const pendingTitle = pendingDelete?.title || t('history.untitled')
+
+  const requestDelete = (conv) => {
+    if (!conv?.id) return
+    setDeleteError('')
+    setPendingDelete(conv)
+  }
+
+  const confirmDelete = async () => {
+    if (!pendingDelete?.id || !onDelete || deleting) return
+    setDeleting(true)
+    setDeleteError('')
+    try {
+      const result = await onDelete(pendingDelete.id)
+      const gone = new Set(Array.isArray(result) && result.length ? result : [pendingDelete.id])
+      setConversations(prev => prev.filter(c => !gone.has(c.id)))
+      setPendingDelete(null)
+    } catch (err) {
+      setDeleteError(err?.message || t('history.deleteFailed'))
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   return (
     <>
@@ -267,6 +338,7 @@ export default function ConversationHistory({ currentConversationId, onSelect, r
         conversations={conversations}
         activeIds={activeIds}
         onSelect={onSelect}
+        onDeleteRequest={requestDelete}
         t={t}
       />
 
@@ -291,9 +363,52 @@ export default function ConversationHistory({ currentConversationId, onSelect, r
           currentConversationId={currentConversationId}
           onSelect={onSelect}
           onClose={() => setDrawerOpen(false)}
+          onDeleteRequest={requestDelete}
           triggerRef={triggerRef}
+          confirmOpen={Boolean(pendingDelete)}
           t={t}
         />
+      )}
+
+      {pendingDelete && (
+        <div
+          className="tree-confirm-overlay"
+          data-testid="conversation-delete-confirm"
+          onClick={() => {
+            if (deleting) return
+            setPendingDelete(null)
+            setDeleteError('')
+          }}
+        >
+          <div className="tree-confirm-dialog" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true">
+            <p>
+              {pendingChildCount > 0
+                ? t('history.deleteConfirmWithChildren', { title: pendingTitle, n: pendingChildCount })
+                : t('history.deleteConfirm', { title: pendingTitle })}
+            </p>
+            {deleteError && <p className="history-delete-error">{deleteError}</p>}
+            <div className="tree-confirm-actions">
+              <button
+                className="tree-confirm-cancel"
+                disabled={deleting}
+                onClick={() => {
+                  setPendingDelete(null)
+                  setDeleteError('')
+                }}
+              >
+                {t('history.deleteCancel')}
+              </button>
+              <button
+                className="tree-confirm-delete"
+                data-testid="conversation-delete-confirm-btn"
+                disabled={deleting}
+                onClick={confirmDelete}
+              >
+                {deleting ? t('history.deleting') : t('history.delete')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   )

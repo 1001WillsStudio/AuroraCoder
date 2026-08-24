@@ -208,6 +208,12 @@ const LANG = {
     'history.untitled': 'Untitled',
     'history.subagent': 'Subagent',
     'history.history': 'History',
+    'history.delete': 'Delete',
+    'history.deleting': 'Deleting…',
+    'history.deleteCancel': 'Cancel',
+    'history.deleteFailed': 'Could not delete this conversation.',
+    'history.deleteConfirm': 'Delete “{title}”? This cannot be undone.',
+    'history.deleteConfirmWithChildren': 'Delete “{title}” and {n} subagent chat(s)? This cannot be undone.',
 
     // ── Code panel ─────────────────────────────────────────────────
     'code.codeView': 'Code View',
@@ -486,6 +492,12 @@ const LANG = {
     'history.untitled': '未命名',
     'history.subagent': '子智能体',
     'history.history': '历史记录',
+    'history.delete': '删除',
+    'history.deleting': '正在删除…',
+    'history.deleteCancel': '取消',
+    'history.deleteFailed': '无法删除该对话。',
+    'history.deleteConfirm': '删除“{title}”？此操作无法撤销。',
+    'history.deleteConfirmWithChildren': '删除“{title}”及其 {n} 个子智能体对话？此操作无法撤销。',
 
     // ── Code panel ─────────────────────────────────────────────────
     'code.codeView': '代码视图',

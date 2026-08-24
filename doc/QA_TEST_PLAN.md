@@ -112,6 +112,7 @@ helpers. `tests/test_settings_max_iterations.py` locks the store:
 | `tests/test_settings_modal_focus.py` | ✅ | Settings overlay must be `role=dialog` `aria-modal=true`, move focus in from the gear, and trap Tab so + New Chat / Upload behind the dim cannot be reached. Source scan locks the dialog effect in SettingsPanel (no shared focusTrap helper). |
 | `tests/test_tool_activity_display.py` | ✅ | Tool-activity cards strip `CODE_INTERPRETER` (and other panel) markup and mark an `Error:` result as `failed`, not green `complete`. Node helpers in `toolActivityDisplay.js`; source scan of ToolActivity.jsx. |
 | `tests/test_workspace_paths.py` | ✅ | Shared workspace containment. Prefix-sibling ``ws-leaked`` next to ``ws`` must 403 on read/tree/delete/download/export (not 400, not leak). Attachments drop the same path. Locks the explorer finding that five HTTP file endpoints copied ``str.startswith`` and ``except Exception`` swallowed the 403. |
+| `tests/test_delete_conversation.py` | ✅ | History delete removes a chat and nested subagent descendants. Store cascade + `DELETE` `deleted_ids`; desktop Node helpers decide whether the open chat should close. Mobile IIFE helper is executed for P→C→G (confirm count 2; open grandchild leaves to new chat). |
 
 Stable `data-testid` hooks on the desktop SPA (`chat-input`, `chat-send`,
 `chat-message`, …) are locked by `tests/test_frontend_testids.py` (source scan;

@@ -437,6 +437,7 @@ class ConversationStore:
             self._save_index()
 
         _atomic_write_json(self._messages_path(conversation_id), messages)
+        self._unlink_if_missing_from_index(conversation_id)
         logger.info(
             f"[store] Saved {len(messages)} messages for {conversation_id[:8]}..."
         )
@@ -503,6 +504,53 @@ class ConversationStore:
         """List child conversations (subagents) spawned by this conversation."""
         return self.list_conversations(parent_id=conversation_id)
 
+    def ids_in_subtree(self, conversation_id: str) -> List[str]:
+        """Return *conversation_id* followed by every descendant id.
+
+        Walks ``parent_id`` links transitively so a top-level delete cannot
+        leave orphaned subagent transcripts in the index. Raises ``KeyError``
+        if the root id is not stored.
+        """
+        with self._lock:
+            return self._ids_in_subtree_locked(conversation_id)
+
+    def _ids_in_subtree_locked(self, conversation_id: str) -> List[str]:
+        """Caller must hold ``self._lock``."""
+        if conversation_id not in self._index:
+            raise KeyError(f"Conversation {conversation_id} not found")
+        children_by_parent: Dict[str, List[str]] = {}
+        for cid, meta in self._index.items():
+            parent = meta.get("parent_id") if isinstance(meta, dict) else None
+            if parent:
+                children_by_parent.setdefault(parent, []).append(cid)
+        ordered: List[str] = []
+        stack = [conversation_id]
+        seen = set()
+        while stack:
+            current = stack.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            ordered.append(current)
+            for child in children_by_parent.get(current, ()):
+                stack.append(child)
+        return ordered
+
+    def _unlink_if_missing_from_index(self, conversation_id: str) -> None:
+        """Drop files written after DELETE won the race against a late persist."""
+        with self._lock:
+            if conversation_id in self._index:
+                return
+        for path in (
+            self._messages_path(conversation_id),
+            self._frontend_messages_path(conversation_id),
+        ):
+            try:
+                if path.exists():
+                    path.unlink()
+            except OSError:
+                pass
+
     def save_frontend_messages(self, conversation_id: str, messages: List[Dict]) -> None:
         """Save frontend-formatted messages to a separate file.
 
@@ -528,12 +576,17 @@ class ConversationStore:
         # conversation is brand new there won't be one yet.
         with self._lock:
             meta = self._index.get(conversation_id)
-            if meta is not None and "title" not in meta:
+            if meta is None:
+                # Deleted (or never created). A late persist after DELETE
+                # must not resurrect an orphan frontend.json.
+                return
+            if "title" not in meta:
                 meta["title"] = _extract_title(messages)
                 meta["updated_at"] = datetime.now(timezone.utc).isoformat()
                 self._save_index()
 
         _atomic_write_json(self._frontend_messages_path(conversation_id), messages)
+        self._unlink_if_missing_from_index(conversation_id)
 
     def seed_frontend_user_message(self, conversation_id: str, raw_content: str) -> None:
         """Persist a user bubble before the first SSE event.
@@ -565,21 +618,29 @@ class ConversationStore:
             logger.error(f"Failed to read frontend messages for {conversation_id}: {e}")
             return []
 
-    def delete_conversation(self, conversation_id: str) -> None:
-        """Delete a conversation's metadata and message file."""
+    def delete_conversation(self, conversation_id: str) -> List[str]:
+        """Delete a conversation and every descendant.
+
+        Returns the deleted ids with the requested conversation first.
+        Index is updated before files are unlinked so a racing stream
+        ``finally`` persist (``update_status`` / ``save_messages``) hits
+        ``KeyError`` instead of resurrecting the chat.
+        """
         with self._lock:
-            if conversation_id not in self._index:
-                raise KeyError(f"Conversation {conversation_id} not found")
-            del self._index[conversation_id]
+            deleted_ids = self._ids_in_subtree_locked(conversation_id)
+            for cid in deleted_ids:
+                self._index.pop(cid, None)
             self._save_index()
 
-        msg_path = self._messages_path(conversation_id)
-        if msg_path.exists():
-            msg_path.unlink()
-        fe_path = self._frontend_messages_path(conversation_id)
-        if fe_path.exists():
-            fe_path.unlink()
-        logger.info(f"[store] Deleted conversation {conversation_id[:8]}...")
+        for cid in deleted_ids:
+            msg_path = self._messages_path(cid)
+            if msg_path.exists():
+                msg_path.unlink()
+            fe_path = self._frontend_messages_path(cid)
+            if fe_path.exists():
+                fe_path.unlink()
+            logger.info(f"[store] Deleted conversation {cid[:8]}...")
+        return deleted_ids
 
 
 # ── Module-level singleton ──────────────────────────────────────────────────

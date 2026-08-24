@@ -141,6 +141,33 @@ const App = (() => {
     }
   }
 
+  async function _deleteConversation(cid, event) {
+    if (event) event.stopPropagation();
+    const conv = conversations.find(c => c.id === cid);
+    const title = (conv && (conv.frontend_title || conv.title)) || 'Untitled';
+    const n = ConversationDelete.childCountForDelete(conversations, cid);
+    const msg = ConversationDelete.deleteConfirmMessage(title, n);
+    if (!window.confirm(msg)) return;
+    try {
+      const result = await API.deleteConversation(cid);
+      const openId = Chat.getConversationId();
+      const plan = ConversationDelete.planAfterDelete(openId, conversations, result, cid);
+      if (plan.action !== 'stay') {
+        if (Chat.isStreaming()) Chat.stopGeneration();
+        if (plan.action === 'parent' && plan.next) {
+          await Chat.loadConversation(plan.next);
+          activeConversationId = plan.next;
+        } else {
+          Chat.newChat();
+          activeConversationId = null;
+        }
+      }
+      await _loadConversations();
+    } catch (err) {
+      _showToast(err.message || 'Failed to delete conversation', true);
+    }
+  }
+
   function _renderConversationList() {
     if (conversations.length === 0) {
       conversationList.innerHTML = '<div class="conversation-list-empty">No conversations yet</div>';
@@ -159,14 +186,20 @@ const App = (() => {
       const date = conv.updated_at ? new Date(conv.updated_at).toLocaleDateString() : '';
 
       item.innerHTML = `
-        <span class="conversation-item-title">${_escapeHtml(title)}</span>
-        <span class="conversation-item-meta">
-          <span>${date}</span>
-          <span class="conversation-item-status ${conv.status || ''}">${conv.status || ''}</span>
-        </span>
+        <div class="conversation-item-body">
+          <span class="conversation-item-title">${_escapeHtml(title)}</span>
+          <span class="conversation-item-meta">
+            <span>${date}</span>
+            <span class="conversation-item-status ${conv.status || ''}">${conv.status || ''}</span>
+          </span>
+        </div>
+        <button type="button" class="conversation-item-delete" aria-label="Delete conversation">×</button>
       `;
 
       item.addEventListener('click', () => _selectConversation(conv.id));
+      item.querySelector('.conversation-item-delete').addEventListener('click', (event) => {
+        _deleteConversation(conv.id, event);
+      });
       conversationList.appendChild(item);
     }
   }
