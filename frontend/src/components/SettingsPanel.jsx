@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { X, Plus, Trash2, Save, RefreshCw, Shield, Globe, LogOut, ExternalLink, Wrench, ChevronDown, ChevronRight, Search } from 'lucide-react'
 import { getSettings, updateSettings, getProviders, getToolStoreStatus, refreshToolStore, getMemories, deleteMemory } from '../services/api'
 import { isAuthRequired, isAuthenticated, logout as authLogout, clearToken } from '../utils/auth.js'
-import { encodeStoredApiKey, isUnlimitedMaxIterations, validateMaxIterations, MAX_ITERATIONS_UNLIMITED } from '../utils/settingsValidation.js'
+import { encodeStoredApiKey, isUnlimitedMaxIterations, validateMaxIterations, validateSettingsIntRanges, MAX_ITERATIONS_UNLIMITED } from '../utils/settingsValidation.js'
 import useLanguage from '../hooks/useLanguage'
 import { LANG_LABELS } from '../i18n/translations'
 import '../styles/settings.css'
@@ -116,6 +116,50 @@ export default function SettingsPanel({ isOpen, onClose }) {
     if (!isOpen || memoryBrowserCollapsed) return
     loadMemories()
   }, [isOpen, memoryBrowserCollapsed])
+
+  const dialogRef = useRef(null)
+
+  // Take focus when the dialog opens (the gear otherwise keeps it) and
+  // trap Tab so + New Chat / Upload behind the overlay cannot be reached.
+  useEffect(() => {
+    if (!isOpen) return undefined
+    const dialog = dialogRef.current
+    const previouslyFocused = typeof document !== 'undefined' ? document.activeElement : null
+    const tabbable = () => dialog
+      ? [...dialog.querySelectorAll(
+          'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])'
+        )]
+      : []
+    const focusFirst = () => {
+      const first = tabbable()[0]
+      ;(first || dialog)?.focus()
+    }
+    focusFirst()
+    const frame = requestAnimationFrame(focusFirst)
+    const onKeyDown = (event) => {
+      if (event.key !== 'Tab' || !dialog) return
+      const list = tabbable()
+      if (!list.length) {
+        event.preventDefault()
+        dialog.focus()
+        return
+      }
+      const firstEl = list[0]
+      const lastEl = list[list.length - 1]
+      const leaving = event.shiftKey
+        ? event.target === firstEl || !dialog.contains(event.target)
+        : event.target === lastEl || !dialog.contains(event.target)
+      if (!leaving) return
+      event.preventDefault()
+      ;(event.shiftKey ? lastEl : firstEl).focus()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      cancelAnimationFrame(frame)
+      document.removeEventListener('keydown', onKeyDown)
+      previouslyFocused?.focus?.()
+    }
+  }, [isOpen])
 
   const handleDeleteMemory = async (memoryId) => {
     try {
@@ -236,11 +280,13 @@ export default function SettingsPanel({ isOpen, onClose }) {
   // and stays unused. encodeStoredApiKey keeps an already-stored secret
   // when the box is empty (the real key is never sent back to the browser).
   // HTML min/max on number inputs are not checked by this button (no form
-  // submit), so Max Iterations Per Turn is validated here before PUT.
+  // submit), so advertised ranges are validated here before PUT.
   const handleSave = async () => {
-    const iterErr = validateMaxIterations(settings?.other?.agent?.max_iterations)
-    if (iterErr) {
-      setMessage({ type: 'error', text: t(iterErr) })
+    const rangeErr =
+      validateMaxIterations(settings?.other?.agent?.max_iterations) ||
+      validateSettingsIntRanges(settings)
+    if (rangeErr) {
+      setMessage({ type: 'error', text: t(rangeErr) })
       return
     }
     setSaving(true); setMessage(null)
@@ -323,11 +369,20 @@ export default function SettingsPanel({ isOpen, onClose }) {
 
   return (
     <div className="settings-overlay" onClick={onClose}>
-      <div className="settings-modal" onClick={e => e.stopPropagation()} data-testid="settings-panel">
+      <div
+        className="settings-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-dialog-title"
+        tabIndex={-1}
+        ref={dialogRef}
+        onClick={e => e.stopPropagation()}
+        data-testid="settings-panel"
+      >
         {/* Header */}
         <div className="settings-header">
           <div className="settings-header-top">
-            <h2>{t('settings.title')}</h2>
+            <h2 id="settings-dialog-title">{t('settings.title')}</h2>
             <div className="settings-header-actions">
               {/* ── Language selector ────────────────────────────── */}
               <div className="settings-lang-selector">

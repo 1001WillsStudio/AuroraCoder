@@ -67,6 +67,11 @@ from typing import Any, Dict, List, Optional, Tuple
 from openai import OpenAI
 
 from gateway.provider_registry import get_memory_extraction_config
+from gateway.task_instruction_display import (
+    TASK_INSTRUCTION_START,
+    extract_task_instruction,
+    strip_task_instruction,
+)
 from memory.settings import passive_extraction_enabled
 from memory.schema import MemoryItem, MEMORY_PLANES, MEMORY_TYPES
 from memory.store import get_repository
@@ -75,6 +80,7 @@ from memory.ops.judge_io import (
     call_judge, EXTRACTION_PLAN_TOOL, EXTRACTION_PLAN_SCHEMA,
 )
 from memory.ops.conversation_search import search_conversations
+from memory.ops.similarity import tokens
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +93,84 @@ OTHER_CONVERSATIONS_PER_NOMINATION_LIMIT = 3
 # module docstring "Layer 2b reuses this same gate". Both leave a marker
 # in the transcript and do no I/O at call time.
 NOMINATION_TOOL_NAMES = ("remember", "report_findings")
+
+# Session wrappers the write-pass must not treat as user-stated standing rules.
+HANDOFF_PREFIX = "[Continued from previous agent session]"
+_ECHO_CONTAINMENT = 0.5
+_SENTENCE_RE = re.compile(r"[^\n.!?]+")
+
+
+def _is_handoff(content: str) -> bool:
+    return bool(content) and content.lstrip().startswith(HANDOFF_PREFIX)
+
+
+def _split_user_content(content: str) -> Tuple[str, str]:
+    """Return ``(scaffold_text, genuine_user_text)`` for one user message."""
+    if not content:
+        return "", ""
+    if _is_handoff(content):
+        return content.strip(), ""
+    if TASK_INSTRUCTION_START in content:
+        return (extract_task_instruction(content) or "").strip(), strip_task_instruction(content)
+    return "", content.strip()
+
+
+def _collect_scaffold_and_genuine(messages: List[Dict[str, Any]]) -> Tuple[str, str]:
+    scaffolds: List[str] = []
+    genuines: List[str] = []
+    for msg in messages:
+        if msg.get("role") != "user":
+            continue
+        scaffold, genuine = _split_user_content(msg.get("content") or "")
+        if scaffold:
+            scaffolds.append(scaffold)
+        if genuine:
+            genuines.append(genuine)
+    return "\n".join(scaffolds), "\n".join(genuines)
+
+
+def _render_user_for_extraction(content: str) -> List[str]:
+    """Omit task-instruction / handoff bodies from the judge transcript."""
+    scaffold, genuine = _split_user_content(content)
+    lines: List[str] = []
+    if _is_handoff(content):
+        lines.append(
+            "HANDOFF: agent-authored one-shot session context "
+            "(not a user standing rule; do not mine preferences from it)."
+        )
+    if genuine:
+        lines.append(f"USER: {genuine}")
+    elif scaffold and not _is_handoff(content):
+        lines.append("USER: (session task instruction only — not a user request)")
+    return lines
+
+
+def _token_containment(candidate: str, haystack: str) -> float:
+    cand, hay = tokens(candidate), tokens(haystack)
+    if not cand:
+        return 0.0
+    return len(cand & hay) / len(cand)
+
+
+def _is_scaffold_echo(candidate_text: str, scaffold: str, genuine: str) -> bool:
+    """True when the candidate restates scaffold and the user did not also say it.
+
+    Stripping wrappers from the transcript is the main fix. This gate is
+    only for leftover paths the strip cannot see: a mid-session ``remember``
+    nomination of the same text, or a later incremental turn whose judge
+    slice no longer includes the wrapped first message.
+    """
+    if not candidate_text.strip() or not scaffold.strip():
+        return False
+    if _token_containment(candidate_text, genuine) >= _ECHO_CONTAINMENT:
+        return False
+    if _token_containment(candidate_text, scaffold) >= _ECHO_CONTAINMENT:
+        return True
+    for raw in _SENTENCE_RE.findall(scaffold):
+        sent = raw.strip()
+        if len(sent) >= 8 and _token_containment(candidate_text, sent) >= _ECHO_CONTAINMENT:
+            return True
+    return False
 
 
 def _transcript_to_text(messages: List[Dict[str, Any]], max_chars: int = MAX_TRANSCRIPT_CHARS) -> str:
@@ -116,7 +200,7 @@ def _transcript_to_text(messages: List[Dict[str, Any]], max_chars: int = MAX_TRA
         if role == "user":
             content = (msg.get("content") or "").strip()
             if content:
-                lines.append(f"USER: {content}")
+                lines.extend(_render_user_for_extraction(content))
         elif role == "assistant":
             content = (msg.get("content") or "").strip()
             if content:
@@ -320,7 +404,10 @@ def run_extraction(conversation_id: str, messages: List[Dict[str, Any]]) -> List
     # failure case documented above.
     repo.set_extraction_checkpoint(conversation_id, len(messages))
 
-    written = _run_write_pass(conversation_id, new_messages, nomination_label="remember")
+    written = _run_write_pass(
+        conversation_id, new_messages, nomination_label="remember",
+        filter_messages=messages,
+    )
     return [w["id"] for w in written]
 
 
@@ -356,6 +443,7 @@ def _run_write_pass(
     conversation_id: str,
     messages: List[Dict[str, Any]],
     nomination_label: str = "remember",
+    filter_messages: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, str]]:
     """Shared core behind ``run_extraction`` and
     ``run_gap_investigation_extraction``: parse nominations, judge
@@ -367,7 +455,10 @@ def _run_write_pass(
     only the slice since that conversation's last extraction checkpoint —
     see that function's docstring for why — so ``MIN_MESSAGES_TO_BOTHER``
     below effectively means "this turn's own new content is trivial",
-    not "this conversation overall is short".
+    not "this conversation overall is short". ``filter_messages`` (the
+    full transcript) is what the scaffold-echo gate reads, so a later
+    turn cannot persist a task-instruction fact just because the
+    checkpoint already consumed the wrapped first message.
 
     Returns a list of ``{"id": memory_id, "source": "nominated"|"discovered"}``
     — richer than the plain id list ``run_extraction`` exposes publicly,
@@ -477,7 +568,10 @@ def _run_write_pass(
             logger.info("[memory-extract] [%s] No-op (0 candidates, %d nominated) — expected common case",
                         conversation_id[:8], len(nominated))
             return []
-        return apply_extraction_plan(candidates, conversation_id, nomination_label, repo)
+        return apply_extraction_plan(
+            candidates, conversation_id, nomination_label, repo,
+            messages=filter_messages if filter_messages is not None else messages,
+        )
 
     except Exception:
         logger.exception("[memory-extract] [%s] Extraction failed — treating as no-op", conversation_id[:8])
@@ -489,17 +583,21 @@ def apply_extraction_plan(
     conversation_id: str,
     nomination_label: str = "remember",
     repo=None,
+    messages: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, str]]:
     """Apply a parsed extraction plan (list of candidate dicts from the judge's
     ``emit_memory_plan`` call, whether the judge ran in-process via ``call_judge``
     or inside an isolated memory-maintenance worker via ``dispatch_memory_maintenance``).
 
-    Each candidate is validated, provenance-stamped, and upserted. The caller must
-    have already verified the judge returned a parseable plan — this function does
-    NOT make a second LLM call. Returns a list of ``{"id": memory_id, "source":
-    "nominated"|"discovered"}`` entries for every candidate that passed validation.
-    Never raises: bad candidates are skipped with a warning."""
+    Each candidate is validated, provenance-stamped, and upserted. When
+    ``messages`` is provided, task-instruction / handoff echoes the user
+    never restated are dropped. The caller must have already verified the
+    judge returned a parseable plan — this function does NOT make a second
+    LLM call. Returns a list of ``{"id": memory_id, "source":
+    "nominated"|"discovered"}`` entries for every candidate that passed
+    validation. Never raises: bad candidates are skipped with a warning."""
     repo = repo or get_repository()
+    scaffold, genuine = _collect_scaffold_and_genuine(messages or [])
     written: List[Dict[str, str]] = []
     for cand in candidates:
         if not isinstance(cand, dict):
@@ -511,6 +609,13 @@ def apply_extraction_plan(
             continue
         if mtype not in MEMORY_TYPES:
             logger.warning("[memory-extract] [%s] Skipping candidate with invalid type %r", conversation_id[:8], mtype)
+            continue
+        echo_hay = f"{cand.get('description', '')} {cand.get('content', '')}"
+        if scaffold and _is_scaffold_echo(echo_hay, scaffold, genuine):
+            logger.info(
+                "[memory-extract] [%s] Skipping scaffold-echo candidate %r",
+                conversation_id[:8], cand.get("description"),
+            )
             continue
 
         source = cand.get("source", "discovered")

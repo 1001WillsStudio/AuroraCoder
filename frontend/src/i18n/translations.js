@@ -104,6 +104,9 @@ const LANG = {
     // ── Messages ──────────────────────────────────────────────────
     'msg.validationError': 'Fix validation errors before saving',
     'msg.maxIterationsRange': 'Max Iterations Per Turn must be between 5 and 200',
+    'msg.maxToolConcurrencyRange': 'Max Tool Concurrency must be between 1 and 20',
+    'msg.terminalMaxOutputRange': 'Terminal Max Output must be between 1000 and 100000',
+    'msg.webSecondaryMaxTokensRange': 'Web Secondary Max Tokens must be between 256 and 32768',
     'msg.saved': 'Settings saved',
     'msg.saveFailed': 'Save failed',
     'msg.nameRequired': 'Name required',
@@ -368,6 +371,9 @@ const LANG = {
     // ── Messages ──────────────────────────────────────────────────
     'msg.validationError': '请先修正验证错误再保存',
     'msg.maxIterationsRange': '每轮最大迭代次数必须在 5 到 200 之间',
+    'msg.maxToolConcurrencyRange': '最大工具并发数必须在 1 到 20 之间',
+    'msg.terminalMaxOutputRange': '终端最大输出必须在 1000 到 100000 之间',
+    'msg.webSecondaryMaxTokensRange': '网页辅助模型最大 Token 数必须在 256 到 32768 之间',
     'msg.saved': '设置已保存',
     'msg.saveFailed': '保存失败',
     'msg.nameRequired': '名称不能为空',

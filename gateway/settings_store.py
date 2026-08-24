@@ -49,6 +49,12 @@ UNLIMITED_AGENT_ITERATIONS = 1_000_000
 _MAX_ITERATIONS_RANGE_MSG = (
     f"max_iterations must be between {AGENT_MAX_ITERATIONS_MIN} and {AGENT_MAX_ITERATIONS_MAX}"
 )
+# Same Save-button gap as max_iterations: concurrency 50, terminal 1, tokens 10.
+_OTHER_INT_RANGES = (
+    ("agent", "max_tool_concurrency", 1, 20, "max_tool_concurrency must be between 1 and 20"),
+    ("agent", "terminal_max_output", 1000, 100000, "terminal_max_output must be between 1000 and 100000"),
+    ("web_secondary", "max_tokens", 256, 32768, "max_tokens must be between 256 and 32768"),
+)
 
 
 # ── low-level file I/O ──────────────────────────────────────────────────────
@@ -121,10 +127,13 @@ def update_settings(partial: Dict[str, Any]) -> Dict[str, Any]:
 
     Raises:
         ValueError: if ``other.agent.max_iterations`` is present and not an
-            integer in ``[5, 200]`` or the sentinel ``"unlimited"``.
-            The on-disk file is not written.
+            integer in ``[5, 200]`` or the sentinel ``"unlimited"``, or if
+            concurrency / terminal output / web-secondary tokens are outside
+            the ranges advertised on the Settings inputs. The on-disk file
+            is not written.
     """
     _validate_agent_max_iterations(partial)
+    _validate_other_int_ranges(partial)
     with _lock:
         current = _load_raw()
 
@@ -432,6 +441,23 @@ def _validate_agent_max_iterations(partial: Dict[str, Any]) -> None:
         return
     if n < AGENT_MAX_ITERATIONS_MIN or n > AGENT_MAX_ITERATIONS_MAX:
         raise ValueError(_MAX_ITERATIONS_RANGE_MSG)
+
+
+def _validate_other_int_ranges(partial: Dict[str, Any]) -> None:
+    """Raise ValueError if concurrency / terminal / token fields are out of range."""
+    other = partial.get("other")
+    if not isinstance(other, dict):
+        return
+    for section, key, lo, hi, msg in _OTHER_INT_RANGES:
+        block = other.get(section)
+        if not isinstance(block, dict) or key not in block:
+            continue
+        try:
+            n = _parse_agent_max_iterations(block[key])
+        except ValueError:
+            raise ValueError(msg) from None
+        if n is not None and (n < lo or n > hi):
+            raise ValueError(msg)
 
 
 def clamp_agent_max_iterations(raw: Any, default: int = 30) -> int:

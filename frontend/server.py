@@ -104,9 +104,22 @@ def mount_static_assets(
         application.add_api_route("/m/{path:path}", _m_path, methods=["GET", "HEAD"])
 
     if frontend_dir.exists():
+        desktop = StaticFiles(directory=str(frontend_dir), html=True)
+
+        # Reload of /c/{id} must serve the SPA. Starlette StaticFiles(html=True)
+        # only falls back to index.html for directories, so a conversation
+        # path would otherwise be a JSON 404.
+        async def _conversation_spa(conversation_id: str, request: Request):
+            return await desktop.get_response("index.html", request.scope)
+
+        application.add_api_route(
+            "/c/{conversation_id}",
+            _conversation_spa,
+            methods=["GET", "HEAD"],
+        )
         application.mount(
             "/",
-            StaticFiles(directory=str(frontend_dir), html=True),
+            desktop,
             name="frontend",
         )
 

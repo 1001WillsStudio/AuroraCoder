@@ -49,9 +49,10 @@ Legend: ✅ done · 🟡 next · ⬜ later.
 | `memory.stance` | ✅ | empty state, `MAX_STANCE_ITEMS` cap, sort, labels, usage-bump scope |
 | `src.training_log` | ✅ | JSONL row shape, toggle, never-raise IO safety, flag loader corruption tolerance |
 | `memory.ops.prompts` | 🟡 | pure templates — cheap, next |
+| `memory.ops.extractor` | ✅ | task-instruction / handoff wrappers omitted from the write-pass transcript (`test_memory_boilerplate.py`) |
 | `memory.store` / `schema` | 🟡 | extend existing layer1 (migrations, embedding-null paths) |
 | `gateway.conversation_store` | 🟡 | task-instruction strip/title + chip field via `gateway.task_instruction_display` (`test_task_instruction_display.py`); CRUD still ⬜ |
-| `gateway.settings_store` | 🟡 | max_iterations range on update (`test_settings_max_iterations.py`); obfuscation round-trip still ⬜ |
+| `gateway.settings_store` | 🟡 | max_iterations / concurrency / terminal / web-secondary token ranges on update (`test_settings_max_iterations.py`); obfuscation round-trip still ⬜ |
 
 ### Side-effecting (subprocess / FS / network)
 | Module | Status | Notes |
@@ -89,22 +90,26 @@ msw (reuses the existing Vite config). Prime targets: `utils/streamUtils.js`,
 The Settings `/m` page is covered in `tests/test_mobile_routes.py`.
 
 `frontend/src/utils/settingsValidation.js` is ``encodeStoredApiKey``
-(empty field + stored key → keep) plus ``validateMaxIterations`` (Save
-rejects a Max Iterations Per Turn value outside 5–200; HTML ``min``/``max``
-are not enforced by the Save button; the sentinel ``unlimited`` is allowed).
-`tests/test_settings_validation.py` covers both. `tests/test_settings_max_iterations.py`
-locks the store: ``update_settings`` raises on ``"0"`` and leaves the on-disk
-value unchanged, and accepts ``"unlimited"``.
+(empty field + stored key → keep), ``validateMaxIterations`` (5–200,
+sentinel ``unlimited``), and ``validateSettingsIntRanges`` (concurrency
+1–20, terminal output 1000–100000, web-secondary tokens 256–32768).
+HTML ``min``/``max`` are not enforced by the Save button, so Save rejects
+those values before PUT. `tests/test_settings_validation.py` covers the
+helpers. `tests/test_settings_max_iterations.py` locks the store:
+``update_settings`` raises on ``"0"`` / concurrency ``"50"`` / terminal
+``"1"`` and leaves the on-disk file unchanged.
 
 | File | Status | Notes |
 |---|---|---|
 | `tests/test_mobile_sidebar_toggle.py` | ✅ | Source-level regression: at `max-width: 768px` the sidebar may stay `display: none` only if App.jsx renders a `.sidebar-toggle` *outside* the aside and `.app.sidebar-open .sidebar` reveals it. Locks the explorer finding that a 375px resize hid New Chat / History / Settings / model with no hamburger. |
 | `tests/test_message_long_token_wrap.py` | ✅ | Source-level regression: `.message-text` must wrap or scroll unbreakable tokens (URLs, identifiers). Locks the explorer finding that a 390px send of `SUPERCALIFRAGILISTIC…` clipped at the column edge (`word-break`/`overflow-wrap` both `normal`, scrollWidth ≫ clientWidth). |
 | `tests/test_stale_viewer_after_delete.py` | ✅ | Deleting an open Workspace file must close its viewer tab; Refresh re-reads view-only tabs and drops them on 404. Helpers in `frontend/src/utils/panelFiles.js` run via Node; source scan locks FileTree → panel wiring. |
+| `tests/test_conversation_url_restore.py` | ✅ | Reload after send must reopen the same chat. Address bar is `/c/{id}`; helpers in `frontend/src/utils/conversationUrl.js` run via Node; source scan locks App.jsx boot restore / popstate / push-vs-replace; production static server must serve the desktop SPA at `/c/{id}` (not JSON 404). |
 | `tests/test_sidebar_default_model.py` | ✅ | Settings → Default Model must drive the sidebar picker on load, after Save (`providers-changed` reloads providers), and on + New Chat. `pickSidebarProvider` prefers `GET /api/providers` `default` over localStorage last-used; source scan locks App.jsx load + `handleClear`. `get_default_model_entry` maps the saved agent default to the same picker id. |
 | `tests/test_user_message_newlines.py` | ✅ | Source-level regression: a user bubble must interpolate the raw string inside `.message-text` and `messages.css` must set `white-space: pre-wrap` on `.user-message-row .message-text`. Locks the explorer finding that Shift+Enter newlines collapsed to one line in the sent bubble. |
 | `tests/test_file_tree_depth.py` | ✅ | First-paint tree is still `max_depth=5` (folder `d` empty). `list_dir_level` on `d` returns only `e`; `f` then `deep.txt` are one-level clicks. On-demand listing does not write the tree cache. FileTree fetches `path=` + `max_depth=1` on click and drops those children on close. After Refresh, expanded empty folders are restored shallowest-first (`d` then `e` then `f`); a closed folder is not. |
 | `tests/test_double_click_send.py` | ✅ | Double-click Send / double Enter must not abort `/api/chat` or open a second History item. Helpers in `frontend/src/utils/composerGuard.js` run via Node; source scan locks `handleSend` claiming the send lock before `getActiveStreams`, and ChatInput ignoring `click.detail > 1` on Send and Stop. |
+| `tests/test_settings_modal_focus.py` | ✅ | Settings overlay must be `role=dialog` `aria-modal=true`, move focus in from the gear, and trap Tab so + New Chat / Upload behind the dim cannot be reached. Source scan locks the dialog effect in SettingsPanel (no shared focusTrap helper). |
 | `tests/test_tool_activity_display.py` | ✅ | Tool-activity cards strip `CODE_INTERPRETER` (and other panel) markup and mark an `Error:` result as `failed`, not green `complete`. Node helpers in `toolActivityDisplay.js`; source scan of ToolActivity.jsx. |
 
 Stable `data-testid` hooks on the desktop SPA (`chat-input`, `chat-send`,
