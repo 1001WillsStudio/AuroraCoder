@@ -85,7 +85,7 @@ function MarkdownContent({ content }) {
  * Main chat message component
  * Renders user messages and assistant responses with activity timeline
  */
-function ChatMessage({ message, msgIdx, isLatest, isStreaming, onRetry, onStopTool, onLoadConversation, subagentChildIds, senderLabel, onForkConversation, forkWarning, forkClickRef, messagesLength, onForkDismiss, appIsStreaming }) {
+function ChatMessage({ message, msgIdx, isLatest, isStreaming, onRetry, onStopTool, onLoadConversation, subagentChildIds, senderLabel, onForkConversation, forkWarning, forkClickRef, messagesLength, onForkDismiss, appIsStreaming, onOpenAttachedFile }) {
   const { t } = useLanguage()
   const forkBtnRef = useRef(null)
   const isForkWarning = forkWarning?.frontendMsgIdx === msgIdx
@@ -139,6 +139,24 @@ function ChatMessage({ message, msgIdx, isLatest, isStreaming, onRetry, onStopTo
               <div className="task-instruction-chip" role="note">
                 <span className="task-instruction-chip-label">{t('chat.taskInstructionChip')}</span>
                 <span className="task-instruction-chip-text">{message.taskInstruction}</span>
+              </div>
+            )}
+            {Array.isArray(message.attachedFiles) && message.attachedFiles.length > 0 && (
+              <div className="attached-files-chip-row" role="note">
+                <span className="task-instruction-chip-label">{t('chat.attachedFilesChip')}</span>
+                <div className="attached-files-chip-list">
+                  {message.attachedFiles.map((path) => (
+                    <button
+                      type="button"
+                      key={path}
+                      className="attached-file-chip attached-file-chip-static"
+                      title={path}
+                      onClick={() => onOpenAttachedFile?.(path)}
+                    >
+                      {path.split(/[/\\]/).pop() || path}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
             <div className="user-message-row">

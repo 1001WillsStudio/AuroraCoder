@@ -459,6 +459,27 @@
   word-break: break-word;
 }
 
+.attached-files-chip-row {
+  margin-bottom: 10px;
+}
+
+.attached-files-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.attached-file-chip-static {
+  cursor: pointer;
+  max-width: 260px;
+}
+
+.attached-file-chip-static:hover {
+  border-color: var(--accent-primary);
+  color: var(--text-primary);
+}
+
 .user-message-row {
   display: flex;
   align-items: center;

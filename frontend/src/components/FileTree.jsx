@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Folder, FolderOpen, File, ChevronRight, ChevronDown,
   RefreshCw, FileCode, FileText, Image, Database, Settings,
-  FileJson, Braces, Download, Trash2, FolderArchive
+  FileJson, Braces, Download, Trash2, FolderArchive, AtSign
 } from 'lucide-react'
 import useLanguage from '../hooks/useLanguage'
 import { expandedEmptyFolderPaths, setFolderChildren } from '../utils/fileTree'
@@ -113,7 +113,7 @@ function TreeNode({ node, level, onFileClick, expandedFolders, toggleFolder, onC
 }
 
 // ── Right-click context menu ────────────────────────────────────────────────
-function ContextMenu({ x, y, node, onClose, onDelete, onDownload, onExport, t }) {
+function ContextMenu({ x, y, node, onClose, onDelete, onDownload, onExport, onAddToChat, t }) {
   const menuRef = useRef(null)
   const isFolder = node.type === 'folder'
 
@@ -139,6 +139,12 @@ function ContextMenu({ x, y, node, onClose, onDelete, onDownload, onExport, t })
 
   return (
     <div ref={menuRef} className="tree-context-menu" style={{ left: x, top: y }}>
+      {!isFolder && onAddToChat && (
+        <button className="context-menu-item" onClick={() => { onAddToChat(node); onClose() }} data-testid="file-tree-add-to-chat">
+          <AtSign size={14} />
+          <span>{t('fileTree.addToChat')}</span>
+        </button>
+      )}
       {isFolder ? (
         <button className="context-menu-item" onClick={() => { onExport(node); onClose() }}>
           <FolderArchive size={14} />
@@ -163,7 +169,7 @@ function ContextMenu({ x, y, node, onClose, onDelete, onDownload, onExport, t })
 // has no children listed fetches one level of that folder. Closing it
 // drops those children. Refresh / end-of-stream refetch the snapshot, then
 // re-open any folder that is still expanded (one level at a time).
-const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, onPathDeleted }) => {
+const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, onPathDeleted, onAddToChat }) => {
   const { t } = useLanguage()
   const [tree, setTree] = useState([])
   const [, setRootPath] = useState(null)
@@ -411,6 +417,7 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, onPathDeleted 
           onDelete={handleDeleteRequest}
           onDownload={handleDownload}
           onExport={handleExport}
+          onAddToChat={onAddToChat}
           t={t}
         />
       )}

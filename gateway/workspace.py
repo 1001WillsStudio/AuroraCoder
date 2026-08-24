@@ -7,6 +7,7 @@ The gateway resolves the workspace directory via ``src.config.WORKSPACE_DIR``.
 """
 
 import logging
+import os
 import shutil
 import tempfile
 import time
@@ -249,6 +250,16 @@ def list_dir_level(directory: Path, base_path: Path) -> list:
     return build_file_tree(directory, base_path, max_depth=1)
 
 
+# Noise directories skipped by workspace search and the compact text tree
+# injected into the agent's system prompt. The file-tree listing keeps a
+# smaller skip set so the visible browser does not change.
+_TREE_SKIP_NAMES = {
+    "__pycache__", "node_modules", ".git", ".venv", "venv",
+    ".pytest_cache", ".ruff_cache", ".mypy_cache", "dist",
+    "build", ".next", "target",
+}
+
+
 def build_file_tree(
     directory: Path,
     base_path: Path,
@@ -306,6 +317,70 @@ def build_file_tree(
     return items
 
 
+def search_workspace_files(
+    directory: Path,
+    query: str,
+    limit: int = 24,
+) -> list:
+    """Find workspace files by name/path substring. Not depth-capped.
+
+    The file tree stops at five folders so nested files are easy to miss.
+    This walk is the human-facing counterpart of that tree: skip the same
+    junk directories, ignore hidden names, and rank exact/prefix hits first.
+    """
+    if not directory or not directory.exists() or not directory.is_dir():
+        return []
+    needle = (query or "").strip().lower()
+    if not needle:
+        return []
+
+    root = directory.resolve()
+    ranked: list[tuple[int, int, str, str]] = []
+    try:
+        for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+            dirnames[:] = sorted(
+                d for d in dirnames
+                if d not in _TREE_SKIP_NAMES and not d.startswith(".")
+            )
+            for name in filenames:
+                if name.startswith("."):
+                    continue
+                abs_path = Path(dirpath) / name
+                try:
+                    rel = abs_path.resolve().relative_to(root).as_posix()
+                except (OSError, ValueError):
+                    continue
+                hay_name = name.lower()
+                hay_path = rel.lower()
+                if needle not in hay_path:
+                    continue
+                stem = Path(name).stem.lower()
+                if hay_name == needle or stem == needle:
+                    rank = 0
+                elif hay_name.startswith(needle) or stem.startswith(needle):
+                    rank = 1
+                elif needle in hay_name:
+                    rank = 2
+                else:
+                    rank = 3
+                ranked.append((rank, len(name), hay_name, rel))
+    except OSError as e:
+        logger.warning(f"Error searching workspace {directory}: {e}")
+        return []
+
+    ranked.sort()
+    out = []
+    seen: set[str] = set()
+    for _rank, _nlen, _name, rel in ranked:
+        if rel in seen:
+            continue
+        seen.add(rel)
+        out.append({"path": rel, "name": Path(rel).name})
+        if len(out) >= limit:
+            break
+    return out
+
+
 # ============================================================================
 # Workspace helpers (upload / delete / export)
 # ============================================================================
@@ -344,14 +419,6 @@ def count_workspace_files(work_dir: Path) -> int:
 # message so the agent has a basic understanding of the workspace without
 # spending turns on manual exploration.
 # ===========================================================================
-
-_TREE_SKIP_NAMES = {
-    "__pycache__", "node_modules", ".git", ".venv", "venv",
-    ".pytest_cache", ".ruff_cache", ".mypy_cache", "dist",
-    "build", ".next", "target",
-}
-
-
 
 
 def generate_workspace_tree_text(

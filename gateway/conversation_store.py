@@ -18,6 +18,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
+from gateway.attached_files import (
+    ATTACHED_FILES_START,
+    extract_attached_files,
+    strip_attached_files,
+)
 from gateway.task_instruction_display import (
     TASK_INSTRUCTION_START,
     sanitize_frontend_messages,
@@ -100,21 +105,34 @@ def _extract_title(messages: List[Dict]) -> str:
     no markers are present (legacy compatibility).
     """
     for msg in messages:
-        if msg.get("role") == "user" and msg.get("content"):
-            content = msg["content"].strip()
+        if msg.get("role") != "user":
+            continue
+        files_field = msg.get("attachedFiles") if isinstance(msg.get("attachedFiles"), list) else []
+        raw_content = msg.get("content")
+        if not raw_content and not files_field:
+            continue
+        content = raw_content.strip() if isinstance(raw_content, str) else ""
+        original = content
 
-            # 1) Marked task instruction (new, reliable)
-            if TASK_INSTRUCTION_START in content:
-                content = strip_task_instruction(content)
+        # 1) Marked task instruction (new, reliable)
+        if TASK_INSTRUCTION_START in original:
+            content = strip_task_instruction(content)
 
-            # 2) Legacy fallback: frontend used plain \n\n separator
-            elif "\n\n" in content:
-                content = content.rsplit("\n\n", 1)[-1]
+        # 1b) Marked attached-files block (per-turn workspace chips)
+        if ATTACHED_FILES_START in original:
+            content = strip_attached_files(content)
 
-            title = content.replace("\n", " ")
-            if len(title) > TITLE_MAX_LENGTH:
-                title = title[:TITLE_MAX_LENGTH] + "..."
-            return title or "Untitled"
+        # 2) Legacy fallback: frontend used plain \n\n separator
+        elif TASK_INSTRUCTION_START not in original and "\n\n" in original:
+            content = content.rsplit("\n\n", 1)[-1]
+
+        title = content.replace("\n", " ").strip()
+        if not title:
+            files = files_field or extract_attached_files(original) or []
+            title = files[0] if files else "Untitled"
+        if len(title) > TITLE_MAX_LENGTH:
+            title = title[:TITLE_MAX_LENGTH] + "..."
+        return title or "Untitled"
     return "Untitled"
 
 
@@ -520,9 +538,9 @@ class ConversationStore:
     def seed_frontend_user_message(self, conversation_id: str, raw_content: str) -> None:
         """Persist a user bubble before the first SSE event.
 
-        Strips the transport wrapper from the visible text and keeps the
-        inner prompt on ``taskInstruction``, so a reload still shows what
-        repeating command was applied.
+        Strips transport wrappers from the visible text and keeps chips
+        on ``taskInstruction`` / ``attachedFiles``, so a reload still
+        shows what was applied.
         """
         new_user_msg = user_message_for_frontend(raw_content)
         existing = self.get_frontend_messages(conversation_id)
