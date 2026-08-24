@@ -394,6 +394,16 @@ export async function resumeStream(conversationId, callbacks, signal) {
 // ============================================================================
 
 /**
+ * Find workspace files by name or path (not capped at tree depth).
+ */
+export async function searchWorkspaceFiles(query, limit = 24) {
+  const params = new URLSearchParams({ q: query || '', limit: String(limit) })
+  const response = await fetch(`${API_BASE}/files/search?${params}`, { headers: _headers() })
+  if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+  return response.json()
+}
+
+/**
  * Get workspace info (docker mode, path, file count)
  */
 export async function getWorkspaceInfo() {

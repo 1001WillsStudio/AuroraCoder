@@ -8,9 +8,10 @@ import LoginScreen from './components/LoginScreen'
 import Sidebar from './components/Sidebar'
 import WelcomeScreen from './components/WelcomeScreen'
 import SettingsPanel from './components/SettingsPanel'
-import { streamChat, getProviders, cancelConversation, getConversation, getActiveStreams, resumeStream, getTaskInstruction, setTaskInstruction, getInstanceInfo } from './services/api'
+import { streamChat, getProviders, cancelConversation, getConversation, getActiveStreams, resumeStream, getTaskInstruction, setTaskInstruction, getInstanceInfo, searchWorkspaceFiles } from './services/api'
 import { isInterruptible, TASK_MARKER_START, TASK_MARKER_END } from './utils/streamUtils'
 import { createSendLock, shouldAcceptStop } from './utils/composerGuard'
+import { addAttachedFile, removeAttachedFile } from './utils/attachedFiles'
 import { checkAuth, isAuthRequired } from './utils/auth.js'
 import { newConversationId } from './utils/uuid.js'
 import { parseConversationId, syncConversationUrl } from './utils/conversationUrl.js'
@@ -45,6 +46,21 @@ function resolveProviderOptions(providers, selectedProvider) {
   return {
     provider_id: entry?.provider_id || null,
     model: entry?.model || null,
+  }
+}
+
+function readDraft(entry) {
+  if (!entry) return { text: '', files: [] }
+  if (typeof entry === 'string') return { text: entry, files: [] }
+  return { text: entry.text || '', files: Array.isArray(entry.files) ? entry.files : [] }
+}
+
+function saveComposerDraft(map, id, text, files) {
+  const key = id ?? '__new__'
+  if ((text && text.trim()) || (files && files.length)) {
+    map.set(key, { text: text || '', files: files || [] })
+  } else {
+    map.delete(key)
   }
 }
 
@@ -127,6 +143,9 @@ function App() {
   const [historyRefreshTrigger, setHistoryRefreshTrigger] = useState(0)
   const [activeConvoWarning, setActiveConvoWarning] = useState(false)
   const draftInputsRef = useRef(new Map())
+  const [attachedFiles, setAttachedFiles] = useState([])
+  const attachedFilesRef = useRef(attachedFiles)
+  attachedFilesRef.current = attachedFiles
   const [viewMode, setViewMode] = useState('main')
   const [parentConversationId, setParentConversationId] = useState(null)
   // Map from tool_call_id → child_id for accurate correlation between
@@ -283,8 +302,11 @@ function App() {
     const log = (label) => console.log(`[timing][handleSend] ${performance.now().toFixed(1)}ms | ${label} (+${(performance.now() - sendT0).toFixed(1)}ms)`)
     log('entered')
 
-    const messageToSend = overrideMessage || inputValue.trim()
-    if (!messageToSend) return
+    const { attachedFiles: optionFiles, ...restOptions } = options
+    const filesToAttach = Array.isArray(optionFiles) ? optionFiles : attachedFilesRef.current
+    const typedText = overrideMessage != null ? String(overrideMessage) : inputValue
+    const messageToSend = typedText.trim()
+    if (!messageToSend && filesToAttach.length === 0) return
 
     const isInterrupt = interruptMessages !== null && interruptMessages.length > 0
     const sendToken = sendLockRef.current.begin(isInterrupt)
@@ -347,13 +369,20 @@ function App() {
     if (appliedInstruction) {
       userBubble.taskInstruction = appliedInstruction
     }
+    if (filesToAttach.length > 0) {
+      userBubble.attachedFiles = filesToAttach
+    }
     setMessages(prev => [...prev, userBubble, { role: 'assistant', content: '' }])
     setInputValue('')
+    setAttachedFiles([])
     setIsStreaming(true)
     setSseReceived(false)
     setCanContinue(false)
     setHistoryRefreshTrigger(prev => prev + 1)
     resetToFollowing()
+    for (const path of filesToAttach) {
+      handleFileTreeClick(path)
+    }
 
     let messagesToSend = null
     if (isInterrupt) {
@@ -369,10 +398,17 @@ function App() {
     // Both paths MUST stay aligned so Continue can never end up on a
     // different/unconfigured provider than a normal send.
     const opts = {
-      ...options,
+      ...restOptions,
       ...resolveProviderOptions(providers, selectedProvider),
+      attached_files: filesToAttach,
     }
-    setLastRequest({ message: userMessageText, conversationId: cid, provider: selectedProvider, existingMessages: messagesToSend })
+    setLastRequest({
+      message: userMessageText,
+      conversationId: cid,
+      provider: selectedProvider,
+      existingMessages: messagesToSend,
+      attachedFiles: filesToAttach,
+    })
 
     log('about to call streamChat()')
     try {
@@ -405,15 +441,20 @@ function App() {
   }
 
   const handleInterruptSend = () => {
-    if (!inputValue.trim()) return
+    if (!inputValue.trim() && attachedFiles.length === 0) return
     if (!isStreaming) { handleSend(); return }
     if (isInterruptible(rawMessages)) {
       handleSend(rawMessages)
     } else {
-      const interruptData = { message: inputValue.trim(), rawMessages }
+      const interruptData = {
+        message: inputValue.trim(),
+        rawMessages,
+        attachedFiles: [...attachedFiles],
+      }
       setPendingInterrupt(interruptData)
       pendingInterruptRef.current = interruptData
       setInputValue('')
+      setAttachedFiles([])
     }
   }
 
@@ -485,7 +526,7 @@ function App() {
       return
     }
     if (abortControllerRef.current) { abortControllerRef.current.abort(); abortControllerRef.current = null }
-    if (inputValueRef.current.trim()) draftInputsRef.current.set(conversationId ?? '__new__', inputValueRef.current)
+    saveComposerDraft(draftInputsRef.current, conversationId, inputValueRef.current, attachedFilesRef.current)
     const nextId = newConversationId()
     syncConversationUrl(nextId, { mode: 'push' })
     setConversationId(nextId)
@@ -498,6 +539,7 @@ function App() {
     setClosedFiles(new Set())
     setViewMode('main')
     setInputValue('')
+    setAttachedFiles([])
     setHistoryRefreshTrigger(prev => prev + 1)
   }, [rawMessages, messages, conversationId, findForkPoint])
 
@@ -508,7 +550,7 @@ function App() {
     if (!options?.skipNavigate) {
       syncConversationUrl(null, { mode: 'push' })
     }
-    if (inputValue.trim()) draftInputsRef.current.set(conversationId ?? '__new__', inputValue)
+    saveComposerDraft(draftInputsRef.current, conversationId, inputValue, attachedFiles)
     if (abortControllerRef.current) abortControllerRef.current.abort()
     setMessages([])
     setRawMessages([])
@@ -526,8 +568,9 @@ function App() {
     setSubagentChildIds({})
     setForkWarning(null)
     setHistoryRefreshTrigger(prev => prev + 1)
-    const draft = draftInputsRef.current.get('__new__') || ''
-    setInputValue(draft)
+    const draft = readDraft(draftInputsRef.current.get('__new__'))
+    setInputValue(draft.text)
+    setAttachedFiles(draft.files)
     // Re-read Default Model so New Chat is correct even if Settings Save's
     // delayed providers-changed event has not fired yet.
     setSelectedProvider(pickSidebarProvider(providers, defaultProviderIdRef.current, null))
@@ -580,7 +623,7 @@ function App() {
     if (!options?.skipNavigate) {
       syncConversationUrl(targetConversationId, { mode: 'push' })
     }
-    if (inputValueRef.current.trim()) draftInputsRef.current.set(conversationId ?? '__new__', inputValueRef.current)
+    saveComposerDraft(draftInputsRef.current, conversationId, inputValueRef.current, attachedFilesRef.current)
     if (abortControllerRef.current) {
       abortControllerRef.current.abort()
       abortControllerRef.current = null
@@ -599,8 +642,9 @@ function App() {
       setClosedFiles(new Set())
       setViewMode(isSubagent ? 'subagent' : 'main')
       setParentConversationId(isSubagent ? conv.parent_id : null)
-      const draft = isSubagent ? '' : (draftInputsRef.current.get(targetConversationId) || '')
-      setInputValue(draft)
+      const draft = isSubagent ? { text: '', files: [] } : readDraft(draftInputsRef.current.get(targetConversationId))
+      setInputValue(draft.text)
+      setAttachedFiles(draft.files)
       if (conv.status === STATUS.RUNNING) {
         setIsStreaming(true)
         setSseReceived(false)
@@ -655,8 +699,9 @@ function App() {
     const cid = conversationIdRef.current || conversationId || lastRequest?.conversationId
     if (!cid) return
     const lastUser = [...messages].reverse().find(m => m.role === 'user')
-    const message = lastRequest?.message || lastUser?.content
-    if (!message) return
+    const message = lastRequest?.message ?? lastUser?.content ?? ''
+    const retryFiles = lastRequest?.attachedFiles || lastUser?.attachedFiles || []
+    if (!String(message).trim() && retryFiles.length === 0) return
     const existing = (rawMessages.length > 0)
       ? rawMessages
       : (lastRequest?.existingMessages || [])
@@ -700,6 +745,7 @@ function App() {
       const opts = {
         retry: true,
         ...resolveProviderOptions(providers, selectedProvider),
+        ...(retryFiles.length ? { attached_files: retryFiles } : {}),
       }
       await streamChat(message, cid, callbacks, abortControllerRef.current.signal, existing, selectedProvider, opts)
     } catch (error) {
@@ -803,6 +849,11 @@ function App() {
         isStreaming={isStreaming}
         onFileClick={handleFileTreeClick}
         onPathDeleted={handlePathDeleted}
+        onAddToChat={(node) => {
+          if (!node?.path || node.type === 'folder') return
+          setAttachedFiles((prev) => addAttachedFile(prev, node.path))
+          inputRef.current?.focus()
+        }}
         conversationId={conversationId}
         onLoadConversation={handleLoadConversation}
         historyRefreshTrigger={historyRefreshTrigger}
@@ -840,6 +891,7 @@ function App() {
                   forkClickRef={forkClickRef}
                   messagesLength={messages.length}
                   appIsStreaming={isStreaming}
+                  onOpenAttachedFile={handleFileTreeClick}
                   senderLabel={
                     viewMode === 'subagent'
                       ? (msg.role === 'user' ? t('app.mainAgent') : t('app.subagent'))
@@ -910,6 +962,10 @@ function App() {
               setPendingInterrupt(null)
               pendingInterruptRef.current = null
             }}
+            attachedFiles={attachedFiles}
+            onAttachFile={(path) => setAttachedFiles((prev) => addAttachedFile(prev, path))}
+            onDetachFile={(path) => setAttachedFiles((prev) => removeAttachedFile(prev, path))}
+            onSearchFiles={searchWorkspaceFiles}
             onContinueInNewChat={() => {
               const userText = inputValue.trim()
               const standardCommand = 'Please use the `continue_as_new_chat` tool to hand off this task to a new chat with fresh context. ' +

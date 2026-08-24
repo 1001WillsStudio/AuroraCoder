@@ -9,9 +9,13 @@
   background: linear-gradient(to top, var(--bg-primary) 80%, transparent);
 }
 
-.input-wrapper {
+.input-stack {
   max-width: var(--chat-max-width);
   margin: 0 auto;
+  position: relative;
+}
+
+.input-wrapper {
   position: relative;
   background: var(--bg-secondary);
   border: 1px solid var(--border-default);
@@ -31,7 +35,7 @@
 
 .chat-input {
   width: 100%;
-  padding: 18px 60px 18px 20px;
+  padding: 18px 108px 18px 20px;
   background: transparent;
   border: none;
   color: var(--text-primary);
@@ -185,4 +189,124 @@
 .continue-new-chat-link:hover {
   opacity: 1;
   color: var(--text-secondary);
+}
+
+/* ── Attached workspace files ────────────────────────────────── */
+.attached-file-chips {
+  max-width: var(--chat-max-width);
+  margin: 0 auto 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.attached-file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  padding: 4px 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-full);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.2;
+}
+
+.attached-file-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attached-file-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.attached-file-chip-remove:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.attach-file-btn {
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.attach-file-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--accent-primary);
+}
+
+.at-file-picker {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: calc(100% + 6px);
+  z-index: 8;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+
+.at-file-picker-empty {
+  padding: 10px 12px;
+  color: var(--text-tertiary);
+  font-size: 0.8rem;
+}
+
+.at-file-picker-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.at-file-picker-item:hover,
+.at-file-picker-item.active {
+  background: var(--bg-tertiary);
+}
+
+.at-file-picker-name {
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.at-file-picker-path {
+  font-size: 0.72rem;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }

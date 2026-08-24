@@ -55,7 +55,9 @@ from gateway.workspace import (
     generate_workspace_tree_text,
     invalidate_tree_cache,
     count_workspace_files,
+    search_workspace_files,
 )
+from gateway.attached_files import prepare_attached_message
 from gateway.streaming import (
     ActiveStream,
     active_streams,
@@ -168,6 +170,19 @@ async def proxy_chat(request: Request):
         body["max_iterations"] = get_max_iterations()
     conversation_id = body.get("conversation_id") or str(uuid.uuid4())
     body["conversation_id"] = conversation_id
+
+    # Point the agent at files the user attached this turn.  Invalid or
+    # out-of-workspace paths are dropped; the marked block is rewritten
+    # from the survivors so the transcript chips stay honest.
+    requested_files = body.pop("attached_files", None)
+    if requested_files or (isinstance(body.get("message"), str) and "[ATTACHED FILES]" in body["message"]):
+        work_dir = _get_workspace() or WORKSPACE
+        wrapped, _kept = prepare_attached_message(
+            body.get("message") or "",
+            requested_files,
+            work_dir,
+        )
+        body["message"] = wrapped or None
 
     # ── Generate workspace tree for the agent's system message ──
     # Only on the *first* turn — continuations already carry the tree
@@ -934,6 +949,17 @@ async def get_file_tree(max_depth: int = 5, path: str = ""):
 
     tree, root, _version = get_cached_file_tree(work_dir, work_dir, max_depth=max_depth)
     return {"tree": tree, "root": root, "error": None}
+
+
+@app.get("/api/files/search")
+async def search_workspace_file_list(q: str = "", limit: int = 24):
+    """Find workspace files by name or path. Not capped at tree depth."""
+    work_dir = _get_workspace() or WORKSPACE
+    if not work_dir or not Path(work_dir).exists():
+        return {"files": [], "error": "No active session"}
+    query = (q or "").strip()
+    cap = max(1, min(int(limit or 24), 50))
+    return {"files": search_workspace_files(work_dir, query, limit=cap), "error": None}
 
 
 @app.get("/api/files/read")

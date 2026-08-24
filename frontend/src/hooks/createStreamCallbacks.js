@@ -32,12 +32,13 @@ export function createStreamCallbacks({
     if (data?.raw_messages) {
       setRawMessages(data.raw_messages)
       if (withInterrupt && pendingInterruptRef?.current && isInterruptible(data.raw_messages)) {
-        const msg = pendingInterruptRef.current.message
-        const raw = data.raw_messages
+        const pending = pendingInterruptRef.current
+        const msg = pending.message
+        const files = pending.attachedFiles || []
         pendingInterruptRef.current = null
         onInterruptFired?.()
         if (abortControllerRef?.current) abortControllerRef.current.abort()
-        setTimeout(() => handleSend?.(raw, msg), 50)
+        setTimeout(() => handleSend?.(data.raw_messages, msg, { attachedFiles: files }), 50)
       }
     }
     if (data?.conversation_id) setConversationId(data.conversation_id)

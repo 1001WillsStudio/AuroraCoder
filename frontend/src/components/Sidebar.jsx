@@ -23,6 +23,7 @@ export default function Sidebar({
   isStreaming,
   onFileClick,
   onPathDeleted,
+  onAddToChat,
   conversationId,
   onLoadConversation,
   historyRefreshTrigger,
@@ -112,6 +113,7 @@ export default function Sidebar({
           isStreaming={isStreaming}
           refreshTrigger={fileTreeRefreshTrigger}
           onPathDeleted={onPathDeleted}
+          onAddToChat={onAddToChat}
         />
       </div>
 
