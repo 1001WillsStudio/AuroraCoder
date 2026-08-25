@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { X, Plus, Trash2, Save, RefreshCw, Shield, Globe, LogOut, ExternalLink, Wrench, ChevronDown, ChevronRight, Search } from 'lucide-react'
-import { getSettings, updateSettings, getProviders, getToolStoreStatus, refreshToolStore, getMemories, deleteMemory } from '../services/api'
+import { getSettings, updateSettings, getProviders, getToolStoreStatus, refreshToolStore, getMemories, deleteMemory, discoverProviderModels } from '../services/api'
 import { isAuthRequired, isAuthenticated, logout as authLogout, clearToken } from '../utils/auth.js'
 import { encodeStoredApiKey, isUnlimitedMaxIterations, validateMaxIterations, validateSettingsIntRanges, MAX_ITERATIONS_UNLIMITED } from '../utils/settingsValidation.js'
 import useLanguage from '../hooks/useLanguage'
@@ -234,12 +234,7 @@ export default function SettingsPanel({ isOpen, onClose }) {
     setDiscoverError(prev => ({ ...prev, [providerId]: '' }))
     setDiscoveredModels(prev => ({ ...prev, [providerId]: [] }))
     try {
-      const resp = await fetch(`/api/discover-models?provider_id=${encodeURIComponent(providerId)}`)
-      if (!resp.ok) {
-        const data = await resp.json().catch(() => ({}))
-        throw new Error(data.detail || `HTTP ${resp.status}`)
-      }
-      const data = await resp.json()
+      const data = await discoverProviderModels(providerId)
       setDiscoveredModels(prev => ({ ...prev, [providerId]: data.models || [] }))
       setExpandedProvider(providerId)
     } catch (err) {

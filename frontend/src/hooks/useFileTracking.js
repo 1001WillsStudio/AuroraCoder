@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { CODE_TOOLS, FILE_SYSTEM_TOOLS } from '../utils/streamUtils'
-import { uploadWorkspace } from '../services/api'
+import { getFileDiffs, readWorkspaceFile, uploadWorkspace } from '../services/api'
 import { closePanelFilesForDeletedPath, applyViewOnlyReadResults } from '../utils/panelFiles'
 
 // ── Pure merge helper ─────────────────────────────────────────────────────
@@ -59,11 +59,7 @@ export function useFileTracking(conversationId, messages, isStreaming) {
 
     setIsLoadingFiles(true)
     try {
-      const resp = await fetch(
-        `/api/files/diff?conversation_id=${encodeURIComponent(conversationId)}`,
-        { signal: controller.signal },
-      )
-      const data = await resp.json()
+      const data = await getFileDiffs(conversationId, controller.signal)
       const cf = closedFilesRef.current
 
       setEditedFiles(prev => mergePanelFiles(prev, data.files, cf))
@@ -192,9 +188,7 @@ export function useFileTracking(conversationId, messages, isStreaming) {
     try {
       const results = await Promise.all(viewOnly.map(async (f) => {
         try {
-          const resp = await fetch(`/api/files/read?file_path=${encodeURIComponent(f.path)}`)
-          if (!resp.ok) return { id: f.id, missing: true }
-          const data = await resp.json()
+          const data = await readWorkspaceFile(f.path)
           return { id: f.id, content: data.content ?? '' }
         } catch (error) {
           console.error('Error refreshing file:', error)
@@ -226,9 +220,7 @@ export function useFileTracking(conversationId, messages, isStreaming) {
 
   const handleFileTreeClick = useCallback(async (filePath) => {
     try {
-      const resp = await fetch(`/api/files/read?file_path=${encodeURIComponent(filePath)}`)
-      if (!resp.ok) return
-      const data = await resp.json()
+      const data = await readWorkspaceFile(filePath)
 
       const entry = {
         id: filePath,          // plain path — merges naturally with diff-tracked files

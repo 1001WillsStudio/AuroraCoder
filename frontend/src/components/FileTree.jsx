@@ -5,6 +5,12 @@ import {
   FileJson, Braces, Download, Trash2, FolderArchive, AtSign
 } from 'lucide-react'
 import useLanguage from '../hooks/useLanguage'
+import {
+  deleteWorkspacePath,
+  downloadWorkspaceFile,
+  exportWorkspaceFolder,
+  getFileTree,
+} from '../services/api'
 import { expandedEmptyFolderPaths, setFolderChildren } from '../utils/fileTree'
 
 // ── File-type icon ──────────────────────────────────────────────────────────
@@ -187,10 +193,7 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, onPathDeleted,
   expandedRef.current = expandedFolders
 
   const loadOneLevel = useCallback(async (path) => {
-    const response = await fetch(
-      `/api/files/tree?path=${encodeURIComponent(path)}&max_depth=1`
-    )
-    const data = await response.json()
+    const data = await getFileTree({ path, maxDepth: 1 })
     if (data.error) return null
     return data.tree || []
   }, [])
@@ -238,8 +241,7 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, onPathDeleted,
     setLoading(true)
     setError(null)
     try {
-      const response = await fetch('/api/files/tree?max_depth=5')
-      const data = await response.json()
+      const data = await getFileTree({ maxDepth: 5 })
       if (data.error) {
         setError(data.error)
         setTree([])
@@ -317,22 +319,22 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, onPathDeleted,
     setContextMenu({ x: e.clientX, y: e.clientY, node })
   }, [])
 
-  const handleDownload = useCallback((node) => {
-    const a = document.createElement('a')
-    a.href = `/api/files/download?file_path=${encodeURIComponent(node.path)}`
-    a.download = node.name
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
+  const handleDownload = useCallback(async (node) => {
+    try {
+      await downloadWorkspaceFile(node.path, node.name)
+    } catch (err) {
+      console.error('Download failed:', err)
+      alert(err.message || 'Download failed')
+    }
   }, [])
 
-  const handleExport = useCallback((node) => {
-    const a = document.createElement('a')
-    a.href = `/api/files/export?folder_path=${encodeURIComponent(node.path)}`
-    a.download = `${node.name}.zip`
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
+  const handleExport = useCallback(async (node) => {
+    try {
+      await exportWorkspaceFolder(node.path, `${node.name}.zip`)
+    } catch (err) {
+      console.error('Export failed:', err)
+      alert(err.message || 'Export failed')
+    }
   }, [])
 
   const handleDeleteRequest = useCallback((node) => setConfirmDelete(node), [])
@@ -340,21 +342,14 @@ const FileTree = ({ onFileClick, isStreaming, refreshTrigger = 0, onPathDeleted,
   const handleDeleteConfirm = useCallback(async () => {
     if (!confirmDelete) return
     try {
-      const res = await fetch('/api/files/delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: confirmDelete.path }),
-      })
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
-        alert(err.detail || 'Failed to delete')
-      } else {
-        onPathDeleted?.(confirmDelete.path)
-      }
-      await fetchTree()
+      await deleteWorkspacePath(confirmDelete.path)
+      onPathDeleted?.(confirmDelete.path)
     } catch (err) {
       console.error('Delete failed:', err)
-      alert('Delete failed: ' + err.message)
+      alert(err.message || 'Failed to delete')
+    }
+    try {
+      await fetchTree()
     } finally {
       setConfirmDelete(null)
     }

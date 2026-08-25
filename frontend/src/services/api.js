@@ -436,6 +436,115 @@ export async function getWorkspaceInfo() {
   return response.json()
 }
 
+async function _readErrorDetail(response, fallback) {
+  const err = await response.json().catch(() => ({}))
+  const detail = err.detail || err.error
+  return typeof detail === 'string' && detail
+    ? detail
+    : (fallback || `HTTP error! status: ${response.status}`)
+}
+
+/**
+ * Query string for GET /api/files/tree. First paint is max_depth=5;
+ * a folder click uses path + max_depth=1.
+ */
+export function fileTreeUrl({ path, maxDepth } = {}) {
+  const params = new URLSearchParams()
+  if (path) params.set('path', path)
+  if (maxDepth != null) params.set('max_depth', String(maxDepth))
+  const qs = params.toString()
+  return `${API_BASE}/files/tree${qs ? `?${qs}` : ''}`
+}
+
+/** List the workspace tree. Always sends the auth header when a token exists. */
+export async function getFileTree(options = {}) {
+  const response = await fetch(fileTreeUrl(options), { headers: _headers() })
+  if (!response.ok) throw new Error(await _readErrorDetail(response, 'Failed to load file tree'))
+  return response.json()
+}
+
+/** Read a workspace file for the code panel. */
+export async function readWorkspaceFile(filePath) {
+  const response = await fetch(
+    `${API_BASE}/files/read?file_path=${encodeURIComponent(filePath)}`,
+    { headers: _headers() },
+  )
+  if (!response.ok) throw new Error(await _readErrorDetail(response, 'Failed to read file'))
+  return response.json()
+}
+
+/** Agent diffs for the conversation's touched files. */
+export async function getFileDiffs(conversationId, signal) {
+  const response = await fetch(
+    `${API_BASE}/files/diff?conversation_id=${encodeURIComponent(conversationId)}`,
+    { signal, headers: _headers() },
+  )
+  if (!response.ok) throw new Error(await _readErrorDetail(response, 'Failed to load file diffs'))
+  return response.json()
+}
+
+/** Delete a file or folder in the workspace. */
+export async function deleteWorkspacePath(path) {
+  const response = await fetch(`${API_BASE}/files/delete`, {
+    method: 'POST',
+    headers: _headers({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ path }),
+  })
+  if (!response.ok) throw new Error(await _readErrorDetail(response, 'Failed to delete'))
+  return response.json()
+}
+
+function triggerBrowserDownload(blob, filename) {
+  const objectUrl = URL.createObjectURL(blob)
+  try {
+    const a = document.createElement('a')
+    a.href = objectUrl
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+  } finally {
+    URL.revokeObjectURL(objectUrl)
+  }
+}
+
+async function downloadAuthorizedFile(url, filename, fallback) {
+  const response = await fetch(url, { headers: _headers() })
+  if (!response.ok) throw new Error(await _readErrorDetail(response, fallback))
+  triggerBrowserDownload(await response.blob(), filename)
+}
+
+/**
+ * Download a workspace file. A raw ``<a href>`` cannot send the Bearer
+ * token, so this fetches a blob with auth headers and saves it locally.
+ */
+export async function downloadWorkspaceFile(filePath, filename) {
+  await downloadAuthorizedFile(
+    `${API_BASE}/files/download?file_path=${encodeURIComponent(filePath)}`,
+    filename || 'download',
+    'Download failed',
+  )
+}
+
+/** Export a workspace folder as a zip (same blob+auth path as download). */
+export async function exportWorkspaceFolder(folderPath, filename) {
+  await downloadAuthorizedFile(
+    `${API_BASE}/files/export?folder_path=${encodeURIComponent(folderPath)}`,
+    filename || 'folder.zip',
+    'Export failed',
+  )
+}
+
+/** Discover models for a provider. Key is resolved server-side. */
+export async function discoverProviderModels(providerId) {
+  const response = await fetch(
+    `${API_BASE}/discover-models?provider_id=${encodeURIComponent(providerId)}`,
+    { headers: _headers() },
+  )
+  if (!response.ok) throw new Error(await _readErrorDetail(response, `HTTP ${response.status}`))
+  return response.json()
+}
+
 /**
  * Upload a folder to the workspace (the user selects a folder via webkitdirectory).
  *
