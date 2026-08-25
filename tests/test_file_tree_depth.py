@@ -168,9 +168,8 @@ def test_closed_folder_is_not_restored_after_refetch():
 @pytest.mark.unit
 def test_file_tree_client_fetches_one_level_on_click_and_drops_on_close():
     src = TREE_JSX.read_text(encoding="utf-8")
-    assert "max_depth=5" in src
-    assert "/api/files/tree?path=" in src
-    assert "max_depth=1" in src
+    assert "getFileTree({ maxDepth: 5 })" in src
+    assert "getFileTree({ path, maxDepth: 1 })" in src
     assert "restoreExpanded" in src
     assert "expandedEmptyFolderPaths" in src
     assert "onDemandRef" in src

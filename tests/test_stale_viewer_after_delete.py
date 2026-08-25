@@ -147,11 +147,11 @@ def test_refresh_does_not_clobber_diff_tabs():
 def test_file_tree_notifies_panel_after_successful_delete():
     src = TREE.read_text(encoding="utf-8")
     start = src.index("const handleDeleteConfirm")
-    confirm = src[start : start + 900]
-    # Successful delete (res.ok) must tell the viewer; failed delete must not.
-    assert "onPathDeleted" in confirm
+    confirm = src[start : src.index("}, [confirmDelete, fetchTree, onPathDeleted]")]
+    # Successful delete must tell the viewer; failed delete must not.
+    assert "deleteWorkspacePath" in confirm
     assert "onPathDeleted?.(confirmDelete.path)" in confirm or "onPathDeleted(confirmDelete.path)" in confirm
-    fail_arm = confirm[confirm.index("if (!res.ok)") : confirm.index("} else")]
+    fail_arm = confirm[confirm.index("catch") : confirm.index("await fetchTree")]
     assert "onPathDeleted" not in fail_arm
 
 
@@ -164,11 +164,11 @@ def test_refresh_rereads_view_only_tabs_and_drops_missing():
     assert "handlePathDeleted" in src
 
     refresh = src[src.index("const handleRefreshFiles") : src.index("const handleFileTreeClick")]
-    assert "/api/files/read" in refresh
+    assert "readWorkspaceFile" in refresh
     assert "isViewOnly" in refresh
-    assert "if (!resp.ok) return { id: f.id, missing: true }" in refresh
+    assert "missing: true" in refresh
     assert "applyViewOnlyReadResults" in refresh
-    # Must not swallow a failed re-read the way open-file does.
+    # Failed re-read must mark the tab missing, not no-op the way open-file does.
     assert "if (!resp.ok) return\n" not in refresh.replace(" ", "")
 
 
