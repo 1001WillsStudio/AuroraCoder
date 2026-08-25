@@ -1,7 +1,8 @@
-import React, { forwardRef, useEffect, useRef, useState } from 'react'
+import React, { forwardRef, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Send, RotateCcw, ArrowRightFromLine, AtSign, X } from 'lucide-react'
 import useLanguage from '../hooks/useLanguage'
 import { isPrimaryClick } from '../utils/composerGuard'
+import { applyComposerResize } from '../utils/composerResize'
 import { applyAtPick, enterActionForPicker, fileNameOf, MAX_ATTACHED_FILES, parseAtQuery, shouldApplySearchResults } from '../utils/attachedFiles'
 
 /**
@@ -44,6 +45,12 @@ const ChatInput = forwardRef(({
   const hasText = value.trim().length > 0
   const canSend = hasText || attached.length > 0
   const pickerOpen = Boolean(atQuery) && !pendingInterrupt
+
+  // Grow with the draft up to CSS max-height so multiline text is not clipped.
+  useLayoutEffect(() => {
+    const node = ref && typeof ref !== 'function' ? ref.current : null
+    applyComposerResize(node)
+  }, [value, ref])
 
   useEffect(() => {
     if (!pickerOpen) return undefined
