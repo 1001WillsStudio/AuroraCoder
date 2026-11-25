@@ -214,16 +214,20 @@ class MemoryRepository:
         return item
 
     def delete(self, memory_id: str) -> bool:
-        with self._lock, self._connect() as conn:
-            row = conn.execute("SELECT file_path FROM memories WHERE id=?", (memory_id,)).fetchone()
-            if row is None:
-                return False
-            conn.execute("DELETE FROM memories WHERE id=?", (memory_id,))
+        with self._lock:
+            with self._connect() as conn:
+                row = conn.execute("SELECT file_path FROM memories WHERE id=?", (memory_id,)).fetchone()
+                if row is None:
+                    return False
+                conn.execute("DELETE FROM memories WHERE id=?", (memory_id,))
+            self._unlink_memory_file(row["file_path"])
+        return True
+
+    def _unlink_memory_file(self, file_path: str) -> None:
         try:
-            (self._dir / row["file_path"]).unlink(missing_ok=True)
+            (self._dir / file_path).unlink(missing_ok=True)
         except OSError:
             pass
-        return True
 
     def list(
         self,
@@ -349,22 +353,24 @@ class MemoryRepository:
             cap = max_memories()
         if cap <= 0:
             return 0
-        with self._lock, self._connect() as conn:
-            total = conn.execute("SELECT COUNT(*) AS c FROM memories").fetchone()["c"]
-        overflow = total - cap
-        if overflow <= 0:
-            return 0
-        items = self.all_items(plane="world")
-        items.sort(
-            key=lambda it: (it.usage_count, it.last_used or it.created, it.corroboration_count, it.created)
-        )
-        evicted = 0
-        for item in items:
-            if evicted >= overflow:
-                break
-            self.delete(item.id)
-            evicted += 1
-            logger.info("[memory-cap] Evicted %s (%s) to honor cap %d", item.id, item.description, cap)
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                total = conn.execute("SELECT COUNT(*) AS c FROM memories").fetchone()["c"]
+                overflow = total - cap
+                if overflow <= 0:
+                    return 0
+                victims = conn.execute(
+                    """SELECT id, file_path FROM memories WHERE plane='world'
+                       ORDER BY usage_count, COALESCE(NULLIF(last_used, ''), created), corroboration_count, created, id
+                       LIMIT ?""",
+                    (overflow,),
+                ).fetchall()
+                conn.executemany("DELETE FROM memories WHERE id=?", [(row["id"],) for row in victims])
+            for row in victims:
+                self._unlink_memory_file(row["file_path"])
+                logger.info("[memory-cap] Evicted %s to honor cap %d", row["id"], cap)
+        evicted = len(victims)
         if evicted < overflow:
             logger.warning("[memory-cap] Still %d over cap %d (stance not auto-removable)", overflow - evicted, cap)
         return evicted
