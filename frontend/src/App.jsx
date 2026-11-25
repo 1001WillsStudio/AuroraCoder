@@ -675,11 +675,13 @@ function App() {
   const handleLoadConversation = useCallback(async (targetConversationId, options = {}) => {
     const viewEpoch = beginConversationView()
     const isCurrentView = () => viewEpoch === viewEpochRef.current
+    const sourceId = conversationIdRef.current || conversationId
+    const carried = options?.carryPendingSteering ? pendingInterruptRef.current : null
     setSidebarOpen(false)
     if (!options?.skipNavigate) {
       syncConversationUrl(targetConversationId, { mode: 'push' })
     }
-    stashConversationDraft(conversationId)
+    stashConversationDraft(sourceId)
     if (abortControllerRef.current) {
       abortControllerRef.current.abort()
       abortControllerRef.current = null
@@ -710,7 +712,12 @@ function App() {
       const draft = isSubagent ? { text: '', files: [] } : readDraft(draftInputsRef.current.get(targetConversationId))
       setInputValue(draft.text)
       setAttachedFiles(draft.files)
-      if (conv.status === STATUS.RUNNING) {
+      if (carried && !isSubagent) {
+        draftInputsRef.current.delete(sourceId || '__new__')
+        pendingInterruptRef.current = carried
+        setPendingInterrupt(carried)
+      }
+      if (conv.status === STATUS.RUNNING || (carried && !isSubagent && conv.status === 'continued')) {
         setIsStreaming(true)
         setSseReceived(false)
         abortControllerRef.current = new AbortController()
@@ -746,10 +753,27 @@ function App() {
           if (err.name !== 'AbortError') console.error('[resume stream]', err)
           if (isCurrentView()) setIsStreaming(false)
         }
+      } else if (carried && !isSubagent) {
+        const raw = conv.messages || []
+        const finished = [STATUS.COMPLETED, STATUS.MAX_ITERATIONS_REACHED].includes(conv.status)
+        if (finished && raw.length && isInterruptible(raw)) {
+          pendingInterruptRef.current = null
+          setPendingInterrupt(null)
+          handleSendRef.current?.(raw, carried.message, {
+            attachedFiles: carried.attachedFiles || [], interruptStream: false,
+          })
+        } else {
+          restorePendingInterrupt()
+        }
       }
     } catch (e) {
       if (!isCurrentView()) return
       console.error('[handleLoadConversation] Failed:', e)
+      if (carried && conversationIdRef.current === sourceId) {
+        syncConversationUrl(sourceId, { mode: 'replace' })
+        setInputValue(carried.message)
+        setAttachedFiles(carried.attachedFiles || [])
+      }
       if (options?.skipNavigate) {
         setConversationId(prev => (prev === targetConversationId ? null : prev))
       }

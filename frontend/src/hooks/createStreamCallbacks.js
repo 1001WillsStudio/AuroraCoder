@@ -36,7 +36,8 @@ export function createStreamCallbacks({
     const next = { pending, rawMessages, interrupt }
     scheduled = next
     setTimeout(() => {
-      if (scheduled === next) scheduled = null
+      if (scheduled !== next) return
+      scheduled = null
       if (!isCurrentView() || pendingInterruptRef.current !== pending) return
       pendingInterruptRef.current = null
       onInterruptFired?.()
@@ -50,13 +51,16 @@ export function createStreamCallbacks({
   }
 
   const followContinuation = (data) => {
-    if (data?.new_conversation_id && !continuationNavigatedRef?.current.has(data.new_conversation_id)) {
-      continuationNavigatedRef?.current.add(data.new_conversation_id)
-      setTimeout(() => {
-        if (isCurrentView()) handleLoadConversation?.(data.new_conversation_id)
-      }, 500)
-    }
+    const nextId = data?.new_conversation_id
+    if (!nextId) return
+    scheduled = null
+    if (continuationNavigatedRef?.current.has(nextId)) return
+    continuationNavigatedRef?.current.add(nextId)
+    setTimeout(() => {
+      if (isCurrentView()) handleLoadConversation?.(nextId, { carryPendingSteering: true })
+    }, 500)
   }
+
   const onMessages = (frontendMessages, _status, data) => {
     if (_firstMessage) { _firstMessage = false; onFirstSse?.() }
     if (ensureAssistantTail) {
@@ -67,7 +71,9 @@ export function createStreamCallbacks({
     }
     if (data?.raw_messages) {
       setRawMessages(data.raw_messages)
-      if (!data.new_conversation_id) dispatchPending(data.raw_messages, true)
+      if (!data.new_conversation_id && _status !== 'context_limit_reached') {
+        dispatchPending(data.raw_messages, true)
+      }
     }
     if (data?.conversation_id) setConversationId(data.conversation_id)
     followContinuation(data)
@@ -84,7 +90,9 @@ export function createStreamCallbacks({
     if (data.raw_messages) setRawMessages(data.raw_messages)
     setHistoryRefreshTrigger(prev => prev + 1)
     const finished = [STATUS.COMPLETED, STATUS.MAX_ITERATIONS_REACHED].includes(data.status)
-    if (!finished || data.new_conversation_id || !dispatchPending(data.raw_messages, false)) {
+    if (data.new_conversation_id) {
+      followContinuation(data)
+    } else if (!finished || !dispatchPending(data.raw_messages, false)) {
       onStreamEnd?.()
     }
   }
@@ -163,10 +171,7 @@ export function createStreamCallbacks({
   }
   return {
     onMessages: forCurrentView(overrides.onMessages || onMessages),
-    onDone: forCurrentView((data) => {
-      (overrides.onDone || onDone)(data)
-      followContinuation(data)
-    }),
+    onDone: forCurrentView(overrides.onDone || onDone),
     onError: forCurrentView(overrides.onError || onError),
     onSubagentEvent: forCurrentView(overrides.onSubagentEvent || onSubagentEvent),
     onDelta: forCurrentView(overrides.onDelta || onDelta),
