@@ -57,7 +57,9 @@ export function createStreamCallbacks({
     if (continuationNavigatedRef?.current.has(nextId)) return
     continuationNavigatedRef?.current.add(nextId)
     setTimeout(() => {
-      if (isCurrentView()) handleLoadConversation?.(nextId, { carryPendingSteering: true })
+      if (isCurrentView()) {
+        handleLoadConversation?.(nextId, { carryPendingSteering: true, followContinuation: true })
+      }
     }, 500)
   }
 
