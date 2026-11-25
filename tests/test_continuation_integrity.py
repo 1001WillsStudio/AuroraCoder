@@ -32,7 +32,7 @@ def test_handoff_ignores_old_unfinished_and_invalid_calls():
     denied = [handoff("new", "Fresh"), response("new", "Error: tool unavailable")]
     assert streaming._scan_for_continuation([*old, *denied], {"old"}) is None
     assert streaming._scan_for_continuation(
-        [*old, handoff("new", "Fresh"), response("new")], {"old"},
+        [*old, handoff("new", "Fresh"), response("new"), *invalid], {"old"},
     ) == "Fresh"
 
 

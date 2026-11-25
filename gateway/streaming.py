@@ -398,13 +398,14 @@ def _scan_for_continuation(raw_messages: list, prior_tool_ids: set[str]) -> str 
             if function.get("name") != "continue_as_new_chat" or tool_id in prior_tool_ids:
                 continue
             if not tool_id or results.get(tool_id) != CONTINUATION_TOOL_RESULT:
-                return None
+                continue
             try:
                 args = json.loads(function["arguments"])
             except (KeyError, TypeError, ValueError):
-                return None
+                continue
             prompt = args.get("prompt") if isinstance(args, dict) else None
-            return prompt if isinstance(prompt, str) and prompt.strip() else None
+            if isinstance(prompt, str) and prompt.strip():
+                return prompt
     return None
 
 
