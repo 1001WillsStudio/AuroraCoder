@@ -6,9 +6,11 @@ and subscriber SSE — all the plumbing that powers the SSE-based chat streaming
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
+import re
 import secrets
 import time
 import uuid
@@ -556,25 +558,32 @@ def pause_task(conversation_id: str, reason: str = "paused") -> TaskChecklist | 
     return task
 
 
-def _has_work_beyond_checkpoint(messages: list) -> bool:
-    completed_calls = set()
-    for message in reversed(messages):
-        role = message.get("role")
-        if role == "user":
-            break
-        if role == "tool":
-            completed_calls.add(message.get("tool_call_id"))
-        elif role == "assistant":
-            calls = message.get("tool_calls") or []
-            content = message.get("content")
-            if not calls and isinstance(content, str) and content.strip():
-                return True
-            for call in calls:
+def _task_work_observations(messages: list, prior_tool_ids: set[str]) -> list[str]:
+    names = {}
+    observations = {}
+    for message in messages:
+        if message.get("role") == "user":
+            names.clear()
+            observations.clear()
+        elif message.get("role") == "assistant":
+            for call in message.get("tool_calls") or []:
+                call_id = call.get("id")
                 name = call.get("function", {}).get("name")
-                if (name and name not in TASK_TOOL_NAMES and name != "continue_as_new_chat"
-                        and call.get("id") in completed_calls):
-                    return True
-    return False
+                if call_id and call_id not in prior_tool_ids and name and name not in TASK_TOOL_NAMES:
+                    if name != "continue_as_new_chat":
+                        names[call_id] = name
+        elif message.get("role") == "tool":
+            name = names.get(message.get("tool_call_id"))
+            result = message.get("content")
+            if not name or not isinstance(result, str):
+                continue
+            result = result.strip()
+            if (not result or result.startswith(("Error", "Skipped:", "Command timed out"))
+                    or re.search(r"^Exit Code: (?!0$)-?\d+$", result, re.MULTILINE)):
+                continue
+            value = f"{name}\0{' '.join(result.split())}"
+            observations[hashlib.sha256(value.encode()).hexdigest()] = None
+    return list(observations)
 
 
 def _finish_task_segment(stream: ActiveStream, raw_messages: list, prior_tool_ids: set[str]) -> None:
@@ -592,9 +601,17 @@ def _finish_task_segment(stream: ActiveStream, raw_messages: list, prior_tool_id
         stream.status = "interrupted"
     else:
         previous = stream.initial_task_progress
-        progressed = previous is None or task.progress.items != previous.items or (
-            task.progress.checkpoint != previous.checkpoint and _has_work_beyond_checkpoint(raw_messages)
+        observations = _task_work_observations(raw_messages, prior_tool_ids)
+        new_observation = bool(set(observations).difference(task.work_observations))
+        progressed = previous is None or (
+            {item.text: item.evidence for item in task.progress.items}
+            != {item.text: item.evidence for item in previous.items}
+        ) or (
+            task.progress.checkpoint != previous.checkpoint and new_observation
         )
+        recent = list(dict.fromkeys([*task.work_observations, *observations]))[-128:]
+        if recent != task.work_observations:
+            task = store.tasks.save(task, work_observations=recent)
         stalled = 0 if steering or progressed else task.stalled + 1
         if stalled >= 2:
             pause_task(cid, "no_progress")

@@ -63,6 +63,7 @@ class TaskChecklist(BaseModel):
     options: TaskResume = Field(default_factory=TaskResume)
     started: bool = False
     stalled: int = 0
+    work_observations: list[str] = Field(default_factory=list)
     revision: int = 1
     criteria_initialized: bool = False
     criteria_change_index: int = -1
@@ -89,7 +90,7 @@ class TaskChecklist(BaseModel):
         return {
             **self.model_dump(exclude={
                 "conversation_ids", "options", "stalled", "handoff", "steering", "started", "request", "latest_steering",
-                "terminal_jobs", "steering_entries", "criteria_initialized", "criteria_change_index",
+                "terminal_jobs", "steering_entries", "criteria_initialized", "criteria_change_index", "work_observations",
             }),
             "conversation_id": self.conversation_id,
         }
