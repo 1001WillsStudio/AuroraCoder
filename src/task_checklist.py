@@ -27,6 +27,20 @@ class TaskProgress(BaseModel):
         return not self.blocker and all(item.evidence for item in self.items)
 
 
+class TaskCheckpointUpdate(BaseModel):
+    items: list[TaskItem] = Field(
+        default_factory=list, max_length=20, description="Checklist entries to add or update."
+    )
+    checkpoint: Note | None = None
+    blocker: Note | None = None
+    replace_items: bool = Field(
+        default=False, description="Deliberately replace the plan with the supplied entries. Keep every user criterion."
+    )
+    reopen_items: list[ItemText] = Field(
+        default_factory=list, max_length=20, description="Labels whose saved evidence is invalid and must be cleared."
+    )
+
+
 class TaskEdit(BaseModel):
     objective: TaskText
     criteria: list[ItemText] = Field(default_factory=list, max_length=20)
@@ -81,12 +95,13 @@ CHECKPOINT_SCHEMA = {
     "function": {
         "name": CHECKPOINT_TOOL,
         "description": (
-            "Save the entire current acceptance checklist. Keep user criteria verbatim. "
+            "Save changed checklist entries and a checkpoint. Omitted entries and their evidence are kept. "
+            "Keep user criteria verbatim and explicitly reopen an item if its prior evidence no longer applies. "
             "An item is pending until its evidence records an actual check and observed result. "
             "Save a short checkpoint after material progress and before any context handoff. "
             "Use blocker only when work needs external input or cannot progress."
         ),
-        "parameters": TaskProgress.model_json_schema(),
+        "parameters": TaskCheckpointUpdate.model_json_schema(),
     },
 }
 
@@ -127,8 +142,8 @@ class AgentTaskTools:
                 "Carry out the user's current task in the configured workspace. Respect the original "
                 "request and the latest user direction. Continue from the first unverified item. "
                 "Refine your checklist as you learn and use update_task_checklist to save progress "
-                "before handing off context. Keep the full checklist in every update and mark an item "
-                "done only after observing concrete evidence. Once the objective and all items are "
+                "before handing off context. Save the entries that changed and mark an item done only "
+                "after observing concrete evidence. Once the objective and all items are "
                 "verified, save the evidence and summarize. If work requires external input, record the blocker."
             )
         elif self.state["status"] == "paused":

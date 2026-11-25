@@ -8,7 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
-from src.task_checklist import TaskEdit, TaskItem, TaskProgress, TaskResume, TaskStart
+from src.task_checklist import TaskCheckpointUpdate, TaskEdit, TaskItem, TaskProgress, TaskResume, TaskStart
 
 logger = logging.getLogger(__name__)
 
@@ -139,10 +139,29 @@ class TaskChecklistStore:
         )
         return self._create(task)
 
-    def checkpoint(self, task: TaskChecklist, progress: TaskProgress) -> TaskChecklist:
-        labels = {item.text for item in progress.items}
-        if len(labels) != len(progress.items) or not set(task.criteria) <= labels:
-            raise TaskConflict("Keep every user criterion verbatim and give each item a unique label.")
+    def checkpoint(self, task: TaskChecklist, update: TaskCheckpointUpdate) -> TaskChecklist:
+        labels = {item.text for item in update.items}
+        if len(labels) != len(update.items):
+            raise TaskConflict("Give each checklist item a unique label.")
+
+        previous = {item.text: item for item in task.progress.items}
+        items = {} if update.replace_items else previous.copy()
+        for item in update.items:
+            items[item.text] = previous.get(item.text, item) if not item.evidence else item
+        if not set(task.criteria) <= items.keys():
+            raise TaskConflict("Keep every user criterion verbatim.")
+        if not 1 <= len(items) <= 20:
+            raise TaskConflict("Keep between one and twenty checklist items.")
+        for label in update.reopen_items:
+            if label not in items:
+                raise TaskConflict(f"Cannot reopen an unknown checklist item: {label}")
+            items[label] = items[label].model_copy(update={"evidence": ""})
+
+        progress = TaskProgress(
+            items=list(items.values()),
+            checkpoint=task.progress.checkpoint if update.checkpoint is None else update.checkpoint,
+            blocker=task.progress.blocker if update.blocker is None else update.blocker,
+        )
         if task.progress != progress:
             return self.save(task, progress=progress)
         return task

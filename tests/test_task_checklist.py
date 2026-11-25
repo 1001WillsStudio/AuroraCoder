@@ -58,7 +58,9 @@ def test_checkpoint_survives_context_rollover_pause_and_reload(tmp_path, monkeyp
                                 "checkpoint": next_step,
                             }
                             assert (await checkpoint(json, progress, "stale-token")).status_code == 409
-                            assert (await checkpoint(json, {"items": [{"text": first_item}]})).status_code == 422
+                            assert (await checkpoint(json, {
+                                "items": [{"text": first_item}], "replace_items": True,
+                            })).status_code == 422
                             assert (await checkpoint(json, progress)).status_code == 200
                             status = "context_limit_reached"
                         elif segment == 2:

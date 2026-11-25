@@ -38,7 +38,7 @@ except ImportError:
 
 from gateway.conversation_store import store, ensure_error_frontend_message, messages_for_retry, require_conversation_id
 from gateway.task_checklist import TaskConflict
-from src.task_checklist import TaskEdit, TaskProgress, TaskReopen, TaskResume, TaskStart
+from src.task_checklist import TaskCheckpointUpdate, TaskEdit, TaskReopen, TaskResume, TaskStart
 from gateway.settings_store import (
     get_all_settings,
     update_settings as _store_update_settings,
@@ -502,7 +502,7 @@ async def reopen_agent_task(conversation_id: str, reopen: TaskReopen, request: R
 
 
 @app.post("/internal/task-checkpoint/{conversation_id}")
-async def save_task_checkpoint(conversation_id: str, progress: TaskProgress, request: Request):
+async def save_task_checkpoint(conversation_id: str, progress: TaskCheckpointUpdate, request: Request):
     stream = _task_stream(conversation_id, request)
     task = store.tasks.get(conversation_id)
     if (not stream.task_active or not task or task.conversation_id != conversation_id

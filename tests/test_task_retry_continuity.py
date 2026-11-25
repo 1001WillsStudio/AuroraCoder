@@ -2,7 +2,7 @@ import pytest
 
 from gateway import routes, streaming
 from gateway.conversation_store import ConversationStore
-from src.task_checklist import TaskItem, TaskProgress, TaskResume, TaskStart
+from src.task_checklist import TaskCheckpointUpdate, TaskItem, TaskResume, TaskStart
 
 
 @pytest.mark.asyncio
@@ -19,7 +19,7 @@ async def test_retry_uses_saved_task_without_restarting_it(tmp_path, monkeypatch
         cid, TaskStart(objective="Review two files", items=["Inspect first", "Inspect second"]),
         workspace, "Review the files in this workspace", TaskResume(provider_id="original"),
     )
-    task = store.tasks.checkpoint(task, TaskProgress(items=[
+    task = store.tasks.checkpoint(task, TaskCheckpointUpdate(items=[
         TaskItem(text="Inspect first", evidence="First file passed"),
         TaskItem(text="Inspect second"),
     ], checkpoint="Read second file"))
