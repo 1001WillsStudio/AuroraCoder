@@ -1,50 +1,43 @@
 import { STATUS } from '../constants'
-import { isInterruptible } from '../utils/streamUtils'
+import { hasCompleteToolBatch } from '../utils/streamUtils'
 
 /**
  * Plain factory (NOT a hook).  Called inside handler bodies so closures
- * over the enclosing handler work naturally (e.g. handleSend → onMessages
- * → handleSend for interrupt resend).
+ * over the enclosing handler work naturally.
  */
 export function createStreamCallbacks({
   setMessages, setRawMessages, setConversationId, setCanContinue,
   setIsStreaming, setHistoryRefreshTrigger, setSubagentChildIds,
   handleSend, handleLoadConversation,
-  pendingInterruptRef, continuationNavigatedRef, abortControllerRef,
-  withInterrupt = false,
+  queuedInputRef, continuationNavigatedRef,
+  withQueuedInput = false,
   withRetry = false,
   overrides = {},
   onMessagesRefresh = null,
   onFirstSse = null,
   onStreamEnd = null,
-  onInterruptFired = null,
+  onQueuedInputSent = null,
   ensureAssistantTail = false,
   isCurrentView = () => true,
 }) {
   let _firstMessage = true
   let scheduled = null
-  const dispatchPending = (rawMessages, interrupt) => {
-    const pending = pendingInterruptRef?.current
-    if (!withInterrupt || !pending || !handleSend || !rawMessages?.length || !isInterruptible(rawMessages)) {
+  const dispatchPending = (rawMessages) => {
+    const pending = queuedInputRef?.current
+    if (!withQueuedInput || !pending || !handleSend || !rawMessages?.length || !hasCompleteToolBatch(rawMessages)) {
       return false
     }
-    if (scheduled?.pending === pending) {
-      scheduled.rawMessages = rawMessages
-      scheduled.interrupt = interrupt
-      return true
-    }
-    const next = { pending, rawMessages, interrupt }
+    if (scheduled?.pending === pending) return true
+    const next = { pending }
     scheduled = next
     setTimeout(() => {
       if (scheduled !== next) return
       scheduled = null
-      if (!isCurrentView() || pendingInterruptRef.current !== pending) return
-      pendingInterruptRef.current = null
-      onInterruptFired?.()
-      if (next.interrupt) abortControllerRef?.current?.abort()
-      handleSend(next.rawMessages, pending.message, {
+      if (!isCurrentView() || queuedInputRef.current !== pending) return
+      queuedInputRef.current = null
+      onQueuedInputSent?.()
+      handleSend(rawMessages, pending.message, {
         attachedFiles: pending.attachedFiles || [],
-        interruptStream: next.interrupt,
       })
     }, 50)
     return true
@@ -73,9 +66,6 @@ export function createStreamCallbacks({
     }
     if (data?.raw_messages) {
       setRawMessages(data.raw_messages)
-      if (!data.new_conversation_id && _status !== 'context_limit_reached') {
-        dispatchPending(data.raw_messages, true)
-      }
     }
     if (data?.conversation_id) setConversationId(data.conversation_id)
     followContinuation(data)
@@ -87,14 +77,14 @@ export function createStreamCallbacks({
   const onDone = (data) => {
     setConversationId(data.conversation_id)
     setCanContinue(data.status === STATUS.MAX_ITERATIONS_REACHED)
-    setIsStreaming(false)
+    if (!data.new_conversation_id) setIsStreaming(false)
     if (data.messages) setMessages(data.messages)
     if (data.raw_messages) setRawMessages(data.raw_messages)
     setHistoryRefreshTrigger(prev => prev + 1)
     const finished = [STATUS.COMPLETED, STATUS.MAX_ITERATIONS_REACHED].includes(data.status)
     if (data.new_conversation_id) {
       followContinuation(data)
-    } else if (!finished || !dispatchPending(data.raw_messages, false)) {
+    } else if (!finished || !dispatchPending(data.raw_messages)) {
       onStreamEnd?.()
     }
   }

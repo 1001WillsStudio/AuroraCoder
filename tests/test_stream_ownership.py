@@ -49,6 +49,53 @@ async def test_concurrent_sends_wait_to_replace_the_same_stream(tmp_path, monkey
 
 
 @pytest.mark.asyncio
+async def test_desktop_followup_waits_for_active_turn_and_uses_persisted_history(tmp_path, monkeypatch):
+    history = ConversationStore(tmp_path)
+    cid = history.create_conversation()
+    owner = streaming.ActiveStream(cid)
+    active = {cid: owner}
+    release = asyncio.Event()
+    seen = []
+    final = [{"role": "user", "content": "First request"},
+             {"role": "assistant", "content": "The complete first answer."}]
+
+    async def finish_turn():
+        await release.wait()
+        history.save_messages(cid, final)
+        history.update_status(cid, "completed")
+        del active[cid]
+
+    async def backend(_stream, payload):
+        seen.append(payload)
+
+    async def cancel(*_):
+        pytest.fail("A desktop follow-up attempted to cancel an active turn.")
+
+    class Request:
+        async def json(self):
+            return {"conversation_id": cid, "message": "Second request", "max_iterations": 2,
+                    "prefer_saved_history": True, "wait_for_current_turn": True,
+                    "messages": [final[0]]}
+
+    monkeypatch.setattr(routes, "store", history)
+    monkeypatch.setattr(routes, "active_streams", active)
+    monkeypatch.setattr(routes, "_get_workspace", lambda: tmp_path)
+    monkeypatch.setattr(routes, "_cancel_active_stream", cancel)
+    monkeypatch.setattr(routes, "_proxy_backend_stream", backend)
+    owner.task = asyncio.create_task(finish_turn())
+    follow_up = asyncio.create_task(routes.proxy_chat(Request()))
+    await asyncio.sleep(0)
+    assert not follow_up.done() and not owner.cancel_event.is_set()
+    assert seen == []
+    release.set()
+    await asyncio.wait_for(follow_up, 2)
+    await active[cid].task
+    assert seen[0]["message"] == "Second request"
+    assert seen[0]["messages"] == final
+    assert "wait_for_current_turn" not in seen[0]
+
+
+@pytest.mark.asyncio
 async def test_superseded_proxy_cannot_replace_newer_history_during_cleanup(tmp_path, monkeypatch):
     store = ConversationStore(tmp_path)
     cid = store.create_conversation()

@@ -19,13 +19,13 @@ export function isPrimaryClick(event) {
 }
 
 /**
- * A second handleSend is a duplicate unless this call is an interrupt.
+ * A terminal follow-up can start while the previous response is closing.
  * @param {boolean} inFlight
- * @param {boolean} isInterrupt
+ * @param {boolean} afterTurn
  * @returns {boolean}
  */
-export function shouldBeginSend(inFlight, isInterrupt) {
-  return Boolean(isInterrupt) || !inFlight
+export function shouldBeginSend(inFlight, afterTurn) {
+  return Boolean(afterTurn) || !inFlight
 }
 
 /** Ignore Stop for this long after Send so a double-click cannot abort. */
@@ -45,8 +45,7 @@ export function shouldAcceptStop(sendStartedAt, now = Date.now(), armMs = STOP_A
 }
 
 /**
- * Tokened send lock. end(token) is a no-op if a newer send (interrupt)
- * has already claimed the lock, so the aborted predecessor cannot clear it.
+ * Tokened send lock. A completed request cannot clear its follow-up's lock.
  */
 export function createSendLock() {
   let inFlight = false
@@ -55,8 +54,8 @@ export function createSendLock() {
     get inFlight() {
       return inFlight
     },
-    begin(isInterrupt) {
-      if (!shouldBeginSend(inFlight, isInterrupt)) return null
+    begin(afterTurn) {
+      if (!shouldBeginSend(inFlight, afterTurn)) return null
       inFlight = true
       token += 1
       return token

@@ -11,7 +11,7 @@ import Sidebar from './components/Sidebar'
 import WelcomeScreen from './components/WelcomeScreen'
 import SettingsPanel from './components/SettingsPanel'
 import { streamChat, getProviders, cancelConversation, getConversation, deleteConversation, getActiveStreams, resumeStream, getTaskInstruction, setTaskInstruction, getInstanceInfo, searchWorkspaceFiles } from './services/api'
-import { isInterruptible, TASK_MARKER_START, TASK_MARKER_END } from './utils/streamUtils'
+import { hasCompleteToolBatch, TASK_MARKER_START, TASK_MARKER_END } from './utils/streamUtils'
 import { createSendLock, shouldAcceptStop } from './utils/composerGuard'
 import { addAttachedFile, removeAttachedFile } from './utils/attachedFiles'
 import { checkAuth, isAuthRequired } from './utils/auth.js'
@@ -104,7 +104,7 @@ function App() {
     typeof window !== 'undefined' && Boolean(parseConversationId(window.location.pathname))
   ))
   const [canContinue, setCanContinue] = useState(false)
-  const [pendingInterrupt, setPendingInterrupt] = useState(null)
+  const [queuedInput, setQueuedInput] = useState(null)
   const [sseReceived, setSseReceived] = useState(false)
   
   // Provider state
@@ -164,7 +164,7 @@ function App() {
   const abortControllerRef = useRef(null)
   const sendLockRef = useRef(createSendLock())
   const sendStartedAtRef = useRef(0)
-  const pendingInterruptRef = useRef(null)
+  const queuedInputRef = useRef(null)
   const viewEpochRef = useRef(0)
   const pendingConversationLoadRef = useRef(null)
   const conversationIdRef = useRef(null)
@@ -310,21 +310,21 @@ function App() {
     return viewEpochRef.current
   }, [])
 
-  const restorePendingInterrupt = useCallback(() => {
-    const pending = pendingInterruptRef.current
+  const restoreQueuedInput = useCallback(() => {
+    const pending = queuedInputRef.current
     if (!pending) return
-    pendingInterruptRef.current = null
-    setPendingInterrupt(null)
+    queuedInputRef.current = null
+    setQueuedInput(null)
     setInputValue(pending.message)
     setAttachedFiles(pending.attachedFiles || [])
    }, [])
 
   const stashConversationDraft = useCallback((id) => {
-    const pending = pendingInterruptRef.current
+    const pending = queuedInputRef.current
     saveComposerDraft(draftInputsRef.current, id, pending?.message ?? inputValueRef.current,
       pending?.attachedFiles ?? attachedFilesRef.current)
-    pendingInterruptRef.current = null
-    setPendingInterrupt(null)
+    queuedInputRef.current = null
+    setQueuedInput(null)
   }, [])
 
   const latestChatState = useRef(null)
@@ -336,19 +336,19 @@ function App() {
       return
     }
     const latest = latestChatState.current
-    if (fallback && (!latest.isStreaming || isInterruptible(latest.rawMessages))) {
-      handleSendRef.current?.(latest.isStreaming ? latest.rawMessages : null, message, { attachedFiles: files })
+    if (fallback && !latest.isStreaming) {
+      handleSendRef.current?.(latest.rawMessages, message, { attachedFiles: files })
     } else if (fallback) {
       const pending = { message, attachedFiles: files }
-      pendingInterruptRef.current = pending
-      setPendingInterrupt(pending)
+      queuedInputRef.current = pending
+      setQueuedInput(pending)
     } else {
       setInputValue(message)
       setAttachedFiles(files)
     }
   })
 
-  const handleSend = async (interruptMessages = null, overrideMessage = null, options = {}) => {
+  const handleSend = async (finishedMessages = null, overrideMessage = null, options = {}) => {
     if (pendingConversationLoadRef.current) return
     const viewEpoch = viewEpochRef.current
     const isCurrentView = () => viewEpoch === viewEpochRef.current
@@ -356,19 +356,18 @@ function App() {
     const log = (label) => console.log(`[timing][handleSend] ${performance.now().toFixed(1)}ms | ${label} (+${(performance.now() - sendT0).toFixed(1)}ms)`)
     log('entered')
 
-    const { attachedFiles: optionFiles, interruptStream = true, ...restOptions } = options
+    const { attachedFiles: optionFiles, ...restOptions } = options
     const filesToAttach = Array.isArray(optionFiles) ? optionFiles : attachedFilesRef.current
     const typedText = overrideMessage != null ? String(overrideMessage) : inputValue
     const messageToSend = typedText.trim()
     if (!messageToSend && filesToAttach.length === 0) return
 
-    const isInterrupt = interruptMessages !== null && interruptMessages.length > 0
-    const sendToken = sendLockRef.current.begin(isInterrupt)
+    const sendToken = sendLockRef.current.begin(Boolean(finishedMessages?.length))
     if (sendToken == null) return
     sendStartedAtRef.current = Date.now()
     const releaseSend = () => sendLockRef.current.end(sendToken)
 
-    if (!conversationId && !interruptMessages) {
+    if (!conversationId && !finishedMessages) {
       log('getActiveStreams check start')
       try {
         const { active } = await getActiveStreams()
@@ -400,26 +399,6 @@ function App() {
       log('abort done')
     }
 
-    // When interrupting, call cancelConversation.  The gateway cancels
-    // the old stream (triggering final persistence in its finally block)
-    // and returns the latest raw_messages — including content that was
-    // only delivered via deltas and never made it into the frontend's
-    // rawMessages state.  Without this the backend receives a stale
-    // history with the assistant's ``content`` still at ``""``.
-    let latestRawMessages = null
-    if (isInterrupt && interruptStream && cid) {
-      try {
-        const result = await cancelConversation(cid)
-        if (result?.raw_messages?.length > 0) {
-          latestRawMessages = result.raw_messages
-        }
-        log('cancel returned latest messages')
-      } catch (e) {
-        console.warn('[handleSend] Cancel fetch failed, using stale messages:', e.message)
-      }
-    }
-    if (!isCurrentView()) { releaseSend(); return }
-
     log('setState batch (messages, streaming, etc.)')
     const userBubble = { role: 'user', content: userMessageText }
     if (appliedInstruction) {
@@ -437,15 +416,7 @@ function App() {
     setHistoryRefreshTrigger(prev => prev + 1)
     resetToFollowing()
 
-    let messagesToSend = null
-    if (isInterrupt) {
-      messagesToSend = latestRawMessages || interruptMessages
-      if (latestRawMessages) {
-        setRawMessages(latestRawMessages)
-      }
-    } else if (cid && rawMessages.length > 0) {
-      messagesToSend = rawMessages
-    }
+    const messagesToSend = finishedMessages || (cid && rawMessages.length ? rawMessages : null)
 
     // Same resolution as handleContinue: see resolveProviderOptions() above.
     // Both paths MUST stay aligned so Continue can never end up on a
@@ -483,13 +454,13 @@ function App() {
         setIsStreaming, setHistoryRefreshTrigger, setSubagentChildIds,
         handleSend: (...args) => handleSendRef.current?.(...args),
         handleLoadConversation,
-        pendingInterruptRef, continuationNavigatedRef, abortControllerRef,
-        withInterrupt: true,
+        queuedInputRef, continuationNavigatedRef,
+        withQueuedInput: true,
         withRetry: true,
         onMessagesRefresh: handleRefreshFiles,
         onFirstSse: () => setSseReceived(true),
-        onStreamEnd: restorePendingInterrupt,
-        onInterruptFired: () => setPendingInterrupt(null),
+        onStreamEnd: restoreQueuedInput,
+        onQueuedInputSent: () => setQueuedInput(null),
         ensureAssistantTail: true,
       })
       await streamChat(apiMessage, requestedId, callbacks, controller.signal, messagesToSend, selectedProvider, opts)
@@ -501,7 +472,7 @@ function App() {
     }
   }
 
-  const handleInterruptSend = () => {
+  const handleQueueInput = () => {
     if (pendingConversationLoadRef.current) return
     if (!inputValue.trim() && attachedFiles.length === 0) return
     if (!isStreaming) { handleSend(); return }
@@ -513,19 +484,11 @@ function App() {
       }
       return
     }
-    if (isInterruptible(rawMessages)) {
-      handleSend(rawMessages)
-    } else {
-      const interruptData = {
-        message: inputValue.trim(),
-        rawMessages,
-        attachedFiles: [...attachedFiles],
-      }
-      setPendingInterrupt(interruptData)
-      pendingInterruptRef.current = interruptData
-      setInputValue('')
-      setAttachedFiles([])
-    }
+    const queued = { message: inputValue.trim(), attachedFiles: [...attachedFiles] }
+    queuedInputRef.current = queued
+    setQueuedInput(queued)
+    setInputValue('')
+    setAttachedFiles([])
   }
 
   const handleContinue = async () => {
@@ -545,13 +508,13 @@ function App() {
         setIsStreaming, setHistoryRefreshTrigger, setSubagentChildIds,
         handleSend: (...args) => handleSendRef.current?.(...args),
         handleLoadConversation,
-        pendingInterruptRef, continuationNavigatedRef, abortControllerRef,
-        withInterrupt: true,
+        queuedInputRef, continuationNavigatedRef,
+        withQueuedInput: true,
         withRetry: false,
         onMessagesRefresh: handleRefreshFiles,
         onFirstSse: () => setSseReceived(true),
-        onStreamEnd: restorePendingInterrupt,
-        onInterruptFired: () => setPendingInterrupt(null),
+        onStreamEnd: restoreQueuedInput,
+        onQueuedInputSent: () => setQueuedInput(null),
         ensureAssistantTail: true,
       })
       // IMPORTANT: Continue must send the EXACT same provider fields as a
@@ -611,8 +574,8 @@ function App() {
     conversationIdRef.current = nextId
     setConversationId(nextId)
     setLastRequest(null)
-    setPendingInterrupt(null)
-    pendingInterruptRef.current = null
+    setQueuedInput(null)
+    queuedInputRef.current = null
     setRawMessages(rawMessages.slice(0, rawIdx))
     setMessages(messages.slice(0, frontendMsgIdx))
     setIsStreaming(false)
@@ -644,8 +607,8 @@ function App() {
     setLastRequest(null)
     setIsStreaming(false)
     setCanContinue(false)
-    setPendingInterrupt(null)
-    pendingInterruptRef.current = null
+    setQueuedInput(null)
+    queuedInputRef.current = null
     setEditedFiles([])
     setClosedFiles(new Set())
     setActiveConvoWarning(false)
@@ -675,7 +638,7 @@ function App() {
   const handleStop = async () => {
     if (!shouldAcceptStop(sendStartedAtRef.current)) return
     const viewEpoch = viewEpochRef.current
-    restorePendingInterrupt()
+    restoreQueuedInput()
     if (abortControllerRef.current) abortControllerRef.current.abort()
     if (conversationId) {
       try {
@@ -695,7 +658,7 @@ function App() {
 
   const handleStopTool = useCallback(async () => {
     const viewEpoch = viewEpochRef.current
-    restorePendingInterrupt()
+    restoreQueuedInput()
     if (abortControllerRef.current) abortControllerRef.current.abort()
     const cid = conversationIdRef.current
     if (cid) {
@@ -706,13 +669,13 @@ function App() {
     if (viewEpoch !== viewEpochRef.current) return
 
     setIsStreaming(false)
-  }, [restorePendingInterrupt])
+  }, [restoreQueuedInput])
 
   const handleLoadConversation = useCallback(async (targetConversationId, options = {}) => {
     const viewEpoch = beginConversationView()
     const isCurrentView = () => viewEpoch === viewEpochRef.current
     const sourceId = conversationIdRef.current || conversationId
-    const carried = options?.carryPendingSteering ? pendingInterruptRef.current : null
+    const carried = options?.carryPendingSteering ? queuedInputRef.current : null
     setSidebarOpen(false)
     if (!options?.skipNavigate) {
       syncConversationUrl(targetConversationId, { mode: 'push' })
@@ -746,8 +709,8 @@ function App() {
       conversationIdRef.current = targetConversationId
       setConversationId(targetConversationId)
       setLastRequest(null)
-      setPendingInterrupt(null)
-      pendingInterruptRef.current = null
+      setQueuedInput(null)
+      queuedInputRef.current = null
       setSubagentChildIds({})
       setRawMessages(conv.messages || [])
       setMessages(conv.frontend_messages || [])
@@ -763,8 +726,8 @@ function App() {
       setAttachedFiles(draft.files)
       if (carried && !isSubagent) {
         draftInputsRef.current.delete(sourceId || '__new__')
-        pendingInterruptRef.current = carried
-        setPendingInterrupt(carried)
+        queuedInputRef.current = carried
+        setQueuedInput(carried)
       }
       if (conv.status === STATUS.RUNNING || (carried && !isSubagent && conv.status === 'continued')) {
         setIsStreaming(true)
@@ -779,13 +742,13 @@ function App() {
               if (conversationIdRef.current === targetConversationId) handleSendRef.current?.(...args)
             },
             handleLoadConversation,
-            pendingInterruptRef, continuationNavigatedRef, abortControllerRef,
-            withInterrupt: !isSubagent,
+            queuedInputRef, continuationNavigatedRef,
+            withQueuedInput: !isSubagent,
             withRetry: !isSubagent,
             onMessagesRefresh: handleRefreshFiles,
             onFirstSse: () => setSseReceived(true),
-            onStreamEnd: restorePendingInterrupt,
-            onInterruptFired: () => setPendingInterrupt(null),
+            onStreamEnd: restoreQueuedInput,
+            onQueuedInputSent: () => setQueuedInput(null),
             ensureAssistantTail: true,
             overrides: isSubagent ? {
               onDone: (data) => {
@@ -805,19 +768,20 @@ function App() {
       } else if (carried && !isSubagent) {
         const raw = conv.messages || []
         const finished = [STATUS.COMPLETED, STATUS.MAX_ITERATIONS_REACHED].includes(conv.status)
-        if (finished && raw.length && isInterruptible(raw)) {
-          pendingInterruptRef.current = null
-          setPendingInterrupt(null)
+        if (finished && raw.length && hasCompleteToolBatch(raw)) {
+          queuedInputRef.current = null
+          setQueuedInput(null)
           handleSendRef.current?.(raw, carried.message, {
-            attachedFiles: carried.attachedFiles || [], interruptStream: false,
+            attachedFiles: carried.attachedFiles || [],
           })
         } else {
-          restorePendingInterrupt()
+          restoreQueuedInput()
         }
       }
     } catch (e) {
       if (!isCurrentView()) return
       console.error('[handleLoadConversation] Failed:', e)
+      setIsStreaming(false)
       if (carried && conversationIdRef.current === sourceId) {
         syncConversationUrl(sourceId, { mode: 'replace' })
         setInputValue(carried.message)
@@ -836,7 +800,7 @@ function App() {
         })
       }
     }
-  }, [conversationId, resetToFollowing, beginConversationView, restorePendingInterrupt, stashConversationDraft])
+  }, [conversationId, resetToFollowing, beginConversationView, restoreQueuedInput, stashConversationDraft])
 
   const handleRetry = useCallback(async () => {
     // Reuse both the conversation ID and the receipt when the sending tab
@@ -886,13 +850,13 @@ function App() {
         setIsStreaming, setHistoryRefreshTrigger, setSubagentChildIds,
         handleSend: (...args) => handleSendRef.current?.(...args),
         handleLoadConversation,
-        pendingInterruptRef, continuationNavigatedRef, abortControllerRef,
-        withInterrupt: true,
+        queuedInputRef, continuationNavigatedRef,
+        withQueuedInput: true,
         withRetry: true,
         onMessagesRefresh: handleRefreshFiles,
         onFirstSse: () => setSseReceived(true),
-        onStreamEnd: restorePendingInterrupt,
-        onInterruptFired: () => setPendingInterrupt(null),
+        onStreamEnd: restoreQueuedInput,
+        onQueuedInputSent: () => setQueuedInput(null),
         ensureAssistantTail: true,
       })
       const opts = {
@@ -906,7 +870,7 @@ function App() {
       if (error.name !== 'AbortError') console.error('Retry error:', error)
       if (isCurrentView() && abortControllerRef.current === controller) setIsStreaming(false)
     }
-  }, [lastRequest, isStreaming, selectedProvider, messages, rawMessages, conversationId, handleLoadConversation, handleRefreshFiles, providers, resetToFollowing, restorePendingInterrupt])
+  }, [lastRequest, isStreaming, selectedProvider, messages, rawMessages, conversationId, handleLoadConversation, handleRefreshFiles, providers, resetToFollowing, restoreQueuedInput])
 
   const handleDeleteConversation = useCallback(async (targetId) => {
     const openId = conversationIdRef.current || conversationId
@@ -1141,15 +1105,15 @@ function App() {
             value={inputValue}
             onChange={setInputValue}
             isStreaming={isStreaming}
-            pendingInterrupt={pendingInterrupt}
+            queuedInput={queuedInput}
             goalSteeringPending={goalSteering.pending}
             goalSteeringReceived={goalSteering.received}
             onRetrySteering={goalSteering.retry}
             messagesCount={messages.length}
             onSend={handleSend}
-            onInterruptSend={handleInterruptSend}
+            onQueueInput={handleQueueInput}
             onStop={handleStop}
-            onCancelPendingInterrupt={restorePendingInterrupt}
+            onRestoreQueuedInput={restoreQueuedInput}
             attachedFiles={attachedFiles}
             onAttachFile={(path) => setAttachedFiles((prev) => addAttachedFile(prev, path))}
             onDetachFile={(path) => setAttachedFiles((prev) => removeAttachedFile(prev, path))}

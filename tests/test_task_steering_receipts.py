@@ -12,13 +12,14 @@ from src.task_checklist import TaskResume, TaskStart
 
 
 @pytest.mark.asyncio
-async def test_enqueued_steering_survives_reload_and_is_applied_before_successor_dispatch(tmp_path, monkeypatch):
+@pytest.mark.parametrize("terminal_status", ["context_limit_reached", "completed"])
+async def test_enqueued_steering_waits_for_turn_end_and_reaches_successor(tmp_path, monkeypatch, terminal_status):
     db = ConversationStore(tmp_path / "store")
     cid = db.create_conversation()
     task = db.tasks.start(cid, TaskStart(objective="Verify build", items=["Check output"]), str(tmp_path),
                           "Verify build", TaskResume())
     (tmp_path / "scope.txt").write_text("fresh scope", encoding="utf-8")
-    old = streaming.ActiveStream(cid, status="context_limit_reached", task_token="old", initial_task_progress=task.progress)
+    old = streaming.ActiveStream(cid, status="running", task_token="old", initial_task_progress=task.progress)
     active = {cid: old}
     monkeypatch.setattr(routes, "store", db)
     monkeypatch.setattr(routes, "active_streams", active)
@@ -48,16 +49,28 @@ async def test_enqueued_steering_survives_reload_and_is_applied_before_successor
         db = ConversationStore(tmp_path / "store")
         monkeypatch.setattr(routes, "store", db)
         monkeypatch.setattr(streaming, "store", db)
-        check = await client.post(f"/internal/task-boundary/{cid}", headers={"X-Task-Token": "old"})
-        assert check.json() == {"pending": True}
+        assert len(db.tasks.get(cid).pending_steering) == 2
+        assert old.status == "running" and not old.cancel_event.is_set()
+        assert old.new_conversation_id is None and seen == []
+        headers = {"X-Task-Token": "old"}
+        checkpoint = await client.post(f"/internal/task-checkpoint/{cid}", headers=headers, json={"checkpoint": "Running"})
+        state = checkpoint.json()["task_state"]
+        assert state["steering"] == "" and "steering_count" not in state
+        for source in ({"source": "latest"}, {"source": "steering", "index": 0}):
+            assert (await client.post(f"/internal/task-request/{cid}", headers=headers, json=source)).status_code == 404
 
-        streaming._finish_task_segment(old, [], set())
+        old.status = terminal_status
+        final = [{"role": "user", "content": "Verify build"},
+                 {"role": "assistant", "content": "The current turn concluded."}]
+        streaming._finish_task_segment(old, final, set())
         await asyncio.wait_for(active[old.new_conversation_id].task, timeout=3)
+        assert db.get_messages(cid) == final
         successor, body = seen[0]
         assert successor == old.new_conversation_id
         assert "scope.txt" in body["messages"][-1]["content"]
         assert "Use the new scope." in body["messages"][-1]["content"]
         assert body["message"] == "Keep the release files read-only."
+        assert body["task_state"]["steering_count"] == 2
         assert not db.tasks.get(cid).pending_steering
         assert (await client.post(path, json=submission)).json() == first.json()
         assert len(db.tasks.get(cid).steering_history) == 2

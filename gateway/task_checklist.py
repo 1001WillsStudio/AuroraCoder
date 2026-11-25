@@ -5,6 +5,7 @@ import logging
 import re
 import uuid
 from collections.abc import Callable
+from itertools import takewhile
 from pathlib import Path
 from typing import Literal
 
@@ -43,6 +44,14 @@ def _scope_excerpt(text: str, limit: int = _SCOPE_LIMIT) -> str:
     available = limit - len(_OMITTED)
     lead = available // 2
     return text[:lead] + _OMITTED + text[-(available - lead):]
+
+
+def _append_scope_excerpt(prior: str, text: str) -> str:
+    separator = 2 if prior else 0
+    if len(prior) + separator + len(text) > _SCOPE_LIMIT:
+        prior = _scope_excerpt(prior, _SCOPE_LIMIT // 4)
+        text = _scope_excerpt(text, _SCOPE_LIMIT - len(prior) - separator)
+    return "\n\n".join(filter(None, (prior, text)))
 
 
 def _directly_waives(clause: str, subject: str) -> bool:
@@ -116,6 +125,10 @@ class TaskChecklist(BaseModel):
     def pending_steering(self) -> list[TaskSteeringEntry]:
         return [entry for entry in self.steering_history if entry.applied_to is None]
 
+    @property
+    def applied_steering(self) -> list[TaskSteeringEntry]:
+        return list(takewhile(lambda entry: entry.applied_to is not None, self.steering_history))
+
     def public(self) -> dict:
         return {
             **self.model_dump(exclude={
@@ -131,13 +144,17 @@ class TaskChecklist(BaseModel):
             "objective", "criteria", "workspace", "progress", "handoff", "steering", "request", "status",
         })
         state["request"] = _scope_excerpt(self.request)
-        state["steering_boundary"] = True
-        if self.steering_history:
-            state["steering_count"] = len(self.steering_history)
+        applied = self.applied_steering
+        if len(applied) != len(self.steering_history):
+            state["steering"] = ""
+            for entry in applied:
+                state["steering"] = _append_scope_excerpt(state["steering"], entry.content)
+        if applied:
+            state["steering_count"] = len(applied)
         if len(self.request) > _SCOPE_LIMIT:
             state["request_length"] = len(self.request)
-        if self.latest_steering and self.latest_steering not in self.steering:
-            state["latest_steering_length"] = len(self.latest_steering)
+        if applied and applied[-1].content not in state["steering"]:
+            state["latest_steering_length"] = len(applied[-1].content)
         if self.terminal_jobs:
             state["terminal_jobs"] = self.terminal_jobs
         return state
@@ -234,11 +251,7 @@ class TaskChecklistStore:
         entries = task.steering_history
         if entry.receipt and any(saved.receipt == entry.receipt for saved in entries):
             return {}
-        steering = "\n\n".join(filter(None, (task.steering, request)))
-        if len(steering) > _SCOPE_LIMIT:
-            prior = _scope_excerpt(task.steering, _SCOPE_LIMIT // 4)
-            latest_limit = _SCOPE_LIMIT - len(prior) - (2 if prior else 0)
-            steering = "\n\n".join(filter(None, (prior, _scope_excerpt(request, latest_limit))))
+        steering = _append_scope_excerpt(task.steering, request)
         return {"steering": steering, "latest_steering": request, "steering_entries": [*entries, entry]}
 
     def queue_steering(self, task: TaskChecklist, content: str, receipt: str) -> TaskChecklist:

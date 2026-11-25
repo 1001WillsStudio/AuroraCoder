@@ -597,7 +597,7 @@ def _finish_task_segment(stream: ActiveStream, raw_messages: list, prior_tool_id
     if not task or task.status != "active" or task.conversation_id != cid:
         return
     steering = bool(task.pending_steering)
-    if stream.status not in {"completed", "max_iterations_reached", "context_limit_reached", "task_steered"}:
+    if stream.status not in {"completed", "max_iterations_reached", "context_limit_reached"}:
         pause_task(cid, "error")
     elif task.verified and not steering:
         store.tasks.save(task, status="completed", reason="")

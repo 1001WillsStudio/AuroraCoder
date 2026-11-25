@@ -28,7 +28,7 @@ def _handle_retry_src() -> str:
 
 def _handle_send_src() -> str:
     src = APP_JSX.read_text(encoding="utf-8")
-    return src.split("const handleSend =", 1)[1].split("const handleInterruptSend", 1)[0]
+    return src.split("const handleSend =", 1)[1].split("\n  const ", 1)[0]
 
 
 def test_retry_same_id_does_not_fork_or_duplicate_user(tmp_path):

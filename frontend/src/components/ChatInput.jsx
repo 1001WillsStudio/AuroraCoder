@@ -9,8 +9,8 @@ import { applyAtPick, enterActionForPicker, fileNameOf, MAX_ATTACHED_FILES, pars
  * Chat input area with 4 visual modes:
  *
  * 1. Normal         — textarea + send button
- * 2. Streaming      — textarea + stop button (or send if text entered = interrupt)
- * 3. PendingInterrupt — disabled textarea + cancel button
+ * 2. Streaming      — textarea with a Stop or queue button
+ * 3. Queued         — disabled textarea with a button to restore the draft
  * 4. Hidden         — not rendered (subagent view)
  *
  * Workspace files can be attached as chips (`@` picker or the file-tree
@@ -20,15 +20,15 @@ const ChatInput = forwardRef(({
   value,
   onChange,
   isStreaming,
-  pendingInterrupt: localPendingInterrupt,
+  queuedInput: localQueuedInput,
   goalSteeringPending,
   goalSteeringReceived,
   onRetrySteering,
   messagesCount,
   onSend,
-  onInterruptSend,
+  onQueueInput,
   onStop,
-  onCancelPendingInterrupt,
+  onRestoreQueuedInput,
   onContinueInNewChat,
   attachedFiles = [],
   onAttachFile,
@@ -47,8 +47,8 @@ const ChatInput = forwardRef(({
   const attached = Array.isArray(attachedFiles) ? attachedFiles : []
   const hasText = value.trim().length > 0
   const canSend = hasText || attached.length > 0
-  const pendingInterrupt = goalSteeringPending || localPendingInterrupt
-  const pickerOpen = Boolean(atQuery) && !pendingInterrupt
+  const queuedInput = goalSteeringPending || localQueuedInput
+  const pickerOpen = Boolean(atQuery) && !queuedInput
 
   // Grow with the draft up to CSS max-height so multiline text is not clipped.
   useLayoutEffect(() => {
@@ -159,7 +159,7 @@ const ChatInput = forwardRef(({
       if (enterActionForPicker(pickerOpen, hits.length) !== 'send') return
       setAtQuery(null)
       if (isStreaming) {
-        onInterruptSend()
+        onQueueInput()
       } else {
         onSend()
       }
@@ -167,10 +167,10 @@ const ChatInput = forwardRef(({
   }
 
   const queuedPreview = () => {
-    if (!pendingInterrupt) return ''
-    const text = (pendingInterrupt.message || '').trim()
+    if (!queuedInput) return ''
+    const text = (queuedInput.message || '').trim()
     if (text) return text.substring(0, 50) + (text.length > 50 ? '...' : '')
-    const names = (pendingInterrupt.attachedFiles || []).map(fileNameOf).filter(Boolean)
+    const names = (queuedInput.attachedFiles || []).map(fileNameOf).filter(Boolean)
     if (names.length) {
       const joined = names.join(', ')
       return joined.substring(0, 50) + (joined.length > 50 ? '...' : '')
@@ -179,7 +179,7 @@ const ChatInput = forwardRef(({
   }
 
   const handleAtButton = () => {
-    if (pendingInterrupt) return
+    if (queuedInput) return
     const el = typeof ref === 'object' ? ref?.current : null
     const cursor = el ? el.selectionStart : value.length
     const prefix = cursor > 0 && !/\s$/.test(value.slice(0, cursor)) ? ' @' : '@'
@@ -248,19 +248,19 @@ const ChatInput = forwardRef(({
             onClick={(e) => syncAtQuery(e.target.value, e.target.selectionStart)}
             onKeyUp={(e) => syncAtQuery(e.target.value, e.target.selectionStart)}
             placeholder={
-              pendingInterrupt
-                ? t('chat.placeholder.pendingInterrupt')
+              queuedInput
+                ? t('chat.placeholder.queuedInput')
                 : isStreaming
                   ? t('chat.placeholder.streaming')
                   : t('chat.placeholder.normal')
             }
             rows={1}
-            disabled={!!pendingInterrupt}
-            className={`chat-input ${isStreaming ? 'streaming-mode' : ''} ${pendingInterrupt ? 'pending-interrupt' : ''}`}
+            disabled={!!queuedInput}
+            className={`chat-input ${isStreaming ? 'streaming-mode' : ''} ${queuedInput ? 'pending-interrupt' : ''}`}
             data-testid="chat-input"
           />
           <div className="input-actions">
-            {!pendingInterrupt && (
+            {!queuedInput && (
               <button
                 type="button"
                 className="attach-file-btn"
@@ -271,10 +271,10 @@ const ChatInput = forwardRef(({
                 <AtSign size={18} />
               </button>
             )}
-            {pendingInterrupt ? (
+            {queuedInput ? (
               <button
                 className="send-btn pending-btn"
-                onClick={goalSteeringPending ? onRetrySteering : onCancelPendingInterrupt}
+                onClick={goalSteeringPending ? onRetrySteering : onRestoreQueuedInput}
                 title={t(goalSteeringPending ? 'task.retryReceipt' : 'chat.title.cancelPending')}
                 data-testid="chat-stop"
               >
@@ -287,8 +287,8 @@ const ChatInput = forwardRef(({
             ) : isStreaming && canSend ? (
               <button
                 className="send-btn interrupt-btn"
-                onClick={(e) => { if (!isPrimaryClick(e)) return; onInterruptSend() }}
-                title={t('chat.title.interrupt')}
+                onClick={(e) => { if (!isPrimaryClick(e)) return; onQueueInput() }}
+                title={t('chat.title.queueInput')}
                 data-testid="chat-send"
               >
                 <Send size={20} />
@@ -307,8 +307,8 @@ const ChatInput = forwardRef(({
         </div>
       </div>
       <div className="input-hint">
-        {pendingInterrupt
-          ? t(goalSteeringPending ? 'task.awaitingReceipt' : 'chat.interruptQueued', { msg: queuedPreview() })
+        {queuedInput
+          ? t(goalSteeringPending ? 'task.awaitingReceipt' : 'chat.inputQueued', { msg: queuedPreview() })
           : goalSteeringReceived && isStreaming
             ? t('task.steeringReceived')
           : isStreaming

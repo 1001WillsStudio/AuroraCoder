@@ -183,6 +183,8 @@ def _require_workspace_path(work_dir: Path, path: str, *, for_mutation: bool = F
 # Endpoints — Streaming
 # ============================================================================
 
+_REATTACHABLE_TURN_STATUSES = {"running", "completed", "continued", "max_iterations_reached"}
+
 @app.post("/api/chat")
 async def proxy_chat(
     request: Request, turn_id: Annotated[uuid.UUID | None, Header(alias="X-Aurora-Turn-ID")] = None,
@@ -220,11 +222,22 @@ async def proxy_chat(
     except AttachedFilesError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    async with _turn_admission_lock(conversation_id):
-        return await _start_chat_turn(request, body, t0, t1, turn_id=str(turn_id) if turn_id else None)
+    receipt = str(turn_id) if turn_id else None
+    wait_for_current_turn = body.pop("wait_for_current_turn", False) is True
+    while True:
+        async with _turn_admission_lock(conversation_id):
+            owner = active_streams.get(conversation_id)
+            same_receipt = (owner and receipt and body.get("retry_receipt") is True
+                            and owner.turn_id == receipt and owner.status in _REATTACHABLE_TURN_STATUSES)
+            if not wait_for_current_turn or not owner or not owner.task or owner.task.done() or same_receipt:
+                return await _start_chat_turn(request, body, t0, t1, turn_id=receipt,
+                                              after_current_turn=wait_for_current_turn)
+        # Leave the admission lock free for Stop and receipt reattachment.
+        await asyncio.wait({owner.task}, timeout=1)
 
 
-async def _start_chat_turn(request: Request, body: dict, t0: float, t1: float, *, turn_id: str | None):
+async def _start_chat_turn(request: Request, body: dict, t0: float, t1: float, *, turn_id: str | None,
+                           after_current_turn: bool = False):
     conversation_id = body["conversation_id"]
     cid_tag = conversation_id[:8]
     if conversation_id not in active_streams:
@@ -240,7 +253,7 @@ async def _start_chat_turn(request: Request, body: dict, t0: float, t1: float, *
         else:
             stream = active_streams.get(conversation_id)
             status = stream.status if stream else store.get_conversation(conversation_id).get("status")
-            if status in {"running", "completed", "continued", "max_iterations_reached"}:
+            if status in _REATTACHABLE_TURN_STATUSES:
                 return _resume_conversation_stream(conversation_id, request, turn_id=turn_id)
 
     # ── Generate workspace tree for the agent's system message ──
@@ -277,9 +290,9 @@ async def _start_chat_turn(request: Request, body: dict, t0: float, t1: float, *
         parent_id=parent_id,
     )
 
-    # Finish the superseded stream before reading or replacing its transcript.
     t2 = time.perf_counter()
-    await _cancel_active_stream(conversation_id)
+    if not after_current_turn:
+        await _cancel_active_stream(conversation_id)
     t3 = time.perf_counter()
     logger.info(f"[proxy] [{cid_tag}...] cancel_stream={t3-t2:.3f}s")
 
@@ -554,29 +567,23 @@ async def submit_task_steering(conversation_id: str, submission: TaskSteeringSub
     return {"receipt": receipt}
 
 
-@app.post("/internal/task-boundary/{conversation_id}")
-async def task_boundary(conversation_id: str, request: Request):
-    _task_stream(conversation_id, request)
-    task = store.tasks.get(conversation_id)
-    if not task or task.conversation_id != conversation_id or task.status != "active":
-        raise HTTPException(status_code=409, detail="This task stream is no longer active.")
-    return {"pending": bool(task.pending_steering)}
-
-
 @app.post("/internal/task-request/{conversation_id}")
 async def read_agent_task_request(conversation_id: str, extent: TaskRequestSlice, request: Request):
     _task_stream(conversation_id, request)
     task = store.tasks.get(conversation_id)
     if not task or task.conversation_id != conversation_id:
         raise HTTPException(status_code=409, detail="No task source for this stream.")
+    history = task.applied_steering
     if extent.source == "steering":
-        if extent.index is None or extent.index >= len(task.steering_history):
+        if extent.index is None or extent.index >= len(history):
             raise HTTPException(status_code=404, detail="No steering at that index.")
-        source = task.steering_history[extent.index].content
+        source = history[extent.index].content
+    elif extent.source == "latest":
+        source = history[-1].content if history else ""
+        if not source:
+            raise HTTPException(status_code=404, detail="No later steering has been applied to this task.")
     else:
-        source = task.latest_steering if extent.source == "latest" else task.request
-    if not source and extent.source == "latest":
-        raise HTTPException(status_code=404, detail="No later steering has been saved for this task.")
+        source = task.request
     total = len(source)
     start = min(extent.offset, total)
     end = min(start + extent.max_chars, total)

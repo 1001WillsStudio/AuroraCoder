@@ -170,7 +170,7 @@ function canReattach(error, conversationId, signal) {
  * @param {string|null} conversationId - Optional conversation ID to continue
  * @param {object} callbacks - Event callbacks
  * @param {AbortSignal} signal - Optional abort signal
- * @param {array|null} existingMessages - Optional: existing raw messages to continue from (for interrupt/resume)
+ * @param {array|null} existingMessages - Optional raw history for a follow-up or resume
  * @param {string|null} provider - Optional: model provider to use
  */
 export async function streamChat(message, conversationId, callbacks, signal, existingMessages = null, provider = null, options = {}) {
@@ -186,6 +186,7 @@ export async function streamChat(message, conversationId, callbacks, signal, exi
     conversation_id: conversationId || newConversationId(),
     messages: existingMessages,
     prefer_saved_history: true,
+    wait_for_current_turn: true,
     provider: provider,
     provider_id: options.provider_id || null,
     model: options.model || null,

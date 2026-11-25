@@ -32,7 +32,7 @@ CHAT_INPUT = ROOT / "frontend" / "src" / "components" / "ChatInput.jsx"
 
 def _handle_send_src() -> str:
     src = APP.read_text(encoding="utf-8")
-    return src.split("const handleSend =", 1)[1].split("const handleInterruptSend", 1)[0]
+    return src.split("const handleSend =", 1)[1].split("\n  const ", 1)[0]
 
 
 def _eval_js(expr: str):

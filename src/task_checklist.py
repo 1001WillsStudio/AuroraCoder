@@ -220,16 +220,6 @@ class AgentTaskTools:
             )
         return instruction + "\n\n" + json.dumps(self.state, ensure_ascii=False)
 
-    def has_pending_steering(self) -> bool:
-        if not self.active or not self.state.get("steering_boundary"):
-            return False
-        response = httpx.post(
-            f"{os.environ.get('GATEWAY_URL', 'http://localhost:8081')}/internal/task-boundary/{self.conversation_id}",
-            headers={"X-Task-Token": self.token}, timeout=5, trust_env=False,
-        )
-        response.raise_for_status()
-        return response.json()["pending"]
-
     def call(self, name: str, arguments: dict) -> str:
         url = os.environ.get("GATEWAY_URL", "http://localhost:8081")
         path = {
