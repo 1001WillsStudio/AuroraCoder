@@ -73,8 +73,10 @@ async def test_desktop_followup_waits_for_active_turn_and_uses_persisted_history
         pytest.fail("A desktop follow-up attempted to cancel an active turn.")
 
     class Request:
-        async def is_disconnected(self):
-            return disconnected
+        async def receive(self):
+            if disconnected:
+                return {"type": "http.disconnect"}
+            await asyncio.Future()
 
         async def json(self):
             return {"conversation_id": cid, "message": "Second request", "max_iterations": 2,
@@ -96,6 +98,7 @@ async def test_desktop_followup_waits_for_active_turn_and_uses_persisted_history
         with pytest.raises(routes.HTTPException) as response:
             await asyncio.wait_for(follow_up, 2)
         assert response.value.status_code == 499
+        await owner.task
         assert cid not in active and seen == []
         assert history.get_messages(cid) == final
         return

@@ -185,6 +185,12 @@ def _require_workspace_path(work_dir: Path, path: str, *, for_mutation: bool = F
 
 _REATTACHABLE_TURN_STATUSES = {"running", "completed", "continued", "max_iterations_reached"}
 
+
+async def _wait_for_client_disconnect(request: Request) -> None:
+    while (await request.receive())["type"] != "http.disconnect":
+        pass
+
+
 @app.post("/api/chat")
 async def proxy_chat(
     request: Request, turn_id: Annotated[uuid.UUID | None, Header(alias="X-Aurora-Turn-ID")] = None,
@@ -224,20 +230,27 @@ async def proxy_chat(
 
     receipt = str(turn_id) if turn_id else None
     wait_for_current_turn = body.pop("wait_for_current_turn", False) is True
-    waited_for_current_turn = False
-    while True:
-        async with _turn_admission_lock(conversation_id):
-            if waited_for_current_turn and await request.is_disconnected():
-                raise HTTPException(status_code=499, detail="Client disconnected before the follow-up was accepted.")
-            owner = active_streams.get(conversation_id)
-            same_receipt = (owner and receipt and body.get("retry_receipt") is True
-                            and owner.turn_id == receipt and owner.status in _REATTACHABLE_TURN_STATUSES)
-            if not wait_for_current_turn or not owner or not owner.task or owner.task.done() or same_receipt:
-                return await _start_chat_turn(request, body, t0, t1, turn_id=receipt,
-                                              after_current_turn=wait_for_current_turn)
-        # Leave the admission lock free for Stop and receipt reattachment.
-        waited_for_current_turn = True
-        await asyncio.wait({owner.task}, timeout=1)
+    disconnect = None
+    try:
+        while True:
+            async with _turn_admission_lock(conversation_id):
+                if disconnect and disconnect.done():
+                    disconnect.result()
+                    raise HTTPException(status_code=499, detail="Client disconnected before the follow-up was accepted.")
+                owner = active_streams.get(conversation_id)
+                same_receipt = (owner and receipt and body.get("retry_receipt") is True
+                                and owner.turn_id == receipt and owner.status in _REATTACHABLE_TURN_STATUSES)
+                if not wait_for_current_turn or not owner or not owner.task or owner.task.done() or same_receipt:
+                    return await _start_chat_turn(request, body, t0, t1, turn_id=receipt,
+                                                  after_current_turn=wait_for_current_turn)
+            # Leave the admission lock free for Stop and receipt reattachment.
+            if disconnect is None:
+                disconnect = asyncio.create_task(_wait_for_client_disconnect(request))
+            await asyncio.wait({owner.task, disconnect}, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        if disconnect:
+            disconnect.cancel()
+            await asyncio.gather(disconnect, return_exceptions=True)
 
 
 async def _start_chat_turn(request: Request, body: dict, t0: float, t1: float, *, turn_id: str | None,
