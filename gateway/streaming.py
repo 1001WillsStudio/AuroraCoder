@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from weakref import WeakValueDictionary
 
 import httpx
 
@@ -63,6 +64,16 @@ class ActiveStream:
 
 active_streams: Dict[str, ActiveStream] = {}
 _streams_lock = asyncio.Lock()
+_admission_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
+_CANCEL_TIMEOUT_SECONDS = 2.0
+
+
+def _turn_admission_lock(conversation_id: str) -> asyncio.Lock:
+    lock = _admission_locks.get(conversation_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _admission_locks[conversation_id] = lock
+    return lock
 
 
 # ============================================================================
@@ -316,15 +327,9 @@ async def _cancel_active_stream(conversation_id: str) -> None:
                         tasks_to_await.append(gc.task)
                     streams_to_kill.append(gc)
 
-    # Await all cancelled tasks concurrently — total wait bounded to 2 s
+    # Waiting for a cancellation-resistant task must not extend the deadline.
     if tasks_to_await:
-        try:
-            await asyncio.wait_for(
-                asyncio.gather(*tasks_to_await, return_exceptions=True),
-                timeout=2.0,
-            )
-        except (asyncio.TimeoutError, Exception):
-            pass
+        await asyncio.wait(tasks_to_await, timeout=_CANCEL_TIMEOUT_SECONDS)
 
     # GUARANTEE: force-remove any stream that survived the timeout.
     # The orphaned task will finish on its own eventually; its finally
@@ -336,6 +341,12 @@ async def _cancel_active_stream(conversation_id: str) -> None:
             if not s.finished and active_streams.get(s.conversation_id) is s:
                 s.finished = True
                 del active_streams[s.conversation_id]
+                if s.status == "running":
+                    s.status = "interrupted"
+                    try:
+                        store.update_status(s.conversation_id, s.status)
+                    except KeyError:
+                        pass
                 logger.warning(
                     f"[cancel] Force-removed zombie stream "
                     f"{s.conversation_id[:8]}... after timeout"
@@ -692,6 +703,8 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
         _broadcast_stream_event(stream, "error", err)
 
     finally:
+        owner = active_streams.get(cid)
+        superseded = stream.finished or (owner is not None and owner is not stream)
         stream.finished = True
 
         # Determine final status
@@ -705,36 +718,8 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
         # messages in every event (delta + messages), so
         # latest_frontend_messages and latest_event_data are always
         # fresh regardless of the last event type.
-        try:
-            current_status = None
-            try:
-                conv = store.get_conversation(cid)
-                current_status = conv.get("status")
-            except Exception:
-                pass
-            if current_status != "continued":
-                store.update_status(cid, persist_status)
-            if persist_status == "error":
-                data = stream.latest_event_data if isinstance(stream.latest_event_data, dict) else {}
-                err = data if stream.latest_event_type == "error" else (
-                    {"message": data["error"]} if data.get("error") else None
-                )
-                fe = ensure_error_frontend_message(
-                    stream.latest_frontend_messages or store.get_frontend_messages(cid),
-                    err,
-                )
-                stream.latest_frontend_messages = fe
-                store.save_frontend_messages(cid, fe)
-            elif stream.latest_frontend_messages:
-                store.save_frontend_messages(cid, stream.latest_frontend_messages)
-            raw_msgs = stream.latest_event_data.get("raw_messages", []) if stream.latest_event_data else []
-            if raw_msgs:
-                store.save_messages(cid, raw_msgs)
-
-            if current_status != "continued":
-                _schedule_memory_distillation(cid, stream.conv_type, persist_status)
-        except Exception as e:
-            logger.error(f"[proxy] Final persist failed for {cid[:8]}...: {e}")
+        if not superseded:
+            _persist_finished_stream(stream, persist_status)
 
         # Signal end to all subscribers
         for q in list(stream.subscribers):
@@ -749,6 +734,40 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                 del active_streams[cid]
 
         logger.info(f"[proxy] Ended {cid[:8]}... status={persist_status}")
+
+
+def _persist_finished_stream(stream: ActiveStream, persist_status: str) -> None:
+    cid = stream.conversation_id
+    try:
+        current_status = None
+        try:
+            conv = store.get_conversation(cid)
+            current_status = conv.get("status")
+        except Exception:
+            pass
+        if current_status != "continued":
+            store.update_status(cid, persist_status)
+        if persist_status == "error":
+            data = stream.latest_event_data if isinstance(stream.latest_event_data, dict) else {}
+            err = data if stream.latest_event_type == "error" else (
+                {"message": data["error"]} if data.get("error") else None
+            )
+            fe = ensure_error_frontend_message(
+                stream.latest_frontend_messages or store.get_frontend_messages(cid),
+                err,
+            )
+            stream.latest_frontend_messages = fe
+            store.save_frontend_messages(cid, fe)
+        elif stream.latest_frontend_messages:
+            store.save_frontend_messages(cid, stream.latest_frontend_messages)
+        raw_msgs = stream.latest_event_data.get("raw_messages", []) if stream.latest_event_data else []
+        if raw_msgs:
+            store.save_messages(cid, raw_msgs)
+
+        if current_status != "continued":
+            _schedule_memory_distillation(cid, stream.conv_type, persist_status)
+    except Exception as e:
+        logger.error(f"[proxy] Final persist failed for {cid[:8]}...: {e}")
 
 
 # ============================================================================

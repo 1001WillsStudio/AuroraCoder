@@ -64,6 +64,7 @@ from gateway.streaming import (
     ActiveStream,
     active_streams,
     _streams_lock,
+    _turn_admission_lock,
     _cancel_active_stream,
     _fix_orphan_tool_calls,
     _proxy_backend_stream,
@@ -203,6 +204,14 @@ async def proxy_chat(request: Request):
     except AttachedFilesError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    async with _turn_admission_lock(conversation_id):
+        return await _start_chat_turn(request, body, t0, t1)
+
+
+async def _start_chat_turn(request: Request, body: dict, t0: float, t1: float):
+    conversation_id = body["conversation_id"]
+    cid_tag = conversation_id[:8]
+
     # ── Generate workspace tree for the agent's system message ──
     # Only on the *first* turn — continuations already carry the tree
     # inside the cached system message.
@@ -242,6 +251,7 @@ async def proxy_chat(request: Request):
     await _cancel_active_stream(conversation_id)
     t3 = time.perf_counter()
     logger.info(f"[proxy] [{cid_tag}...] cancel_stream={t3-t2:.3f}s")
+    store.update_status(conversation_id, "running")
 
     # Retry: keep the current transcript (orphan tool calls are filled in
     # below) and do not append another user message.
@@ -382,10 +392,10 @@ async def cancel_conversation_stream(conversation_id: str):
     closes the gap where content streamed via deltas was never persisted
     into the frontend's ``rawMessages`` and would be lost on interrupt.
     """
-    await _cancel_active_stream(conversation_id)
-
-    raw_messages = store.get_messages(conversation_id)
-    frontend_messages = store.get_frontend_messages(conversation_id)
+    async with _turn_admission_lock(conversation_id):
+        await _cancel_active_stream(conversation_id)
+        raw_messages = store.get_messages(conversation_id)
+        frontend_messages = store.get_frontend_messages(conversation_id)
 
     return {
         "cancelled": conversation_id,
