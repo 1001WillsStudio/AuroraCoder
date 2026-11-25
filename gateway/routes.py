@@ -324,6 +324,7 @@ async def _start_chat_turn(request: Request, body: dict, t0: float, t1: float, *
             and isinstance(user_message, str) and user_message.strip()):
         stream.task_token = secrets.token_urlsafe(32)
         stream.task_request = user_message
+        stream.task_request_is_retry = bool(retry)
         stream.task_options = TaskResume(
             provider=body.get("provider"), provider_id=body.get("provider_id"), model=body.get("model"),
         )
@@ -341,6 +342,8 @@ async def _start_chat_turn(request: Request, body: dict, t0: float, t1: float, *
             state = task.prompt_state()
             if task.conversation_id != conversation_id or (retry and task.status == "paused"):
                 state["status"] = "historical"
+            elif task.status == "completed":
+                state["can_start_new_task"] = not retry
             body["task_state"] = state
     t4 = time.perf_counter()
 
@@ -523,10 +526,11 @@ class TaskSteeringSubmission(BaseModel):
 
 @app.post("/api/conversations/{conversation_id}/task/steering", status_code=202)
 async def submit_task_steering(conversation_id: str, submission: TaskSteeringSubmission):
-    task = store.tasks.get(require_conversation_id(conversation_id))
+    tasks = store.tasks.list_for_conversation(require_conversation_id(conversation_id))
     receipt = str(submission.receipt)
-    if task and any(entry.receipt == receipt for entry in task.steering_history):
+    if any(entry.receipt == receipt for saved in tasks for entry in saved.steering_history):
         return {"receipt": receipt}
+    task = tasks[0] if tasks else None
     owner = active_streams.get(task.conversation_id) if task else None
     if (not task or task.status != "active" or not owner or not owner.task_active
             or owner.finished or owner.cancel_event.is_set()):
@@ -577,7 +581,7 @@ async def read_agent_task_request(conversation_id: str, extent: TaskRequestSlice
 @app.post("/internal/task-start/{conversation_id}")
 async def start_agent_task(conversation_id: str, plan: TaskStart, request: Request):
     stream = _task_stream(conversation_id, request)
-    if not stream.task_request:
+    if not stream.task_request or (stream.task_request_is_retry and store.tasks.get(conversation_id)):
         raise HTTPException(status_code=409, detail="A new task needs a user request.")
     try:
         task = store.tasks.start(conversation_id, plan, task_workspace(),
@@ -628,7 +632,12 @@ def _task_for_conversation(conversation_id: str):
 @app.get("/api/conversations/{conversation_id}/task")
 async def get_task(conversation_id: str):
     task = _task_for_conversation(conversation_id)
-    return {"task": task.public() if task else None}
+    completed = [saved.public() for saved in store.tasks.list_for_conversation(conversation_id)
+                 if saved.status == "completed" and saved.id != task.id] if task else []
+    result = {"task": task.public() if task else None}
+    if completed:
+        result["completed_tasks"] = completed
+    return result
 
 
 @app.put("/api/conversations/{conversation_id}/task")

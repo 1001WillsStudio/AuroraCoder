@@ -16,6 +16,7 @@
 const LANG = {
   en: {
     'task.title': 'Task checklist',
+    'task.history': 'Completed Goals',
     'task.openCurrent': 'Open current chat',
     'task.status.active': 'Running',
     'task.status.paused': 'Paused',
@@ -313,6 +314,7 @@ const LANG = {
 
   zh: {
     'task.title': '任务清单',
+    'task.history': '已完成的目标',
     'task.openCurrent': '打开当前会话',
     'task.status.active': '执行中',
     'task.status.paused': '已暂停',

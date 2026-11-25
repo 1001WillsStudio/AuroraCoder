@@ -74,6 +74,7 @@ class ActiveStream:
     turn_id: Optional[str] = None
     task_token: Optional[str] = None
     task_request: Optional[str] = None
+    task_request_is_retry: bool = False
     task_options: TaskResume = field(default_factory=TaskResume)
     initial_task_progress: Optional[TaskProgress] = None
 

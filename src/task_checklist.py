@@ -161,7 +161,7 @@ class AgentTaskTools:
         return self.state is not None and self.state["status"] == "active"
 
     def schemas(self) -> list[dict]:
-        if self.state is None:
+        if self.state is None or self.state.get("can_start_new_task"):
             return [START_SCHEMA]
         if not self.active and self.state["status"] != "paused":
             return []
@@ -198,6 +198,13 @@ class AgentTaskTools:
             )
         elif self.state["status"] == "completed":
             instruction = "Use the completed task state as background for the user's current message."
+            if self.state.get("can_start_new_task"):
+                instruction += (
+                    " If the user asks for a new, substantial task with distinct outcomes, call start_task"
+                    " with a fresh objective and checklist. Quote its explicit acceptance conditions"
+                    " separately and verbatim from the new request. Respond normally to questions, small"
+                    " requests, or discussion of the completed work."
+                )
         else:
             instruction = "This is an earlier segment of a task. Use the saved state only as background."
         if self.state["status"] in {"active", "paused"}:

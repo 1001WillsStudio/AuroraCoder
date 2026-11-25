@@ -12,6 +12,21 @@
   background: var(--bg-secondary);
 }
 
+.task-checklist-card + .task-checklist-card {
+  margin-top: 4px;
+}
+
+.task-checklist-history {
+  max-height: 30vh;
+  overflow-y: auto;
+}
+
+.task-checklist-history summary {
+  padding: 4px 8px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
 .task-checklist-header,
 .task-checklist-summary {
   display: flex;

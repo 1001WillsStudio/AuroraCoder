@@ -87,6 +87,7 @@ class TaskChecklist(BaseModel):
     started: bool = False
     stalled: int = 0
     work_observations: list[str] = Field(default_factory=list)
+    generation: int = 0
     revision: int = 1
     criteria_initialized: bool = False
     criteria_change_index: int = -1
@@ -114,6 +115,7 @@ class TaskChecklist(BaseModel):
             **self.model_dump(exclude={
                 "conversation_ids", "options", "stalled", "handoff", "steering", "started", "request", "latest_steering",
                 "terminal_jobs", "steering_entries", "criteria_initialized", "criteria_change_index", "work_observations",
+                "generation",
             }),
             "conversation_id": self.conversation_id,
         }
@@ -141,7 +143,7 @@ class TaskChecklistStore:
     def __init__(self, directory: Path, write_json, read_messages: Callable[[str], list[dict]]):
         self.directory = directory
         self.write_json = write_json
-        self.by_conversation: dict[str, TaskChecklist] = {}
+        self.by_conversation: dict[str, dict[str, TaskChecklist]] = {}
         for path in directory.glob("*.json"):
             try:
                 task = TaskChecklist.model_validate_json(path.read_text(encoding="utf-8"))
@@ -157,12 +159,27 @@ class TaskChecklistStore:
                         task = task.model_copy(update={"progress": task.progress.model_copy(
                             update={"items": [*items, *missing]},
                         )})
-                self.by_conversation.update(dict.fromkeys(task.conversation_ids, task))
+                self._index(task)
             except (OSError, ValidationError):
                 logger.exception("Could not load task checklist %s", path)
 
     def get(self, conversation_id: str) -> TaskChecklist | None:
-        return self.by_conversation.get(conversation_id)
+        tasks = self.by_conversation.get(conversation_id, {})
+        return max(tasks.values(), key=lambda task: task.generation, default=None)
+
+    def list_for_conversation(self, conversation_id: str) -> list[TaskChecklist]:
+        return sorted(self.by_conversation.get(conversation_id, {}).values(),
+                      key=lambda task: task.generation, reverse=True)
+
+    def _index(self, task: TaskChecklist) -> None:
+        for cid in task.conversation_ids:
+            self.by_conversation.setdefault(cid, {})[task.id] = task
+
+    def _unindex(self, conversation_id: str, task_id: str) -> None:
+        tasks = self.by_conversation[conversation_id]
+        tasks.pop(task_id)
+        if not tasks:
+            del self.by_conversation[conversation_id]
 
     @staticmethod
     def _recover_criteria(task: TaskChecklist, read_messages: Callable[[str], list[dict]]) -> list[str]:
@@ -192,7 +209,8 @@ class TaskChecklistStore:
 
     def start(self, conversation_id: str, plan: TaskStart, workspace: str, request: str,
               options: TaskResume) -> TaskChecklist:
-        if self.get(conversation_id):
+        existing = self.get(conversation_id)
+        if existing and (existing.status != "completed" or existing.conversation_id != conversation_id):
             raise TaskConflict("A saved task already exists in this conversation.")
         if any(criterion not in request for criterion in plan.criteria):
             raise TaskConflict("Quote each acceptance condition verbatim from the user's task request.")
@@ -201,6 +219,7 @@ class TaskChecklistStore:
             id=str(uuid.uuid4()), objective=plan.objective, criteria=criteria, workspace=workspace,
             conversation_ids=[conversation_id], progress=self._initial_progress(plan, criteria),
             status="active", request=request, options=options, started=True, criteria_initialized=True,
+            generation=existing.generation + 1 if existing else 0,
         ))
 
     @staticmethod
@@ -302,15 +321,15 @@ class TaskChecklistStore:
 
     def _create(self, task: TaskChecklist) -> TaskChecklist:
         self.write_json(self.directory / f"{task.id}.json", task.model_dump())
-        self.by_conversation[task.conversation_id] = task
+        self._index(task)
         return task
 
     def save(self, task: TaskChecklist, **changes) -> TaskChecklist:
         updated = task.model_copy(update={**changes, "revision": task.revision + 1})
         self.write_json(self.directory / f"{updated.id}.json", updated.model_dump())
-        self.by_conversation.update(dict.fromkeys(updated.conversation_ids, updated))
+        self._index(updated)
         for cid in set(task.conversation_ids) - set(updated.conversation_ids):
-            self.by_conversation.pop(cid, None)
+            self._unindex(cid, task.id)
         return updated
 
     def edit(self, conversation_id: str, edit: TaskEdit, workspace: str) -> TaskChecklist:
@@ -376,12 +395,10 @@ class TaskChecklistStore:
         return task
 
     def remove_conversation(self, conversation_id: str) -> None:
-        task = self.get(conversation_id)
-        if not task:
-            return
-        remaining = [cid for cid in task.conversation_ids if cid != conversation_id]
-        if remaining:
-            self.save(task, conversation_ids=remaining)
-        else:
-            (self.directory / f"{task.id}.json").unlink(missing_ok=True)
-            self.by_conversation.pop(conversation_id, None)
+        for task in self.list_for_conversation(conversation_id):
+            remaining = [cid for cid in task.conversation_ids if cid != conversation_id]
+            if remaining:
+                self.save(task, conversation_ids=remaining)
+            else:
+                (self.directory / f"{task.id}.json").unlink(missing_ok=True)
+                self._unindex(conversation_id, task.id)

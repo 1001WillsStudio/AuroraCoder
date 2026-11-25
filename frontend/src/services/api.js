@@ -351,7 +351,7 @@ export async function readTask(conversationId, signal) {
     signal, headers: _headers(),
   })
   if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
-  return (await response.json()).task
+  return response.json()
 }
 
 export async function submitTaskSteering(conversationId, { receipt, message, attachedFiles }) {

@@ -10,7 +10,7 @@ import httpx
 from gateway.api import app
 from gateway import routes, streaming
 from gateway.conversation_store import ConversationStore
-from src.task_checklist import TaskEdit
+from src.task_checklist import AgentTaskTools, TaskEdit
 
 
 def test_checkpoint_survives_context_rollover_pause_and_reload(tmp_path, monkeypatch):
@@ -172,6 +172,8 @@ def test_normal_chat_can_start_and_resume_an_agent_owned_checklist(tmp_path, mon
         original = "Please verify that the landing page opens and that the exported file can be read."
         objective = "Verify the landing page and the export end to end."
         labels = ["Open the landing page.", "Read the exported file."]
+        next_request = "Now please verify that the backup restores. Restore the backup."
+        next_label = "Restore the backup."
 
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gateway") as api:
             class Backend:
@@ -214,10 +216,31 @@ def test_normal_chat_can_start_and_resume_an_agent_owned_checklist(tmp_path, mon
                             assert state["progress"]["blocker"] == ""
                             state["progress"]["items"][1]["evidence"] = "The exported file was read."
                             await call("checkpoint", state["progress"])
+                        elif user_message is None:
+                            tools = AgentTaskTools(cid, json["task_token"], json["task_state"])
+                            assert not tools.schemas()
+                            stale_start = await api.post(
+                                f"/internal/task-start/{cid}",
+                                headers={"X-Task-Token": json["task_token"]},
+                                json={"objective": "Unintended retry goal", "items": [next_label]},
+                            )
+                            assert stale_start.status_code == 409
+                        elif user_message == next_request:
+                            tools = AgentTaskTools(cid, json["task_token"], json["task_state"])
+                            assert [schema["function"]["name"] for schema in tools.schemas()] == ["start_task"]
+                            started = await call("start", {
+                                "objective": "Verify the backup", "items": [next_label], "criteria": [next_label],
+                            })
+                            assert started["request"] == next_request
+                            assert started["progress"]["items"][0]["evidence"] == ""
+                            await call("checkpoint", {
+                                "items": [{"text": next_label, "evidence": "Restored and reopened the backup."}],
+                            })
                         message = {"role": "user", "content": user_message}
+                        messages = json["messages"] if user_message is None else [message]
                         yield streaming._format_sse("done", {
                             "conversation_id": cid, "status": "completed",
-                            "messages": [message], "raw_messages": [message],
+                            "messages": messages, "raw_messages": messages,
                         })
 
                     yield SimpleNamespace(status_code=200, aiter_text=events)
@@ -247,5 +270,19 @@ def test_normal_chat_can_start_and_resume_an_agent_owned_checklist(tmp_path, mon
             assert finished["id"] == paused["id"]
             assert finished["status"] == "completed"
             assert all(item["evidence"] for item in finished["progress"]["items"])
+
+            response = await api.post("/api/chat", json={"message": original, "conversation_id": cid, "retry": True})
+            assert response.status_code == 200
+            assert (await api.get(task_url)).json() == {"task": finished}
+
+            assert await send(next_request, cid) == cid
+            result = (await api.get(task_url)).json()
+            assert result["task"]["status"] == "completed"
+            assert result["task"]["id"] != finished["id"]
+            assert result["task"]["criteria"] == [next_label]
+            assert result["completed_tasks"] == [finished]
+            reopened = ConversationStore(tmp_path)
+            monkeypatch.setattr(routes, "store", reopened)
+            assert (await api.get(task_url)).json() == result
 
     asyncio.run(run())
