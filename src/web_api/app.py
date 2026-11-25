@@ -227,6 +227,11 @@ async def stream_chat_response(
                         "provider": current_provider,
                     }
 
+                    if status == "error":
+                        common["message"] = response["error"]
+                        common["type"] = "ModelStreamError"
+                        loop.call_soon_threadsafe(queue.put_nowait, ("error", common))
+                        return
                     if llm_delta is not None:
                         common["delta"] = llm_delta
                         loop.call_soon_threadsafe(queue.put_nowait, ("delta", common))

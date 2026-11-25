@@ -78,9 +78,10 @@ def test_transport_retry_is_bounded_and_closes_each_stream(monkeypatch):
     count = main_flow.MAX_STREAMING_RETRIES + 1
     requests = configure(monkeypatch, [interrupted(index) for index in range(count)])
 
-    with pytest.raises(RuntimeError, match="Connection lost while reading the model response"):
-        list(run_turn(max_iterations=1))
-
+    final = list(run_turn(max_iterations=1))[-1]
+    assert final["status"] == "error"
+    assert "Connection lost while reading the model response" in final["error"]
+    assert [msg["role"] for msg in final["messages"]] == ["system", "user"]
     assert len(requests) == count
     assert closed == list(range(count))
 

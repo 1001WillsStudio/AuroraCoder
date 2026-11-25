@@ -327,7 +327,13 @@ def generate_chat_responses_stream_native(
         
         except (TransportError, APIConnectionError) as exc:
             if streaming_errors >= MAX_STREAMING_RETRIES:
-                raise RuntimeError(f"Connection lost while reading the model response: {exc}") from exc
+                yield {
+                    "messages": messages,
+                    "status": "error",
+                    "error": f"Connection lost while reading the model response: {exc}",
+                    "provider": provider_id,
+                }
+                return
             streaming_errors += 1
             iteration_count -= 1
             _main_logger.warning("Retrying interrupted model stream (%s/%s): %s",
