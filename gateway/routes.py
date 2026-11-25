@@ -515,13 +515,56 @@ def _task_stream(conversation_id: str, request: Request) -> ActiveStream:
     return stream
 
 
+class TaskSteeringSubmission(BaseModel):
+    receipt: uuid.UUID
+    message: str = Field(default="", max_length=262144)
+    attached_files: list[str] = Field(default_factory=list)
+
+
+@app.post("/api/conversations/{conversation_id}/task/steering", status_code=202)
+async def submit_task_steering(conversation_id: str, submission: TaskSteeringSubmission):
+    task = store.tasks.get(require_conversation_id(conversation_id))
+    receipt = str(submission.receipt)
+    if task and any(entry.receipt == receipt for entry in task.steering_history):
+        return {"receipt": receipt}
+    owner = active_streams.get(task.conversation_id) if task else None
+    if (not task or task.status != "active" or not owner or not owner.task_active
+            or owner.finished or owner.cancel_event.is_set()):
+        raise HTTPException(status_code=409, detail={"code": "no_active_goal"})
+    body = {"message": submission.message, "attached_files": submission.attached_files}
+    try:
+        apply_request_attachments(body, Path(task.workspace))
+    except AttachedFilesError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    content = body["message"]
+    if not content or not content.strip():
+        raise HTTPException(status_code=422, detail="Send steering text or a workspace attachment.")
+    # This handler does not yield between owner lookup and the durable receipt.
+    store.tasks.queue_steering(task, content, receipt)
+    return {"receipt": receipt}
+
+
+@app.post("/internal/task-boundary/{conversation_id}")
+async def task_boundary(conversation_id: str, request: Request):
+    _task_stream(conversation_id, request)
+    task = store.tasks.get(conversation_id)
+    if not task or task.conversation_id != conversation_id or task.status != "active":
+        raise HTTPException(status_code=409, detail="This task stream is no longer active.")
+    return {"pending": bool(task.pending_steering)}
+
+
 @app.post("/internal/task-request/{conversation_id}")
 async def read_agent_task_request(conversation_id: str, extent: TaskRequestSlice, request: Request):
     _task_stream(conversation_id, request)
     task = store.tasks.get(conversation_id)
     if not task or task.conversation_id != conversation_id:
         raise HTTPException(status_code=409, detail="No task source for this stream.")
-    source = task.latest_steering if extent.source == "latest" else task.request
+    if extent.source == "steering":
+        if extent.index is None or extent.index >= len(task.steering_history):
+            raise HTTPException(status_code=404, detail="No steering at that index.")
+        source = task.steering_history[extent.index].content
+    else:
+        source = task.latest_steering if extent.source == "latest" else task.request
     if not source and extent.source == "latest":
         raise HTTPException(status_code=404, detail="No later steering has been saved for this task.")
     total = len(source)
@@ -553,7 +596,8 @@ async def reopen_agent_task(conversation_id: str, reopen: TaskReopen, request: R
             or not stream.task_request or task.workspace != task_workspace()):
         raise HTTPException(status_code=409, detail="Resume a paused task in its current conversation and workspace.")
     try:
-        task = store.tasks.reopen(task, stream.task_request, stream.task_options, reopen.revised_plan)
+        task = store.tasks.reopen(task, stream.task_request, stream.task_options, reopen.revised_plan,
+                                  receipt=stream.turn_id, criteria_change=reopen.criteria_change)
     except TaskConflict as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     stream.initial_task_progress = task.progress

@@ -31,14 +31,16 @@ async def test_latest_steering_middle_can_be_read_in_a_new_context_after_restart
     agent = AgentTaskTools(second, stream.task_token, task.prompt_state())
     assert any(tool["function"]["name"] == "read_task_request" for tool in agent.schemas())
     assert "latest" in agent.prompt()
+    store.tasks.reopen(task, "Continue.", TaskResume(), None)
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://fixture") as client:
         headers = {"X-Task-Token": stream.task_token}
         path = f"/internal/task-request/{second}"
         result = await client.post(path, headers=headers, json={
-            "source": "latest", "offset": 2850, "max_chars": len(marker),
+            "source": "steering", "index": 1, "offset": 2850, "max_chars": len(marker),
         })
         assert result.json()["text"] == marker
+        assert (await client.post(path, headers=headers, json={"source": "latest"})).json()["text"] == "Continue."
         assert (await client.post(path, headers=headers, json={})).json()["text"] == "Initial request"
 
 

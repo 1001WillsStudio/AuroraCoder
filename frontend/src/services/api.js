@@ -354,6 +354,19 @@ export async function readTask(conversationId, signal) {
   return (await response.json()).task
 }
 
+export async function submitTaskSteering(conversationId, { receipt, message, attachedFiles }) {
+  const response = await fetch(`${API_BASE}/conversations/${encodeURIComponent(conversationId)}/task/steering`, {
+    method: 'POST',
+    headers: _headers({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ receipt, message, attached_files: attachedFiles }),
+  })
+  const result = await response.json().catch(() => null)
+  if (response.ok && result?.receipt === receipt) return 'accepted'
+  if (response.status === 409 && result?.detail?.code === 'no_active_goal') return 'no-goal'
+  if (response.status === 400 || response.status === 422) return 'rejected'
+  throw new Error('Could not confirm Goal steering receipt.')
+}
+
 /**
  * Delete a conversation and its descendant subagent chats.
  * @param {string} conversationId

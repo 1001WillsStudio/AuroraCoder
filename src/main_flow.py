@@ -216,9 +216,19 @@ def generate_chat_responses_stream_native(
     # Read the user's training-data preference *once* — it cannot change mid-request.
     save_training = load_save_training_flag()
     retrying_empty_reply = False
+    steering_requested = False
+
+    def steering_boundary() -> bool:
+        nonlocal steering_requested
+        if not steering_requested and task_tools and tools_override is None:
+            steering_requested = task_tools.has_pending_steering()
+        return steering_requested
 
     while iteration_count < max_iterations:
         if stopped():
+            return
+        if steering_boundary():
+            yield {"messages": messages, "status": "task_steered", "provider": provider_id}
             return
         iteration_count += 1
         
@@ -432,10 +442,19 @@ def generate_chat_responses_stream_native(
             tool_options["stop_requested"] = stop_requested
         if task_tools and tools_override is None:
             tool_options["task_tool_handler"] = task_tools.call
+            tool_options["before_dispatch"] = steering_boundary
         triggered_trackers = execute_tool_calls(
             current_tool_calls, messages, conversation_id=conversation_id, **tool_options,
         )
         if stopped():
+            return
+        if steering_boundary():
+            answered = {record.get("tool_call_id") for record in messages if record.get("role") == "tool"}
+            messages.extend({
+                "role": "tool", "tool_call_id": call["id"],
+                "content": "Skipped: a user correction arrived before this tool was dispatched.",
+            } for call in current_tool_calls if call["id"] not in answered)
+            yield {"messages": messages, "status": "task_steered", "provider": provider_id}
             return
 
         # Warn once when estimated context nears the model's window.

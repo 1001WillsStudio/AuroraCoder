@@ -166,6 +166,7 @@ def execute_tool_calls(
     allowed_tools: set[str] | None = None,
     *,
     stop_requested: Callable[[], bool] | None = None,
+    before_dispatch: Callable[[], bool] | None = None,
     task_tool_handler=None,
 ) -> Dict[str, int]:
     """
@@ -184,6 +185,9 @@ def execute_tool_calls(
 
     def stopped() -> bool:
         return stop_requested is not None and stop_requested()
+
+    def deferred() -> bool:
+        return before_dispatch is not None and before_dispatch()
 
     def run_tool(call: Dict) -> Tuple[Dict, str, str] | None:
         if stopped():
@@ -205,6 +209,8 @@ def execute_tool_calls(
         if stopped():
             break
         if is_safe and len(batch) > 1:
+            if deferred():
+                break
             futures = {
                 _get_executor().submit(run_tool, tc): tc
                 for tc in batch
@@ -229,6 +235,8 @@ def execute_tool_calls(
                 _mark(tool_name)
         else:
             for tc in batch:
+                if stopped() or deferred():
+                    break
                 guard_err = None
                 if allowed(tc["function"]["name"]):
                     guard_err = _check_same_file_edit_guard(tc, files_edited_this_turn)

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -9,11 +10,21 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
-from src.task_checklist import TaskCheckpointUpdate, TaskEdit, TaskItem, TaskProgress, TaskResume, TaskStart
+from src.task_checklist import TaskCheckpointUpdate, TaskCriteriaChange, TaskEdit, TaskItem, TaskProgress, TaskResume, TaskStart
+from gateway.attached_files import strip_attached_files
+from gateway.task_instruction_display import strip_task_instruction
 
 logger = logging.getLogger(__name__)
 _SCOPE_LIMIT = 6000
 _OMITTED = "\n\n[Middle of the user text omitted from this excerpt.]\n\n"
+_WAIVER = re.compile(r"\b(?:skip|drop|remove|waive|omit|cancel|no longer|not required|no need)\b|跳过|撤回|取消|免除|无需|不用|不必|不再", re.I)
+_CLAUSE_BOUNDARY = re.compile(r"[.,;!?，。；！？\n]+")
+_NEGATED_WAIVER = re.compile(
+    r"\b(?:don't|do not|never|must not|should not|cannot)\b[^.,;\n]{0,30}"
+    r"\b(?:skip|drop|remove|waive|omit|cancel|replace|change)\b"
+    r"|(?:不要|不能|不得|禁止|不允许).{0,8}(?:跳过|撤回|取消|免除|更改|替换)", re.I,
+)
+_REPLACEMENT = re.compile(r"\b(?:replace|change|switch|redefine)\b[^.?!\n]{0,60}\b(?:criteria|requirements|objective|goal|scope)\b|(?:验收|目标|范围)[^。！？\n]{0,16}(?:改为|变更为|替换|重新定义)|(?:替换|修改|更改|重设)(?:原有|原先|原来的)?(?:验收|目标|范围)", re.I)
 
 
 def _scope_excerpt(text: str, limit: int = _SCOPE_LIMIT) -> str:
@@ -26,6 +37,12 @@ def _scope_excerpt(text: str, limit: int = _SCOPE_LIMIT) -> str:
 
 class TaskConflict(ValueError):
     pass
+
+
+class TaskSteeringEntry(BaseModel):
+    content: str
+    receipt: str | None = None
+    applied_to: str | None = None
 
 
 class TaskChecklist(BaseModel):
@@ -41,11 +58,14 @@ class TaskChecklist(BaseModel):
     steering: str = ""
     request: str = ""
     latest_steering: str = ""
+    steering_entries: list[TaskSteeringEntry] = Field(default_factory=list)
     terminal_jobs: list[str] = Field(default_factory=list)
     options: TaskResume = Field(default_factory=TaskResume)
     started: bool = False
     stalled: int = 0
     revision: int = 1
+    criteria_initialized: bool = False
+    criteria_change_index: int = -1
 
     @property
     def conversation_id(self) -> str:
@@ -55,11 +75,21 @@ class TaskChecklist(BaseModel):
     def verified(self) -> bool:
         return self.progress.verified and set(self.criteria) <= {item.text for item in self.progress.items}
 
+    @property
+    def steering_history(self) -> list[TaskSteeringEntry]:
+        if not self.steering_entries and self.latest_steering:
+            return [TaskSteeringEntry(content=self.latest_steering, applied_to=self.conversation_id)]
+        return self.steering_entries
+
+    @property
+    def pending_steering(self) -> list[TaskSteeringEntry]:
+        return [entry for entry in self.steering_history if entry.applied_to is None]
+
     def public(self) -> dict:
         return {
             **self.model_dump(exclude={
                 "conversation_ids", "options", "stalled", "handoff", "steering", "started", "request", "latest_steering",
-                "terminal_jobs",
+                "terminal_jobs", "steering_entries", "criteria_initialized", "criteria_change_index",
             }),
             "conversation_id": self.conversation_id,
         }
@@ -69,6 +99,9 @@ class TaskChecklist(BaseModel):
             "objective", "criteria", "workspace", "progress", "handoff", "steering", "request", "status",
         })
         state["request"] = _scope_excerpt(self.request)
+        state["steering_boundary"] = True
+        if self.steering_history:
+            state["steering_count"] = len(self.steering_history)
         if len(self.request) > _SCOPE_LIMIT:
             state["request_length"] = len(self.request)
         if self.latest_steering and self.latest_steering not in self.steering:
@@ -88,7 +121,7 @@ class TaskChecklistStore:
         for path in directory.glob("*.json"):
             try:
                 task = TaskChecklist.model_validate_json(path.read_text(encoding="utf-8"))
-                if task.request and not task.criteria:
+                if task.request and not task.criteria and not task.criteria_initialized:
                     criteria = self._recover_criteria(task, read_messages)
                     task = task.model_copy(update={"criteria": criteria})
                     if task.status == "completed" and not task.verified:
@@ -143,27 +176,93 @@ class TaskChecklistStore:
         return self._create(TaskChecklist(
             id=str(uuid.uuid4()), objective=plan.objective, criteria=criteria, workspace=workspace,
             conversation_ids=[conversation_id], progress=self._initial_progress(plan, criteria),
-            status="active", request=request, options=options, started=True,
+            status="active", request=request, options=options, started=True, criteria_initialized=True,
         ))
 
-    def reopen(self, task: TaskChecklist, request: str, options: TaskResume,
-               revised_plan: TaskStart | None) -> TaskChecklist:
+    @staticmethod
+    def _append_steering(task: TaskChecklist, entry: TaskSteeringEntry) -> dict:
+        request = entry.content
+        entries = task.steering_history
+        if entry.receipt and any(saved.receipt == entry.receipt for saved in entries):
+            return {}
         steering = "\n\n".join(filter(None, (task.steering, request)))
         if len(steering) > _SCOPE_LIMIT:
             prior = _scope_excerpt(task.steering, _SCOPE_LIMIT // 4)
             latest_limit = _SCOPE_LIMIT - len(prior) - (2 if prior else 0)
             steering = "\n\n".join(filter(None, (prior, _scope_excerpt(request, latest_limit))))
+        return {"steering": steering, "latest_steering": request, "steering_entries": [*entries, entry]}
+
+    def queue_steering(self, task: TaskChecklist, content: str, receipt: str) -> TaskChecklist:
+        changes = self._append_steering(task, TaskSteeringEntry(content=content, receipt=receipt))
+        return self.save(task, **changes) if changes else task
+
+    @staticmethod
+    def _criteria_amendment(task: TaskChecklist, change: TaskCriteriaChange | None) -> dict:
+        if change is None:
+            return {}
+        history = task.steering_history
+        index = change.steering_index if change.steering_index is not None else len(history) - 1
+        if index < 0 or index >= len(history) or index < task.criteria_change_index:
+            raise TaskConflict("Choose a saved steering entry at or after the last acceptance change.")
+        entry = history[index]
+        source = strip_attached_files(strip_task_instruction(entry.content))
+        if not entry.applied_to or change.quote not in source:
+            raise TaskConflict("Quote the actual user direction after it has reached this task.")
+        if _NEGATED_WAIVER.search(change.quote):
+            raise TaskConflict("The quoted direction prohibits removing or replacing requirements.")
+        if change.replace and not _REPLACEMENT.search(change.quote):
+            raise TaskConflict("Replacing the criteria requires an explicit user direction changing the scope.")
+        if change.objective and (not change.replace or change.objective not in change.quote):
+            raise TaskConflict("Quote the new objective verbatim in an explicit scope replacement.")
+        for removal in change.withdraw:
+            subject = re.escape(removal.subject)
+            if removal.subject.isascii():
+                subject = rf"\b{subject}\b"
+            if (removal.criterion not in task.criteria
+                    or not re.search(subject, removal.criterion, re.I)
+                    or not any(_WAIVER.search(clause) and re.search(subject, clause, re.I)
+                               for clause in _CLAUSE_BOUNDARY.split(change.quote))):
+                raise TaskConflict("Quote the explicit withdrawal of each removed user criterion.")
+        if any(label not in change.quote for label in change.add):
+            raise TaskConflict("Quote the new acceptance conditions verbatim in the saved user direction.")
+        withdrawn = {item.criterion for item in change.withdraw}
+        keep = [] if change.replace else [label for label in task.criteria if label not in withdrawn]
+        changes = {"criteria": list(dict.fromkeys([*keep, *change.add])), "criteria_change_index": index,
+                   "criteria_initialized": True}
+        if change.objective:
+            changes.update(objective=change.objective, handoff="")
+        return changes
+
+    def reopen(self, task: TaskChecklist, request: str, options: TaskResume,
+               revised_plan: TaskStart | None, *, receipt: str | None = None,
+               criteria_change: TaskCriteriaChange | None = None) -> TaskChecklist:
         changes = {
-            "status": "active", "reason": "", "steering": steering, "latest_steering": request,
+            **self._append_steering(task, TaskSteeringEntry(
+                content=request, receipt=receipt, applied_to=task.conversation_id,
+            )),
+            "status": "active", "reason": "",
             "started": True, "stalled": 0,
             "options": options if options.model_dump(exclude_none=True) else task.options,
             "progress": task.progress.model_copy(update={"blocker": ""}),
         }
+        entered = task.model_copy(update=changes)
+        amendment = self._criteria_amendment(entered, criteria_change)
+        changes.update(amendment)
+        criteria = changes.get("criteria", task.criteria)
         if revised_plan:
             changes.update(
-                objective=revised_plan.objective, handoff="",
-                progress=self._initial_progress(revised_plan, task.criteria),
+                objective=changes.get("objective", revised_plan.objective), handoff="",
+                progress=self._initial_progress(revised_plan, criteria),
             )
+        elif amendment:
+            retired = set(task.criteria) - set(criteria)
+            items = {} if criteria_change.replace else {
+                item.text: item for item in task.progress.items if item.text not in retired
+            }
+            items.update({label: TaskItem(text=label) for label in criteria if label not in items})
+            if not 1 <= len(items) <= 20:
+                raise TaskConflict("Provide a revised plan with one to twenty checklist items.")
+            changes["progress"] = TaskProgress(items=list(items.values()))
         return self.save(task, **changes)
 
     @staticmethod
@@ -208,11 +307,11 @@ class TaskChecklistStore:
         progress = TaskProgress(items=items)
 
         if task:
-            return self.save(task, objective=edit.objective, criteria=criteria, progress=progress,
+            return self.save(task, objective=edit.objective, criteria=criteria, progress=progress, criteria_initialized=True,
                              status="paused", reason="", handoff="", steering="", stalled=0)
         task = TaskChecklist(
             id=str(uuid.uuid4()), objective=edit.objective, criteria=criteria, workspace=workspace,
-            conversation_ids=[conversation_id], progress=progress,
+            conversation_ids=[conversation_id], progress=progress, criteria_initialized=True,
         )
         return self._create(task)
 
@@ -221,11 +320,18 @@ class TaskChecklistStore:
         if len(labels) != len(update.items):
             raise TaskConflict("Give each checklist item a unique label.")
 
-        previous = {item.text: item for item in task.progress.items}
+        amendment = self._criteria_amendment(task, update.criteria_change)
+        criteria = amendment.get("criteria", task.criteria)
+        retired = set(task.criteria) - set(criteria)
+        reset = update.criteria_change is not None and update.criteria_change.replace
+        previous = {} if reset else {item.text: item for item in task.progress.items if item.text not in retired}
         items = {} if update.replace_items else previous.copy()
         for item in update.items:
             items[item.text] = previous.get(item.text, item) if not item.evidence else item
-        if not set(task.criteria) <= items.keys():
+        if amendment:
+            for label in criteria:
+                items.setdefault(label, previous.get(label) or TaskItem(text=label))
+        if not set(criteria) <= items.keys():
             raise TaskConflict("Keep every user criterion verbatim.")
         if not 1 <= len(items) <= 20:
             raise TaskConflict("Keep between one and twenty checklist items.")
@@ -239,8 +345,8 @@ class TaskChecklistStore:
             checkpoint=task.progress.checkpoint if update.checkpoint is None else update.checkpoint,
             blocker=task.progress.blocker if update.blocker is None else update.blocker,
         )
-        if task.progress != progress:
-            return self.save(task, progress=progress)
+        if task.progress != progress or amendment:
+            return self.save(task, progress=progress, **amendment)
         return task
 
     def remove_conversation(self, conversation_id: str) -> None:

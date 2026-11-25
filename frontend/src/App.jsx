@@ -5,6 +5,7 @@ import { RotateCcw, X, ArrowDown, Menu } from 'lucide-react'
 import ChatMessage from './components/ChatMessage'
 import ChatInput from './components/ChatInput'
 import TaskChecklist from './components/TaskChecklist'
+import useGoalSteering from './hooks/useGoalSteering'
 import LoginScreen from './components/LoginScreen'
 import Sidebar from './components/Sidebar'
 import WelcomeScreen from './components/WelcomeScreen'
@@ -326,6 +327,27 @@ function App() {
     setPendingInterrupt(null)
   }, [])
 
+  const latestChatState = useRef(null)
+  latestChatState.current = { isStreaming, rawMessages }
+  const goalSteering = useGoalSteering(conversationId, (entry, fallback) => {
+    const { conversationId: cid, message, attachedFiles: files } = entry
+    if (conversationIdRef.current !== cid || pendingConversationLoadRef.current) {
+      saveComposerDraft(draftInputsRef.current, cid, message, files)
+      return
+    }
+    const latest = latestChatState.current
+    if (fallback && (!latest.isStreaming || isInterruptible(latest.rawMessages))) {
+      handleSendRef.current?.(latest.isStreaming ? latest.rawMessages : null, message, { attachedFiles: files })
+    } else if (fallback) {
+      const pending = { message, attachedFiles: files }
+      pendingInterruptRef.current = pending
+      setPendingInterrupt(pending)
+    } else {
+      setInputValue(message)
+      setAttachedFiles(files)
+    }
+  })
+
   const handleSend = async (interruptMessages = null, overrideMessage = null, options = {}) => {
     if (pendingConversationLoadRef.current) return
     const viewEpoch = viewEpochRef.current
@@ -483,6 +505,14 @@ function App() {
     if (pendingConversationLoadRef.current) return
     if (!inputValue.trim() && attachedFiles.length === 0) return
     if (!isStreaming) { handleSend(); return }
+    const cid = conversationIdRef.current || conversationId
+    if (cid) {
+      if (goalSteering.send(cid, inputValue.trim(), [...attachedFiles])) {
+        setInputValue('')
+        setAttachedFiles([])
+      }
+      return
+    }
     if (isInterruptible(rawMessages)) {
       handleSend(rawMessages)
     } else {
@@ -1112,6 +1142,9 @@ function App() {
             onChange={setInputValue}
             isStreaming={isStreaming}
             pendingInterrupt={pendingInterrupt}
+            goalSteeringPending={goalSteering.pending}
+            goalSteeringReceived={goalSteering.received}
+            onRetrySteering={goalSteering.retry}
             messagesCount={messages.length}
             onSend={handleSend}
             onInterruptSend={handleInterruptSend}

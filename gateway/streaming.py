@@ -510,11 +510,20 @@ def start_task_segment(task: TaskChecklist, *, fresh: bool, handoff: str = "", s
         f"Continue task: {task.objective}" if fresh else task.objective
     )
     prior = _fix_orphan_tool_calls(store.get_messages(cid))
-    store.save_messages(cid, [*prior, {"role": "user", "content": message, "source": TASK_RESUME_SOURCE}])
+    synthetic = {"role": "user", "content": message, "source": TASK_RESUME_SOURCE}
+    directions = [{"role": "user", "content": entry.content} for entry in task.pending_steering]
+    store.save_messages(cid, [*prior, synthetic, *directions])
     store.seed_frontend_user_message(cid, message, source=TASK_RESUME_SOURCE)
+    for direction in directions:
+        store.seed_frontend_user_message(cid, direction["content"])
+    applied = [
+        entry if entry.applied_to else entry.model_copy(update={"applied_to": cid})
+        for entry in task.steering_history
+    ]
     task = store.tasks.save(
         task, status="active", reason="", stalled=stalled, handoff=handoff, started=True,
         conversation_ids=[*task.conversation_ids, cid] if fresh else task.conversation_ids,
+        steering_entries=applied,
     )
     store.update_status(cid, "running", accepted_turn_id=None)
     stream = ActiveStream(
@@ -532,6 +541,9 @@ def start_task_segment(task: TaskChecklist, *, fresh: bool, handoff: str = "", s
         "message_source": TASK_RESUME_SOURCE,
         "workspace_tree": tree, "task_state": task.prompt_state(), "task_token": stream.task_token,
     }
+    if directions:
+        body.update(messages=[*prior, synthetic, *directions[:-1]], message=directions[-1]["content"])
+        body.pop("message_source")
     active_streams[cid] = stream
     stream.task = asyncio.create_task(_proxy_backend_stream(stream, body))
     return cid
@@ -570,11 +582,12 @@ def _finish_task_segment(stream: ActiveStream, raw_messages: list, prior_tool_id
     task = store.tasks.get(cid)
     if not task or task.status != "active" or task.conversation_id != cid:
         return
-    if stream.status not in {"completed", "max_iterations_reached", "context_limit_reached"}:
+    steering = bool(task.pending_steering)
+    if stream.status not in {"completed", "max_iterations_reached", "context_limit_reached", "task_steered"}:
         pause_task(cid, "error")
-    elif task.verified:
+    elif task.verified and not steering:
         store.tasks.save(task, status="completed", reason="")
-    elif task.progress.blocker:
+    elif task.progress.blocker and not steering:
         pause_task(cid, "blocked")
         stream.status = "interrupted"
     else:
@@ -582,7 +595,7 @@ def _finish_task_segment(stream: ActiveStream, raw_messages: list, prior_tool_id
         progressed = previous is None or task.progress.items != previous.items or (
             task.progress.checkpoint != previous.checkpoint and _has_work_beyond_checkpoint(raw_messages)
         )
-        stalled = 0 if progressed else task.stalled + 1
+        stalled = 0 if steering or progressed else task.stalled + 1
         if stalled >= 2:
             pause_task(cid, "no_progress")
             stream.status = "interrupted"
@@ -590,6 +603,8 @@ def _finish_task_segment(stream: ActiveStream, raw_messages: list, prior_tool_id
         prompt = _scan_for_continuation(raw_messages, prior_tool_ids)
         handoff = prompt[-6000:] if isinstance(prompt, str) else task.handoff
         store.save_messages(cid, raw_messages)
+        if steering and task.progress.blocker:
+            task = store.tasks.save(task, progress=task.progress.model_copy(update={"blocker": ""}))
         stream.new_conversation_id = start_task_segment(task, fresh=True, handoff=handoff, stalled=stalled)
         stream.status = "continued"
         store.update_status(cid, "continued")

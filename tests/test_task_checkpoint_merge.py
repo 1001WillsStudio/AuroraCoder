@@ -4,7 +4,7 @@ import pytest
 
 from gateway.conversation_store import ConversationStore
 from gateway.task_checklist import TaskConflict
-from src.task_checklist import TaskCheckpointUpdate, TaskResume, TaskStart
+from src.task_checklist import TaskCheckpointUpdate, TaskCriteriaChange, TaskResume, TaskStart
 
 
 def test_user_acceptance_survives_replanning_and_needs_its_own_evidence(tmp_path):
@@ -41,10 +41,41 @@ def test_legacy_completed_task_recovers_windows_from_successful_start_tool(tmp_p
     path = tmp_path / "tasks" / f"{task.id}.json"
     legacy = task.model_dump()
     legacy.update(criteria=[], status="completed", progress={"items": [{"text": "Linux", "evidence": "Passed"}]})
+    legacy.pop("criteria_initialized", None)
     path.write_text(json.dumps(legacy), encoding="utf-8")
     repaired = ConversationStore(tmp_path).tasks.get(cid)
     assert repaired.status == "paused" and not repaired.verified
     assert [(row.text, row.evidence) for row in repaired.progress.items] == [("Linux", "Passed"), ("Windows", "")]
+
+
+def test_actual_user_withdrawal_and_scope_replacement_change_protected_criteria(tmp_path):
+    db = ConversationStore(tmp_path)
+    cid = db.create_conversation()
+    task = db.tasks.start(cid, TaskStart(objective="Verify", items=["Linux", "Windows"]),
+                          "/workspace", "Verify Linux and Windows.", TaskResume())
+    removal = [{"criterion": "Windows", "subject": "Windows"}]
+    with pytest.raises(TaskConflict):
+        db.tasks.reopen(task, "Continue", TaskResume(), None,
+                        criteria_change=TaskCriteriaChange(quote="Continue", withdraw=removal))
+    with pytest.raises(TaskConflict):
+        db.tasks.reopen(task, "Never drop Windows.", TaskResume(), None,
+                        criteria_change=TaskCriteriaChange(quote="Never drop Windows.", withdraw=removal))
+    with pytest.raises(TaskConflict):
+        db.tasks.reopen(task, "Skip Linux, keep Windows.", TaskResume(), None,
+                        criteria_change=TaskCriteriaChange(quote="Skip Linux, keep Windows.", withdraw=removal))
+    directive = "Windows 不用验收了，只跑 Linux。"
+    task = db.tasks.reopen(task, directive, TaskResume(), TaskStart(objective="Verify", items=["Linux"]),
+                           criteria_change=TaskCriteriaChange(quote=directive, withdraw=removal))
+    assert task.criteria == ["Linux"] and [item.text for item in task.progress.items] == ["Linux"]
+
+    replacement = "Replace the acceptance criteria with Verify macOS."
+    task = db.tasks.reopen(task, replacement, TaskResume(), None)
+    task = db.tasks.checkpoint(task, TaskCheckpointUpdate(
+        criteria_change=TaskCriteriaChange(quote=replacement, replace=True, add=["Verify macOS"]),
+    ))
+    assert task.criteria == ["Verify macOS"] and [item.text for item in task.progress.items] == ["Verify macOS"]
+    reloaded = ConversationStore(tmp_path).tasks.get(cid)
+    assert reloaded.criteria == ["Verify macOS"]
 
 
 def test_a_partial_checkpoint_does_not_discard_a_previously_verified_item(tmp_path):

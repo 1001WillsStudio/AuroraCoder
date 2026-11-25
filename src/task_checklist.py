@@ -27,6 +27,22 @@ class TaskProgress(BaseModel):
         return not self.blocker and all(item.evidence for item in self.items)
 
 
+class TaskCriterionWithdrawal(BaseModel):
+    criterion: ItemText
+    subject: ItemText = Field(description="A name or phrase appearing verbatim in both the criterion and the user's withdrawal.")
+
+
+class TaskCriteriaChange(BaseModel):
+    quote: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)] = Field(
+        description="The saved user's exact words explicitly changing or withdrawing acceptance requirements."
+    )
+    steering_index: int | None = Field(default=None, ge=0, description="Index of the saved direction. Defaults to the latest.")
+    withdraw: list[TaskCriterionWithdrawal] = Field(default_factory=list, max_length=20)
+    add: list[ItemText] = Field(default_factory=list, max_length=20, description="New criteria quoted verbatim in quote.")
+    replace: bool = Field(default=False, description="Replace the full criteria set only for an explicit scope replacement.")
+    objective: TaskText | None = Field(default=None, description="An explicitly replaced objective quoted verbatim in quote.")
+
+
 class TaskCheckpointUpdate(BaseModel):
     items: list[TaskItem] = Field(
         default_factory=list, max_length=20, description="Checklist entries to add or update."
@@ -39,6 +55,7 @@ class TaskCheckpointUpdate(BaseModel):
     reopen_items: list[ItemText] = Field(
         default_factory=list, max_length=20, description="Labels whose saved evidence is invalid and must be cleared."
     )
+    criteria_change: TaskCriteriaChange | None = None
 
 
 class TaskEdit(BaseModel):
@@ -64,12 +81,14 @@ class TaskStart(BaseModel):
 
 class TaskReopen(BaseModel):
     revised_plan: TaskStart | None = None
+    criteria_change: TaskCriteriaChange | None = None
 
 
 class TaskRequestSlice(BaseModel):
-    source: Literal["original", "latest"] = Field(
-        default="original", description="Read the first task request or the latest user steering."
+    source: Literal["original", "latest", "steering"] = Field(
+        default="original", description="Read the first request, latest direction, or an indexed direction."
     )
+    index: int | None = Field(default=None, ge=0, description="Zero-based position for source=steering.")
     offset: int = Field(default=0, ge=0, description="Starting character, counted from zero.")
     max_chars: int = Field(default=3000, ge=1, le=3000)
 
@@ -98,7 +117,8 @@ RESUME_SCHEMA = {
         "description": (
             "Resume the saved task when the user asks to continue or steers ongoing work. "
             "Supply a revised plan only when the user explicitly changes the objective. "
-            "Keep the saved checklist for an ordinary continuation."
+            "Keep the saved checklist for an ordinary continuation. To remove or change acceptance "
+            "criteria, include criteria_change with the exact words from the user's saved direction."
         ),
         "parameters": TaskReopen.model_json_schema(),
     },
@@ -110,6 +130,7 @@ CHECKPOINT_SCHEMA = {
         "description": (
             "Save changed checklist entries and a checkpoint. Omitted entries and their evidence are kept. "
             "Keep user criteria verbatim and explicitly reopen an item if its prior evidence no longer applies. "
+            "Use criteria_change only when the user explicitly changes acceptance requirements. Cite the exact saved direction. "
             "An item is pending until its evidence records an actual check and observed result. "
             "Save a short checkpoint after material progress and before any context handoff. "
             "Use blocker only when work needs external input or cannot progress."
@@ -121,7 +142,7 @@ REQUEST_SCHEMA = {
     "type": "function",
     "function": {
         "name": READ_TASK_REQUEST,
-        "description": "Read the original task request or latest user steering by character range.",
+        "description": "Read the original request or ordered user steering by character range.",
         "parameters": TaskRequestSlice.model_json_schema(),
     },
 }
@@ -145,7 +166,7 @@ class AgentTaskTools:
         if not self.active and self.state["status"] != "paused":
             return []
         tools = [CHECKPOINT_SCHEMA if self.active else RESUME_SCHEMA]
-        if self.state.get("request_length") or self.state.get("latest_steering_length"):
+        if self.state.get("request_length") or self.state.get("latest_steering_length") or self.state.get("steering_count"):
             tools.append(REQUEST_SCHEMA)
         return tools
 
@@ -184,11 +205,23 @@ class AgentTaskTools:
                 instruction += " The original request is excerpted. Use read_task_request for omitted details."
             if self.state.get("latest_steering_length"):
                 instruction += ' The latest steering is excerpted. Use read_task_request with source="latest".'
+            if self.state.get("steering_count"):
+                instruction += ' Recover earlier directions with read_task_request, source="steering" and a zero-based index.'
         if self.active and self.state.get("terminal_jobs"):
             instruction += (
                 " Check relevant terminal_jobs with terminal_job_status. They were already started in this task."
             )
         return instruction + "\n\n" + json.dumps(self.state, ensure_ascii=False)
+
+    def has_pending_steering(self) -> bool:
+        if not self.active or not self.state.get("steering_boundary"):
+            return False
+        response = httpx.post(
+            f"{os.environ.get('GATEWAY_URL', 'http://localhost:8081')}/internal/task-boundary/{self.conversation_id}",
+            headers={"X-Task-Token": self.token}, timeout=5, trust_env=False,
+        )
+        response.raise_for_status()
+        return response.json()["pending"]
 
     def call(self, name: str, arguments: dict) -> str:
         url = os.environ.get("GATEWAY_URL", "http://localhost:8081")
@@ -210,7 +243,9 @@ class AgentTaskTools:
         if name == READ_TASK_REQUEST:
             text = result["text"]
             end = result["offset"] + len(text)
-            source = "Latest steering" if arguments.get("source") == "latest" else "Original request"
+            source = {"latest": "Latest steering", "steering": "User steering"}.get(
+                arguments.get("source"), "Original request",
+            )
             output = f"{source} characters [{result['offset']}, {end}) of {result['total_chars']}.\n\n{text}"
             if result["next_offset"] is not None:
                 output += f"\n\nRead from offset {result['next_offset']} to continue."

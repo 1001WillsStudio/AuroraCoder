@@ -20,7 +20,10 @@ const ChatInput = forwardRef(({
   value,
   onChange,
   isStreaming,
-  pendingInterrupt,
+  pendingInterrupt: localPendingInterrupt,
+  goalSteeringPending,
+  goalSteeringReceived,
+  onRetrySteering,
   messagesCount,
   onSend,
   onInterruptSend,
@@ -44,6 +47,7 @@ const ChatInput = forwardRef(({
   const attached = Array.isArray(attachedFiles) ? attachedFiles : []
   const hasText = value.trim().length > 0
   const canSend = hasText || attached.length > 0
+  const pendingInterrupt = goalSteeringPending || localPendingInterrupt
   const pickerOpen = Boolean(atQuery) && !pendingInterrupt
 
   // Grow with the draft up to CSS max-height so multiline text is not clipped.
@@ -270,8 +274,8 @@ const ChatInput = forwardRef(({
             {pendingInterrupt ? (
               <button
                 className="send-btn pending-btn"
-                onClick={onCancelPendingInterrupt}
-                title={t('chat.title.cancelPending')}
+                onClick={goalSteeringPending ? onRetrySteering : onCancelPendingInterrupt}
+                title={t(goalSteeringPending ? 'task.retryReceipt' : 'chat.title.cancelPending')}
                 data-testid="chat-stop"
               >
                 <RotateCcw size={18} />
@@ -304,7 +308,9 @@ const ChatInput = forwardRef(({
       </div>
       <div className="input-hint">
         {pendingInterrupt
-          ? t('chat.interruptQueued', { msg: queuedPreview() })
+          ? t(goalSteeringPending ? 'task.awaitingReceipt' : 'chat.interruptQueued', { msg: queuedPreview() })
+          : goalSteeringReceived && isStreaming
+            ? t('task.steeringReceived')
           : isStreaming
             ? t('chat.hint.streaming')
             : messagesCount > 0
