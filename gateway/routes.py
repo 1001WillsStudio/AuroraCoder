@@ -878,6 +878,12 @@ def _count_tools_in_dict(tools_dict: dict, by_source: dict) -> int:
     return added
 
 
+def _toolstore_home() -> str:
+    if ConfigManager is not None:
+        return str(ConfigManager().config_dir)
+    return os.environ.get("TOOLSTORE_HOME", os.path.expanduser("~/.toolstore"))
+
+
 @app.get("/api/toolstore/status")
 async def get_toolstore_status():
     """Return tool counts — registry (online) + MCP/skills (local)."""
@@ -885,10 +891,7 @@ async def get_toolstore_status():
     by_source: dict = {}
     total = 0
 
-    try:
-        home = Path(ConfigManager().config_dir)
-    except ImportError:
-        home = Path(os.environ.get("TOOLSTORE_HOME", os.path.expanduser("~/.toolstore")))
+    home = Path(_toolstore_home())
 
     index_path = home / "index.json"
     if index_path.exists():
@@ -915,15 +918,11 @@ async def get_toolstore_status():
 async def refresh_toolstore():
     """Run `toolstore update` to rebuild the local tool index."""
     try:
-        _home = str(ConfigManager().config_dir)
-    except ImportError:
-        _home = os.environ.get("TOOLSTORE_HOME", os.path.expanduser("~/.toolstore"))
-    try:
         result = await asyncio.to_thread(
             subprocess.run,
             ["toolstore", "update"],
             capture_output=True, text=True, timeout=60,
-            env={**os.environ, "TOOLSTORE_HOME": _home}
+            env={**os.environ, "TOOLSTORE_HOME": _toolstore_home()},
         )
         return {"ok": True, "output": result.stdout[-2000:], "errors": result.stderr[-500:] if result.returncode != 0 else None}
     except Exception as e:
