@@ -1,5 +1,10 @@
 @echo off
 cd /d "%~dp0\.."
+if defined AURORA_DEV_LAUNCH_ID goto :launch
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%~dp0windows-launch-lock.ps1" -BatchPath "%~f0"
+exit /b %errorlevel%
+
+:launch
 
 :: ── Check if base image exists; build if missing ─────────────────────────
 docker inspect --type=image auroracoder-base >nul 2>&1
@@ -38,7 +43,6 @@ goto :base_build_now
 docker build -t auroracoder-base -f docker\Dockerfile.base .
 if errorlevel 1 (
     echo Base image build failed.
-    pause
     exit /b 1
 )
 echo [base] Done.
@@ -50,7 +54,6 @@ echo [app] Building app image...
 docker build -t auroracoder -f docker\Dockerfile .
 if errorlevel 1 (
     echo App image build failed.
-    pause
     exit /b 1
 )
 

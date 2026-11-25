@@ -1,5 +1,12 @@
 @echo off
 cd /d "%~dp0\.."
+if defined AURORA_DEV_LAUNCH_ID goto :launch
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%~dp0windows-launch-lock.ps1" -BatchPath "%~f0" -Instance "%~1"
+set "AURORA_LAUNCH_RESULT=%errorlevel%"
+if "%AURORA_LAUNCH_RESULT%"=="0" pause
+exit /b %AURORA_LAUNCH_RESULT%
+
+:launch
 
 :: ── Instance configuration ──────────────────────────────────────────────
 :: Auto-detects the next free instance number (2, 3, 4, …).
@@ -123,7 +130,6 @@ echo To stop: docker stop %CONTAINER%
 echo.
 echo Opening browser...
 start "" "http://localhost:%FRONTEND_PORT%"
-pause
 goto :eof
 
 :replacement_failed

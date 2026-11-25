@@ -9,9 +9,9 @@ set "AURORA_SWAP_NAME=%~2"
 set "AURORA_SWAP_OLD_ID="
 set "AURORA_SWAP_WAS_RUNNING="
 set "AURORA_SWAP_AUTO_REMOVE="
-:select_cid_file
-set "AURORA_SWAP_CID_FILE=%TEMP%\aurora-launch-%RANDOM%-%RANDOM%.cid"
-if exist "%AURORA_SWAP_CID_FILE%" goto :select_cid_file
+if not defined AURORA_DEV_LAUNCH_ID exit /b 1
+set "AURORA_SWAP_CID_FILE=%TEMP%\aurora-launch-%AURORA_DEV_LAUNCH_ID%.cid"
+if exist "%AURORA_SWAP_CID_FILE%" exit /b 1
 for /f "tokens=1-3" %%a in ('docker container inspect --format "{{.Id}} {{.State.Running}} {{.HostConfig.AutoRemove}}" "%AURORA_SWAP_NAME%" 2^>nul') do (
     set "AURORA_SWAP_OLD_ID=%%a"
     set "AURORA_SWAP_WAS_RUNNING=%%b"
@@ -47,8 +47,16 @@ if exist "%AURORA_SWAP_CID_FILE%" (
 )
 if not defined AURORA_SWAP_FAILED_ID goto :restore_previous
 set "AURORA_SWAP_FAILED_RUNNING="
-for /f %%a in ('docker container inspect --format "{{.State.Running}}" "%AURORA_SWAP_FAILED_ID%" 2^>nul') do set "AURORA_SWAP_FAILED_RUNNING=%%a"
+set "AURORA_SWAP_FAILED_NAME="
+for /f "tokens=1,2" %%a in ('docker container inspect --format "{{.Name}} {{.State.Running}}" "%AURORA_SWAP_FAILED_ID%" 2^>nul') do (
+    set "AURORA_SWAP_FAILED_NAME=%%a"
+    set "AURORA_SWAP_FAILED_RUNNING=%%b"
+)
 if not defined AURORA_SWAP_FAILED_RUNNING goto :restore_previous
+if not "%AURORA_SWAP_FAILED_NAME%"=="/%AURORA_SWAP_NAME%" (
+    echo The failed container ID belongs to a different launch. Leaving it untouched.
+    goto :restore_previous
+)
 if "%AURORA_SWAP_FAILED_RUNNING%"=="true" (
     docker stop "%AURORA_SWAP_FAILED_ID%" >nul
     if errorlevel 1 exit /b 1

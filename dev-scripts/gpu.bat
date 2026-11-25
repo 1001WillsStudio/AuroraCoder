@@ -1,5 +1,10 @@
 @echo off
 cd /d "%~dp0\.."
+if defined AURORA_DEV_LAUNCH_ID goto :launch
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%~dp0windows-launch-lock.ps1" -BatchPath "%~f0"
+exit /b %errorlevel%
+
+:launch
 
 :: ── Pre-pull NVIDIA vLLM image (~9 GB, one time only) ──────────────────
 set "NV_IMAGE=nvcr.io/nvidia/vllm:26.05.post1-py3"
@@ -7,7 +12,7 @@ docker inspect --type=image "%NV_IMAGE%" >nul 2>&1
 if errorlevel 1 (
     echo [nv] Pulling NVIDIA vLLM image - one time only, ~9 GB...
     docker pull "%NV_IMAGE%"
-    if errorlevel 1 (echo Pull failed. & pause & exit /b 1)
+    if errorlevel 1 (echo Pull failed. & exit /b 1)
 ) else (
     echo [nv] NVIDIA vLLM image already cached.
 )
@@ -28,13 +33,13 @@ goto :build_gpu
 :build_gpu_base
 echo [gpu-base] Building...
 docker build -t auroracoder-gpu-base -f docker\Dockerfile.gpu-base .
-if errorlevel 1 (echo Build failed. & pause & exit /b 1)
+if errorlevel 1 (echo Build failed. & exit /b 1)
 echo [gpu-base] Done.
 
 :build_gpu
 echo [gpu] Building app image...
 docker build -t auroracoder-gpu -f docker\Dockerfile.gpu .
-if errorlevel 1 (echo Build failed. & pause & exit /b 1)
+if errorlevel 1 (echo Build failed. & exit /b 1)
 
 call "%~dp0container-replacement.bat" prepare "auroracoder-agent-gpu"
 if errorlevel 1 exit /b 1
