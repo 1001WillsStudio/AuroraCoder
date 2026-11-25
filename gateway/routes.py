@@ -305,7 +305,7 @@ async def _start_chat_turn(request: Request, body: dict, t0: float, t1: float):
     if (conv_type == "user_chat" and not parent_id and not body.get("tools")
             and isinstance(user_message, str) and user_message.strip()):
         stream.task_token = secrets.token_urlsafe(32)
-        stream.task_request = user_message[:6000]
+        stream.task_request = user_message
         stream.task_options = TaskResume(
             provider=body.get("provider"), provider_id=body.get("provider_id"), model=body.get("model"),
         )

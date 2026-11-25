@@ -11,6 +11,16 @@ from pydantic import BaseModel, Field, ValidationError
 from src.task_checklist import TaskCheckpointUpdate, TaskEdit, TaskItem, TaskProgress, TaskResume, TaskStart
 
 logger = logging.getLogger(__name__)
+_SCOPE_LIMIT = 6000
+_OMITTED = "\n\n[Middle of the user text omitted from this excerpt.]\n\n"
+
+
+def _scope_excerpt(text: str, limit: int = _SCOPE_LIMIT) -> str:
+    if len(text) <= limit:
+        return text
+    available = limit - len(_OMITTED)
+    lead = available // 2
+    return text[:lead] + _OMITTED + text[-(available - lead):]
 
 
 class TaskConflict(ValueError):
@@ -45,9 +55,11 @@ class TaskChecklist(BaseModel):
         }
 
     def prompt_state(self) -> dict:
-        return self.model_dump(include={
+        state = self.model_dump(include={
             "objective", "criteria", "workspace", "progress", "handoff", "steering", "request", "status",
         })
+        state["request"] = _scope_excerpt(self.request)
+        return state
 
 
 class TaskChecklistStore:
@@ -79,7 +91,11 @@ class TaskChecklistStore:
 
     def reopen(self, task: TaskChecklist, request: str, options: TaskResume,
                revised_plan: TaskStart | None) -> TaskChecklist:
-        steering = "\n\n".join(filter(None, (task.steering, request)))[-6000:]
+        steering = "\n\n".join(filter(None, (task.steering, request)))
+        if len(steering) > _SCOPE_LIMIT:
+            prior = _scope_excerpt(task.steering, _SCOPE_LIMIT // 4)
+            latest_limit = _SCOPE_LIMIT - len(prior) - (2 if prior else 0)
+            steering = "\n\n".join(filter(None, (prior, _scope_excerpt(request, latest_limit))))
         changes = {
             "status": "active", "reason": "", "steering": steering, "started": True, "stalled": 0,
             "options": options if options.model_dump(exclude_none=True) else task.options,
