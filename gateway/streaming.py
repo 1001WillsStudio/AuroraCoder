@@ -788,7 +788,6 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                                     ])
                                     for pending in pending_inputs:
                                         store.seed_frontend_user_message(new_cid, pending["content"])
-                                    store.acknowledge_turn_inputs(cid, pending_inputs)
                                     # Persist the old conversation's segment BEFORE marking it
                                     # "continued" — its raw_msgs (including any `remember` calls
                                     # made before the handoff) must be on disk before we hand off
@@ -796,7 +795,7 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                                     # re-fetches messages from the store rather than taking them
                                     # as an argument.
                                     store.save_messages(cid, edata.get("raw_messages", []))
-                                    store.mark_continued(cid, new_cid)
+                                    store.mark_continued(cid, new_cid, inputs=pending_inputs)
                                     stream.new_conversation_id = new_cid
 
                                     # A "continued" conversation is otherwise EXCLUDED from
@@ -819,7 +818,6 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                                 stream.status = "continued"
                                 edata["status"] = "continued"
                                 edata["new_conversation_id"] = stream.new_conversation_id
-                                edata["status"] = "continued"
 
                             # ── Always update latest state from *every* event ──
                             # The backend now always includes full messages in
@@ -895,6 +893,7 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
     except Exception as e:
         logger.exception(f"[proxy] Error for {cid[:8]}...")
         err = {"message": str(e), "type": type(e).__name__}
+        stream.status = "error"
         stream.latest_event_type = "error"
         stream.latest_event_data = err
         _broadcast_stream_event(stream, "error", err)

@@ -1,3 +1,4 @@
+import asyncio
 from uuid import uuid4
 
 import httpx
@@ -6,6 +7,59 @@ import pytest
 from gateway import routes
 from gateway.api import app
 from gateway.conversation_store import ConversationStore
+
+
+@pytest.mark.asyncio
+async def test_repeated_chat_post_reattaches_without_waiting_or_reexecuting(tmp_path, monkeypatch):
+    store = ConversationStore(tmp_path)
+    cid, receipt = str(uuid4()), uuid4()
+    active = {}
+    calls = []
+    release = asyncio.Event()
+    attached = tmp_path / "scope.txt"
+    attached.write_text("Scope for the original turn")
+    monkeypatch.setattr(routes, "store", store)
+    monkeypatch.setattr(routes, "active_streams", active)
+    monkeypatch.setattr(routes, "_get_workspace", lambda: tmp_path)
+
+    class Request:
+        async def json(self):
+            return {
+                "conversation_id": cid, "message": "Run once", "wait_for_current_turn": True,
+                "attached_files": ["scope.txt"],
+            }
+
+        async def receive(self):
+            await asyncio.Future()
+
+    async def backend(stream, body):
+        calls.append(body["message"])
+        await release.wait()
+        store.update_status(cid, "completed")
+        del active[cid]
+
+    monkeypatch.setattr(routes, "_proxy_backend_stream", backend)
+    await routes.proxy_chat(Request(), receipt)
+    original = active[cid]
+    attached.unlink()
+    try:
+        await asyncio.wait_for(routes.proxy_chat(Request(), receipt), timeout=1)
+        assert active[cid] is original
+        assert len(original.subscribers) == 2
+    finally:
+        release.set()
+        await original.task
+
+    monkeypatch.setattr(routes, "store", ConversationStore(tmp_path))
+    await routes.proxy_chat(Request(), receipt)
+    assert not active
+    assert len(calls) == 1 and "scope.txt" in calls[0] and "Run once" in calls[0]
+    assert [message["content"] for message in routes.store.get_messages(cid)] == calls
+
+    routes.store.update_status(cid, "completed", accepted_turn_id=str(uuid4()))
+    with pytest.raises(routes.HTTPException) as error:
+        await routes.proxy_chat(Request(), receipt)
+    assert error.value.status_code == 409
 
 
 @pytest.mark.asyncio

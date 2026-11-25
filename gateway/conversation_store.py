@@ -569,17 +569,18 @@ class ConversationStore:
         """Keep accepted receipts, releasing the payload after transcript persistence."""
         with self._lock:
             meta = self._index[conversation_id]
-            inputs = dict(meta.get("turn_inputs", {}))
-            if not inputs:
+            inputs = meta.get("turn_inputs", {})
+            released = self._released_turn_inputs(inputs, messages)
+            if released == inputs:
                 return
-            applied = {message.get(TURN_INPUT_RECEIPT) for message in messages}
-            if not any(inputs.get(receipt) for receipt in applied):
-                return
-            for receipt in applied & inputs.keys():
-                inputs[receipt] = None
-            updated = {**self._index, conversation_id: {**meta, "turn_inputs": inputs}}
+            updated = {**self._index, conversation_id: {**meta, "turn_inputs": released}}
             _atomic_write_json(self._index_path(), updated)
             self._index = updated
+
+    @staticmethod
+    def _released_turn_inputs(inputs: dict, messages: list[dict]) -> dict:
+        applied = {message.get(TURN_INPUT_RECEIPT) for message in messages}
+        return {receipt: None if receipt in applied else content for receipt, content in inputs.items()}
 
     _KEEP_ACCEPTED_TURN = object()
 
@@ -653,8 +654,8 @@ class ConversationStore:
                 self._index = recovered
             return len(interrupted)
 
-    def mark_continued(self, conversation_id: str, next_id: str) -> None:
-        """Commit the status and successor together after both transcripts are saved."""
+    def mark_continued(self, conversation_id: str, next_id: str, *, inputs: list[dict] | None = None) -> None:
+        """Commit the successor and release transferred inputs after both transcripts are saved."""
         with self._lock:
             if conversation_id == next_id or next_id not in self._index:
                 raise ValueError("The continuation must be a separate saved conversation.")
@@ -664,6 +665,8 @@ class ConversationStore:
                 "continued_to": next_id,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
+            if inputs:
+                entry["turn_inputs"] = self._released_turn_inputs(entry.get("turn_inputs", {}), inputs)
             updated = {**self._index, conversation_id: entry}
             _atomic_write_json(self._index_path(), updated)
             self._index = updated

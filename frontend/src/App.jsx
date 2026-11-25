@@ -650,11 +650,13 @@ function App() {
   const handleStop = async () => {
     if (!shouldAcceptStop(sendStartedAtRef.current)) return
     const viewEpoch = viewEpochRef.current
+    // The gateway can already own the turn before its response headers arrive.
+    const cid = conversationIdRef.current || lastRequest?.conversationId
     restoreQueuedInput()
     if (abortControllerRef.current) abortControllerRef.current.abort()
-    if (conversationId) {
+    if (cid) {
       try {
-        const result = await cancelConversation(conversationId)
+        const result = await cancelConversation(cid)
         if (viewEpoch !== viewEpochRef.current) return
         if (result?.raw_messages?.length > 0) {
           setRawMessages(result.raw_messages)

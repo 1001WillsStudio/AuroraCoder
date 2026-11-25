@@ -6,8 +6,9 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import httpx
+import pytest
 
-from gateway import routes, streaming
+from gateway import conversation_store, routes, streaming
 from gateway.api import app
 from gateway.conversation_store import ConversationStore
 from src.config import CONTINUATION_TOOL_RESULT
@@ -66,7 +67,8 @@ def test_stored_handoff_skips_stale_successors_and_keeps_the_source(tmp_path):
     assert reloaded.get_conversation(first)["status"] == "continued"
 
 
-def test_gateway_starts_child_after_tool_result_and_retains_model(tmp_path, monkeypatch):
+@pytest.mark.parametrize("interrupt_handoff", [False, True])
+def test_gateway_starts_child_after_tool_result_and_retains_model(tmp_path, monkeypatch, interrupt_handoff):
     async def run():
         store = ConversationStore(tmp_path)
         monkeypatch.setattr(streaming, "store", store)
@@ -74,6 +76,17 @@ def test_gateway_starts_child_after_tool_result_and_retains_model(tmp_path, monk
         monkeypatch.setattr(streaming, "_memory_ops_executor", SimpleNamespace(submit=lambda *_: None))
         monkeypatch.setattr(streaming, "_schedule_memory_distillation", lambda *_: None)
         cid = store.create_conversation()
+        store.queue_turn_input(cid, "queued-receipt", "Retain this accepted correction.")
+        queued = store.pending_turn_inputs(cid)
+        if interrupt_handoff:
+            atomic_write = conversation_store._atomic_write_json
+
+            def interrupt_link(path, value):
+                if isinstance(value, dict) and value.get(cid, {}).get("continued_to"):
+                    raise OSError("interrupted continuation index write")
+                return atomic_write(path, value)
+
+            monkeypatch.setattr(conversation_store, "_atomic_write_json", interrupt_link)
         old = [handoff("old", "Old work"), response("old")]
         user = {"role": "user", "content": "Verify the current branch without changing it."}
         pending = [*old, user, handoff("new", "Continue checking the logs.")]
@@ -115,6 +128,13 @@ def test_gateway_starts_child_after_tool_result_and_retains_model(tmp_path, monk
             "conversation_id": cid, "messages": old, "message": user["content"],
             "provider_id": "configured", "model": "selected-model", "max_iterations": 75,
         })
+        if interrupt_handoff:
+            recovered = ConversationStore(tmp_path)
+            assert recovered.latest_continuation(cid) is None
+            assert recovered.get_conversation(cid)["status"] == "error"
+            assert recovered.pending_turn_inputs(cid) == queued
+            assert len(sent) == 1
+            return
         await asyncio.wait_for(child_started.wait(), timeout=3)
 
         first, child = sent
@@ -122,10 +142,14 @@ def test_gateway_starts_child_after_tool_result_and_retains_model(tmp_path, monk
         assert child["provider_id"] == first["provider_id"]
         assert child["model"] == first["model"]
         assert child["max_iterations"] == 75
-        assert user["content"] in child["message"]
-        assert "Continue checking the logs." in child["message"]
+        assert user["content"] in child["messages"][0]["content"]
+        assert "Continue checking the logs." in child["messages"][0]["content"]
+        assert child["message"] == queued[0]["content"]
+        assert child["message_receipt"] == "queued-receipt"
         assert store.get_conversation(cid)["status"] == "continued"
         reloaded = ConversationStore(tmp_path)
+        assert reloaded.pending_turn_inputs(cid) == []
+        assert reloaded.has_turn_input(cid, "queued-receipt")
         monkeypatch.setattr(routes, "store", reloaded)
         monkeypatch.setattr(routes, "active_streams", {})
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gateway") as client:

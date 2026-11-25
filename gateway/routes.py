@@ -221,16 +221,6 @@ async def proxy_chat(
         body["max_iterations"] = get_max_iterations()
     body["conversation_id"] = conversation_id
 
-    # Point the agent at files the user attached this turn.  Invalid or
-    # out-of-workspace paths are dropped; the marked block is rewritten
-    # from the survivors so the transcript chips stay honest.  If the
-    # user asked to attach files and none survived, refuse instead of
-    # starting a files-only turn with message=None.
-    try:
-        apply_request_attachments(body, _get_workspace() or WORKSPACE)
-    except AttachedFilesError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
     receipt = str(turn_id) if turn_id else None
     wait_for_current_turn = body.pop("wait_for_current_turn", False) is True
     disconnect = None
@@ -241,8 +231,9 @@ async def proxy_chat(
                     disconnect.result()
                     raise HTTPException(status_code=499, detail="Client disconnected before the follow-up was accepted.")
                 owner = active_streams.get(conversation_id)
-                same_receipt = (owner and receipt and body.get("retry_receipt") is True
-                                and owner.turn_id == receipt and owner.status in _REATTACHABLE_TURN_STATUSES)
+                same_receipt = (owner and receipt and owner.turn_id == receipt
+                                and (body.get("retry_receipt") is not True
+                                     or owner.status in _REATTACHABLE_TURN_STATUSES))
                 if not wait_for_current_turn or not owner or not owner.task or owner.task.done() or same_receipt:
                     return await _start_chat_turn(request, body, t0, t1, turn_id=receipt,
                                                   after_current_turn=wait_for_current_turn)
@@ -262,19 +253,26 @@ async def _start_chat_turn(request: Request, body: dict, t0: float, t1: float, *
     cid_tag = conversation_id[:8]
     if conversation_id not in active_streams:
         store.recover_turn_write(conversation_id)
-    if body.pop("retry_receipt", False) is True:
-        if not body.get("retry") or not turn_id:
-            raise HTTPException(status_code=400, detail="Retrying a turn requires its original receipt.")
-        turn_state = store.turn_state(conversation_id, turn_id)
-        if turn_state == "superseded":
-            raise HTTPException(status_code=409, detail="A newer turn already followed this request.")
-        if turn_state == "unaccepted":
+    receipt_retry = body.pop("retry_receipt", False) is True
+    if receipt_retry and (not body.get("retry") or not turn_id):
+        raise HTTPException(status_code=400, detail="Retrying a turn requires its original receipt.")
+    turn_state = store.turn_state(conversation_id, turn_id) if turn_id else "unaccepted"
+    if turn_state == "superseded":
+        raise HTTPException(status_code=409, detail="A newer turn already followed this request.")
+    if turn_state == "current":
+        stream = active_streams.get(conversation_id)
+        status = stream.status if stream else store.get_conversation(conversation_id).get("status")
+        if not receipt_retry or status in _REATTACHABLE_TURN_STATUSES:
+            return _resume_conversation_stream(conversation_id, request, turn_id=turn_id)
+    else:
+        if receipt_retry:
             body["retry"] = False
-        else:
-            stream = active_streams.get(conversation_id)
-            status = stream.status if stream else store.get_conversation(conversation_id).get("status")
-            if status in _REATTACHABLE_TURN_STATUSES:
-                return _resume_conversation_stream(conversation_id, request, turn_id=turn_id)
+        # A replay or retry of an accepted turn already has its original
+        # attachments in the transcript, even if those files moved since.
+        try:
+            apply_request_attachments(body, _get_workspace() or WORKSPACE)
+        except AttachedFilesError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # ── Generate workspace tree for the agent's system message ──
     # Only on the *first* turn — continuations already carry the tree
