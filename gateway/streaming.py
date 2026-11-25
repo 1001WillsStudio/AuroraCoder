@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from src.config import WORKSPACE_DIR, MAX_FILE_READ_SIZE
+from src.config import WORKSPACE_DIR, MAX_FILE_READ_SIZE, CONTINUATION_TOOL_RESULT
 from src.workspace_paths import WorkspacePathError, resolve_under_workspace
 from gateway.conversation_store import store, sanitize_frontend_messages, ensure_error_frontend_message
 from gateway.workspace import (
@@ -381,31 +381,76 @@ def _parse_sse_blocks(text: str) -> List[tuple]:
 # Continuation Helpers
 # ============================================================================
 
-def _scan_for_continuation(raw_messages: list) -> dict | None:
+def _scan_for_continuation(raw_messages: list, prior_tool_ids: set[str]) -> str | None:
     """
-    Scan assistant messages for the LAST (most recent) continue_as_new_chat
-    tool call.  Returns its parsed arguments dict, or None if the most recent
-    call is missing or has invalid JSON.  Earlier calls are never used.
+    Use the latest handoff from this turn only after its tool completed.
     """
+    results = {
+        msg.get("tool_call_id"): msg.get("content")
+        for msg in raw_messages if msg.get("role") == "tool"
+    }
     for msg in reversed(raw_messages):
         if msg.get("role") != "assistant":
             continue
-        for tc in msg.get("tool_calls", []):
-            if tc.get("function", {}).get("name") == "continue_as_new_chat":
-                try:
-                    return json.loads(tc["function"]["arguments"])
-                except json.JSONDecodeError:
-                    logger.warning(
-                        "[continuation] Most recent continue_as_new_chat (id=%s) "
-                        "has invalid JSON — aborting continuation.  Arguments: %s",
-                        tc.get("id", "?"),
-                        tc.get("function", {}).get("arguments", "")[:200],
-                    )
-                    return None
+        for tc in reversed(msg.get("tool_calls") or []):
+            function = tc.get("function", {})
+            tool_id = tc.get("id")
+            if function.get("name") != "continue_as_new_chat" or tool_id in prior_tool_ids:
+                continue
+            if not tool_id or results.get(tool_id) != CONTINUATION_TOOL_RESULT:
+                return None
+            try:
+                args = json.loads(function["arguments"])
+            except (KeyError, TypeError, ValueError):
+                return None
+            prompt = args.get("prompt") if isinstance(args, dict) else None
+            return prompt if isinstance(prompt, str) and prompt.strip() else None
     return None
 
 
-async def _start_continuation(new_cid: str, provider_id: str, user_msg: str):
+_CONTINUED_MARKER = "[Continued from previous agent session]"
+_PRIOR_USER_PREFIX = "Prior user messages (chronological): "
+
+
+def _continuation_message(raw_messages: list, summary: str) -> str:
+    user_messages = []
+    for message in raw_messages:
+        content = message.get("content")
+        if message.get("role") != "user" or not isinstance(content, str) or not content.strip():
+            continue
+        if not content.startswith(_CONTINUED_MARKER):
+            user_messages.append(content)
+            continue
+        line = content[len(_CONTINUED_MARKER):].lstrip().split("\n", 1)[0]
+        if line.startswith(_PRIOR_USER_PREFIX):
+            try:
+                previous = json.loads(line[len(_PRIOR_USER_PREFIX):])
+            except ValueError:
+                continue
+            if isinstance(previous, list):
+                user_messages.extend(text for text in previous if isinstance(text, str))
+
+    clipped = [
+        text if len(text) <= 3000 else f"{text[:1500]}\n[Earlier text omitted]\n{text[-1450:]}"
+        for text in user_messages
+    ]
+    context = clipped[:1]
+    remaining = 12000 - sum(map(len, context))
+    recent = []
+    for text in reversed(clipped[1:]):
+        if len(text) > remaining:
+            break
+        recent.append(text)
+        remaining -= len(text)
+    context.extend(reversed(recent))
+    return (
+        f"{_CONTINUED_MARKER}\n\n{_PRIOR_USER_PREFIX}{json.dumps(context, ensure_ascii=False)}\n\n"
+        "Keep the user's earlier scope and the latest corrections. The following summary "
+        f"was written by the previous agent and may omit details.\n\n{summary}"
+    )
+
+
+async def _start_continuation(new_cid: str, provider_id: str, user_msg: str, options: dict):
     """
     Simulate a user opening a new chat, typing the continuation message,
     and pressing Send.  POSTs to the backend via the normal proxy flow.
@@ -415,6 +460,7 @@ async def _start_continuation(new_cid: str, provider_id: str, user_msg: str):
     original chat — NOT as a subagent child in the sidebar.
     """
     body = {
+        **{key: options[key] for key in ("provider_id", "model", "max_iterations") if key in options},
         "conversation_id": new_cid,
         "message": user_msg,
         "provider": provider_id,
@@ -454,6 +500,10 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
     stream stays alive even if all subscribers disconnect.
     """
     cid = stream.conversation_id
+    prior_tool_ids = {
+        call.get("id") for message in request_body.get("messages") or []
+        for call in message.get("tool_calls") or []
+    }
     last_saved_msg_count = 0
     backend_connect_start = time.perf_counter()
     try:
@@ -488,21 +538,19 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                             stream.latest_event_data = edata
 
                             # --- Continuation detection ---
-                            # Only scan on full-state events (messages), never during
-                            # active streaming (delta) — tool-call arguments are still
-                            # being built up during deltas, producing bogus warnings.
                             if not stream.new_conversation_id and etype == "messages":
-                                args = None
-                                if stream.conv_type == "user_chat" and request_body.get("tools") not in {
-                                    "read_only", "gap_investigation", "memory_maintenance",
-                                }:
-                                    args = _scan_for_continuation(edata.get("raw_messages", []))
-                                if args:
-                                    prompt = args.get("prompt", "")
+                                prompt = None
+                                if (edata.get("status") == "completed" and stream.conv_type == "user_chat"
+                                        and request_body.get("tools") not in {
+                                            "read_only", "gap_investigation", "memory_maintenance",
+                                        }):
+                                    prompt = _scan_for_continuation(edata.get("raw_messages", []), prior_tool_ids)
+                                if prompt:
                                     new_cid = str(uuid.uuid4())
 
-                                    # Build the user message: just the agent's prompt with a note
-                                    user_msg = f"[Continued from previous agent session]\n\n{prompt}"
+                                    raw_messages = edata.get("raw_messages", [])
+                                    user_msg = _continuation_message(raw_messages, prompt)
+                                    provider = edata.get("provider") or stream.provider
 
                                     # Continuation is a new standalone main chat —
                                     # no parent_id, so the frontend does NOT display
@@ -511,7 +559,7 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                                         conversation_id=new_cid,
                                         parent_id=None,
                                         conv_type="user_chat",
-                                        provider_id=stream.provider,
+                                        provider_id=provider,
                                     )
                                     store.save_messages(new_cid, [
                                         {"role": "user", "content": user_msg},
@@ -540,13 +588,14 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                                     _memory_ops_executor.submit(_run_session_end_memory_ops, cid, "user_chat", "continued")
 
                                     # Simulate user pressing Send — POST to backend immediately
-                                    asyncio.create_task(_start_continuation(new_cid, stream.provider, user_msg))
+                                    await _start_continuation(new_cid, provider, user_msg, request_body)
 
                                     logger.info(f"[proxy] Created continuation {new_cid[:8]}... from {cid[:8]}... — auto-started")
 
                             # Annotate events with new_conversation_id if continuation was detected
                             if stream.new_conversation_id:
                                 edata["new_conversation_id"] = stream.new_conversation_id
+                                edata["status"] = "continued"
 
                             # ── Always update latest state from *every* event ──
                             # The backend now always includes full messages in

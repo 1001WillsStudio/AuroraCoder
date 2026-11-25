@@ -20,6 +20,7 @@ from .config import (
     MAX_STREAMING_RETRIES,
     SYSTEM_MESSAGE_TEMPLATE, DISPLAY_GUIDE, TERMINAL_ENV_NOTE,
     CONTEXT_WINDOW_TOKENS, CONTEXT_WARN_THRESHOLD,
+    CONTINUATION_TOOL_RESULT,
     _CONTINUATION_NOTICE_MARKER, CONTINUATION_NOTICE,
 )
 from .providers import messages_for_provider, provider_manager
@@ -396,8 +397,13 @@ def generate_chat_responses_stream_native(
                 })
 
         # If continue_as_new_chat was called, end the loop immediately
-        can_continue = restricted_tool_names is None or "continue_as_new_chat" in restricted_tool_names
-        if can_continue and any(tc["function"]["name"] == "continue_as_new_chat" for tc in current_tool_calls):
+        handoff_ids = {
+            tc["id"] for tc in current_tool_calls if tc["function"]["name"] == "continue_as_new_chat"
+        }
+        if any(
+            msg.get("tool_call_id") in handoff_ids and msg.get("content") == CONTINUATION_TOOL_RESULT
+            for msg in messages[-len(current_tool_calls):]
+        ):
             yield {
                 "messages": messages,
                 "status": "completed",

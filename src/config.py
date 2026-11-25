@@ -119,6 +119,7 @@ CONTEXT_WARN_THRESHOLD = 0.80
 
 # One-liner notice (injected once when tool first appears)
 _CONTINUATION_NOTICE_MARKER = "[CONTEXT CONTINUATION TOOL AVAILABLE]"
+CONTINUATION_TOOL_RESULT = "Continuing in a new chat with fresh context."
 CONTINUATION_NOTICE = (
     "⚠️ `continue_as_new_chat` is now available in your tool list — "
     "you are at ~80% context."
