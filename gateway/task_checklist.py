@@ -5,7 +5,6 @@ import logging
 import re
 import uuid
 from collections.abc import Callable
-from itertools import takewhile
 from pathlib import Path
 from typing import Literal
 
@@ -134,7 +133,15 @@ class TaskChecklist(BaseModel):
 
     @property
     def applied_steering(self) -> list[TaskSteeringEntry]:
-        return list(takewhile(lambda entry: entry.applied_to is not None, self.steering_history))
+        applied, _ = self.split_steering_at_pending()
+        return applied
+
+    def split_steering_at_pending(self) -> tuple[list[TaskSteeringEntry], list[TaskSteeringEntry]]:
+        # A newer reply can be recorded behind a pending correction. Replay
+        # the whole suffix in order so the pending correction cannot override it.
+        history = self.steering_history
+        boundary = next((i for i, entry in enumerate(history) if entry.applied_to is None), len(history))
+        return history[:boundary], history[boundary:]
 
     def public(self) -> dict:
         return {
@@ -151,8 +158,8 @@ class TaskChecklist(BaseModel):
             "objective", "criteria", "workspace", "progress", "handoff", "steering", "request", "status",
         })
         state["request"] = _scope_excerpt(self.request)
-        applied = self.applied_steering
-        if len(applied) != len(self.steering_history):
+        applied, pending = self.split_steering_at_pending()
+        if pending:
             state["steering"] = ""
             for entry in applied:
                 state["steering"] = _append_scope_excerpt(state["steering"], entry.content)

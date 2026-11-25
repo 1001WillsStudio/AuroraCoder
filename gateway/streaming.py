@@ -511,29 +511,21 @@ def start_task_segment(task: TaskChecklist, *, fresh: bool, handoff: str = "", s
     cid = str(uuid.uuid4()) if fresh else task.conversation_id
     if fresh:
         store.create_conversation(conversation_id=cid, provider_id=provider)
-    message = (
-        f"Continue task: {task.objective}" if fresh else task.objective
-    )
+    message = f"Continue task: {task.objective}" if fresh else task.objective
     prior = _fix_orphan_tool_calls(store.get_messages(cid))
     synthetic = {"role": "user", "content": message, "source": TASK_RESUME_SOURCE}
-    history = task.steering_history
-    first_pending = next((index for index, entry in enumerate(history) if entry.applied_to is None), len(history))
-    # A stop followed by a chat resume can add a newer direction before the
-    # older admitted one is applied. The successor must see them in order.
-    directions = [entry.as_message() for entry in history[first_pending:]]
+    applied_steering, pending_steering = task.split_steering_at_pending()
+    directions = [entry.as_message() for entry in pending_steering]
     store.save_messages(cid, [*prior, synthetic, *directions])
     store.seed_frontend_user_message(cid, message, source=TASK_RESUME_SOURCE)
     for direction in directions:
         store.seed_frontend_user_message(cid, direction["content"])
     store.acknowledge_turn_inputs(task.conversation_id, directions)
-    applied = [
-        entry if index < first_pending else entry.model_copy(update={"applied_to": cid})
-        for index, entry in enumerate(history)
-    ]
+    applied_steering.extend(entry.model_copy(update={"applied_to": cid}) for entry in pending_steering)
     task = store.tasks.save(
         task, status="active", reason="", stalled=stalled, handoff=handoff, started=True,
         conversation_ids=[*task.conversation_ids, cid] if fresh else task.conversation_ids,
-        steering_entries=applied,
+        steering_entries=applied_steering,
     )
     store.update_status(cid, "running", accepted_turn_id=None)
     stream = ActiveStream(
@@ -648,32 +640,38 @@ def _record_task_terminal_jobs(stream: ActiveStream, messages: list[dict], prior
         store.tasks.save(task, terminal_jobs=jobs)
 
 
-async def _start_continuation(new_cid: str, provider_id: str, user_msg: str, options: dict, inputs: list[dict]):
-    """
-    Simulate a user opening a new chat, typing the continuation message,
-    and pressing Send.  POSTs to the backend via the normal proxy flow.
+async def _start_continuation(source: ActiveStream, prompt: str, messages: list[dict], options: dict) -> None:
+    """Persist an ordinary chat handoff before dispatching its successor."""
+    cid = source.conversation_id
+    provider = source.provider
+    user_msg = _continuation_message(messages, prompt)
+    inputs = store.pending_turn_inputs(cid)
+    new_cid = store.create_conversation(provider_id=provider)
+    store.save_messages(new_cid, [{"role": "user", "content": user_msg}, *inputs])
+    store.save_frontend_messages(new_cid, [{"role": "user", "content": user_msg}])
+    for pending in inputs:
+        store.seed_frontend_user_message(new_cid, pending["content"])
+    store.save_messages(cid, messages)
+    store.mark_continued(cid, new_cid, inputs=inputs)
+    source.new_conversation_id = new_cid
 
-    The continuation is a standalone main chat (conv_type="user_chat",
-    parent_id=None) so the frontend displays it at the same level as the
-    original chat — NOT as a subagent child in the sidebar.
-    """
+    # The finalizer skips continued chats, so distill the saved source here.
+    _memory_ops_executor.submit(_run_session_end_memory_ops, cid, "user_chat", "continued")
+
     body = {
         **{key: options[key] for key in ("provider_id", "model", "max_iterations") if key in options},
         "conversation_id": new_cid,
         "message": user_msg,
-        "provider": provider_id,
+        "provider": provider,
     }
-
-    stream = ActiveStream(
+    successor = ActiveStream(
         conversation_id=new_cid,
-        conv_type="user_chat",
-        parent_id=None,
-        provider=provider_id,
+        provider=provider,
         task_token=secrets.token_urlsafe(32),
     )
-    body.update(task_token=stream.task_token, accept_turn_inputs=True)
+    body.update(task_token=successor.task_token, accept_turn_inputs=True)
     if inputs:
-        stream.task_request = inputs[-1]["content"]
+        successor.task_request = inputs[-1]["content"]
         body.update(
             messages=[{"role": "user", "content": user_msg}, *inputs[:-1]],
             message=inputs[-1]["content"], message_receipt=inputs[-1][TURN_INPUT_RECEIPT],
@@ -682,14 +680,10 @@ async def _start_continuation(new_cid: str, provider_id: str, user_msg: str, opt
         body["task_state"] = {"status": "conversation_handoff"}
 
     async with _streams_lock:
-        active_streams[new_cid] = stream
+        active_streams[new_cid] = successor
 
-    stream.task = asyncio.create_task(_proxy_backend_stream(stream, body))
-
-    logger.info(f"[proxy] Continuation {new_cid[:8]}... auto-started")
-
-
-
+    successor.task = asyncio.create_task(_proxy_backend_stream(successor, body))
+    logger.info("[proxy] Started continuation %s from %s", new_cid[:8], cid[:8])
 
 # ============================================================================
 # Backend Proxy — background task
@@ -755,63 +749,14 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                                 _finish_task_segment(stream, raw_msgs, prior_tool_ids)
                                 edata["status"] = stream.status
 
-                            # --- Continuation detection ---
-                            if not stream.task_active and not stream.new_conversation_id and etype == "messages":
-                                prompt = None
-                                if (edata.get("status") == "completed" and stream.conv_type == "user_chat"
-                                        and request_body.get("tools") not in {
-                                            "read_only", "gap_investigation", "memory_maintenance",
-                                        }):
-                                    prompt = _scan_for_continuation(edata.get("raw_messages", []), prior_tool_ids)
+                            if (etype == "messages" and edata.get("status") == "completed"
+                                    and stream.conv_type == "user_chat" and not stream.task_active
+                                    and not stream.new_conversation_id and request_body.get("tools") not in {
+                                        "read_only", "gap_investigation", "memory_maintenance",
+                                    }):
+                                prompt = _scan_for_continuation(raw_msgs, prior_tool_ids)
                                 if prompt:
-                                    new_cid = str(uuid.uuid4())
-
-                                    raw_messages = edata.get("raw_messages", [])
-                                    user_msg = _continuation_message(raw_messages, prompt)
-                                    provider = edata.get("provider") or stream.provider
-                                    pending_inputs = store.pending_turn_inputs(cid)
-
-                                    # Continuation is a new standalone main chat —
-                                    # no parent_id, so the frontend does NOT display
-                                    # it as a subagent child in the sidebar.
-                                    store.create_conversation(
-                                        conversation_id=new_cid,
-                                        parent_id=None,
-                                        conv_type="user_chat",
-                                        provider_id=provider,
-                                    )
-                                    store.save_messages(new_cid, [
-                                        {"role": "user", "content": user_msg}, *pending_inputs,
-                                    ])
-                                    store.save_frontend_messages(new_cid, [
-                                        {"role": "user", "content": user_msg},
-                                    ])
-                                    for pending in pending_inputs:
-                                        store.seed_frontend_user_message(new_cid, pending["content"])
-                                    # Persist the old conversation's segment BEFORE marking it
-                                    # "continued" — its raw_msgs (including any `remember` calls
-                                    # made before the handoff) must be on disk before we hand off
-                                    # to the background distillation pass below, since that pass
-                                    # re-fetches messages from the store rather than taking them
-                                    # as an argument.
-                                    store.save_messages(cid, edata.get("raw_messages", []))
-                                    store.mark_continued(cid, new_cid, inputs=pending_inputs)
-                                    stream.new_conversation_id = new_cid
-
-                                    # A "continued" conversation is otherwise EXCLUDED from
-                                    # session-end distillation (see the finally block below) since
-                                    # it isn't really "done" — the task keeps going in new_cid.
-                                    # But this segment's transcript (and any `remember` calls in
-                                    # it) would otherwise never be mined at all, since the new
-                                    # conversation starts fresh rather than inheriting messages.
-                                    # Trigger distillation for THIS segment explicitly, right here,
-                                    # rather than widening the general terminal-status gate.
-                                    _memory_ops_executor.submit(_run_session_end_memory_ops, cid, "user_chat", "continued")
-
-                                    # Simulate user pressing Send — POST to backend immediately
-                                    await _start_continuation(new_cid, provider, user_msg, request_body, pending_inputs)
-
-                                    logger.info(f"[proxy] Created continuation {new_cid[:8]}... from {cid[:8]}... — auto-started")
+                                    await _start_continuation(stream, prompt, raw_msgs, request_body)
 
                             # Annotate events with new_conversation_id if continuation was detected
                             if stream.new_conversation_id:

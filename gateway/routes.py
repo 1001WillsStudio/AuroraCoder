@@ -427,20 +427,22 @@ async def _start_chat_turn(request: Request, body: dict, t0: float, t1: float, *
 
     stream.task = asyncio.create_task(_proxy_backend_stream(stream, body))
 
-    queue: asyncio.Queue = asyncio.Queue(maxsize=256)
-    stream.subscribers.append(queue)
-
     t_total = time.perf_counter() - t0
     logger.info(f"[proxy] [{cid_tag}...] total_pre_backend={t_total:.3f}s json={t1-t0:.3f}s cancel={t3-t2:.3f}s store={t5-t4:.3f}s")
+    return _subscribe_to_stream(stream, request)
 
+
+def _subscribe_to_stream(stream: ActiveStream, request: Request, *, replay_latest: bool = False) -> StreamingResponse:
+    queue: asyncio.Queue = asyncio.Queue(maxsize=256)
+    stream.subscribers.append(queue)
     return StreamingResponse(
-        _subscriber_sse(stream, queue, request),
+        _subscriber_sse(stream, queue, request, replay_latest=replay_latest),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
-            "X-Conversation-ID": conversation_id,
+            "X-Conversation-ID": stream.conversation_id,
         },
     )
 
@@ -460,18 +462,7 @@ def _resume_conversation_stream(conversation_id: str, request: Request, *, turn_
     if stream:
         if turn_id is not None and stream.turn_id != turn_id:
             raise HTTPException(status_code=409, detail="That turn is no longer current for this conversation.")
-        queue: asyncio.Queue = asyncio.Queue(maxsize=256)
-        stream.subscribers.append(queue)
-        return StreamingResponse(
-            _subscriber_sse(stream, queue, request, replay_latest=True),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-                "X-Conversation-ID": conversation_id,
-            },
-        )
+        return _subscribe_to_stream(stream, request, replay_latest=True)
 
     # No active stream — serve the stored conversation as a done event
     store.recover_turn_write(conversation_id)
@@ -614,9 +605,7 @@ async def take_turn_inputs(conversation_id: str, boundary: TurnInputBoundary, re
     task = store.tasks.get(conversation_id) if stream.task_active else None
     if task and (task.conversation_id != conversation_id or task.status != "active"):
         task = None
-    history = task.steering_history if task else []
-    first_pending = next((i for i, entry in enumerate(history) if entry.applied_to is None), len(history))
-    task_inputs = history[first_pending:]
+    applied_steering, task_inputs = task.split_steering_at_pending() if task else ([], [])
     task_receipts = {entry.receipt for entry in task_inputs}
     inputs = [
         message for message in store.pending_turn_inputs(conversation_id)
@@ -643,9 +632,9 @@ async def take_turn_inputs(conversation_id: str, boundary: TurnInputBoundary, re
             store.seed_frontend_user_message(conversation_id, message["content"])
     stream.latest_frontend_messages = store.get_frontend_messages(conversation_id)
     if task_inputs:
-        applied = [entry.model_copy(update={"applied_to": conversation_id}) for entry in task_inputs]
+        applied_steering.extend(entry.model_copy(update={"applied_to": conversation_id}) for entry in task_inputs)
         task = store.tasks.save(
-            task, steering_entries=[*history[:first_pending], *applied],
+            task, steering_entries=applied_steering,
             progress=task.progress.model_copy(update={"blocker": ""}), stalled=0,
         )
     if inputs:

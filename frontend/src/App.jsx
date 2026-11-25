@@ -310,22 +310,48 @@ function App() {
     return viewEpochRef.current
   }, [])
 
+  const setQueuedFollowUp = useCallback((pending) => {
+    queuedInputRef.current = pending
+    setQueuedInput(pending)
+  }, [])
+
   const restoreQueuedInput = useCallback(() => {
     const pending = queuedInputRef.current
     if (!pending) return
-    queuedInputRef.current = null
-    setQueuedInput(null)
+    setQueuedFollowUp(null)
     setInputValue(pending.message)
     setAttachedFiles(pending.attachedFiles || [])
-   }, [])
+  }, [setQueuedFollowUp])
 
   const stashConversationDraft = useCallback((id) => {
     const pending = queuedInputRef.current
     saveComposerDraft(draftInputsRef.current, id, pending?.message ?? inputValueRef.current,
       pending?.attachedFiles ?? attachedFilesRef.current)
-    queuedInputRef.current = null
-    setQueuedInput(null)
+    setQueuedFollowUp(null)
+  }, [setQueuedFollowUp])
+
+  const confirmConversationId = useCallback((id) => {
+    if (!id) return
+    conversationIdRef.current = id
+    setConversationId(id)
   }, [])
+
+  const chatCallbacks = useCallback((isCurrentView, options = {}) => createStreamCallbacks({
+    isCurrentView,
+    setMessages, setRawMessages, setConversationId: confirmConversationId, setCanContinue,
+    setIsStreaming, setHistoryRefreshTrigger, setSubagentChildIds,
+    handleSend: (...args) => handleSendRef.current?.(...args),
+    handleLoadConversation: (...args) => handleLoadConversationRef.current?.(...args),
+    queuedInputRef, continuationNavigatedRef,
+    withQueuedInput: true,
+    withRetry: true,
+    onMessagesRefresh: handleRefreshFiles,
+    onFirstSse: () => setSseReceived(true),
+    onStreamEnd: restoreQueuedInput,
+    onQueuedInputSent: () => setQueuedInput(null),
+    ensureAssistantTail: true,
+    ...options,
+  }), [confirmConversationId, handleRefreshFiles, restoreQueuedInput])
 
   const latestChatState = useRef(null)
   latestChatState.current = { isStreaming, rawMessages }
@@ -339,9 +365,7 @@ function App() {
     if (fallback && !latest.isStreaming) {
       handleSendRef.current?.(latest.rawMessages, message, { attachedFiles: files })
     } else if (fallback) {
-      const pending = { message, attachedFiles: files }
-      queuedInputRef.current = pending
-      setQueuedInput(pending)
+      setQueuedFollowUp({ message, attachedFiles: files })
     } else {
       setInputValue(message)
       setAttachedFiles(files)
@@ -387,7 +411,6 @@ function App() {
     const appliedInstruction = (systemPrompt.trim() && !cid)
       ? systemPrompt.trim()
       : ''
-    // First send keeps conversation_id null so the gateway allocates it.
     const apiMessage = appliedInstruction
       ? `${TASK_MARKER_START}\n${appliedInstruction}\n${TASK_MARKER_END}\n\n${userMessageText}`
       : userMessageText
@@ -443,34 +466,14 @@ function App() {
     const controller = new AbortController()
     abortControllerRef.current = controller
     try {
-      const callbacks = createStreamCallbacks({
-        isCurrentView,
-        setMessages, setRawMessages,
-        setConversationId: (id) => {
-          if (id) conversationIdRef.current = id
-          setConversationId(id)
-        },
-        setCanContinue,
-        setIsStreaming, setHistoryRefreshTrigger, setSubagentChildIds,
-        handleSend: (...args) => handleSendRef.current?.(...args),
-        handleLoadConversation,
-        queuedInputRef, continuationNavigatedRef,
-        withQueuedInput: true,
-        withRetry: true,
-        onMessagesRefresh: handleRefreshFiles,
-        onFirstSse: () => setSseReceived(true),
-        onStreamEnd: restoreQueuedInput,
-        onQueuedInputSent: () => setQueuedInput(null),
-        ensureAssistantTail: true,
+      const callbacks = chatCallbacks(isCurrentView, {
         overrides: {
           onConversationId: (id) => {
             if (!id) return
-            conversationIdRef.current = id
-            setConversationId(id)
+            confirmConversationId(id)
             const pending = queuedInputRef.current
             if (pending && goalSteering.send(id, pending.message, pending.attachedFiles)) {
-              queuedInputRef.current = null
-              setQueuedInput(null)
+              setQueuedFollowUp(null)
             }
           },
         },
@@ -486,19 +489,16 @@ function App() {
 
   const handleQueueInput = () => {
     if (pendingConversationLoadRef.current) return
-    if (!inputValue.trim() && attachedFiles.length === 0) return
+    const message = inputValue.trim()
+    if (!message && attachedFiles.length === 0) return
     if (!isStreaming) { handleSend(); return }
     const cid = conversationIdRef.current || conversationId
+    const files = [...attachedFiles]
     if (cid) {
-      if (goalSteering.send(cid, inputValue.trim(), [...attachedFiles])) {
-        setInputValue('')
-        setAttachedFiles([])
-      }
-      return
+      if (!goalSteering.send(cid, message, files)) return
+    } else {
+      setQueuedFollowUp({ message, attachedFiles: files })
     }
-    const queued = { message: inputValue.trim(), attachedFiles: [...attachedFiles] }
-    queuedInputRef.current = queued
-    setQueuedInput(queued)
     setInputValue('')
     setAttachedFiles([])
   }
@@ -514,27 +514,7 @@ function App() {
     const controller = new AbortController()
     abortControllerRef.current = controller
     try {
-      const callbacks = createStreamCallbacks({
-        isCurrentView,
-        setMessages, setRawMessages, setConversationId, setCanContinue,
-        setIsStreaming, setHistoryRefreshTrigger, setSubagentChildIds,
-        handleSend: (...args) => handleSendRef.current?.(...args),
-        handleLoadConversation,
-        queuedInputRef, continuationNavigatedRef,
-        withQueuedInput: true,
-        withRetry: false,
-        onMessagesRefresh: handleRefreshFiles,
-        onFirstSse: () => setSseReceived(true),
-        onStreamEnd: restoreQueuedInput,
-        onQueuedInputSent: () => setQueuedInput(null),
-        ensureAssistantTail: true,
-      })
-      // IMPORTANT: Continue must send the EXACT same provider fields as a
-      // normal send (handleSend).  Both handlers resolve `provider_id`/
-      // `model` through the SAME helper — resolveProviderOptions() — so a
-      // future refactor of provider id derivation cannot make Continue's
-      // payload diverge from a normal send. (See the docstring above for the
-      // original "Provider '<client>' is not configured" mismatch this closes.)
+      const callbacks = chatCallbacks(isCurrentView, { withRetry: false })
       const opts = resolveProviderOptions(providers, selectedProvider)
       await streamChat(null, conversationId, callbacks, controller.signal, rawMessages, selectedProvider, opts)
     } catch (error) {
@@ -586,8 +566,6 @@ function App() {
     conversationIdRef.current = nextId
     setConversationId(nextId)
     setLastRequest(null)
-    setQueuedInput(null)
-    queuedInputRef.current = null
     setRawMessages(rawMessages.slice(0, rawIdx))
     setMessages(messages.slice(0, frontendMsgIdx))
     setIsStreaming(false)
@@ -619,8 +597,6 @@ function App() {
     setLastRequest(null)
     setIsStreaming(false)
     setCanContinue(false)
-    setQueuedInput(null)
-    queuedInputRef.current = null
     setEditedFiles([])
     setClosedFiles(new Set())
     setActiveConvoWarning(false)
@@ -720,11 +696,8 @@ function App() {
       }
       pendingConversationLoadRef.current = null
       isSubagent = conv.type === 'subagent'
-      conversationIdRef.current = targetConversationId
-      setConversationId(targetConversationId)
+      confirmConversationId(targetConversationId)
       setLastRequest(null)
-      setQueuedInput(null)
-      queuedInputRef.current = null
       setSubagentChildIds({})
       setRawMessages(conv.messages || [])
       setMessages(conv.frontend_messages || [])
@@ -740,36 +713,25 @@ function App() {
       setAttachedFiles(draft.files)
       if (carried && !isSubagent) {
         draftInputsRef.current.delete(sourceId || '__new__')
-        queuedInputRef.current = carried
-        setQueuedInput(carried)
+        setQueuedFollowUp(carried)
       }
       if (conv.status === STATUS.RUNNING || (carried && !isSubagent && conv.status === 'continued')) {
         setIsStreaming(true)
         setSseReceived(false)
         abortControllerRef.current = new AbortController()
         try {
-          const callbacks = createStreamCallbacks({
-            isCurrentView,
-            setMessages, setRawMessages, setConversationId, setCanContinue,
-            setIsStreaming, setHistoryRefreshTrigger, setSubagentChildIds,
+          const callbacks = chatCallbacks(isCurrentView, {
             handleSend: (...args) => {
               if (conversationIdRef.current === targetConversationId) handleSendRef.current?.(...args)
             },
-            handleLoadConversation,
-            queuedInputRef, continuationNavigatedRef,
             withQueuedInput: !isSubagent,
             withRetry: !isSubagent,
-            onMessagesRefresh: handleRefreshFiles,
-            onFirstSse: () => setSseReceived(true),
-            onStreamEnd: restoreQueuedInput,
-            onQueuedInputSent: () => setQueuedInput(null),
-            ensureAssistantTail: true,
             overrides: isSubagent ? {
               onDone: (data) => {
                 setIsStreaming(false)
                 if (data.messages) setMessages(data.messages)
                 if (data.raw_messages) setRawMessages(data.raw_messages)
-                setCanContinue(!isSubagent && data.status === STATUS.MAX_ITERATIONS_REACHED)
+                setCanContinue(false)
                 setHistoryRefreshTrigger(prev => prev + 1)
               },
             } : {},
@@ -783,8 +745,7 @@ function App() {
         const raw = conv.messages || []
         const finished = [STATUS.COMPLETED, STATUS.MAX_ITERATIONS_REACHED].includes(conv.status)
         if (finished && raw.length && hasCompleteToolBatch(raw)) {
-          queuedInputRef.current = null
-          setQueuedInput(null)
+          setQueuedFollowUp(null)
           handleSendRef.current?.(raw, carried.message, {
             attachedFiles: carried.attachedFiles || [],
           })
@@ -814,7 +775,8 @@ function App() {
         })
       }
     }
-  }, [conversationId, resetToFollowing, beginConversationView, restoreQueuedInput, stashConversationDraft])
+  }, [conversationId, resetToFollowing, beginConversationView, chatCallbacks, confirmConversationId,
+    restoreQueuedInput, setQueuedFollowUp, stashConversationDraft])
 
   const handleRetry = useCallback(async () => {
     // Reuse both the conversation ID and the receipt when the sending tab
@@ -853,26 +815,7 @@ function App() {
     const controller = new AbortController()
     abortControllerRef.current = controller
     try {
-      const callbacks = createStreamCallbacks({
-        isCurrentView,
-        setMessages, setRawMessages,
-        setConversationId: (id) => {
-          if (id) conversationIdRef.current = id
-          setConversationId(id)
-        },
-        setCanContinue,
-        setIsStreaming, setHistoryRefreshTrigger, setSubagentChildIds,
-        handleSend: (...args) => handleSendRef.current?.(...args),
-        handleLoadConversation,
-        queuedInputRef, continuationNavigatedRef,
-        withQueuedInput: true,
-        withRetry: true,
-        onMessagesRefresh: handleRefreshFiles,
-        onFirstSse: () => setSseReceived(true),
-        onStreamEnd: restoreQueuedInput,
-        onQueuedInputSent: () => setQueuedInput(null),
-        ensureAssistantTail: true,
-      })
+      const callbacks = chatCallbacks(isCurrentView)
       const opts = {
         retry: true,
         ...(lastRequest?.turnId ? { turnId: lastRequest.turnId, retry_receipt: true } : {}),
@@ -884,7 +827,7 @@ function App() {
       if (error.name !== 'AbortError') console.error('Retry error:', error)
       if (isCurrentView() && abortControllerRef.current === controller) setIsStreaming(false)
     }
-  }, [lastRequest, isStreaming, selectedProvider, messages, rawMessages, conversationId, handleLoadConversation, handleRefreshFiles, providers, resetToFollowing, restoreQueuedInput])
+  }, [lastRequest, isStreaming, selectedProvider, messages, rawMessages, conversationId, chatCallbacks, providers, resetToFollowing])
 
   const handleDeleteConversation = useCallback(async (targetId) => {
     const openId = conversationIdRef.current || conversationId
