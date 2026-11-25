@@ -173,6 +173,10 @@ class AgentTaskTools:
             instruction = "This is an earlier segment of a task. Use the saved state only as background."
         if self.state["status"] in {"active", "paused"} and self.state.get("request_length"):
             instruction += " The original request is excerpted. Use read_task_request when you need any omitted detail."
+        if self.active and self.state.get("terminal_jobs"):
+            instruction += (
+                " Check relevant terminal_jobs with terminal_job_status. They were already started in this task."
+            )
         return instruction + "\n\n" + json.dumps(self.state, ensure_ascii=False)
 
     def call(self, name: str, arguments: dict) -> str:

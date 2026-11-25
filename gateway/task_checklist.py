@@ -39,6 +39,7 @@ class TaskChecklist(BaseModel):
     handoff: str = ""
     steering: str = ""
     request: str = ""
+    terminal_jobs: list[str] = Field(default_factory=list)
     options: TaskResume = Field(default_factory=TaskResume)
     started: bool = False
     stalled: int = 0
@@ -50,7 +51,9 @@ class TaskChecklist(BaseModel):
 
     def public(self) -> dict:
         return {
-            **self.model_dump(exclude={"conversation_ids", "options", "stalled", "handoff", "steering", "started", "request"}),
+            **self.model_dump(exclude={
+                "conversation_ids", "options", "stalled", "handoff", "steering", "started", "request", "terminal_jobs",
+            }),
             "conversation_id": self.conversation_id,
         }
 
@@ -61,6 +64,8 @@ class TaskChecklist(BaseModel):
         state["request"] = _scope_excerpt(self.request)
         if len(self.request) > _SCOPE_LIMIT:
             state["request_length"] = len(self.request)
+        if self.terminal_jobs:
+            state["terminal_jobs"] = self.terminal_jobs
         return state
 
 

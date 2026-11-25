@@ -26,6 +26,7 @@ from src.workspace_paths import WorkspacePathError, resolve_under_workspace
 from gateway.conversation_store import store, sanitize_frontend_messages, ensure_error_frontend_message
 from gateway.provider_registry import get_max_iterations
 from gateway.task_checklist import TaskChecklist, TaskConflict
+from gateway.task_terminal_jobs import pending_terminal_jobs
 from gateway.workspace import (
     file_snapshots,
     mark_file_touched,
@@ -566,6 +567,15 @@ def _finish_task_segment(stream: ActiveStream, raw_messages: list, prior_tool_id
         _memory_ops_executor.submit(_run_session_end_memory_ops, cid, "user_chat", "continued")
 
 
+def _record_task_terminal_jobs(stream: ActiveStream, messages: list[dict], prior_tool_ids: set[str]) -> None:
+    task = store.tasks.get(stream.conversation_id)
+    if not task or task.status != "active" or task.conversation_id != stream.conversation_id:
+        return
+    jobs = pending_terminal_jobs(task.terminal_jobs, messages, prior_tool_ids)
+    if jobs != task.terminal_jobs:
+        store.tasks.save(task, terminal_jobs=jobs)
+
+
 async def _start_continuation(new_cid: str, provider_id: str, user_msg: str, options: dict):
     """
     Simulate a user opening a new chat, typing the continuation message,
@@ -617,8 +627,8 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
     """
     cid = stream.conversation_id
     prior_tool_ids = {
-        call.get("id") for message in request_body.get("messages") or []
-        for call in message.get("tool_calls") or []
+        call["id"] for message in request_body.get("messages") or []
+        for call in message.get("tool_calls") or [] if call.get("id")
     }
     last_saved_msg_count = 0
     backend_connect_start = time.perf_counter()
@@ -655,6 +665,8 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                             stream.provider = edata.get("provider", stream.provider)
                             raw_msgs = edata.get("raw_messages", [])
 
+                            if stream.task_active and etype in {"messages", "done"}:
+                                _record_task_terminal_jobs(stream, raw_msgs, prior_tool_ids)
                             if stream.task_active and etype == "done":
                                 _finish_task_segment(stream, raw_msgs, prior_tool_ids)
                                 edata["status"] = stream.status
