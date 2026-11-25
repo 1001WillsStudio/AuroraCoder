@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 
 import httpx
@@ -5,6 +6,61 @@ import pytest
 from fastapi.testclient import TestClient
 
 from frontend import server
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/health", "/api/chat", "/api/conversations/abc/stream"])
+async def test_desktop_bounds_time_before_chat_or_health_response_headers(monkeypatch, path):
+    closed = []
+
+    async def send(*_args, **_kwargs):
+        await asyncio.sleep(0.05)
+        raise AssertionError("A connected gateway never sent response headers")
+
+    async def close():
+        closed.append(True)
+
+    monkeypatch.setattr(server, "_INTERACTIVE_HEADER_TIMEOUT_SECONDS", 0.01, raising=False)
+    monkeypatch.setattr(server.httpx, "AsyncClient", lambda **_: SimpleNamespace(
+        build_request=lambda *_args, **_kwargs: None, send=send, aclose=close,
+    ))
+
+    async def body():
+        return b""
+
+    request = SimpleNamespace(url=SimpleNamespace(query=""), method="GET", headers={}, body=body)
+    response = await server._proxy(request, path)
+    assert response.status_code == 504
+    assert closed == [True]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/api/chat", "/api/toolstore/refresh"])
+async def test_desktop_leaves_body_stream_and_non_chat_request_unbounded(monkeypatch, path):
+    async def chunks():
+        await asyncio.sleep(0.04)
+        yield b"completed"
+
+    async def close():
+        pass
+
+    async def send(*_args, **_kwargs):
+        if path.endswith("/refresh"):
+            await asyncio.sleep(0.04)
+        return SimpleNamespace(status_code=200, headers={}, aiter_bytes=chunks, aclose=close)
+
+    monkeypatch.setattr(server, "_INTERACTIVE_HEADER_TIMEOUT_SECONDS", 0.01, raising=False)
+    monkeypatch.setattr(server.httpx, "AsyncClient", lambda **_: SimpleNamespace(
+        build_request=lambda *_args, **_kwargs: None, send=send, aclose=close,
+    ))
+
+    async def body():
+        return b""
+
+    request = SimpleNamespace(url=SimpleNamespace(query=""), method="POST", headers={}, body=body)
+    response = await server._proxy(request, path)
+    assert response.status_code == 200
+    assert [chunk async for chunk in response.body_iterator] == [b"completed"]
 
 
 @pytest.mark.parametrize(("error_type", "expected"), [(httpx.ConnectError, 502), (httpx.ConnectTimeout, 504)])

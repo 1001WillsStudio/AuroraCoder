@@ -11,12 +11,13 @@ file display, settings, providers, workspace management.
 from pathlib import Path
 
 import httpx
-from anyio import CancelScope
+from anyio import CancelScope, fail_after
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 GATEWAY_URL = "http://localhost:8081"
+_INTERACTIVE_HEADER_TIMEOUT_SECONDS = 20
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_FRONTEND_DIR = Path(__file__).resolve().parent / "dist"
@@ -43,17 +44,21 @@ async def _proxy(request: Request, target_path: str):
         if k.lower() not in ("host", "content-length")
     }
 
-    # SSE can be silent while a tool runs, but connection and request-body
-    # setup must not hold the desktop open when the local gateway is down.
+    # Limit the wait for the local gateway to accept an interactive request.
+    # Once it starts responding, an SSE stream can be silent while a tool runs.
+    interactive = target_path in {"/health", "/api/chat"} or (
+        target_path.startswith("/api/conversations/") and target_path.endswith("/stream")
+    )
     timeout = httpx.Timeout(connect=5, read=None, write=30, pool=5)
     client = httpx.AsyncClient(timeout=timeout, trust_env=False)
     try:
         req = client.build_request(request.method, url, content=body, headers=req_headers)
-        resp = await client.send(req, stream=True)
+        with fail_after(_INTERACTIVE_HEADER_TIMEOUT_SECONDS if interactive else None):
+            resp = await client.send(req, stream=True)
     except BaseException as error:
         with CancelScope(shield=True):
             await client.aclose()
-        if isinstance(error, httpx.TimeoutException):
+        if isinstance(error, (httpx.TimeoutException, TimeoutError)):
             return JSONResponse({"detail": "AuroraCoder gateway did not respond in time."}, status_code=504)
         if isinstance(error, httpx.RequestError):
             return JSONResponse({"detail": "AuroraCoder gateway is unavailable."}, status_code=502)
