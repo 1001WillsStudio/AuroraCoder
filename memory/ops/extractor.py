@@ -331,7 +331,7 @@ def run_extraction(conversation_id: str, messages: List[Dict[str, Any]]) -> List
     rather than a fresh row) but wastes an LLM call proportional to
     (transcript length × turn count), not just transcript length. A
     memory/store.py-backed checkpoint (``get_extraction_checkpoint`` /
-    ``set_extraction_checkpoint``) now tracks how many messages of this
+    ``claim_extraction_through``) now tracks how many messages of this
     conversation have already been scanned, so each call only looks at
     this turn's new messages.
 
@@ -387,9 +387,7 @@ def run_extraction(conversation_id: str, messages: List[Dict[str, Any]]) -> List
         return []
 
     repo = get_repository()
-    checkpoint = repo.get_extraction_checkpoint(conversation_id)
-    new_messages = messages[checkpoint:]
-    if not new_messages:
+    if len(messages) <= repo.get_extraction_checkpoint(conversation_id):
         return []
 
     cfg = get_memory_extraction_config()
@@ -402,10 +400,12 @@ def run_extraction(conversation_id: str, messages: List[Dict[str, Any]]) -> List
     # subsequent failure (network error, rejected judgment, malformed
     # output) leaves the checkpoint advanced anyway, same as the plain
     # failure case documented above.
-    repo.set_extraction_checkpoint(conversation_id, len(messages))
+    checkpoint = repo.claim_extraction_through(conversation_id, len(messages))
+    if checkpoint is None:
+        return []
 
     written = _run_write_pass(
-        conversation_id, new_messages, nomination_label="remember",
+        conversation_id, messages[checkpoint:], nomination_label="remember",
         filter_messages=messages,
     )
     return [w["id"] for w in written]

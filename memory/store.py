@@ -64,7 +64,7 @@ CREATE INDEX IF NOT EXISTS idx_memories_plane ON memories(plane);
 CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);
 
 -- How far into a conversation's message list ops/extractor.py's write pass
--- has already scanned — see get_extraction_checkpoint/set_extraction_checkpoint
+-- has already scanned — see get_extraction_checkpoint/claim_extraction_through
 -- below and run_extraction()'s docstring for why this exists (avoid
 -- re-scanning + re-judging the whole transcript from scratch on every turn).
 CREATE TABLE IF NOT EXISTS extraction_checkpoints (
@@ -290,11 +290,18 @@ class MemoryRepository:
             ).fetchone()
         return row["last_extracted_count"] if row else 0
 
-    def set_extraction_checkpoint(self, conversation_id: str, message_count: int) -> None:
-        """Record that this conversation's write pass has now scanned up to
-        (but not including anything past) ``message_count`` messages."""
+    def claim_extraction_through(self, conversation_id: str, message_count: int) -> int | None:
+        """Reserve the next message range, returning its previous starting offset."""
         now = datetime.now(timezone.utc).isoformat()
         with self._lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT last_extracted_count FROM extraction_checkpoints WHERE conversation_id=?",
+                (conversation_id,),
+            ).fetchone()
+            previous = row["last_extracted_count"] if row else 0
+            if message_count <= previous:
+                return None
             conn.execute(
                 """
                 INSERT INTO extraction_checkpoints (conversation_id, last_extracted_count, updated_at)
@@ -304,6 +311,7 @@ class MemoryRepository:
                 """,
                 (conversation_id, message_count, now),
             )
+            return previous
 
     def all_items(self, plane: Optional[str] = None, scope: Optional[str] = None) -> List[MemoryItem]:
         """Return full MemoryItem objects (reads file content) for candidate ranking.
