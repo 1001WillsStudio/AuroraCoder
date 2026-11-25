@@ -237,11 +237,20 @@ async def proxy_chat(request: Request):
         parent_id=parent_id,
     )
 
+    # Finish the superseded stream before reading or replacing its transcript.
+    t2 = time.perf_counter()
+    await _cancel_active_stream(conversation_id)
+    t3 = time.perf_counter()
+    logger.info(f"[proxy] [{cid_tag}...] cancel_stream={t3-t2:.3f}s")
+
     # Retry: keep the current transcript (orphan tool calls are filled in
     # below) and do not append another user message.
     if body.pop("retry", False):
-        prior = body.get("messages") or store.get_messages(conversation_id)
-        body["messages"] = messages_for_retry(prior, body.get("message") or "")
+        prior = store.get_messages(conversation_id) or body.get("messages")
+        body["messages"] = messages_for_retry(
+            prior, body.get("message") or "",
+            frontend_messages=store.get_frontend_messages(conversation_id),
+        )
         body["message"] = None
 
     # ── Fix orphan tool calls before forwarding to the backend ────────────
@@ -251,16 +260,6 @@ async def proxy_chat(request: Request):
     # these, so we inject synthetic "stopped by user" results now.
     if body.get("messages"):
         body["messages"] = _fix_orphan_tool_calls(body["messages"])
-        store.save_messages(conversation_id, body["messages"])
-
-    # ────────────────────────────────────────────────────────────────────
-
-
-    # Cancel any previous stream for the SAME conversation (re-send / continue)
-    t2 = time.perf_counter()
-    await _cancel_active_stream(conversation_id)
-    t3 = time.perf_counter()
-    logger.info(f"[proxy] [{cid_tag}...] cancel_stream={t3-t2:.3f}s")
 
     stream = ActiveStream(
         conversation_id=conversation_id,
@@ -275,8 +274,14 @@ async def proxy_chat(request: Request):
     # backend event still shows something.  For existing conversations
     # (re-send / interrupt), APPEND instead of replacing — otherwise the
     # entire history is lost if the backend never produces events.
-    if body.get("message"):
-        store.seed_frontend_user_message(conversation_id, body["message"])
+    message = body.get("message")
+    accepted = [dict(msg) for msg in body.get("messages") or []]
+    if message:
+        accepted.append({"role": "user", "content": message})
+    if accepted:
+        store.save_messages(conversation_id, accepted)
+    if message:
+        store.seed_frontend_user_message(conversation_id, message)
     t5 = time.perf_counter()
     logger.info(f"[proxy] [{cid_tag}...] store_ops={t5-t4:.3f}s")
 

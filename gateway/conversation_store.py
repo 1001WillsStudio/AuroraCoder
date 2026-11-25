@@ -20,10 +20,12 @@ from typing import Optional, List, Dict, Any
 
 from gateway.attached_files import (
     ATTACHED_FILES_START,
+    apply_attached_files,
     extract_attached_files,
     strip_attached_files,
 )
 from gateway.task_instruction_display import (
+    TASK_INSTRUCTION_END,
     TASK_INSTRUCTION_START,
     sanitize_frontend_messages,
     strip_task_instruction,
@@ -53,13 +55,32 @@ TITLE_MAX_LENGTH = 100
 def messages_for_retry(
     messages: Optional[List[Dict]],
     user_text: str = "",
+    *,
+    frontend_messages: Optional[List[Dict]] = None,
 ) -> List[Dict]:
-    """Keep the existing transcript for retry; seed the user line only if empty.
+    """Keep the stored transcript and recover a pending turn from older histories.
 
     Incomplete tool rounds are made sendable by ``_fix_orphan_tool_calls``
     on the chat path — this helper does not re-trim them.
     """
     msgs = list(messages or [])
+    if frontend_messages and frontend_messages[-1].get("isError"):
+        visible_users = [msg for msg in frontend_messages if msg.get("role") == "user"]
+        raw_users = [user_message_for_frontend(msg.get("content"))["content"]
+                     for msg in msgs if msg.get("role") == "user"]
+        if len(visible_users) == len(raw_users) + 1 and raw_users == [
+            msg.get("content", "") for msg in visible_users[:-1]
+        ]:
+            pending = visible_users[-1]
+            text = pending.get("content", "")
+            instruction = pending.get("taskInstruction")
+            if instruction:
+                text = f"{TASK_INSTRUCTION_START}\n{instruction}\n{TASK_INSTRUCTION_END}\n\n{text}"
+            text = apply_attached_files(text, pending.get("attachedFiles") or [])
+            msg = {"role": "user", "content": text}
+            if pending.get("ts"):
+                msg["ts"] = pending["ts"]
+            msgs.append(msg)
     if msgs:
         return msgs
     if user_text:
