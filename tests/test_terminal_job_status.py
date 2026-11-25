@@ -8,8 +8,7 @@ from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
 
-from src.code_sandbox import sandbox, terminal_jobs
-from src.code_tools import terminal_runner
+from src.code_sandbox import sandbox, terminal_jobs, terminal_sessions
 from src.tool_definitions import execute_tool_call
 
 
@@ -23,7 +22,7 @@ class TerminalJobStatusTest(unittest.TestCase):
         stack.enter_context(patch.object(tempfile, "gettempdir", return_value=str(workspace)))
         stack.enter_context(patch.dict(os.environ, {"AURORACODER_DOCKER": "1"}))
         shell = sandbox.PersistentShell()
-        stack.enter_context(patch.object(terminal_runner, "shell", shell))
+        stack.enter_context(patch.object(terminal_sessions, "shell", shell))
         self.addCleanup(shell.stop)
         shell.start()
 
