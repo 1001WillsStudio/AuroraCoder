@@ -9,6 +9,7 @@ import json
 
 from ..code_sandbox import WORKSPACE
 from ..code_sandbox.terminal_jobs import terminal_job_status
+from ..code_sandbox.terminal_output import truncate_terminal_text
 from ..code_sandbox.terminal_sessions import use_terminal
 from ..config import (
     TERMINAL_MAX_OUTPUT_CHARS,
@@ -30,15 +31,7 @@ def _get_terminal_max_output_chars() -> int:
 
 def _truncate_output(text: str, limit: int | None = None) -> str:
     """Keep the first and last portions of long output, dropping the middle."""
-    if limit is None:
-        limit = _get_terminal_max_output_chars()
-    if len(text) <= limit:
-        return text
-    keep = limit // 2
-    head = text[:keep]
-    tail = text[-keep:]
-    dropped = len(text) - keep * 2
-    return f"{head}\n\n... [{dropped:,} characters truncated] ...\n\n{tail}"
+    return truncate_terminal_text(text, _get_terminal_max_output_chars() if limit is None else limit)
 
 
 class TerminalRunner:
@@ -72,12 +65,13 @@ class TerminalRunner:
                 if not shell.is_alive:
                     return "Error: Persistent shell is not available. Use new_terminal=true to restart it."
 
-                result = shell.run(command, timeout=timeout, blocking=blocking)
+                result = shell.run(command, timeout=timeout, blocking=blocking,
+                                   output_limit=_get_terminal_max_output_chars())
             output = [f"Status: {result.status}"]
             if result.exit_code is not None:
                 output.append(f"Exit Code: {result.exit_code}")
             if result.output:
-                output.extend(["STDOUT:", _truncate_output(result.output)])
+                output.extend(["STDOUT:", result.output])
             elif result.status == "completed":
                 output.append("[NOTE: Command produced no output.]")
             if result.detail:

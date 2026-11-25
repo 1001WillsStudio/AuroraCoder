@@ -32,8 +32,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Optional
 
-from ..config import WORKSPACE_DIR, DEFAULT_BASE_ENV_NAME
+from ..config import WORKSPACE_DIR, DEFAULT_BASE_ENV_NAME, TERMINAL_MAX_OUTPUT_CHARS
 from .terminal_jobs import job_paths, remember_terminal_job
+from .terminal_output import read_terminal_output
 
 logger = logging.getLogger(__name__)
 
@@ -209,12 +210,13 @@ class PersistentShell:
         command: str,
         timeout: int = 120,
         blocking: bool = True,
+        output_limit: int = TERMINAL_MAX_OUTPUT_CHARS,
     ) -> ShellResult:
         """Run once and return a completion code or the live command's output and status files."""
         with self._lock:
-            return self._run(command, timeout, blocking)
+            return self._run(command, timeout, blocking, output_limit)
 
-    def _run(self, command: str, timeout: int, blocking: bool) -> ShellResult:
+    def _run(self, command: str, timeout: int, blocking: bool, output_limit: int) -> ShellResult:
         proc = self._proc
         if proc is None or proc.poll() is not None:
             return ShellResult("error", detail="Persistent shell not running.")
@@ -309,7 +311,7 @@ class PersistentShell:
                                job_id=remember_terminal_job(cmd_id, True, numbers[0]))
 
         try:
-            output = output_path.read_text(encoding="utf-8", errors="replace")
+            output = read_terminal_output(output_path, output_limit)
         except OSError as exc:
             output = f"[Error reading command output: {exc}]"
         for path in (output_path, status_path):

@@ -78,3 +78,14 @@ class TerminalResultsTest(unittest.TestCase):
         self.assertEqual(second.exit_code, 0)
         self.assertIn("new shell", second.output)
         self.assert_finishes(result)
+
+    def test_foreground_output_is_bounded_before_decoding(self):
+        command = python_command("import sys; print('BEGIN ' + '它' * 600_000 + ' END🌕', file=sys.stderr)")
+        with patch.object(Path, "read_text", side_effect=AssertionError("Unbounded terminal log read")):
+            result = self.shell.run(command, output_limit=64)
+        self.assertEqual(result.exit_code, 0)
+        self.assertTrue(result.output.startswith("BEGIN 它"))
+        self.assertTrue(result.output.endswith(" END🌕\n"))
+        self.assertIn("1,800,015 bytes of output; middle truncated", result.output)
+        self.assertNotIn("�", result.output)
+        self.assertLess(len(result.output), 145)
