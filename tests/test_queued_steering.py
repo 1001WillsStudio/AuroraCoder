@@ -68,6 +68,6 @@ console.log(JSON.stringify({called, pending, navigations, restored, carried: pen
     assert raw[-1]["content"] == "final"
     assert message == "Use the previous branch"
     assert options == {"attachedFiles": ["scope.md"], "interruptStream": False}
-    assert output["navigations"] == [["next", {"carryPendingSteering": True}]]
+    assert output["navigations"] == [["next", {"carryPendingSteering": True, "followContinuation": True}]]
     assert output["restored"] == []
     assert output["carried"] == {"message": "Check the newly clarified path", "attachedFiles": ["scope.md"]}
