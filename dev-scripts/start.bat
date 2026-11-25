@@ -57,12 +57,6 @@ if errorlevel 1 (
 call "%~dp0container-replacement.bat" prepare "auroracoder-agent"
 if errorlevel 1 exit /b 1
 
-:: Short delay for port cleanup
-echo [%time%] sleep 2...
-timeout /t 2 /nobreak >nul
-echo [%time%] sleep done
-
-
 :: ── Port configuration ──────────────────────────────────────────────────
 set "FRONTEND_PORT=3000"
 set "BACKEND_PORT=8080"

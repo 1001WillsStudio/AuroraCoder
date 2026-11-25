@@ -30,10 +30,6 @@ if errorlevel 1 (
 call "%~dp0container-replacement.bat" prepare "%CONTAINER%"
 if errorlevel 1 exit /b 1
 
-echo [%time%] sleep 2...
-timeout /t 2 /nobreak >nul
-echo [%time%] sleep done
-
 :: ── Base ports (from ports.conf or defaults) ────────────────────────────
 set "BASE_FRONTEND=3000"
 set "BASE_BACKEND=8080"

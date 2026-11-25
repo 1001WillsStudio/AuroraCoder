@@ -39,8 +39,6 @@ if errorlevel 1 (echo Build failed. & pause & exit /b 1)
 call "%~dp0container-replacement.bat" prepare "auroracoder-agent-gpu"
 if errorlevel 1 exit /b 1
 
-timeout /t 2 /nobreak >nul
-
 :: ── Port configuration ──────────────────────────────────────────────────
 set "FRONTEND_PORT=3000"
 set "BACKEND_PORT=8080"

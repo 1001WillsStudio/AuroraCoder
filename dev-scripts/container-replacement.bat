@@ -23,7 +23,7 @@ docker rename "%AURORA_SWAP_OLD_ID%" "%AURORA_SWAP_NAME%-previous-%AURORA_SWAP_O
 if errorlevel 1 exit /b 1
 if not "%AURORA_SWAP_WAS_RUNNING%"=="true" exit /b 0
 docker stop "%AURORA_SWAP_OLD_ID%" >nul
-if not errorlevel 1 exit /b 0
+if not errorlevel 1 goto :wait_for_port_release
 docker rename "%AURORA_SWAP_OLD_ID%" "%AURORA_SWAP_NAME%"
 exit /b 1
 
@@ -32,6 +32,11 @@ echo Replacing a legacy auto-remove container. Its Docker state cannot be saved 
 docker stop "%AURORA_SWAP_OLD_ID%" >nul
 if errorlevel 1 exit /b 1
 set "AURORA_SWAP_OLD_ID="
+
+:wait_for_port_release
+echo Waiting for Docker to release the previous ports...
+powershell.exe -NoProfile -NonInteractive -Command "Start-Sleep -Seconds 2"
+if errorlevel 1 echo The port wait could not run. Availability will be checked before starting.
 exit /b 0
 
 :restore
