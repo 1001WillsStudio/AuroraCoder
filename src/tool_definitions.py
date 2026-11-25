@@ -877,6 +877,10 @@ def execute_tool_call(tool_name: str, arguments: Dict[str, Any], tool_call_id: s
     #   (arguments: Dict[str, Any]) -> (result: str, arguments: Dict[str, Any])
     function = function_map[tool_name]
 
+    if tool_name == "run_terminal_command":
+        result, applied_args = function(arguments, conversation_id=conversation_id)
+        return applied_args, result
+
     # Subagent: inject execution-only metadata.  The subagent function strips
     # tool_call_id and conversation_id from the returned applied args so the
     # LLM never sees them.

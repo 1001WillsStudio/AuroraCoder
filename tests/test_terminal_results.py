@@ -11,7 +11,7 @@ from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
 
-from src.code_sandbox import sandbox
+from src.code_sandbox import sandbox, terminal_sessions
 from src.code_tools import terminal_runner
 
 
@@ -29,7 +29,7 @@ class TerminalResultsTest(unittest.TestCase):
         stack.enter_context(patch.object(sandbox.tempfile, "gettempdir", return_value=str(self.workspace)))
         stack.enter_context(patch.dict(os.environ, {"AURORACODER_DOCKER": "1"}))
         self.shell = sandbox.PersistentShell()
-        stack.enter_context(patch.object(terminal_runner, "shell", self.shell))
+        stack.enter_context(patch.object(terminal_sessions, "shell", self.shell))
         self.addCleanup(self.shell.stop)
         self.shell.start()
 

@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 
 from ..main_flow import generate_chat_responses_stream_native
 from ..code_sandbox import shell, get_workspace, WORKSPACE
+from ..code_sandbox.terminal_sessions import stop_terminal_sessions
 from ..core_tools.subagent import cancel_active_subagents
 from ..config import DEFAULT_PROVIDER
 from ..providers import provider_manager
@@ -176,7 +177,7 @@ async def stream_chat_response(
     messages: list, conversation_id: str, request: Request,
     max_iterations: int, provider: Optional[str] = None,
     model: Optional[str] = None,
-    tools_override: Optional[list] = None, restart_shell: bool = False,
+    tools_override: Optional[list] = None,
     workspace_tree: str = "",
 ) -> AsyncGenerator[str, None]:
     cancel_event = threading.Event()
@@ -192,12 +193,6 @@ async def stream_chat_response(
         def run_generator():
             nonlocal seq
             try:
-                if restart_shell:
-                    try:
-                        shell.restart()
-                    except Exception as e:
-                        logger.warning(f"Failed to restart shell: {e}")
-
                 current_messages = messages
                 status = "running"
                 current_provider = provider
@@ -323,6 +318,7 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to initialize sandbox: {e}")
     yield
     logger.info("Shutting down...")
+    stop_terminal_sessions()
     shell.stop()
     executor.shutdown(wait=False)
 
@@ -356,9 +352,6 @@ async def reload_providers():
 @app.post("/api/chat")
 async def chat(chat_request: ChatRequest, request: Request):
     conversation_id = chat_request.conversation_id or str(uuid.uuid4())
-    is_new = not chat_request.conversation_id
-    if is_new:
-        pass  # File tracking is now handled by gateway/_track_file_changes (SSE scanning)
 
     messages = (chat_request.messages or []).copy()
     if chat_request.message:
@@ -373,7 +366,7 @@ async def chat(chat_request: ChatRequest, request: Request):
         stream_chat_response(messages, conversation_id, request, provider=provider,
                              model=chat_request.model, max_iterations=max_iterations,
                              tools_override=tools_override,
-                             restart_shell=is_new, workspace_tree=workspace_tree,),
+                             workspace_tree=workspace_tree),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache", "Connection": "keep-alive",

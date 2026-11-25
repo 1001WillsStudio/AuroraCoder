@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 import json
 
-from ..code_sandbox import shell, WORKSPACE
+from ..code_sandbox import WORKSPACE
+from ..code_sandbox.terminal_sessions import use_terminal
 from ..config import (
     TERMINAL_MAX_OUTPUT_CHARS,
     TERMINAL_DEFAULT_TIMEOUT,
@@ -42,8 +43,9 @@ def _truncate_output(text: str, limit: int | None = None) -> str:
 class TerminalRunner:
     """Terminal command runner with support for background processes."""
     
-    def __init__(self, workspace_root: str = None):
+    def __init__(self, workspace_root: str = None, *, conversation_id: str | None = None):
         self.workspace_root = WORKSPACE
+        self.conversation_id = conversation_id
     
     def run_command(
         self, command: str, timeout: int = TERMINAL_DEFAULT_TIMEOUT, blocking: bool = True, cwd: str = None, new_terminal: bool = False
@@ -63,13 +65,13 @@ class TerminalRunner:
         """
         try:
 
-            if new_terminal:
-                shell.restart()
+            with use_terminal(self.conversation_id, reset=new_terminal) as shell:
+                if shell is None:
+                    return "Error: This terminal expired after being idle. Use new_terminal=true and set the working directory again."
+                if not shell.is_alive:
+                    return "Error: Persistent shell is not available. Use new_terminal=true to restart it."
 
-            if not shell.is_alive:
-                return "Error: Persistent shell is not available. Use new_terminal=true to restart it."
-
-            result = shell.run(command, timeout=timeout, blocking=blocking)
+                result = shell.run(command, timeout=timeout, blocking=blocking)
             output = [f"Status: {result.status}"]
             if result.exit_code is not None:
                 output.append(f"Exit Code: {result.exit_code}")
@@ -134,7 +136,9 @@ class TerminalRunner:
             return f"Error executing command: {str(e)}"
 
 
-def run_terminal_cmd_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+def run_terminal_cmd_tool(
+    arguments: Dict[str, Any], *, conversation_id: str | None = None,
+) -> Tuple[str, Dict[str, Any]]:
     """Run terminal command tool wrapper.
 
     Timeout policy (values live in config.py): the default is
@@ -147,7 +151,7 @@ def run_terminal_cmd_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any
     ``sleep`` honor the agent-supplied timeout in full so deliberate waits are
     not cut short.
     """
-    runner = TerminalRunner(workspace_root=arguments.get("workspace_root"))
+    runner = TerminalRunner(workspace_root=arguments.get("workspace_root"), conversation_id=conversation_id)
     timeout = arguments.get("timeout", TERMINAL_DEFAULT_TIMEOUT)
     blocking = arguments.get("blocking", True)
     command = arguments["command"]
