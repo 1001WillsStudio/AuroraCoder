@@ -721,7 +721,8 @@ async def refresh_toolstore():
     except ImportError:
         _home = os.environ.get("TOOLSTORE_HOME", os.path.expanduser("~/.toolstore"))
     try:
-        result = subprocess.run(
+        result = await asyncio.to_thread(
+            subprocess.run,
             ["toolstore", "update"],
             capture_output=True, text=True, timeout=60,
             env={**os.environ, "TOOLSTORE_HOME": _home}
