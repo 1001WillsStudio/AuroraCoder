@@ -22,6 +22,33 @@ export function createStreamCallbacks({
   isCurrentView = () => true,
 }) {
   let _firstMessage = true
+  let scheduled = null
+  const dispatchPending = (rawMessages, interrupt) => {
+    const pending = pendingInterruptRef?.current
+    if (!withInterrupt || !pending || !handleSend || !rawMessages?.length || !isInterruptible(rawMessages)) {
+      return false
+    }
+    if (scheduled?.pending === pending) {
+      scheduled.rawMessages = rawMessages
+      scheduled.interrupt = interrupt
+      return true
+    }
+    const next = { pending, rawMessages, interrupt }
+    scheduled = next
+    setTimeout(() => {
+      if (scheduled === next) scheduled = null
+      if (!isCurrentView() || pendingInterruptRef.current !== pending) return
+      pendingInterruptRef.current = null
+      onInterruptFired?.()
+      if (next.interrupt) abortControllerRef?.current?.abort()
+      handleSend(next.rawMessages, pending.message, {
+        attachedFiles: pending.attachedFiles || [],
+        interruptStream: next.interrupt,
+      })
+    }, 50)
+    return true
+  }
+
   const onMessages = (frontendMessages, _status, data) => {
     if (_firstMessage) { _firstMessage = false; onFirstSse?.() }
     if (ensureAssistantTail) {
@@ -32,17 +59,7 @@ export function createStreamCallbacks({
     }
     if (data?.raw_messages) {
       setRawMessages(data.raw_messages)
-      if (withInterrupt && pendingInterruptRef?.current && isInterruptible(data.raw_messages)) {
-        const pending = pendingInterruptRef.current
-        const msg = pending.message
-        const files = pending.attachedFiles || []
-        pendingInterruptRef.current = null
-        onInterruptFired?.()
-        if (abortControllerRef?.current) abortControllerRef.current.abort()
-        setTimeout(() => {
-          if (isCurrentView()) handleSend?.(data.raw_messages, msg, { attachedFiles: files })
-        }, 50)
-      }
+      if (!data.new_conversation_id) dispatchPending(data.raw_messages, true)
     }
     if (data?.conversation_id) setConversationId(data.conversation_id)
     if (data?.new_conversation_id && !continuationNavigatedRef?.current.has(data.new_conversation_id)) {
@@ -63,6 +80,10 @@ export function createStreamCallbacks({
     if (data.messages) setMessages(data.messages)
     if (data.raw_messages) setRawMessages(data.raw_messages)
     setHistoryRefreshTrigger(prev => prev + 1)
+    const finished = [STATUS.COMPLETED, STATUS.MAX_ITERATIONS_REACHED].includes(data.status)
+    if (!finished || data.new_conversation_id || !dispatchPending(data.raw_messages, false)) {
+      onStreamEnd?.()
+    }
   }
 
   const onError = (error) => {
