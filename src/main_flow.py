@@ -41,6 +41,7 @@ from .code_tools.tool_store_panel import ToolStorePanel
 from .code_tools.memory_panel import MemoryPanel
 from .core_tools import memory_client
 from .task_checklist import AgentTaskTools
+from .provider_context_errors import is_context_limit_error
 
 # ── Register all Living Tool State panels ──────────────────────────
 register(CodeInterpreterPanel())
@@ -259,6 +260,10 @@ def generate_chat_responses_stream_native(
         try:
             completion_stream = client.chat.completions.create(**api_kwargs)
         except Exception as exc:
+            if task_tools and task_tools.active and is_context_limit_error(exc):
+                _main_logger.info("Provider rejected the current context for task recovery (%s/%s)", provider_id, model_name)
+                yield {"messages": messages, "status": "context_limit_reached", "provider": provider_id}
+                return
             record_provider_failure(exc, provider_id, model_name, conversation_id, api_kwargs)
             raise
 
