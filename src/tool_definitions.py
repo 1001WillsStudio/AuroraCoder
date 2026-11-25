@@ -127,7 +127,8 @@ NATIVE_TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "Reads a file and displays its content in the code interpreter. Checks for file existence and confirms it can be opened.",
+            "description": "Open file contents in the code interpreter, or use start_line/end_line for a "
+                           "bounded excerpt with original line numbers without opening the whole file.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -136,6 +137,10 @@ NATIVE_TOOL_DEFINITIONS = [
                         "description": "Path to the file(s) to read (relative to workspace). Pass a single string or an array of strings to open multiple files at once.",
                         "items": {"type": "string"}
                     },
+                    "start_line": {"type": "integer", "minimum": 1,
+                                   "description": "First line of an excerpt for one file. Default 1."},
+                    "end_line": {"type": "integer", "minimum": 1,
+                                 "description": "Last line (inclusive). An excerpt contains at most 200 lines."},
                 },
                 "required": ["file"]
             }

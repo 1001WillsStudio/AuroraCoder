@@ -75,6 +75,8 @@ def discover_open_files(messages: List[Dict]) -> Set[str]:
                 if not isinstance(args, dict):
                     continue
 
+                if tool_name == "read_file" and (args.get("start_line") is not None or args.get("end_line") is not None):
+                    continue
                 target = args.get("file")
 
                 # ── Handle keep on close_file (close all except) ────────
