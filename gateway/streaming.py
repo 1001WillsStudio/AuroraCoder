@@ -492,7 +492,11 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                             # active streaming (delta) — tool-call arguments are still
                             # being built up during deltas, producing bogus warnings.
                             if not stream.new_conversation_id and etype == "messages":
-                                args = _scan_for_continuation(edata.get("raw_messages", []))
+                                args = None
+                                if stream.conv_type == "user_chat" and request_body.get("tools") not in {
+                                    "read_only", "gap_investigation", "memory_maintenance",
+                                }:
+                                    args = _scan_for_continuation(edata.get("raw_messages", []))
                                 if args:
                                     prompt = args.get("prompt", "")
                                     new_cid = str(uuid.uuid4())

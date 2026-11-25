@@ -157,6 +157,7 @@ def execute_tool_calls(
     current_tool_calls: List[Dict],
     messages: List[Dict],
     conversation_id: str | None = None,
+    allowed_tools: set[str] | None = None,
 ) -> Dict[str, int]:
     """
     Execute tool calls, running concurrent-safe tools in parallel.
@@ -169,15 +170,25 @@ def execute_tool_calls(
     triggered: Dict[str, int] = {}
     files_edited_this_turn: set = set()
 
+    def allowed(name: str) -> bool:
+        return allowed_tools is None or name in allowed_tools
+
+    def run_tool(call: Dict) -> Tuple[Dict, str, str]:
+        name = call["function"]["name"]
+        if not allowed(name):
+            return call, name, f"Error: tool '{name}' is not available in this session."
+        return _execute_single_tool(call, conversation_id)
+
     def _mark(tool_name: str):
-        nonlocal triggered
+        if not allowed(tool_name):
+            return
         for panel_name in triggered_by(tool_name):
             triggered[panel_name] = len(messages) - 1  # index just appended
 
     for is_safe, batch in partition_tool_calls(current_tool_calls):
         if is_safe and len(batch) > 1:
             futures = {
-                _get_executor().submit(_execute_single_tool, tc, conversation_id): tc
+                _get_executor().submit(run_tool, tc): tc
                 for tc in batch
             }
             # Collect results keyed by tool_call id to preserve original order
@@ -196,7 +207,9 @@ def execute_tool_calls(
                 _mark(tool_name)
         else:
             for tc in batch:
-                guard_err = _check_same_file_edit_guard(tc, files_edited_this_turn)
+                guard_err = None
+                if allowed(tc["function"]["name"]):
+                    guard_err = _check_same_file_edit_guard(tc, files_edited_this_turn)
                 if guard_err:
                     tool_name = tc["function"]["name"]
                     messages.append({
@@ -206,7 +219,7 @@ def execute_tool_calls(
                     })
                     _mark(tool_name)
                     continue
-                tc_out, tool_name, result = _execute_single_tool(tc, conversation_id)
+                tc_out, tool_name, result = run_tool(tc)
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc_out["id"],

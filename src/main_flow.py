@@ -142,8 +142,11 @@ def generate_chat_responses_stream_native(
     prefetch_primary_tools()
 
     # Resolve tool definitions — use override if provided, else defaults
-    tools = tools_override or get_tool_definitions()
+    tools = get_tool_definitions() if tools_override is None else tools_override
     filter_continuation = tools_override is None  # only filter for default tools
+    restricted_tool_names = (
+        None if tools_override is None else {tool["function"]["name"] for tool in tools_override}
+    )
 
     # Add system message if not already present.
     if not messages or messages[0].get("role") != "system":
@@ -207,12 +210,12 @@ def generate_chat_responses_stream_native(
         api_kwargs = {
             "model": model_name,
             "messages": api_messages,
-            "tools": tools_for_iteration,
-            "tool_choice": "auto",
             "max_tokens": api_max_tokens,
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        if tools_for_iteration:
+            api_kwargs.update(tools=tools_for_iteration, tool_choice="auto")
         
         # Add extra_body if provider requires it (e.g., NVIDIA thinking mode)
         if extra_body:
@@ -379,7 +382,10 @@ def generate_chat_responses_stream_native(
         }
 
         # Delegate to the tool execution engine
-        triggered_trackers = execute_tool_calls(current_tool_calls, messages, conversation_id=conversation_id)
+        restrictions = {} if restricted_tool_names is None else {"allowed_tools": restricted_tool_names}
+        triggered_trackers = execute_tool_calls(
+            current_tool_calls, messages, conversation_id=conversation_id, **restrictions,
+        )
 
         # Warn once when estimated context nears the model's window.
         if context_window and current_usage and not _has_continuation_notice_been_shown(messages):
@@ -390,7 +396,8 @@ def generate_chat_responses_stream_native(
                 })
 
         # If continue_as_new_chat was called, end the loop immediately
-        if any(tc["function"]["name"] == "continue_as_new_chat" for tc in current_tool_calls):
+        can_continue = restricted_tool_names is None or "continue_as_new_chat" in restricted_tool_names
+        if can_continue and any(tc["function"]["name"] == "continue_as_new_chat" for tc in current_tool_calls):
             yield {
                 "messages": messages,
                 "status": "completed",
