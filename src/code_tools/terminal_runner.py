@@ -51,13 +51,20 @@ class TerminalRunner:
             command: The command to execute.
             timeout: Command timeout in seconds.
             blocking: If False, launch in background and return the log file path.
-            cwd: Working directory (now managed by the session).
+            cwd: Optional workspace directory from which to run the command.
             new_terminal: If True, restart the persistent shell before running the command.
 
         Returns:
             Command output or process information
         """
         try:
+            command_options = {}
+            if cwd is not None:
+                workspace = self.workspace_root.resolve()
+                working_directory = (workspace / cwd).resolve()
+                if not working_directory.is_relative_to(workspace) or not working_directory.is_dir():
+                    return "Error: cwd must be an existing directory inside the workspace."
+                command_options["cwd"] = working_directory
 
             with use_terminal(self.conversation_id, reset=new_terminal) as shell:
                 if shell is None:
@@ -65,8 +72,10 @@ class TerminalRunner:
                 if not shell.is_alive:
                     return "Error: Persistent shell is not available. Use new_terminal=true to restart it."
 
-                result = shell.run(command, timeout=timeout, blocking=blocking,
-                                   output_limit=_get_terminal_max_output_chars())
+                result = shell.run(
+                    command, timeout=timeout, blocking=blocking,
+                    output_limit=_get_terminal_max_output_chars(), **command_options,
+                )
             output = [f"Status: {result.status}"]
             if result.exit_code is not None:
                 output.append(f"Exit Code: {result.exit_code}")
@@ -166,6 +175,7 @@ def run_terminal_cmd_tool(
         command=command,
         timeout=timeout,
         blocking=blocking,
+        cwd=arguments.get("cwd"),
         new_terminal=arguments.get("new_terminal", False),
     )
 

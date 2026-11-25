@@ -26,8 +26,9 @@ class TerminalResultsTest(unittest.TestCase):
         self.addCleanup(stack.close)
         self.workspace = Path(stack.enter_context(tempfile.TemporaryDirectory()))
         stack.enter_context(patch.object(sandbox, "WORKSPACE", self.workspace))
+        stack.enter_context(patch.object(terminal_runner, "WORKSPACE", self.workspace))
         stack.enter_context(patch.object(tempfile, "gettempdir", return_value=str(self.workspace)))
-        stack.enter_context(patch.dict(os.environ, {"AURORACODER_DOCKER": "1"}))
+        stack.enter_context(patch.dict(os.environ, {"AURORACODER_DOCKER": "1", "DEMO": "wrong-directory"}))
         self.shell = sandbox.PersistentShell()
         stack.enter_context(patch.object(terminal_sessions, "shell", self.shell))
         self.addCleanup(self.shell.stop)
@@ -89,3 +90,30 @@ class TerminalResultsTest(unittest.TestCase):
         self.assertIn("1,800,015 bytes of output; middle truncated", result.output)
         self.assertNotIn("�", result.output)
         self.assertLess(len(result.output), 145)
+
+    def test_native_terminal_runs_in_the_requested_working_directory(self):
+        target = self.workspace / "nested %DEMO% folder's worktree"
+        target.mkdir()
+        command = python_command("from pathlib import Path; print(Path.cwd().name)")
+        output, _ = terminal_runner.run_terminal_cmd_tool({"command": command, "cwd": target.name})
+        self.assertIn("Exit Code: 0", output)
+        self.assertIn(target.name, output)
+        again, _ = terminal_runner.run_terminal_cmd_tool({"command": command})
+        self.assertIn(target.name, again)
+
+    def test_invalid_working_directory_does_not_run_the_command(self):
+        command = python_command("from pathlib import Path; Path('must-not-run.txt').touch()")
+        output, _ = terminal_runner.run_terminal_cmd_tool({"command": command, "cwd": "no-such-worktree"})
+        self.assertIn("Error:", output)
+        self.assertFalse((self.workspace / "must-not-run.txt").exists())
+
+    @unittest.skipIf(os.name == "nt", "The Docker Bash shell supports detached background jobs.")
+    def test_detached_directory_does_not_relocate_the_parent_shell(self):
+        target = self.workspace / "detached workspace"
+        target.mkdir()
+        command = python_command(
+            "from pathlib import Path; Path('marker').touch(); print('finished'); raise SystemExit(7)"
+        )
+        self.assert_finishes(self.shell.run(command, cwd=target, blocking=False))
+        self.assertTrue((target / "marker").exists())
+        self.assertEqual(self.shell.run("pwd").output.strip(), str(self.workspace))

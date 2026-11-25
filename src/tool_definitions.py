@@ -340,6 +340,10 @@ NATIVE_TOOL_DEFINITIONS = [
                         "type": "boolean",
                         "description": "If false, start a background command and return its PID, log path, and exit status path. Default is true."
                     },
+                    "cwd": {
+                        "type": "string",
+                        "description": "Optional directory inside the workspace. A relative path starts at the workspace root. For foreground commands this becomes the terminal's current directory.",
+                    },
                     "new_terminal": {
                         "type": "boolean",
                         "description": "If true, restart the persistent shell before running the command. Use when the terminal is unresponsive or you need a clean environment. Default is false."

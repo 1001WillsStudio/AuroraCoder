@@ -37,6 +37,7 @@ from .terminal_jobs import job_paths, remember_terminal_job
 from .terminal_output import read_terminal_output
 
 logger = logging.getLogger(__name__)
+_CMD_PERCENT_ENV = "_AURORA_LITERAL_PERCENT"
 
 # ---------------------------------------------------------------------------
 # Workspace
@@ -153,7 +154,8 @@ class PersistentShell:
     def _start(self) -> None:
         self.stop()
 
-        shell_cmd = ["cmd.exe", "/D"] if sys.platform == "win32" else ["bash", "-i"]
+        shell_cmd = ["cmd.exe", "/D", "/V:OFF"] if sys.platform == "win32" else ["bash", "-i"]
+        env = {**os.environ, _CMD_PERCENT_ENV: "%"} if sys.platform == "win32" else None
         cwd = str(get_workspace())
 
         try:
@@ -164,6 +166,7 @@ class PersistentShell:
                 stderr=subprocess.STDOUT,
                 text=True,
                 cwd=cwd,
+                env=env,
                 shell=False,
                 errors="replace",
                 bufsize=1,
@@ -211,17 +214,24 @@ class PersistentShell:
         timeout: int = 120,
         blocking: bool = True,
         output_limit: int = TERMINAL_MAX_OUTPUT_CHARS,
+        cwd: Path | None = None,
     ) -> ShellResult:
         """Run once and return a completion code or the live command's output and status files."""
         with self._lock:
-            return self._run(command, timeout, blocking, output_limit)
+            return self._run(command, timeout, blocking, output_limit, cwd)
 
-    def _run(self, command: str, timeout: int, blocking: bool, output_limit: int) -> ShellResult:
+    def _run(self, command: str, timeout: int, blocking: bool, output_limit: int, cwd: Path | None) -> ShellResult:
         proc = self._proc
         if proc is None or proc.poll() is not None:
             return ShellResult("error", detail="Persistent shell not running.")
 
         command = self._strip_background_syntax(command)
+        if cwd is not None:
+            if sys.platform == "win32":
+                path = str(cwd).replace("%", f"%{_CMD_PERCENT_ENV}%")
+                command = f'cd /d "{path}" && (\n{command}\n)'
+            else:
+                command = f"builtin cd -- {self._shell_quote(str(cwd))} && {{\n{command}\n}}"
         cmd_id = uuid.uuid4().hex
         boundary = f"END_{cmd_id}"
         exit_var = f"_aurora_exit_{cmd_id}"
