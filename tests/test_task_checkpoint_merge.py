@@ -54,15 +54,16 @@ def test_actual_user_withdrawal_and_scope_replacement_change_protected_criteria(
     task = db.tasks.start(cid, TaskStart(objective="Verify", items=["Linux", "Windows"]),
                           "/workspace", "Verify Linux and Windows.", TaskResume())
     removal = [{"criterion": "Windows", "subject": "Windows"}]
-    with pytest.raises(TaskConflict):
-        db.tasks.reopen(task, "Continue", TaskResume(), None,
-                        criteria_change=TaskCriteriaChange(quote="Continue", withdraw=removal))
-    with pytest.raises(TaskConflict):
-        db.tasks.reopen(task, "Never drop Windows.", TaskResume(), None,
-                        criteria_change=TaskCriteriaChange(quote="Never drop Windows.", withdraw=removal))
-    with pytest.raises(TaskConflict):
-        db.tasks.reopen(task, "Skip Linux, keep Windows.", TaskResume(), None,
-                        criteria_change=TaskCriteriaChange(quote="Skip Linux, keep Windows.", withdraw=removal))
+    for source, quote in [
+        ("Continue", "Continue"),
+        ("Never drop Windows.", "drop Windows"),
+        ("Skip Linux, keep Windows.", "Skip Linux, keep Windows."),
+        ("No need to change the Windows check.", "No need to change the Windows check."),
+        ("Remind me to say ‘skip Windows’.", "skip Windows"),
+    ]:
+        with pytest.raises(TaskConflict, match="explicit withdrawal"):
+            db.tasks.reopen(task, source, TaskResume(), None,
+                            criteria_change=TaskCriteriaChange(quote=quote, withdraw=removal))
     directive = "Windows 不用验收了，只跑 Linux。"
     task = db.tasks.reopen(task, directive, TaskResume(), TaskStart(objective="Verify", items=["Linux"]),
                            criteria_change=TaskCriteriaChange(quote=directive, withdraw=removal))

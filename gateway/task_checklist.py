@@ -17,14 +17,18 @@ from gateway.task_instruction_display import strip_task_instruction
 logger = logging.getLogger(__name__)
 _SCOPE_LIMIT = 6000
 _OMITTED = "\n\n[Middle of the user text omitted from this excerpt.]\n\n"
-_WAIVER = re.compile(r"\b(?:skip|drop|remove|waive|omit|cancel|no longer|not required|no need)\b|跳过|撤回|取消|免除|无需|不用|不必|不再", re.I)
 _CLAUSE_BOUNDARY = re.compile(r"[.,;!?，。；！？\n]+")
 _NEGATED_WAIVER = re.compile(
     r"\b(?:don't|do not|never|must not|should not|cannot)\b[^.,;\n]{0,30}"
     r"\b(?:skip|drop|remove|waive|omit|cancel|replace|change)\b"
     r"|(?:不要|不能|不得|禁止|不允许).{0,8}(?:跳过|撤回|取消|免除|更改|替换)", re.I,
 )
-_REPLACEMENT = re.compile(r"\b(?:replace|change|switch|redefine)\b[^.?!\n]{0,60}\b(?:criteria|requirements|objective|goal|scope)\b|(?:验收|目标|范围)[^。！？\n]{0,16}(?:改为|变更为|替换|重新定义)|(?:替换|修改|更改|重设)(?:原有|原先|原来的)?(?:验收|目标|范围)", re.I)
+_REPLACEMENT = re.compile(
+    r"(?:please\s+)?(?:replace|change|switch|redefine)\s+(?:(?:the|current|original|previous|acceptance)\s+)*"
+    r"(?:criteria|requirements|objective|goal|scope)\b"
+    r"|(?:请)?(?:(?:验收|目标|范围).{0,16}(?:改为|变更为|替换|重新定义)"
+    r"|(?:替换|修改|更改|重设)(?:原有|原先|原来的)?(?:验收|目标|范围))", re.I,
+)
 
 
 def _scope_excerpt(text: str, limit: int = _SCOPE_LIMIT) -> str:
@@ -33,6 +37,25 @@ def _scope_excerpt(text: str, limit: int = _SCOPE_LIMIT) -> str:
     available = limit - len(_OMITTED)
     lead = available // 2
     return text[:lead] + _OMITTED + text[-(available - lead):]
+
+
+def _directly_waives(clause: str, subject: str) -> bool:
+    english_check = r"(?:check|verify|test|validate|run)"
+    target = rf"(?:the\s+)?(?:{english_check}\s+)?{subject}(?:\s+(?:checks?|tests?|verification))?"
+    action = r"(?:skip|drop|remove|waive|omit|cancel)"
+    english = (
+        rf"(?:(?:please|just)\s+)*(?:{action}\s+{target}"
+        rf"|(?:there is )?no need to\s+{english_check}\s+{target}"
+        rf"|{target}\s+(?:is |are )?(?:no longer required|not required|optional)(?: anymore)?)"
+        r"(?:\s+(?:now|anymore|for this task))?"
+    )
+    check = r"(?:再)?(?:验收|验证|测试|检查|运行|跑)"
+    waiver = r"(?:不用|无需|不必|不再需要|不再)"
+    chinese = (
+        rf"请?\s*(?:(?:跳过|撤回|取消|免除)\s*{subject}(?:的)?(?:\s*{check})?"
+        rf"|{waiver}\s*{check}\s*{subject}|{subject}(?:的验收)?\s*{waiver}\s*{check}?)(?:了)?"
+    )
+    return re.fullmatch(english, clause, re.I) is not None or re.fullmatch(chinese, clause, re.I) is not None
 
 
 class TaskConflict(ValueError):
@@ -209,9 +232,12 @@ class TaskChecklistStore:
         source = strip_attached_files(strip_task_instruction(entry.content))
         if not entry.applied_to or change.quote not in source:
             raise TaskConflict("Quote the actual user direction after it has reached this task.")
+        # A short substring of a negated sentence is still part of that sentence.
+        clauses = [clause.strip() for clause in _CLAUSE_BOUNDARY.split(source)
+                   if clause.strip() and clause.strip() in change.quote]
         if _NEGATED_WAIVER.search(change.quote):
             raise TaskConflict("The quoted direction prohibits removing or replacing requirements.")
-        if change.replace and not _REPLACEMENT.search(change.quote):
+        if change.replace and not any(_REPLACEMENT.match(clause) for clause in clauses):
             raise TaskConflict("Replacing the criteria requires an explicit user direction changing the scope.")
         if change.objective and (not change.replace or change.objective not in change.quote):
             raise TaskConflict("Quote the new objective verbatim in an explicit scope replacement.")
@@ -221,8 +247,7 @@ class TaskChecklistStore:
                 subject = rf"\b{subject}\b"
             if (removal.criterion not in task.criteria
                     or not re.search(subject, removal.criterion, re.I)
-                    or not any(_WAIVER.search(clause) and re.search(subject, clause, re.I)
-                               for clause in _CLAUSE_BOUNDARY.split(change.quote))):
+                    or not any(_directly_waives(clause, subject) for clause in clauses)):
                 raise TaskConflict("Quote the explicit withdrawal of each removed user criterion.")
         if any(label not in change.quote for label in change.add):
             raise TaskConflict("Quote the new acceptance conditions verbatim in the saved user direction.")
