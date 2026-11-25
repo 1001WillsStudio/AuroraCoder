@@ -223,6 +223,8 @@ async def proxy_chat(
 async def _start_chat_turn(request: Request, body: dict, t0: float, t1: float, *, turn_id: str | None):
     conversation_id = body["conversation_id"]
     cid_tag = conversation_id[:8]
+    if conversation_id not in active_streams:
+        store.recover_turn_write(conversation_id)
     if body.pop("retry_receipt", False) is True:
         if not body.get("retry") or not turn_id:
             raise HTTPException(status_code=400, detail="Retrying a turn requires its original receipt.")
@@ -350,7 +352,7 @@ async def _start_chat_turn(request: Request, body: dict, t0: float, t1: float, *
     if message:
         accepted.append({"role": "user", "content": message})
     if accepted:
-        store.save_messages(conversation_id, accepted)
+        store.save_messages(conversation_id, accepted, pending_turn_id=turn_id if message else None)
     if message:
         store.seed_frontend_user_message(conversation_id, message)
     store.update_status(conversation_id, "running", accepted_turn_id=turn_id)
@@ -425,6 +427,7 @@ def _resume_conversation_stream(conversation_id: str, request: Request, *, turn_
         )
 
     # No active stream — serve the stored conversation as a done event
+    store.recover_turn_write(conversation_id)
     try:
         conv = store.get_conversation(conversation_id)
     except KeyError:
@@ -1124,6 +1127,8 @@ async def list_conversations(
 async def get_conversation(conversation_id: str):
     """Return full conversation: metadata + messages + frontend_messages."""
     try:
+        if conversation_id not in active_streams:
+            store.recover_turn_write(conversation_id)
         conv = store.get_conversation(conversation_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Conversation not found")

@@ -50,6 +50,8 @@ TERMINAL_STATUSES = frozenset({
     "completed", "error", "max_iterations_reached", "interrupted",
 })
 GATEWAY_RESTARTED = "gateway_restarted"
+TURN_WRITE_INTERRUPTED = "turn_write_interrupted"
+_PENDING_TURN_ID = "pending_turn_id"
 
 TITLE_MAX_LENGTH = 100
 _CONVERSATION_ID = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}\Z")
@@ -144,7 +146,8 @@ def ensure_error_frontend_message(
 def frontend_messages_for_status(frontend_messages: List[Dict], conversation: dict) -> List[Dict]:
     if conversation.get("status") != "error":
         return frontend_messages
-    if conversation.get("recovery_reason") != GATEWAY_RESTARTED:
+    recovery_reason = conversation.get("recovery_reason")
+    if recovery_reason not in {GATEWAY_RESTARTED, TURN_WRITE_INTERRUPTED}:
         return ensure_error_frontend_message(frontend_messages)
 
     visible = frontend_messages or sanitize_frontend_messages([
@@ -152,10 +155,12 @@ def frontend_messages_for_status(frontend_messages: List[Dict], conversation: di
         for msg in conversation.get("messages", [])
         if isinstance(msg, dict) and msg.get("role") in ("user", "assistant")
     ])
-    return ensure_error_frontend_message(visible, {
-        "message": "AuroraCoder restarted before this turn finished. Use Try Again to continue the same conversation.",
-        "type": "GatewayRestarted",
-    })
+    detail = (
+        "AuroraCoder stopped while saving this turn. Use Try Again to continue the same conversation."
+        if recovery_reason == TURN_WRITE_INTERRUPTED
+        else "AuroraCoder restarted before this turn finished. Use Try Again to continue the same conversation."
+    )
+    return ensure_error_frontend_message(visible, {"message": detail, "type": recovery_reason})
 
 
 def _extract_title(messages: List[Dict]) -> str:
@@ -487,7 +492,7 @@ class ConversationStore:
         logger.info(f"[store] Created conversation {cid[:8]}... (type={conv_type})")
         return cid
 
-    def save_messages(self, conversation_id: str, messages: List[Dict]) -> None:
+    def save_messages(self, conversation_id: str, messages: List[Dict], *, pending_turn_id: str | None = None) -> None:
         """
         Full-replace the stored message list for a conversation.
 
@@ -509,8 +514,14 @@ class ConversationStore:
         """
         now = datetime.now(timezone.utc).isoformat()
         for msg in messages:
-            if isinstance(msg, dict) and not msg.get("ts"):
-                msg["ts"] = now
+            if isinstance(msg, dict):
+                msg.pop(_PENDING_TURN_ID, None)
+                if not msg.get("ts"):
+                    msg["ts"] = now
+        if pending_turn_id:
+            # Keep the receipt beside the new raw user message until the gateway
+            # commits admission in the index. No provider call has started yet.
+            messages = [*messages[:-1], {**messages[-1], _PENDING_TURN_ID: pending_turn_id}]
 
         with self._lock:
             meta = self._index.get(conversation_id)
@@ -530,13 +541,16 @@ class ConversationStore:
 
     _KEEP_ACCEPTED_TURN = object()
 
-    def update_status(self, conversation_id: str, status: str, *, accepted_turn_id=_KEEP_ACCEPTED_TURN) -> None:
+    def update_status(
+        self, conversation_id: str, status: str, *, accepted_turn_id=_KEEP_ACCEPTED_TURN,
+        recovery_reason: str | None = None,
+    ) -> None:
         """Update status and optionally replace the current turn receipt."""
         with self._lock:
             meta = self._index.get(conversation_id)
             if meta is None:
                 raise KeyError(f"Conversation {conversation_id} not found")
-            meta["status"] = status
+            meta = {**meta, "status": status}
             if accepted_turn_id is not self._KEEP_ACCEPTED_TURN:
                 receipts = meta.get("accepted_turn_ids", [])
                 for receipt in (meta.get("accepted_turn_id"), accepted_turn_id):
@@ -548,10 +562,30 @@ class ConversationStore:
                 meta.pop("accepted_turn_id", None)
             elif accepted_turn_id is not self._KEEP_ACCEPTED_TURN:
                 meta["accepted_turn_id"] = accepted_turn_id
-            if status != "error":
+            if recovery_reason:
+                meta["recovery_reason"] = recovery_reason
+            elif status != "error":
                 meta.pop("recovery_reason", None)
             meta["updated_at"] = datetime.now(timezone.utc).isoformat()
-            self._save_index()
+            updated = {**self._index, conversation_id: meta}
+            _atomic_write_json(self._index_path(), updated)
+            self._index = updated
+
+    def recover_turn_write(self, conversation_id: str) -> None:
+        """Recover a user message written just before the gateway could record admission."""
+        raw_users = [
+            message for message in self._read_messages(conversation_id)
+            if isinstance(message, dict) and message.get("role") == "user"
+        ]
+        receipt = raw_users[-1].get(_PENDING_TURN_ID) if raw_users else None
+        if not receipt or self.turn_state(conversation_id, receipt) != "unaccepted":
+            return
+        visible_users = [m.get("content", "") for m in self.get_frontend_messages(conversation_id)
+                         if m.get("role") == "user"]
+        preceding = [user_message_for_frontend(m.get("content"))["content"] for m in raw_users[:-1]]
+        if visible_users == preceding:
+            self.seed_frontend_user_message(conversation_id, raw_users[-1]["content"])
+        self.update_status(conversation_id, "error", accepted_turn_id=receipt, recovery_reason=TURN_WRITE_INTERRUPTED)
 
     def turn_state(self, conversation_id: str, turn_id: str) -> str:
         """Distinguish an unaccepted turn from the current or a superseded one."""
@@ -620,6 +654,13 @@ class ConversationStore:
 
     def get_messages(self, conversation_id: str) -> List[Dict]:
         """Return the stored message list (for feeding back to the model)."""
+        messages = self._read_messages(conversation_id)
+        for message in messages:
+            if isinstance(message, dict):
+                message.pop(_PENDING_TURN_ID, None)
+        return messages
+
+    def _read_messages(self, conversation_id: str) -> List[Dict]:
         path = self._messages_path(conversation_id)
         if not path.exists():
             return []
