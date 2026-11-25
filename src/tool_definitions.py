@@ -23,7 +23,7 @@ from .code_tools.file_operations import (
     execute_edit_file_normal,
 )
 # from .code_tools.grep_search import grep_search_tool  # COMMENTED OUT — agent can use terminal grep
-from .code_tools.terminal_runner import run_terminal_cmd_tool
+from .code_tools.terminal_runner import run_terminal_cmd_tool, terminal_job_status_tool
 from .core_tools.tool_store_client import (
     tool_store_tool,
     get_primary_tool_schemas,
@@ -322,9 +322,8 @@ NATIVE_TOOL_DEFINITIONS = [
                 "Run commands in a persistent shell that starts in /workspace and preserves its "
                 "working directory and environment. Completed commands report their actual exit code, "
                 "including commands that print nothing. Use blocking=false for long-running commands. "
-                "A detached command or foreground timeout reports running, the output file, and an "
-                "exit status file written on completion. Read those files to check the original "
-                "command's result."
+                "A detached command or foreground timeout reports its Job ID and output paths. "
+                "Keep the Job ID in your checkpoint and use terminal_job_status to follow the original command."
             ),
             "parameters": {
                 "type": "object",
@@ -349,6 +348,23 @@ NATIVE_TOOL_DEFINITIONS = [
                 "required": ["command"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "terminal_job_status",
+            "description": "Inspect a terminal job without running it again. Returns recent output "
+                           "and the exit code when the command has completed. Use the previously returned Job ID.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "job_id": {"type": "string", "description": "Job ID from run_terminal_command."},
+                    "wait_seconds": {"type": "integer", "minimum": 0, "maximum": 30,
+                                     "description": "Wait up to this long for completion. Default is 0."},
+                },
+                "required": ["job_id"],
+            },
+        },
     },
     {
         "type": "function",
@@ -737,6 +753,7 @@ TOOL_FUNCTION_MAP = {
     # "search_files": file_search_tool,  # COMMENTED OUT — agent can use terminal: find / fd
     # "grep_search": grep_search_tool,  # COMMENTED OUT — agent can use terminal grep
     "run_terminal_command": run_terminal_cmd_tool,
+    "terminal_job_status": terminal_job_status_tool,
     "tool_store": tool_store_tool,
     "subagent": run_subagent,
     "continue_as_new_chat": continue_as_new_chat,

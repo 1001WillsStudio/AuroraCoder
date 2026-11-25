@@ -26,7 +26,6 @@ import re
 import subprocess
 import sys
 import time
-import tempfile
 import threading
 import uuid
 from dataclasses import dataclass
@@ -34,6 +33,7 @@ from pathlib import Path
 from typing import Literal, Optional
 
 from ..config import WORKSPACE_DIR, DEFAULT_BASE_ENV_NAME
+from .terminal_jobs import job_paths, remember_terminal_job
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +123,7 @@ class ShellResult:
     detail: str = ""
     output_path: Path | None = None
     status_path: Path | None = None
+    job_id: str | None = None
 
 
 class PersistentShell:
@@ -223,12 +224,9 @@ class PersistentShell:
         boundary = f"END_{cmd_id}"
         exit_var = f"_aurora_exit_{cmd_id}"
         background = not blocking and sys.platform != "win32"
-        directory = Path(tempfile.gettempdir())
+        output_path, status_path = job_paths(cmd_id, background)
         if background:
-            directory = directory / "agent_bg_logs"
-            directory.mkdir(exist_ok=True)
-        output_path = directory / (f"bg_{cmd_id}.log" if background else f"shell_out_{cmd_id}.txt")
-        status_path = output_path.with_suffix(".status")
+            output_path.parent.mkdir(exist_ok=True)
         quote = self._shell_quote
 
         if background:
@@ -299,6 +297,7 @@ class PersistentShell:
                     f"Terminal PID: {proc.pid}"
                 ),
                 output_path=output_path, status_path=status_path,
+                job_id=None if background else remember_terminal_job(cmd_id, False, proc.pid),
             )
 
         if not numbers:
@@ -306,7 +305,8 @@ class PersistentShell:
                                output_path=output_path)
         if background:
             return ShellResult("running", detail=f"Background PID: {numbers[0]}",
-                               output_path=output_path, status_path=status_path)
+                               output_path=output_path, status_path=status_path,
+                               job_id=remember_terminal_job(cmd_id, True, numbers[0]))
 
         try:
             output = output_path.read_text(encoding="utf-8", errors="replace")

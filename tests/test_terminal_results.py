@@ -26,7 +26,7 @@ class TerminalResultsTest(unittest.TestCase):
         self.addCleanup(stack.close)
         self.workspace = Path(stack.enter_context(tempfile.TemporaryDirectory()))
         stack.enter_context(patch.object(sandbox, "WORKSPACE", self.workspace))
-        stack.enter_context(patch.object(sandbox.tempfile, "gettempdir", return_value=str(self.workspace)))
+        stack.enter_context(patch.object(tempfile, "gettempdir", return_value=str(self.workspace)))
         stack.enter_context(patch.dict(os.environ, {"AURORACODER_DOCKER": "1"}))
         self.shell = sandbox.PersistentShell()
         stack.enter_context(patch.object(terminal_sessions, "shell", self.shell))

@@ -8,6 +8,7 @@ from typing import Dict, Any, Optional, List, Tuple
 import json
 
 from ..code_sandbox import WORKSPACE
+from ..code_sandbox.terminal_jobs import terminal_job_status
 from ..code_sandbox.terminal_sessions import use_terminal
 from ..config import (
     TERMINAL_MAX_OUTPUT_CHARS,
@@ -81,6 +82,8 @@ class TerminalRunner:
                 output.append("[NOTE: Command produced no output.]")
             if result.detail:
                 output.append(result.detail)
+            if result.job_id:
+                output.append(f"Job ID: {result.job_id}")
             if result.output_path:
                 output.append(f"Output file: {result.output_path}")
             if result.status_path:
@@ -173,3 +176,7 @@ def run_terminal_cmd_tool(
     )
 
     return result, arguments
+
+
+def terminal_job_status_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    return terminal_job_status(arguments.get("job_id"), arguments.get("wait_seconds", 0)), arguments
