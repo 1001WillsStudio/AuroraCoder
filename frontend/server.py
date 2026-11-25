@@ -11,8 +11,9 @@ file display, settings, providers, workspace management.
 from pathlib import Path
 
 import httpx
+from anyio import CancelScope
 from fastapi import FastAPI, Request
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 GATEWAY_URL = "http://localhost:8081"
@@ -42,9 +43,21 @@ async def _proxy(request: Request, target_path: str):
         if k.lower() not in ("host", "content-length")
     }
 
-    client = httpx.AsyncClient(timeout=httpx.Timeout(None))
-    req = client.build_request(request.method, url, content=body, headers=req_headers)
-    resp = await client.send(req, stream=True)
+    # SSE can be silent while a tool runs, but connection and request-body
+    # setup must not hold the desktop open when the local gateway is down.
+    timeout = httpx.Timeout(connect=5, read=None, write=30, pool=5)
+    client = httpx.AsyncClient(timeout=timeout, trust_env=False)
+    try:
+        req = client.build_request(request.method, url, content=body, headers=req_headers)
+        resp = await client.send(req, stream=True)
+    except BaseException as error:
+        with CancelScope(shield=True):
+            await client.aclose()
+        if isinstance(error, httpx.TimeoutException):
+            return JSONResponse({"detail": "AuroraCoder gateway did not respond in time."}, status_code=504)
+        if isinstance(error, httpx.RequestError):
+            return JSONResponse({"detail": "AuroraCoder gateway is unavailable."}, status_code=502)
+        raise
 
     # Strip hop-by-hop headers so SSE streaming works
     resp_headers = {
@@ -57,8 +70,11 @@ async def _proxy(request: Request, target_path: str):
             async for chunk in resp.aiter_bytes():
                 yield chunk
         finally:
-            await resp.aclose()
-            await client.aclose()
+            with CancelScope(shield=True):
+                try:
+                    await resp.aclose()
+                finally:
+                    await client.aclose()
 
     return StreamingResponse(
         stream_body(),
