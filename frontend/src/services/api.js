@@ -302,8 +302,8 @@ export async function listConversations(filters = {}) {
  * Get a full conversation (metadata + messages).
  * @param {string} conversationId
  */
-export async function getConversation(conversationId) {
-  const response = await fetch(`${API_BASE}/conversations/${conversationId}`, { headers: _headers() })
+export async function getConversation(conversationId, signal) {
+  const response = await fetch(`${API_BASE}/conversations/${conversationId}`, { headers: _headers(), signal })
   if (!response.ok) {
     throw new Error(`HTTP error! status: ${response.status}`)
   }

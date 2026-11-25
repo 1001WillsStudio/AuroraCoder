@@ -19,6 +19,7 @@ export function createStreamCallbacks({
   onStreamEnd = null,
   onInterruptFired = null,
   ensureAssistantTail = false,
+  isCurrentView = () => true,
 }) {
   let _firstMessage = true
   const onMessages = (frontendMessages, _status, data) => {
@@ -38,13 +39,17 @@ export function createStreamCallbacks({
         pendingInterruptRef.current = null
         onInterruptFired?.()
         if (abortControllerRef?.current) abortControllerRef.current.abort()
-        setTimeout(() => handleSend?.(data.raw_messages, msg, { attachedFiles: files }), 50)
+        setTimeout(() => {
+          if (isCurrentView()) handleSend?.(data.raw_messages, msg, { attachedFiles: files })
+        }, 50)
       }
     }
     if (data?.conversation_id) setConversationId(data.conversation_id)
     if (data?.new_conversation_id && !continuationNavigatedRef?.current.has(data.new_conversation_id)) {
       continuationNavigatedRef?.current.add(data.new_conversation_id)
-      setTimeout(() => handleLoadConversation?.(data.new_conversation_id), 500)
+      setTimeout(() => {
+        if (isCurrentView()) handleLoadConversation?.(data.new_conversation_id)
+      }, 500)
     }
     // Trigger a diff refresh on every full-state messages event so the
     // code panel always reflects the latest file state after a round.
@@ -129,12 +134,15 @@ export function createStreamCallbacks({
    });
  };
 
+  const forCurrentView = (callback) => (...args) => {
+    if (isCurrentView()) callback(...args)
+  }
   return {
-    onMessages: overrides.onMessages || onMessages,
-    onDone: overrides.onDone || onDone,
-    onError: overrides.onError || onError,
-    onSubagentEvent: overrides.onSubagentEvent || onSubagentEvent,
-    onDelta: overrides.onDelta || onDelta,
-    onConversationId: overrides.onConversationId || ((id) => { if (id) setConversationId(id) }),
+    onMessages: forCurrentView(overrides.onMessages || onMessages),
+    onDone: forCurrentView(overrides.onDone || onDone),
+    onError: forCurrentView(overrides.onError || onError),
+    onSubagentEvent: forCurrentView(overrides.onSubagentEvent || onSubagentEvent),
+    onDelta: forCurrentView(overrides.onDelta || onDelta),
+    onConversationId: forCurrentView(overrides.onConversationId || ((id) => { if (id) setConversationId(id) })),
   };
 }
