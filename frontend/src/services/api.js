@@ -181,6 +181,7 @@ export async function streamChat(message, conversationId, callbacks, signal, exi
     message,
     conversation_id: conversationId || null,
     messages: existingMessages,
+    prefer_saved_history: true,
     provider: provider,
     provider_id: options.provider_id || null,
     model: options.model || null,

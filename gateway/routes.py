@@ -265,6 +265,7 @@ async def _start_chat_turn(request: Request, body: dict, t0: float, t1: float):
 
     # Retry: keep the current transcript (orphan tool calls are filled in
     # below) and do not append another user message.
+    prefer_saved_history = body.pop("prefer_saved_history", False) is True
     retry = body.pop("retry", False)
     if retry:
         prior = store.get_messages(conversation_id) or body.get("messages")
@@ -273,6 +274,12 @@ async def _start_chat_turn(request: Request, body: dict, t0: float, t1: float):
             frontend_messages=store.get_frontend_messages(conversation_id),
         )
         body["message"] = None
+    elif prefer_saved_history:
+        # A desktop snapshot can be stale after streaming, reconnection or
+        # another tab's turn. A new fork has no saved history yet.
+        saved = store.get_messages(conversation_id)
+        if saved:
+            body["messages"] = saved
 
     # ── Fix orphan tool calls before forwarding to the backend ────────────
     # If the previous stream was cancelled mid-tool-execution, the
