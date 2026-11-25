@@ -27,7 +27,7 @@ from fastapi.staticfiles import StaticFiles
 
 from pydantic import BaseModel
 
-from gateway.conversation_store import store
+from gateway.conversation_store import InvalidConversationId, store
 from gateway.provider_registry import sync_tool_env_vars
 from gateway.settings_store import configure_github_auth
 
@@ -49,6 +49,11 @@ app = FastAPI(
     description="SSE proxy + conversation storage",
     version="1.0.0",
 )
+
+
+@app.exception_handler(InvalidConversationId)
+async def _invalid_conversation_id(_request: Request, exc: InvalidConversationId):
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
 @app.on_event("startup")

@@ -35,7 +35,7 @@ try:
 except ImportError:
     ConfigManager = None
 
-from gateway.conversation_store import store, ensure_error_frontend_message, messages_for_retry
+from gateway.conversation_store import store, ensure_error_frontend_message, messages_for_retry, require_conversation_id
 from gateway.settings_store import (
     get_all_settings,
     update_settings as _store_update_settings,
@@ -185,13 +185,14 @@ async def proxy_chat(request: Request):
     body = await request.json()
     t1 = time.perf_counter()
     body_size = len(json.dumps(body)) if body else 0
-    cid_tag = (body.get('conversation_id') or 'new')[:8]
+    requested_id = body.get("conversation_id")
+    conversation_id = str(uuid.uuid4()) if requested_id in (None, "") else require_conversation_id(requested_id)
+    cid_tag = conversation_id[:8] if requested_id else "new"
     logger.info(f"[proxy] [{cid_tag}...] json_parse={t1-t0:.3f}s body_size={body_size}")
 
     # ── Inject max_iterations from settings if not already set ───
     if "max_iterations" not in body:
         body["max_iterations"] = get_max_iterations()
-    conversation_id = body.get("conversation_id") or str(uuid.uuid4())
     body["conversation_id"] = conversation_id
 
     # Point the agent at files the user attached this turn.  Invalid or

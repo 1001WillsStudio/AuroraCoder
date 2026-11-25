@@ -10,6 +10,7 @@ Thread-safe: all public methods acquire self._lock before mutating state.
 
 import json
 import os
+import re
 import uuid
 import threading
 import tempfile
@@ -50,6 +51,22 @@ TERMINAL_STATUSES = frozenset({
 })
 
 TITLE_MAX_LENGTH = 100
+_CONVERSATION_ID = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}\Z")
+_WINDOWS_DEVICE = re.compile(r"(?:con|prn|aux|nul|com[1-9]|lpt[1-9])\Z")
+
+
+class InvalidConversationId(ValueError):
+    """An ID that cannot be used as an unambiguous transcript filename."""
+
+
+def require_conversation_id(value: str) -> str:
+    if not isinstance(value, str) or not _CONVERSATION_ID.fullmatch(value):
+        raise InvalidConversationId("Invalid conversation ID")
+    folded = value.lower()
+    if (folded == "index" or folded.startswith("index.corrupt-") or folded.endswith(".frontend")
+            or _WINDOWS_DEVICE.fullmatch(folded.split(".", 1)[0])):
+        raise InvalidConversationId("Reserved conversation ID")
+    return value
 
 
 def messages_for_retry(
@@ -209,10 +226,10 @@ class ConversationStore:
         return self._dir / "index.json"
 
     def _messages_path(self, conversation_id: str) -> Path:
-        return self._dir / f"{conversation_id}.json"
+        return self._dir / f"{require_conversation_id(conversation_id)}.json"
 
     def _frontend_messages_path(self, conversation_id: str) -> Path:
-        return self._dir / f"{conversation_id}.frontend.json"
+        return self._dir / f"{require_conversation_id(conversation_id)}.frontend.json"
 
     def _load_index(self) -> None:
         path = self._index_path()
@@ -292,7 +309,10 @@ class ConversationStore:
                 cids.add(name[: -len(".json")])
 
         for cid in cids:
-            meta = self._reconstruct_meta(cid)
+            try:
+                meta = self._reconstruct_meta(cid)
+            except InvalidConversationId:
+                continue
             if meta is not None:
                 index[cid] = meta
         return index
@@ -400,12 +420,14 @@ class ConversationStore:
         extracted from the actual message list by ``save_messages`` or
         ``save_frontend_messages``.
         """
-        cid = conversation_id or str(uuid.uuid4())
+        cid = str(uuid.uuid4()) if conversation_id in (None, "") else require_conversation_id(conversation_id)
         now = datetime.now(timezone.utc).isoformat()
 
         with self._lock:
             if cid in self._index:
                 return cid
+            if any(key.lower() == cid.lower() for key in self._index):
+                raise InvalidConversationId("Conversation ID differs only in letter case")
 
             self._index[cid] = {
                 "id": cid,
@@ -654,7 +676,11 @@ class ConversationStore:
             self._save_index()
 
         for cid in deleted_ids:
-            msg_path = self._messages_path(cid)
+            try:
+                msg_path = self._messages_path(cid)
+            except InvalidConversationId:
+                # An old invalid entry can be deleted from the index without following its path.
+                continue
             if msg_path.exists():
                 msg_path.unlink()
             fe_path = self._frontend_messages_path(cid)
