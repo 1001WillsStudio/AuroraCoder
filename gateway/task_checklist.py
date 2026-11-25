@@ -17,7 +17,9 @@ from gateway.task_instruction_display import strip_task_instruction
 logger = logging.getLogger(__name__)
 _SCOPE_LIMIT = 6000
 _OMITTED = "\n\n[Middle of the user text omitted from this excerpt.]\n\n"
+_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?。！？\n])")
 _CLAUSE_BOUNDARY = re.compile(r"[.,;!?，。；！？\n]+")
+_CONDITIONAL = re.compile(r"(?:please\s+)?(?:if|unless|when|assuming)\b|如果|若|除非", re.I)
 _NEGATED_WAIVER = re.compile(
     r"\b(?:don't|do not|never|must not|should not|cannot)\b[^.,;\n]{0,30}"
     r"\b(?:skip|drop|remove|waive|omit|cancel|replace|change)\b"
@@ -25,7 +27,7 @@ _NEGATED_WAIVER = re.compile(
 )
 _REPLACEMENT = re.compile(
     r"(?:please\s+)?(?:replace|change|switch|redefine)\s+(?:(?:the|current|original|previous|acceptance)\s+)*"
-    r"(?:criteria|requirements|objective|goal|scope)\b"
+    r"(?:criteria|requirements|objective|goal|scope)\s+(?:with|to)\s+\S"
     r"|(?:请)?(?:(?:验收|目标|范围).{0,16}(?:改为|变更为|替换|重新定义)"
     r"|(?:替换|修改|更改|重设)(?:原有|原先|原来的)?(?:验收|目标|范围))", re.I,
 )
@@ -252,8 +254,13 @@ class TaskChecklistStore:
         if not entry.applied_to or change.quote not in source:
             raise TaskConflict("Quote the actual user direction after it has reached this task.")
         # A short substring of a negated sentence is still part of that sentence.
-        clauses = [clause.strip() for clause in _CLAUSE_BOUNDARY.split(source)
-                   if clause.strip() and clause.strip() in change.quote]
+        clauses = []
+        for sentence in _SENTENCE_BOUNDARY.split(source):
+            sentence = sentence.strip()
+            if sentence.endswith(("?", "？")) or _CONDITIONAL.match(sentence):
+                continue
+            clauses.extend(clause for part in _CLAUSE_BOUNDARY.split(sentence)
+                           if (clause := part.strip()) and clause in change.quote)
         if _NEGATED_WAIVER.search(change.quote):
             raise TaskConflict("The quoted direction prohibits removing or replacing requirements.")
         if change.replace and not any(_REPLACEMENT.match(clause) for clause in clauses):

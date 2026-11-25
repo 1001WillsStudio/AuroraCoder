@@ -60,6 +60,8 @@ def test_actual_user_withdrawal_and_scope_replacement_change_protected_criteria(
         ("Skip Linux, keep Windows.", "Skip Linux, keep Windows."),
         ("No need to change the Windows check.", "No need to change the Windows check."),
         ("Remind me to say ‘skip Windows’.", "skip Windows"),
+        ("Skip Windows?", "Skip Windows"),
+        ("If Linux passes, skip Windows.", "skip Windows"),
     ]:
         with pytest.raises(TaskConflict, match="explicit withdrawal"):
             db.tasks.reopen(task, source, TaskResume(), None,
@@ -77,6 +79,13 @@ def test_actual_user_withdrawal_and_scope_replacement_change_protected_criteria(
     assert task.criteria == ["Verify macOS"] and [item.text for item in task.progress.items] == ["Verify macOS"]
     reloaded = ConversationStore(tmp_path).tasks.get(cid)
     assert reloaded.criteria == ["Verify macOS"]
+
+    new_objective = "Review the macOS installer"
+    new_direction = f"Change the goal to {new_objective}."
+    task = db.tasks.reopen(reloaded, new_direction, TaskResume(), None, criteria_change=TaskCriteriaChange(
+        quote=new_direction, replace=True, add=[new_objective], objective=new_objective,
+    ))
+    assert task.objective == new_objective and task.criteria == [new_objective]
 
 
 def test_a_partial_checkpoint_does_not_discard_a_previously_verified_item(tmp_path):
