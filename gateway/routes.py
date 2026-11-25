@@ -59,6 +59,7 @@ from gateway.workspace import (
 )
 from gateway.attached_files import apply_request_attachments, AttachedFilesError
 from gateway.paths import WorkspacePathError, resolve_under_workspace
+from src.backend_access import backend_auth_headers
 from src.workspace_paths import workspace_mutation_target
 from gateway.streaming import (
     ActiveStream,
@@ -471,7 +472,7 @@ async def update_settings(update: _SettingsUpdate):
 
     try:
         async with httpx.AsyncClient() as c:
-            await c.post(f"{BACKEND_URL}/api/reload", timeout=5)
+            await c.post(f"{BACKEND_URL}/api/reload", headers=backend_auth_headers(), timeout=5)
     except Exception:
         logger.warning("Backend not reachable — provider reload skipped")
     return result

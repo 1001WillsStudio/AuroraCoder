@@ -19,6 +19,7 @@ from weakref import WeakValueDictionary
 
 import httpx
 
+from src.backend_access import backend_auth_headers
 from src.config import WORKSPACE_DIR, MAX_FILE_READ_SIZE, CONTINUATION_TOOL_RESULT
 from src.workspace_paths import WorkspacePathError, resolve_under_workspace
 from gateway.conversation_store import store, sanitize_frontend_messages, ensure_error_frontend_message
@@ -537,7 +538,7 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                 "POST",
                 f"{BACKEND_URL}/api/chat",
                 json=request_body,
-                headers={"Content-Type": "application/json"},
+                headers={"Content-Type": "application/json", **backend_auth_headers()},
             ) as response:
                 backend_connect_elapsed = time.perf_counter() - backend_connect_start
                 logger.info(f"[proxy] [{cid[:8]}...] backend_connect={backend_connect_elapsed:.3f}s status={response.status_code}")

@@ -30,6 +30,7 @@ from pydantic import BaseModel
 from gateway.conversation_store import InvalidConversationId, store
 from gateway.provider_registry import sync_tool_env_vars
 from gateway.settings_store import configure_github_auth
+from src.backend_access import backend_auth_headers
 
 logging.basicConfig(
     level=logging.INFO,
@@ -71,7 +72,7 @@ async def _startup_sync():
     configure_github_auth()
     try:
         async with httpx.AsyncClient() as c:
-            await c.post(f"{BACKEND_URL}/api/reload", timeout=5)
+            await c.post(f"{BACKEND_URL}/api/reload", headers=backend_auth_headers(), timeout=5)
     except Exception:
         logger.warning("Backend not reachable at startup — will sync on first request")
 

@@ -17,12 +17,13 @@ from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
 
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from ..main_flow import generate_chat_responses_stream_native
+from ..backend_access import backend_access_allowed
 from ..code_sandbox import shell, get_workspace, WORKSPACE
 from ..code_sandbox.terminal_sessions import stop_terminal_sessions
 from ..core_tools.subagent import cancel_active_subagents
@@ -347,7 +348,12 @@ async def health_check():
         "shell_alive": shell.is_alive,
     }
 
-@app.post("/api/reload")
+def require_backend_access(request: Request) -> None:
+    if not backend_access_allowed(request.headers):
+        raise HTTPException(status_code=401, detail="Backend authentication required")
+
+
+@app.post("/api/reload", dependencies=[Depends(require_backend_access)])
 async def reload_providers():
     """Called by the gateway after settings change.  Re-reads settings.json
     from disk and rebuilds the in-memory client cache."""
@@ -355,7 +361,7 @@ async def reload_providers():
     return {"ok": True}
 
 
-@app.post("/api/chat")
+@app.post("/api/chat", dependencies=[Depends(require_backend_access)])
 async def chat(chat_request: ChatRequest, request: Request):
     conversation_id = chat_request.conversation_id or str(uuid.uuid4())
 
