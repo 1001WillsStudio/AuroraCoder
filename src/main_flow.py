@@ -32,6 +32,7 @@ from .config import (
     _CONTINUATION_NOTICE_MARKER, CONTINUATION_NOTICE,
 )
 from .providers import messages_for_provider, provider_manager
+from .provider_diagnostics import record_provider_failure
 from .core_tools.tool_store_client import prefetch_primary_tools  # noqa: E402 — redefined in function body
 from .code_tools.panel_manager import get_all as get_panels
 from .code_tools.panel_manager import register
@@ -250,11 +251,7 @@ def generate_chat_responses_stream_native(
         try:
             completion_stream = client.chat.completions.create(**api_kwargs)
         except Exception as exc:
-            import json as _j, datetime as _dt
-            _p = (Path(__file__).resolve().parent.parent / "data" / "diagnostics" / "llm_failures.jsonl")
-            _p.parent.mkdir(parents=True, exist_ok=True)
-            with open(_p, "a", encoding="utf-8") as _f:
-                _f.write(_j.dumps({"ts": _dt.datetime.now().isoformat(), "conversation_id": conversation_id, "provider": provider_id, "model": model_name, "error": f"{type(exc).__name__}: {exc}", "status": getattr(exc, "status_code", None), "upstream": getattr(getattr(exc, "response", None), "text", None), "api_kwargs": api_kwargs}, ensure_ascii=False, default=str) + "\n")
+            record_provider_failure(exc, provider_id, model_name, conversation_id, api_kwargs)
             raise
 
         try:
