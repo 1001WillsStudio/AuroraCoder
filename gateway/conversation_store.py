@@ -537,6 +537,13 @@ class ConversationStore:
             if meta is None:
                 raise KeyError(f"Conversation {conversation_id} not found")
             meta["status"] = status
+            if accepted_turn_id is not self._KEEP_ACCEPTED_TURN:
+                receipts = meta.get("accepted_turn_ids", [])
+                for receipt in (meta.get("accepted_turn_id"), accepted_turn_id):
+                    if receipt and receipt not in receipts:
+                        receipts = [*receipts, receipt]
+                if receipts:
+                    meta["accepted_turn_ids"] = receipts
             if accepted_turn_id is None:
                 meta.pop("accepted_turn_id", None)
             elif accepted_turn_id is not self._KEEP_ACCEPTED_TURN:
@@ -545,6 +552,16 @@ class ConversationStore:
                 meta.pop("recovery_reason", None)
             meta["updated_at"] = datetime.now(timezone.utc).isoformat()
             self._save_index()
+
+    def turn_state(self, conversation_id: str, turn_id: str) -> str:
+        """Distinguish an unaccepted turn from the current or a superseded one."""
+        with self._lock:
+            meta = self._index.get(conversation_id, {})
+            if meta.get("accepted_turn_id") == turn_id:
+                return "current"
+            if turn_id in meta.get("accepted_turn_ids", []):
+                return "superseded"
+        return "unaccepted"
 
     def recover_running_after_restart(self) -> int:
         """Make unfinished turns from the prior gateway process retryable."""
@@ -567,6 +584,7 @@ class ConversationStore:
             if meta is None:
                 raise KeyError(f"Conversation {conversation_id} not found")
             meta = dict(meta)
+            meta.pop("accepted_turn_ids", None)
 
         messages = self.get_messages(conversation_id)
         return {**meta, "messages": messages}
@@ -596,7 +614,10 @@ class ConversationStore:
         Sorted by updated_at descending.
         """
         with self._lock:
-            items = list(self._index.values())
+            items = [
+                {key: value for key, value in meta.items() if key != "accepted_turn_ids"}
+                for meta in self._index.values()
+            ]
 
         if conv_type is not None:
             items = [c for c in items if c.get("type") == conv_type]

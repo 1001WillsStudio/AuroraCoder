@@ -179,7 +179,7 @@ export async function streamChat(message, conversationId, callbacks, signal, exi
   _tlog('streamChat() called', seq)
 
   const { onError, onConversationId } = callbacks
-  const turnId = newConversationId()
+  const { turnId = newConversationId(), ...requestOptions } = options
   
   const requestBody = {
     message,
@@ -189,7 +189,7 @@ export async function streamChat(message, conversationId, callbacks, signal, exi
     provider: provider,
     provider_id: options.provider_id || null,
     model: options.model || null,
-    ...options
+    ...requestOptions
   }
 
   _tlog('request body built, JSON.stringify next', seq, t0)
@@ -226,6 +226,10 @@ export async function streamChat(message, conversationId, callbacks, signal, exi
     if (headerCid) onConversationId?.(headerCid)
     
     if (!response.ok) {
+      if (response.status === 409 && requestOptions.retry_receipt) {
+        const result = await response.json().catch(() => ({}))
+        if (typeof result.detail === 'string') throw new Error(result.detail)
+      }
       const error = new Error(`HTTP error! status: ${response.status}`)
       if (response.status !== 502 && response.status !== 504) throw error
       await recoverBeforeHeaders(error)

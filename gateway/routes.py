@@ -223,6 +223,19 @@ async def proxy_chat(
 async def _start_chat_turn(request: Request, body: dict, t0: float, t1: float, *, turn_id: str | None):
     conversation_id = body["conversation_id"]
     cid_tag = conversation_id[:8]
+    if body.pop("retry_receipt", False) is True:
+        if not body.get("retry") or not turn_id:
+            raise HTTPException(status_code=400, detail="Retrying a turn requires its original receipt.")
+        turn_state = store.turn_state(conversation_id, turn_id)
+        if turn_state == "superseded":
+            raise HTTPException(status_code=409, detail="A newer turn already followed this request.")
+        if turn_state == "unaccepted":
+            body["retry"] = False
+        else:
+            stream = active_streams.get(conversation_id)
+            status = stream.status if stream else store.get_conversation(conversation_id).get("status")
+            if status in {"running", "completed", "continued", "max_iterations_reached"}:
+                return _resume_conversation_stream(conversation_id, request, turn_id=turn_id)
 
     # ── Generate workspace tree for the agent's system message ──
     # Only on the *first* turn — continuations already carry the tree

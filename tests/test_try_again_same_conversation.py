@@ -1,9 +1,7 @@
 """Try Again after a first-turn provider 500 must stay on the same chat.
 
-Try Again is its own path (not handleSend with a flag). A regular send
-still omits conversation_id so the gateway allocates it; the UI keeps
-X-Conversation-ID. Retry requires that id, sends retry:true, and does
-not append another user bubble.
+Try Again reuses the conversation ID and does not append another user
+bubble. The gateway still accepts requests from older desktop clients.
 """
 from __future__ import annotations
 

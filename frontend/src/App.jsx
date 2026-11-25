@@ -428,14 +428,19 @@ function App() {
     // Same resolution as handleContinue: see resolveProviderOptions() above.
     // Both paths MUST stay aligned so Continue can never end up on a
     // different/unconfigured provider than a normal send.
+    const requestedId = cid || newConversationId()
+    const turnId = newConversationId()
     const opts = {
       ...restOptions,
       ...resolveProviderOptions(providers, selectedProvider),
       attached_files: filesToAttach,
+      turnId,
     }
     setLastRequest({
       message: userMessageText,
-      conversationId: cid,
+      apiMessage,
+      conversationId: requestedId,
+      turnId,
       provider: selectedProvider,
       existingMessages: messagesToSend,
       attachedFiles: filesToAttach,
@@ -465,7 +470,7 @@ function App() {
         onInterruptFired: () => setPendingInterrupt(null),
         ensureAssistantTail: true,
       })
-      await streamChat(apiMessage, cid, callbacks, controller.signal, messagesToSend, selectedProvider, opts)
+      await streamChat(apiMessage, requestedId, callbacks, controller.signal, messagesToSend, selectedProvider, opts)
     } catch (error) {
       if (error.name !== 'AbortError') console.error('Chat error:', error)
       if (isCurrentView() && abortControllerRef.current === controller) setIsStreaming(false)
@@ -497,6 +502,7 @@ function App() {
     if (!conversationId || isStreaming || rawMessages.length === 0 || pendingConversationLoadRef.current) return
     const viewEpoch = viewEpochRef.current
     const isCurrentView = () => viewEpoch === viewEpochRef.current
+    setLastRequest(null)
     setIsStreaming(true)
     setSseReceived(false)
     setCanContinue(false)
@@ -790,16 +796,15 @@ function App() {
   }, [conversationId, resetToFollowing, beginConversationView, restorePendingInterrupt, stashConversationDraft])
 
   const handleRetry = useCallback(async () => {
-    // Try Again is not a new send: it must reuse the conversation the
-    // gateway already created. Falling through handleSend would treat a
-    // first-turn 500 like a brand-new chat (null id + another user line).
+    // Reuse both the conversation ID and the receipt when the sending tab
+    // still has them. After a reload, retry the latest persisted user turn.
     if (isStreaming || pendingConversationLoadRef.current) return
     const viewEpoch = viewEpochRef.current
     const isCurrentView = () => viewEpoch === viewEpochRef.current
     const cid = conversationIdRef.current || conversationId || lastRequest?.conversationId
     if (!cid) return
     const lastUser = [...messages].reverse().find(m => m.role === 'user')
-    const message = lastRequest?.message ?? lastUser?.content ?? ''
+    const message = lastRequest?.apiMessage ?? lastRequest?.message ?? lastUser?.content ?? ''
     const retryFiles = lastRequest?.attachedFiles || lastUser?.attachedFiles || []
     if (!String(message).trim() && retryFiles.length === 0) return
     const existing = (rawMessages.length > 0)
@@ -849,6 +854,7 @@ function App() {
       })
       const opts = {
         retry: true,
+        ...(lastRequest?.turnId ? { turnId: lastRequest.turnId, retry_receipt: true } : {}),
         ...resolveProviderOptions(providers, selectedProvider),
         ...(retryFiles.length ? { attached_files: retryFiles } : {}),
       }
