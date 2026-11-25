@@ -569,7 +569,7 @@ def _finish_task_segment(stream: ActiveStream, raw_messages: list, prior_tool_id
         return
     if stream.status not in {"completed", "max_iterations_reached", "context_limit_reached"}:
         pause_task(cid, "error")
-    elif task.progress.verified:
+    elif task.verified:
         store.tasks.save(task, status="completed", reason="")
     elif task.progress.blocker:
         pause_task(cid, "blocked")

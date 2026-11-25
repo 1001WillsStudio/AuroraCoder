@@ -3,6 +3,7 @@
 import json
 import logging
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
@@ -50,6 +51,10 @@ class TaskChecklist(BaseModel):
     def conversation_id(self) -> str:
         return self.conversation_ids[-1]
 
+    @property
+    def verified(self) -> bool:
+        return self.progress.verified and set(self.criteria) <= {item.text for item in self.progress.items}
+
     def public(self) -> dict:
         return {
             **self.model_dump(exclude={
@@ -76,13 +81,25 @@ class TaskChecklist(BaseModel):
 class TaskChecklistStore:
     """Gateway event-loop owned. Write the new state before replacing the in-memory state."""
 
-    def __init__(self, directory: Path, write_json):
+    def __init__(self, directory: Path, write_json, read_messages: Callable[[str], list[dict]]):
         self.directory = directory
         self.write_json = write_json
         self.by_conversation: dict[str, TaskChecklist] = {}
         for path in directory.glob("*.json"):
             try:
                 task = TaskChecklist.model_validate_json(path.read_text(encoding="utf-8"))
+                if task.request and not task.criteria:
+                    criteria = self._recover_criteria(task, read_messages)
+                    task = task.model_copy(update={"criteria": criteria})
+                    if task.status == "completed" and not task.verified:
+                        task = task.model_copy(update={"status": "paused", "reason": "criteria_recovered"})
+                    # Keep already-recorded evidence, including legacy plans at the item limit.
+                    items = task.progress.items
+                    missing = [TaskItem(text=text) for text in criteria if text not in {item.text for item in items}]
+                    if len(items) + len(missing) <= 20:
+                        task = task.model_copy(update={"progress": task.progress.model_copy(
+                            update={"items": [*items, *missing]},
+                        )})
                 self.by_conversation.update(dict.fromkeys(task.conversation_ids, task))
             except (OSError, ValidationError):
                 logger.exception("Could not load task checklist %s", path)
@@ -90,13 +107,42 @@ class TaskChecklistStore:
     def get(self, conversation_id: str) -> TaskChecklist | None:
         return self.by_conversation.get(conversation_id)
 
+    @staticmethod
+    def _recover_criteria(task: TaskChecklist, read_messages: Callable[[str], list[dict]]) -> list[str]:
+        for cid in task.conversation_ids:
+            calls = {}
+            for message in read_messages(cid):
+                if not isinstance(message, dict):
+                    continue
+                if message.get("role") == "assistant":
+                    calls.update({
+                        call.get("id"): call["function"].get("arguments")
+                        for call in message.get("tool_calls") or []
+                        if call.get("id") and call.get("function", {}).get("name") == "start_task"
+                    })
+                elif message.get("role") == "tool" and message.get("content") == (
+                    "Task and checklist saved. Proceed with the first item."
+                ):
+                    arguments = calls.get(message.get("tool_call_id"))
+                    if not isinstance(arguments, str):
+                        continue
+                    try:
+                        plan = TaskStart.model_validate_json(arguments)
+                    except ValidationError:
+                        continue
+                    return list(dict.fromkeys(plan.criteria or plan.items))
+        return [item.text for item in task.progress.items]
+
     def start(self, conversation_id: str, plan: TaskStart, workspace: str, request: str,
               options: TaskResume) -> TaskChecklist:
         if self.get(conversation_id):
             raise TaskConflict("A saved task already exists in this conversation.")
+        if any(criterion not in request for criterion in plan.criteria):
+            raise TaskConflict("Quote each acceptance condition verbatim from the user's task request.")
+        criteria = list(dict.fromkeys(plan.criteria or plan.items))
         return self._create(TaskChecklist(
-            id=str(uuid.uuid4()), objective=plan.objective, criteria=[], workspace=workspace,
-            conversation_ids=[conversation_id], progress=self._initial_progress(plan),
+            id=str(uuid.uuid4()), objective=plan.objective, criteria=criteria, workspace=workspace,
+            conversation_ids=[conversation_id], progress=self._initial_progress(plan, criteria),
             status="active", request=request, options=options, started=True,
         ))
 
@@ -115,16 +161,19 @@ class TaskChecklistStore:
         }
         if revised_plan:
             changes.update(
-                objective=revised_plan.objective, criteria=[], handoff="",
-                progress=self._initial_progress(revised_plan),
+                objective=revised_plan.objective, handoff="",
+                progress=self._initial_progress(revised_plan, task.criteria),
             )
         return self.save(task, **changes)
 
     @staticmethod
-    def _initial_progress(plan: TaskStart) -> TaskProgress:
+    def _initial_progress(plan: TaskStart, criteria: list[str]) -> TaskProgress:
         if len(set(plan.items)) != len(plan.items):
             raise TaskConflict("Give each checklist item a unique label.")
-        return TaskProgress(items=[TaskItem(text=text) for text in plan.items])
+        labels = list(dict.fromkeys([*plan.items, *criteria]))
+        if len(labels) > 20:
+            raise TaskConflict("Keep no more than twenty checklist items including the user criteria.")
+        return TaskProgress(items=[TaskItem(text=text) for text in labels])
 
     def _create(self, task: TaskChecklist) -> TaskChecklist:
         self.write_json(self.directory / f"{task.id}.json", task.model_dump())

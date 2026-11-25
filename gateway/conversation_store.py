@@ -250,7 +250,7 @@ class ConversationStore:
         self._lock = threading.Lock()
         self._index: Dict[str, Dict] = {}
         self._load_index()
-        self.tasks = TaskChecklistStore(self._dir / "tasks", _atomic_write_json)
+        self.tasks = TaskChecklistStore(self._dir / "tasks", _atomic_write_json, self.get_messages)
 
     # ------------------------------------------------------------------
     # Internal helpers

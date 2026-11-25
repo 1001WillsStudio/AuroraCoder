@@ -24,6 +24,7 @@ const LANG = {
     'task.reason.no_progress': 'The agent paused after two attempts without a new checkpoint.',
     'task.reason.error': 'The conversation ended with an error. Ask the agent to continue from the saved checklist.',
     'task.reason.interrupted': 'The previous run was interrupted. Ask the agent to continue from the saved checklist.',
+    'task.reason.criteria_recovered': 'An earlier acceptance condition was recovered and still needs evidence.',
     // ── Settings header ───────────────────────────────────────────
     'settings.title': 'Settings',
     'settings.subtitle':
@@ -316,6 +317,7 @@ const LANG = {
     'task.reason.no_progress': '连续两次执行都没有新的进度记录，任务已暂停。',
     'task.reason.error': '会话运行出错。可以在对话中让 Agent 从已保存的清单继续。',
     'task.reason.interrupted': '上次执行已中断。可以在对话中让 Agent 从已保存的清单继续。',
+    'task.reason.criteria_recovered': '已找回早期的验收条件，该条件仍需验证。',
     // ── Settings header ───────────────────────────────────────────
     'settings.title': '设置',
     'settings.subtitle':

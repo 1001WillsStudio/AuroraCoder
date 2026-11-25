@@ -56,6 +56,10 @@ class TaskResume(BaseModel):
 class TaskStart(BaseModel):
     objective: TaskText
     items: list[ItemText] = Field(min_length=1, max_length=20)
+    criteria: list[ItemText] = Field(
+        default_factory=list, max_length=20,
+        description="Every explicit user acceptance condition, quoted separately and verbatim from the task request.",
+    )
 
 
 class TaskReopen(BaseModel):
@@ -151,6 +155,7 @@ class AgentTaskTools:
                 "When the user asks you to carry out a long-running task, a task likely to span context "
                 "windows, or work with several distinct verifiable outcomes, call start_task early. "
                 "Infer the objective and write the initial checklist yourself from the user's request. "
+                "Put every explicit acceptance condition in criteria, quoted separately and verbatim. "
                 "Keep each item tied to an outcome you can verify. Preserve explicit user constraints "
                 "and keep the checklist as small as the work allows. Then proceed without waiting. "
                 "For questions and small, self-contained requests, respond normally."

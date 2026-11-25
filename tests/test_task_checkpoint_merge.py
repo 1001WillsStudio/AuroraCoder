@@ -1,8 +1,50 @@
+import json
+
 import pytest
 
 from gateway.conversation_store import ConversationStore
 from gateway.task_checklist import TaskConflict
 from src.task_checklist import TaskCheckpointUpdate, TaskResume, TaskStart
+
+
+def test_user_acceptance_survives_replanning_and_needs_its_own_evidence(tmp_path):
+    store = ConversationStore(tmp_path)
+    cid = store.create_conversation()
+    criteria = ["Run on Linux", "Run on Windows"]
+    task = store.tasks.start(cid, TaskStart(objective="Verify both builds", items=["Build"], criteria=criteria),
+                             "/workspace", "Run on Linux. Run on Windows.", TaskResume())
+    assert task.criteria == criteria
+    with pytest.raises(TaskConflict, match="user criterion"):
+        store.tasks.checkpoint(task, TaskCheckpointUpdate(replace_items=True, items=[
+            {"text": criteria[0], "evidence": "Passed."},
+        ]))
+    task = store.tasks.reopen(task, "Continue", TaskResume(), TaskStart(objective="Build", items=["New step"]))
+    assert task.criteria == criteria
+    task = store.tasks.checkpoint(task, TaskCheckpointUpdate(replace_items=True, items=[
+        {"text": criteria[0], "evidence": "Passed."}, {"text": criteria[1]},
+    ]))
+    assert not task.verified
+    assert ConversationStore(tmp_path).tasks.get(cid).criteria == criteria
+
+
+def test_legacy_completed_task_recovers_windows_from_successful_start_tool(tmp_path):
+    store = ConversationStore(tmp_path)
+    cid = store.create_conversation()
+    plan = TaskStart(objective="Verify both", items=["Linux", "Windows"])
+    task = store.tasks.start(cid, plan, "/workspace", "Verify on Linux and Windows.", TaskResume())
+    store.save_messages(cid, [
+        {"role": "assistant", "tool_calls": [
+            {"id": "accepted", "function": {"name": "start_task", "arguments": plan.model_dump_json()}},
+        ]},
+        {"role": "tool", "tool_call_id": "accepted", "content": "Task and checklist saved. Proceed with the first item."},
+    ])
+    path = tmp_path / "tasks" / f"{task.id}.json"
+    legacy = task.model_dump()
+    legacy.update(criteria=[], status="completed", progress={"items": [{"text": "Linux", "evidence": "Passed"}]})
+    path.write_text(json.dumps(legacy), encoding="utf-8")
+    repaired = ConversationStore(tmp_path).tasks.get(cid)
+    assert repaired.status == "paused" and not repaired.verified
+    assert [(row.text, row.evidence) for row in repaired.progress.items] == [("Linux", "Passed"), ("Windows", "")]
 
 
 def test_a_partial_checkpoint_does_not_discard_a_previously_verified_item(tmp_path):
