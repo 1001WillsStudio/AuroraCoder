@@ -20,6 +20,10 @@ _OMITTED = "\n\n[Middle of the user text omitted from this excerpt.]\n\n"
 _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?。！？\n])")
 _CLAUSE_BOUNDARY = re.compile(r"[.,;!?，。；！？\n]+")
 _CONDITIONAL = re.compile(r"(?:please\s+)?(?:if|unless|when|assuming)\b|如果|若|除非", re.I)
+_LEADING_NEGATION = re.compile(
+    r"(?:please\s+)?(?:do not|don['’]t|never|must not|should not|cannot|can['’]t|under no circumstances)\b"
+    r"|(?:请)?(?:无论如何[，,\s]*)?(?:都)?(?:不要|不能|不得|禁止|不允许)", re.I,
+)
 _NEGATED_WAIVER = re.compile(
     r"\b(?:don't|do not|never|must not|should not|cannot)\b[^.,;\n]{0,30}"
     r"\b(?:skip|drop|remove|waive|omit|cancel|replace|change)\b"
@@ -257,7 +261,8 @@ class TaskChecklistStore:
         clauses = []
         for sentence in _SENTENCE_BOUNDARY.split(source):
             sentence = sentence.strip()
-            if sentence.endswith(("?", "？")) or _CONDITIONAL.match(sentence):
+            if (sentence.endswith(("?", "？")) or _CONDITIONAL.match(sentence)
+                    or _LEADING_NEGATION.match(sentence)):
                 continue
             clauses.extend(clause for part in _CLAUSE_BOUNDARY.split(sentence)
                            if (clause := part.strip()) and clause in change.quote)

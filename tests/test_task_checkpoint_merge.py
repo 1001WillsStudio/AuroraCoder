@@ -57,6 +57,9 @@ def test_actual_user_withdrawal_and_scope_replacement_change_protected_criteria(
     for source, quote in [
         ("Continue", "Continue"),
         ("Never drop Windows.", "drop Windows"),
+        ("Do not, under any circumstances, skip Windows.", "skip Windows"),
+        ("Please don’t, even on a retry, skip Windows.", "skip Windows"),
+        ("无论如何，都不要，跳过 Windows。", "跳过 Windows"),
         ("Skip Linux, keep Windows.", "Skip Linux, keep Windows."),
         ("No need to change the Windows check.", "No need to change the Windows check."),
         ("Remind me to say ‘skip Windows’.", "skip Windows"),
