@@ -53,6 +53,10 @@ TERMINAL_STATUSES = frozenset({
 TITLE_MAX_LENGTH = 100
 _CONVERSATION_ID = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}\Z")
 _WINDOWS_DEVICE = re.compile(r"(?:con|prn|aux|nul|com[1-9]|lpt[1-9])\Z")
+_MEMORY_TRACE_ID = re.compile(
+    r"memory-maintenance:(extraction|consolidation):maint-\1-[a-f0-9]{10}\Z"
+)
+_PORTABLE_TRACE_PREFIX = "~memory-maintenance~"
 
 
 class InvalidConversationId(ValueError):
@@ -60,7 +64,11 @@ class InvalidConversationId(ValueError):
 
 
 def require_conversation_id(value: str) -> str:
-    if not isinstance(value, str) or not _CONVERSATION_ID.fullmatch(value):
+    if not isinstance(value, str):
+        raise InvalidConversationId("Invalid conversation ID")
+    if _MEMORY_TRACE_ID.fullmatch(value):
+        return value
+    if not _CONVERSATION_ID.fullmatch(value):
         raise InvalidConversationId("Invalid conversation ID")
     folded = value.lower()
     if (folded == "index" or folded.startswith("index.corrupt-") or folded.endswith(".frontend")
@@ -225,11 +233,22 @@ class ConversationStore:
     def _index_path(self) -> Path:
         return self._dir / "index.json"
 
+    def _conversation_path(self, conversation_id: str, suffix: str) -> Path:
+        cid = require_conversation_id(conversation_id)
+        if _MEMORY_TRACE_ID.fullmatch(cid):
+            # Older Linux stores used the logical trace ID directly on disk.
+            if os.name != "nt":
+                legacy = self._dir / f"{cid}{suffix}"
+                if legacy.is_file():
+                    return legacy
+            return self._dir / f"~{cid.replace(':', '~')}{suffix}"
+        return self._dir / f"{cid}{suffix}"
+
     def _messages_path(self, conversation_id: str) -> Path:
-        return self._dir / f"{require_conversation_id(conversation_id)}.json"
+        return self._conversation_path(conversation_id, ".json")
 
     def _frontend_messages_path(self, conversation_id: str) -> Path:
-        return self._dir / f"{require_conversation_id(conversation_id)}.frontend.json"
+        return self._conversation_path(conversation_id, ".frontend.json")
 
     def _load_index(self) -> None:
         path = self._index_path()
@@ -282,8 +301,8 @@ class ConversationStore:
         """Reconstruct index metadata by scanning surviving message files.
 
         Type and parent/child relationships are not stored in the message
-        files, so recovered conversations default to ``type="user_chat"`` with
-        ``status="completed"`` and are flagged with ``recovered=True``.
+        files. Only memory maintenance has a recognizable ID. Others default
+        to user chats. All recovered entries are marked completed and recovered.
         """
         index: Dict[str, Dict] = {}
         try:
@@ -304,9 +323,12 @@ class ConversationStore:
             ):
                 continue
             if name.endswith(".frontend.json"):
-                cids.add(name[: -len(".frontend.json")])
+                stem = name[: -len(".frontend.json")]
             else:
-                cids.add(name[: -len(".json")])
+                stem = name[: -len(".json")]
+            if stem.startswith(_PORTABLE_TRACE_PREFIX):
+                stem = stem[1:].replace("~", ":")
+            cids.add(stem)
 
         for cid in cids:
             try:
@@ -382,7 +404,7 @@ class ConversationStore:
             "id": cid,
             "parent_id": None,
             "session_id": None,
-            "type": "user_chat",
+            "type": "memory_maintenance" if _MEMORY_TRACE_ID.fullmatch(cid) else "user_chat",
             "status": "completed",
             "provider_id": None,
             "created_at": created,
