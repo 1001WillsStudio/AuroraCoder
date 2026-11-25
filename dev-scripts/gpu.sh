@@ -70,5 +70,11 @@ docker run --rm -d --name auroracoder-agent-gpu \
     -p $TOOLSTORE_PORT:8765 -p $DEV_PORT_START-$DEV_PORT_END:8900-8902 \
     auroracoder-gpu || { echo "Container failed."; exit 1; }
 
+echo "Waiting for AuroraCoder services..."
+docker exec auroracoder-agent-gpu python3 /app/src/readiness.py || {
+    echo "Check startup with docker logs auroracoder-agent-gpu"
+    exit 1
+}
+
 echo "Running at http://localhost:$FRONTEND_PORT"
 echo "Verify: docker exec auroracoder-agent-gpu python -c \"import torch; print(torch.cuda.get_device_name(0))\""

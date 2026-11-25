@@ -96,6 +96,13 @@ docker run --rm -d --name auroracoder-agent-gpu --gpus all %ENV_FILE_ARG% ^
 
 if errorlevel 1 (echo Container failed. & pause & exit /b 1)
 
+echo Waiting for AuroraCoder services...
+docker exec auroracoder-agent-gpu python3 /app/src/readiness.py
+if errorlevel 1 (
+    echo Check startup with docker logs auroracoder-agent-gpu
+    exit /b 1
+)
+
 echo.
 echo ========================================
 echo   AuroraCoder GPU is running
@@ -104,8 +111,7 @@ echo ========================================
 echo.
 echo Verify GPU: docker exec auroracoder-agent-gpu python -c "import torch; print(torch.cuda.get_device_name(0))"
 echo.
-echo Opening browser in 3 seconds...
-timeout /t 3 /nobreak >nul
+echo Opening browser...
 start "" "http://localhost:%FRONTEND_PORT%"
 
 goto :eof

@@ -156,10 +156,14 @@ docker run --rm -d \
     echo "Failed to start container."
     exit 1
 }
-echo "Container \"$CONTAINER\" started."
+echo "Waiting for AuroraCoder services..."
+docker exec "$CONTAINER" python3 /app/src/readiness.py || {
+    echo "Check startup with docker logs $CONTAINER"
+    exit 1
+}
 echo ""
 echo "AuroraCoder instance $INST is running at http://localhost:$FRONTEND_PORT"
 echo "To stop: docker stop $CONTAINER"
 echo ""
 echo "Opening browser..."
-(sleep 3 && open_browser "http://localhost:$FRONTEND_PORT") &
+open_browser "http://localhost:$FRONTEND_PORT" &

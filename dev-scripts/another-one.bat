@@ -122,13 +122,17 @@ if errorlevel 1 (
     echo Failed to start container.
     exit /b 1
 )
-echo Container "%CONTAINER%" started.
+echo Waiting for AuroraCoder services...
+docker exec "%CONTAINER%" python3 /app/src/readiness.py
+if errorlevel 1 (
+    echo Check startup with docker logs %CONTAINER%
+    exit /b 1
+)
 echo.
 echo AuroraCoder instance %INST% is running at http://localhost:%FRONTEND_PORT%
 echo To stop: docker stop %CONTAINER%
 echo.
-echo Opening browser in 3 seconds...
-timeout /t 3 /nobreak >nul
+echo Opening browser...
 start "" "http://localhost:%FRONTEND_PORT%"
 pause
 goto :eof
