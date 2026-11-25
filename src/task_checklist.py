@@ -2,7 +2,7 @@
 
 import json
 import os
-from typing import Annotated
+from typing import Annotated, Literal
 
 import httpx
 from pydantic import BaseModel, Field, StringConstraints
@@ -63,6 +63,9 @@ class TaskReopen(BaseModel):
 
 
 class TaskRequestSlice(BaseModel):
+    source: Literal["original", "latest"] = Field(
+        default="original", description="Read the first task request or the latest user steering."
+    )
     offset: int = Field(default=0, ge=0, description="Starting character, counted from zero.")
     max_chars: int = Field(default=3000, ge=1, le=3000)
 
@@ -114,7 +117,7 @@ REQUEST_SCHEMA = {
     "type": "function",
     "function": {
         "name": READ_TASK_REQUEST,
-        "description": "Read the saved original task request by character range to recover details omitted from the prompt.",
+        "description": "Read the original task request or latest user steering by character range.",
         "parameters": TaskRequestSlice.model_json_schema(),
     },
 }
@@ -138,7 +141,7 @@ class AgentTaskTools:
         if not self.active and self.state["status"] != "paused":
             return []
         tools = [CHECKPOINT_SCHEMA if self.active else RESUME_SCHEMA]
-        if self.state.get("request_length"):
+        if self.state.get("request_length") or self.state.get("latest_steering_length"):
             tools.append(REQUEST_SCHEMA)
         return tools
 
@@ -171,8 +174,11 @@ class AgentTaskTools:
             instruction = "Use the completed task state as background for the user's current message."
         else:
             instruction = "This is an earlier segment of a task. Use the saved state only as background."
-        if self.state["status"] in {"active", "paused"} and self.state.get("request_length"):
-            instruction += " The original request is excerpted. Use read_task_request when you need any omitted detail."
+        if self.state["status"] in {"active", "paused"}:
+            if self.state.get("request_length"):
+                instruction += " The original request is excerpted. Use read_task_request for omitted details."
+            if self.state.get("latest_steering_length"):
+                instruction += ' The latest steering is excerpted. Use read_task_request with source="latest".'
         if self.active and self.state.get("terminal_jobs"):
             instruction += (
                 " Check relevant terminal_jobs with terminal_job_status. They were already started in this task."
@@ -199,7 +205,8 @@ class AgentTaskTools:
         if name == READ_TASK_REQUEST:
             text = result["text"]
             end = result["offset"] + len(text)
-            output = f"Original request characters [{result['offset']}, {end}) of {result['total_chars']}.\n\n{text}"
+            source = "Latest steering" if arguments.get("source") == "latest" else "Original request"
+            output = f"{source} characters [{result['offset']}, {end}) of {result['total_chars']}.\n\n{text}"
             if result["next_offset"] is not None:
                 output += f"\n\nRead from offset {result['next_offset']} to continue."
             return output

@@ -39,6 +39,7 @@ class TaskChecklist(BaseModel):
     handoff: str = ""
     steering: str = ""
     request: str = ""
+    latest_steering: str = ""
     terminal_jobs: list[str] = Field(default_factory=list)
     options: TaskResume = Field(default_factory=TaskResume)
     started: bool = False
@@ -52,7 +53,8 @@ class TaskChecklist(BaseModel):
     def public(self) -> dict:
         return {
             **self.model_dump(exclude={
-                "conversation_ids", "options", "stalled", "handoff", "steering", "started", "request", "terminal_jobs",
+                "conversation_ids", "options", "stalled", "handoff", "steering", "started", "request", "latest_steering",
+                "terminal_jobs",
             }),
             "conversation_id": self.conversation_id,
         }
@@ -64,6 +66,8 @@ class TaskChecklist(BaseModel):
         state["request"] = _scope_excerpt(self.request)
         if len(self.request) > _SCOPE_LIMIT:
             state["request_length"] = len(self.request)
+        if self.latest_steering and self.latest_steering not in self.steering:
+            state["latest_steering_length"] = len(self.latest_steering)
         if self.terminal_jobs:
             state["terminal_jobs"] = self.terminal_jobs
         return state
@@ -104,7 +108,8 @@ class TaskChecklistStore:
             latest_limit = _SCOPE_LIMIT - len(prior) - (2 if prior else 0)
             steering = "\n\n".join(filter(None, (prior, _scope_excerpt(request, latest_limit))))
         changes = {
-            "status": "active", "reason": "", "steering": steering, "started": True, "stalled": 0,
+            "status": "active", "reason": "", "steering": steering, "latest_steering": request,
+            "started": True, "stalled": 0,
             "options": options if options.model_dump(exclude_none=True) else task.options,
             "progress": task.progress.model_copy(update={"blocker": ""}),
         }

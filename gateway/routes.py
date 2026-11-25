@@ -483,10 +483,13 @@ async def read_agent_task_request(conversation_id: str, extent: TaskRequestSlice
     task = store.tasks.get(conversation_id)
     if not task or task.conversation_id != conversation_id:
         raise HTTPException(status_code=409, detail="No task source for this stream.")
-    total = len(task.request)
+    source = task.latest_steering if extent.source == "latest" else task.request
+    if not source and extent.source == "latest":
+        raise HTTPException(status_code=404, detail="No later steering has been saved for this task.")
+    total = len(source)
     start = min(extent.offset, total)
     end = min(start + extent.max_chars, total)
-    return {"text": task.request[start:end], "offset": start,
+    return {"text": source[start:end], "offset": start,
             "total_chars": total, "next_offset": end if end < total else None}
 
 
