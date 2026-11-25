@@ -18,12 +18,17 @@ goto :find_next
 
 set "CONTAINER=auroracoder-agent-%INST%"
 
-:: ── Stop old container FIRST ───────────────────────────────────────────
-echo [%time%] Stopping old container "%CONTAINER%"...
-docker stop %CONTAINER% >nul 2>&1
-echo [%time%] docker stop done
-docker rm   %CONTAINER% >nul 2>&1
-echo [%time%] docker rm done
+:: ── Pre-flight checks ───────────────────────────────────────────────────
+:: The base + app images must already exist (built by start.bat)
+docker inspect --type=image auroracoder >nul 2>&1
+if errorlevel 1 (
+    echo ERROR: App image "auroracoder" not found.
+    echo Run start.bat first to build the Docker images.
+    exit /b 1
+)
+
+call "%~dp0container-replacement.bat" prepare "%CONTAINER%"
+if errorlevel 1 exit /b 1
 
 echo [%time%] sleep 2...
 timeout /t 2 /nobreak >nul
@@ -58,7 +63,7 @@ set /a "TOOLSTORE_PORT=%BASE_TOOLSTORE%+%INST%-1"
 
 :: ── Auto-find available ports ──────────────────────────────────────────
 call "%~dp0port-availability.bat"
-if errorlevel 1 exit /b 1
+if errorlevel 1 goto :replacement_failed
 echo [ports] BACKEND_PORT=%BACKEND_PORT% FRONTEND_PORT=%FRONTEND_PORT% VNC_PORT=%VNC_PORT% TOOLSTORE_PORT=%TOOLSTORE_PORT%
 echo [ports] DEV range=%DEV_PORT_START%-%DEV_PORT_END%
 
@@ -77,15 +82,6 @@ echo   ToolStore:      http://localhost:%TOOLSTORE_PORT%
 echo ========================================
 echo.
 
-:: ── Pre-flight checks ───────────────────────────────────────────────────
-:: The base + app images must already exist (built by start.bat)
-docker inspect --type=image auroracoder >nul 2>&1
-if errorlevel 1 (
-    echo ERROR: App image "auroracoder" not found.
-    echo Run start.bat first to build the Docker images.
-    exit /b 1
-)
-
 :: Check if .env exists; warn but don't abort (keys can be set via Settings UI)
 if exist ".env" (
     set "ENV_FILE_ARG=--env-file .env"
@@ -102,10 +98,8 @@ if not exist "%DATA_DIR%" mkdir "%DATA_DIR%"
 if not exist "%WORKSPACE_DIR%" mkdir "%WORKSPACE_DIR%"
 
 :: ── Start backend container ─────────────────────────────────────────────
-:: No need for "timeout 2" here — the old container was stopped at the very
-:: beginning of the script, so ports have long been released.
 echo Starting backend in Docker (instance %INST%)...
-docker run --rm -d ^
+docker run -d --cidfile "%AURORA_SWAP_CID_FILE%" ^
     --name %CONTAINER% ^
     %ENV_FILE_ARG% ^
     -e AURORACODER_DOCKER=1 ^
@@ -118,16 +112,15 @@ docker run --rm -d ^
     -p %FRONTEND_PORT%:3000 ^
     -p %TOOLSTORE_PORT%:8765 ^
     auroracoder
-if errorlevel 1 (
-    echo Failed to start container.
-    exit /b 1
-)
+if errorlevel 1 goto :replacement_failed
+set "AURORA_SWAP_NEW_ID="
+set /p AURORA_SWAP_NEW_ID=<"%AURORA_SWAP_CID_FILE%"
+if not defined AURORA_SWAP_NEW_ID goto :replacement_failed
+
 echo Waiting for AuroraCoder services...
-docker exec "%CONTAINER%" python3 /app/src/readiness.py
-if errorlevel 1 (
-    echo Check startup with docker logs %CONTAINER%
-    exit /b 1
-)
+docker exec "%AURORA_SWAP_NEW_ID%" python3 /app/src/readiness.py
+if errorlevel 1 goto :replacement_failed
+call "%~dp0container-replacement.bat" finish
 echo.
 echo AuroraCoder instance %INST% is running at http://localhost:%FRONTEND_PORT%
 echo To stop: docker stop %CONTAINER%
@@ -136,3 +129,9 @@ echo Opening browser...
 start "" "http://localhost:%FRONTEND_PORT%"
 pause
 goto :eof
+
+:replacement_failed
+echo The replacement did not start successfully.
+call "%~dp0container-replacement.bat" restore
+if errorlevel 1 echo Automatic Docker rollback failed.
+exit /b 1

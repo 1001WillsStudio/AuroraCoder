@@ -48,15 +48,16 @@ fi
 
 CONTAINER="auroracoder-agent-$INST"
 
-# ── Stop old container FIRST ───────────────────────────────────────────
-# By stopping the old container at the very beginning, ports have plenty
-# of time to be released while we do all the other work below.
-# This avoids a wasteful "sleep 2" right before the docker run.
-echo "Stopping old container \"$CONTAINER\" if any..."
-docker stop "$CONTAINER" >/dev/null 2>&1 || true
-docker rm   "$CONTAINER" >/dev/null 2>&1 || true
+# ── Pre-flight checks ───────────────────────────────────────────────────
+# The base + app images must already exist (built by start.sh)
+if ! docker inspect --type=image auroracoder >/dev/null 2>&1; then
+    echo "ERROR: App image \"auroracoder\" not found."
+    echo "Run start.sh first to build the Docker images."
+    exit 1
+fi
 
-# Short delay to ensure ports are released before we start resolving them
+source "$SCRIPT_DIR/container-replacement.sh"
+begin_replacement "$CONTAINER"
 echo "Waiting for port cleanup..."
 sleep 2
 
@@ -114,14 +115,6 @@ echo "  ToolStore:      http://localhost:$TOOLSTORE_PORT"
 echo "========================================"
 echo ""
 
-# ── Pre-flight checks ───────────────────────────────────────────────────
-# The base + app images must already exist (built by start.sh)
-if ! docker inspect --type=image auroracoder >/dev/null 2>&1; then
-    echo "ERROR: App image \"auroracoder\" not found."
-    echo "Run start.sh first to build the Docker images."
-    exit 1
-fi
-
 # ── Check if .env exists; warn but don't abort (keys can be set via Settings UI)
 if [ -f ".env" ]; then
     ENV_FILE_ARG="--env-file .env"
@@ -137,10 +130,8 @@ fi
 mkdir -p "$DATA_DIR" "$WORKSPACE_DIR"
 
 # ── Start backend container ─────────────────────────────────────────────
-# No need for "sleep 2" here — the old container was stopped at the very
-# beginning of the script, so ports have long been released.
 echo "Starting backend in Docker (instance $INST)..."
-docker run --rm -d \
+docker run -d --cidfile "$AURORA_SWAP_CID_FILE" \
     --name "$CONTAINER" \
     $ENV_FILE_ARG \
     -e AURORACODER_DOCKER=1 \
@@ -157,10 +148,9 @@ docker run --rm -d \
     exit 1
 }
 echo "Waiting for AuroraCoder services..."
-docker exec "$CONTAINER" python3 /app/src/readiness.py || {
-    echo "Check startup with docker logs $CONTAINER"
-    exit 1
-}
+AURORA_SWAP_NEW_ID=$(cat "$AURORA_SWAP_CID_FILE")
+docker exec "$AURORA_SWAP_NEW_ID" python3 /app/src/readiness.py
+finish_replacement
 echo ""
 echo "AuroraCoder instance $INST is running at http://localhost:$FRONTEND_PORT"
 echo "To stop: docker stop $CONTAINER"

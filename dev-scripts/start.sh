@@ -32,15 +32,41 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
-# ── Stop existing container FIRST ─────────────────────────────────────────
-# Docker builds take time — by stopping the old container at the very
-# beginning, ports have the entire build duration to be released.
-# This avoids a wasteful "sleep 2" blocking the final launch.
-echo "Stopping old container if any..."
-docker stop auroracoder-agent >/dev/null 2>&1 || true
-docker rm auroracoder-agent >/dev/null 2>&1 || true
+# ── Check if base image exists; build if missing ─────────────────────────
+if docker inspect --type=image auroracoder-base >/dev/null 2>&1; then
+    echo "[base] Base image found, skipping."
+else
+    echo "[base] Building base image -- first time, this may take a few minutes..."
+    # Pre-pull base image -- tries Chinese mirrors if Docker Hub is unreachable
+    BASE_IMAGE="python:3.12-slim-bookworm"
+    if ! docker pull "$BASE_IMAGE" >/dev/null 2>&1; then
+        echo "[mirror] Docker Hub unreachable, trying Chinese mirrors..."
+        if docker pull "docker.m.daocloud.io/library/$BASE_IMAGE"; then
+            docker tag "docker.m.daocloud.io/library/$BASE_IMAGE" "$BASE_IMAGE"
+            echo "[mirror] Pulled via daoCloud."
+        elif docker pull "hub-mirror.c.163.com/library/$BASE_IMAGE"; then
+            docker tag "hub-mirror.c.163.com/library/$BASE_IMAGE" "$BASE_IMAGE"
+            echo "[mirror] Pulled via NetEase."
+        else
+            echo "[mirror] All mirrors exhausted, proceeding anyway..."
+        fi
+    fi
+    docker build -t auroracoder-base -f docker/Dockerfile.base . || {
+        echo "Base image build failed."
+        exit 1
+    }
+    echo "[base] Done."
+fi
 
-# Short delay to ensure ports are released before we start resolving them
+# ── Always rebuild app image (fast: just copies source code) ─────────────
+echo "[app] Building app image..."
+docker build -t auroracoder -f docker/Dockerfile . || {
+    echo "App image build failed."
+    exit 1
+}
+
+source "$SCRIPT_DIR/container-replacement.sh"
+begin_replacement "auroracoder-agent"
 echo "Waiting for port cleanup..."
 sleep 2
 
@@ -93,41 +119,6 @@ else
     STORAGE_BASE="$HOME/AuroraCoder"
 fi
 
-# ── Check if base image exists; build if missing ─────────────────────────
-# These Docker steps are slow — but because we stopped the old container
-# at the very beginning, ports have already been released by now.
-if docker inspect --type=image auroracoder-base >/dev/null 2>&1; then
-    echo "[base] Base image found, skipping."
-else
-    echo "[base] Building base image -- first time, this may take a few minutes..."
-    # Pre-pull base image -- tries Chinese mirrors if Docker Hub is unreachable
-    BASE_IMAGE="python:3.12-slim-bookworm"
-    if ! docker pull "$BASE_IMAGE" >/dev/null 2>&1; then
-        echo "[mirror] Docker Hub unreachable, trying Chinese mirrors..."
-        if docker pull "docker.m.daocloud.io/library/$BASE_IMAGE"; then
-            docker tag "docker.m.daocloud.io/library/$BASE_IMAGE" "$BASE_IMAGE"
-            echo "[mirror] Pulled via daoCloud."
-        elif docker pull "hub-mirror.c.163.com/library/$BASE_IMAGE"; then
-            docker tag "hub-mirror.c.163.com/library/$BASE_IMAGE" "$BASE_IMAGE"
-            echo "[mirror] Pulled via NetEase."
-        else
-            echo "[mirror] All mirrors exhausted, proceeding anyway..."
-        fi
-    fi
-    docker build -t auroracoder-base -f docker/Dockerfile.base . || {
-        echo "Base image build failed."
-        exit 1
-    }
-    echo "[base] Done."
-fi
-
-# ── Always rebuild app image (fast: just copies source code) ─────────────
-echo "[app] Building app image..."
-docker build -t auroracoder -f docker/Dockerfile . || {
-    echo "App image build failed."
-    exit 1
-}
-
 # ── Check if .env exists; warn but don't abort (keys can be set via Settings UI)
 if [ -f ".env" ]; then
     ENV_FILE_ARG="--env-file .env"
@@ -142,7 +133,7 @@ fi
 # ── Start backend container ──────────────────────────────────────────────
 echo "Starting backend in Docker (app + frontend)..."
 mkdir -p "$STORAGE_BASE/data" "$STORAGE_BASE/workspace"
-docker run --rm -d \
+docker run -d --cidfile "$AURORA_SWAP_CID_FILE" \
     --name auroracoder-agent \
     $ENV_FILE_ARG \
     -e AURORACODER_DOCKER=1 \
@@ -159,10 +150,9 @@ docker run --rm -d \
     exit 1
 }
 echo "Waiting for AuroraCoder services..."
-docker exec auroracoder-agent python3 /app/src/readiness.py || {
-    echo "Check startup with docker logs auroracoder-agent"
-    exit 1
-}
+AURORA_SWAP_NEW_ID=$(cat "$AURORA_SWAP_CID_FILE")
+docker exec "$AURORA_SWAP_NEW_ID" python3 /app/src/readiness.py
+finish_replacement
 echo ""
 echo "AuroraCoder is running at http://localhost:$FRONTEND_PORT"
 echo "To stop: docker stop auroracoder-agent"

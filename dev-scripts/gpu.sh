@@ -10,10 +10,31 @@ GPU_ARG="$GPU_FLAG $GPU_DEVICE"
 
 echo "[gpu] GPU argument: $GPU_ARG"
 
-# Stop old container
-echo "Stopping old container..."
-docker stop auroracoder-agent-gpu >/dev/null 2>&1 || true
-docker rm auroracoder-agent-gpu >/dev/null 2>&1 || true
+# ── Pre-pull NVIDIA vLLM image (~9 GB, one time only) ────────────────────
+NV_IMAGE="nvcr.io/nvidia/vllm:26.05.post1-py3"
+if docker inspect --type=image "$NV_IMAGE" >/dev/null 2>&1; then
+    echo "[nv] NVIDIA vLLM image already cached."
+else
+    echo "[nv] Pulling NVIDIA vLLM image (one time only, ~9 GB)..."
+    docker pull "$NV_IMAGE" || { echo "Pull failed."; exit 1; }
+fi
+
+# ── Build GPU base ───────────────────────────────────────────────────────
+if docker inspect --type=image auroracoder-gpu-base >/dev/null 2>&1; then
+    echo "[gpu-base] Found, skipping."
+else
+    echo "[gpu-base] Building..."
+    docker build -t auroracoder-gpu-base -f docker/Dockerfile.gpu-base . || { echo "Build failed."; exit 1; }
+    echo "[gpu-base] Done."
+fi
+
+# ── Build GPU app ────────────────────────────────────────────────────────
+echo "[gpu] Building app image..."
+docker build -t auroracoder-gpu -f docker/Dockerfile.gpu . || { echo "Build failed."; exit 1; }
+
+source "$SCRIPT_DIR/container-replacement.sh"
+begin_replacement "auroracoder-agent-gpu"
+echo "Waiting for port cleanup..."
 sleep 2
 
 # Ports
@@ -37,32 +58,10 @@ echo "  ToolStore:    http://localhost:$TOOLSTORE_PORT"
 STORAGE_BASE="${HOME}/Documents/AuroraCoder-GPU"
 [ -d "$HOME/Documents" ] || STORAGE_BASE="${HOME}/AuroraCoder-GPU"
 
-# ── Pre-pull NVIDIA vLLM image (~9 GB, one time only) ────────────────────
-NV_IMAGE="nvcr.io/nvidia/vllm:26.05.post1-py3"
-if docker inspect --type=image "$NV_IMAGE" >/dev/null 2>&1; then
-    echo "[nv] NVIDIA vLLM image already cached."
-else
-    echo "[nv] Pulling NVIDIA vLLM image (one time only, ~9 GB)..."
-    docker pull "$NV_IMAGE" || { echo "Pull failed."; exit 1; }
-fi
-
-# ── Build GPU base ───────────────────────────────────────────────────────
-if docker inspect --type=image auroracoder-gpu-base >/dev/null 2>&1; then
-    echo "[gpu-base] Found, skipping."
-else
-    echo "[gpu-base] Building..."
-    docker build -t auroracoder-gpu-base -f docker/Dockerfile.gpu-base . || { echo "Build failed."; exit 1; }
-    echo "[gpu-base] Done."
-fi
-
-# ── Build GPU app ────────────────────────────────────────────────────────
-echo "[gpu] Building app image..."
-docker build -t auroracoder-gpu -f docker/Dockerfile.gpu . || { echo "Build failed."; exit 1; }
-
 # ── Start container ──────────────────────────────────────────────────────
 ENV_FILE_ARG=""; [ -f .env ] && ENV_FILE_ARG="--env-file .env" || echo "NOTE: .env not found, configure keys via Settings UI."
 mkdir -p "$STORAGE_BASE/data" "$STORAGE_BASE/workspace"
-docker run --rm -d --name auroracoder-agent-gpu \
+docker run -d --cidfile "$AURORA_SWAP_CID_FILE" --name auroracoder-agent-gpu \
     $GPU_ARG $ENV_FILE_ARG \
     -e AURORACODER_DOCKER=1 -e AURORACODER_VNC=1 -e AURORACODER_GPU=1 \
     -v "$STORAGE_BASE/data:/app/data" -v "$STORAGE_BASE/workspace:/workspace" \
@@ -71,10 +70,9 @@ docker run --rm -d --name auroracoder-agent-gpu \
     auroracoder-gpu || { echo "Container failed."; exit 1; }
 
 echo "Waiting for AuroraCoder services..."
-docker exec auroracoder-agent-gpu python3 /app/src/readiness.py || {
-    echo "Check startup with docker logs auroracoder-agent-gpu"
-    exit 1
-}
+AURORA_SWAP_NEW_ID=$(cat "$AURORA_SWAP_CID_FILE")
+docker exec "$AURORA_SWAP_NEW_ID" python3 /app/src/readiness.py
+finish_replacement
 
 echo "Running at http://localhost:$FRONTEND_PORT"
 echo "Verify: docker exec auroracoder-agent-gpu python -c \"import torch; print(torch.cuda.get_device_name(0))\""
