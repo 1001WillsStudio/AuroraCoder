@@ -29,9 +29,8 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
-import requests
-
 from ..config import DATA_DIR
+from ..gateway_access import gateway_tool_request
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +64,8 @@ def get_stance(scope: Optional[str] = None) -> str:
     called on the first turn of a conversation, before the system message
     is inserted). Returns "" on any failure."""
     try:
-        resp = requests.get(
+        resp = gateway_tool_request(
+            "GET",
             f"{GATEWAY_URL}/api/memory/stance",
             params={"scope": scope} if scope else {},
             timeout=_TIMEOUT,
@@ -80,7 +80,8 @@ def get_stance(scope: Optional[str] = None) -> str:
 def recall(query: str, plane: str = "world", scope: Optional[str] = None, k: int = 5) -> List[Dict[str, Any]]:
     """Query the World Model. Returns [] on any failure (fail-open)."""
     try:
-        resp = requests.get(
+        resp = gateway_tool_request(
+            "GET",
             f"{GATEWAY_URL}/api/memory/recall",
             params={"query": query, "plane": plane, "scope": scope or "", "k": k},
             timeout=_TIMEOUT,
@@ -100,7 +101,7 @@ def forget(memory_id: str) -> Dict[str, Any]:
     Returns {"ok": bool, "error": ...} on failure.
     """
     try:
-        resp = requests.delete(f"{GATEWAY_URL}/api/memory/{memory_id}", timeout=_TIMEOUT)
+        resp = gateway_tool_request("DELETE", f"{GATEWAY_URL}/api/memory/{memory_id}", timeout=_TIMEOUT)
         if resp.status_code == 404:
             return {"ok": False, "error": "no memory with that id"}
         resp.raise_for_status()
@@ -125,7 +126,7 @@ def log_gap(
     """
     payload = {"question": question, "scope": scope, "priority": priority, "strategy": strategy}
     try:
-        resp = requests.post(f"{GATEWAY_URL}/api/memory/gaps", json=payload, timeout=_TIMEOUT)
+        resp = gateway_tool_request("POST", f"{GATEWAY_URL}/api/memory/gaps", json=payload, timeout=_TIMEOUT)
         if resp.status_code >= 400:
             return {"ok": False, "error": f"gateway returned {resp.status_code}: {resp.text[:300]}"}
         return resp.json()

@@ -31,6 +31,7 @@ from gateway.conversation_store import InvalidConversationId, store
 from gateway.provider_registry import sync_tool_env_vars
 from gateway.settings_store import configure_github_auth
 from src.backend_access import backend_auth_headers
+from src.gateway_access import HEADER as GATEWAY_AUTH_HEADER, gateway_service_allowed
 
 logging.basicConfig(
     level=logging.INFO,
@@ -123,7 +124,7 @@ def _validate_token(token: str) -> bool:
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    """Require Bearer token for all /api/* routes (except /api/auth/*, /health).
+    """Protect /api/* with a login or a scoped loopback service signature.
 
     If ACCESS_PASSWORD is not set, no auth is required.
     Public paths: /health, /api/auth/*
@@ -138,6 +139,12 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
 
     if not path.startswith("/api/"):
+        return await call_next(request)
+
+    if request.client and gateway_service_allowed(
+        request.client.host, request.method, path,
+        request.headers.get(GATEWAY_AUTH_HEADER, ""), AUTH_PASSWORD,
+    ):
         return await call_next(request)
 
     auth_header = request.headers.get("Authorization", "")
