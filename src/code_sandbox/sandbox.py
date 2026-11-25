@@ -13,7 +13,7 @@ Usage::
     files = list(WORKSPACE.iterdir())
 
     # Run a command
-    stdout, err = shell.run("ls -la", timeout=30)
+    result = shell.run("ls -la", timeout=30)
 
     # Restart the shell
     shell.restart()
@@ -29,8 +29,9 @@ import time
 import tempfile
 import threading
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Literal, Optional
 
 from ..config import WORKSPACE_DIR, DEFAULT_BASE_ENV_NAME
 
@@ -114,6 +115,16 @@ def get_conda_env_path() -> Optional[Path]:
 # Persistent Shell
 # ---------------------------------------------------------------------------
 
+@dataclass(frozen=True)
+class ShellResult:
+    status: Literal["completed", "running", "error"]
+    output: str = ""
+    exit_code: int | None = None
+    detail: str = ""
+    output_path: Path | None = None
+    status_path: Path | None = None
+
+
 class PersistentShell:
     """A long-lived bash (or cmd) subprocess that preserves state across commands.
 
@@ -124,6 +135,7 @@ class PersistentShell:
 
     def __init__(self):
         self._proc: Optional[subprocess.Popen] = None
+        self._lock = threading.RLock()
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -133,6 +145,10 @@ class PersistentShell:
 
     def start(self) -> None:
         """Start (or restart) the persistent shell."""
+        with self._lock:
+            self._start()
+
+    def _start(self) -> None:
         self.stop()
 
         shell_cmd = ["cmd.exe", "/D"] if sys.platform == "win32" else ["bash", "-i"]
@@ -147,6 +163,7 @@ class PersistentShell:
                 text=True,
                 cwd=cwd,
                 shell=False,
+                errors="replace",
                 bufsize=1,
                 universal_newlines=True,
             )
@@ -160,17 +177,23 @@ class PersistentShell:
             self._proc = None
 
     def stop(self) -> None:
-        if self._proc is None:
-            return
-        try:
-            self._proc.terminate()
-            self._proc.wait(timeout=5)
-        except Exception:
+        with self._lock:
+            proc = self._proc
+            if proc is None:
+                return
+            self._proc = None
             try:
-                self._proc.kill()
-            except Exception:
-                pass
-        self._proc = None
+                proc.stdin.close()
+                proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=4)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+            finally:
+                proc.stdout.close()
 
     def restart(self) -> str:
         """Stop and re-start the shell.  Returns a status message."""
@@ -185,95 +208,116 @@ class PersistentShell:
         command: str,
         timeout: int = 120,
         blocking: bool = True,
-    ) -> Tuple[str, str]:
-        """Execute *command* and return ``(stdout, error_message)``.
+    ) -> ShellResult:
+        """Run once and return a completion code or the live command's output and status files."""
+        with self._lock:
+            return self._run(command, timeout, blocking)
 
-        When *blocking* is False the command is launched with ``nohup`` in the
-        background; a log-file path is returned immediately.
-        """
-        if not self.is_alive:
-            return "", "Persistent shell not running."
+    def _run(self, command: str, timeout: int, blocking: bool) -> ShellResult:
+        proc = self._proc
+        if proc is None or proc.poll() is not None:
+            return ShellResult("error", detail="Persistent shell not running.")
 
         command = self._strip_background_syntax(command)
-        cmd_id = uuid.uuid4().hex[:8]
-        out_file = os.path.join(tempfile.gettempdir(), f"shell_out_{cmd_id}.txt")
+        cmd_id = uuid.uuid4().hex
         boundary = f"END_{cmd_id}"
+        exit_var = f"_aurora_exit_{cmd_id}"
+        background = not blocking and sys.platform != "win32"
+        directory = Path(tempfile.gettempdir())
+        if background:
+            directory = directory / "agent_bg_logs"
+            directory.mkdir(exist_ok=True)
+        output_path = directory / (f"bg_{cmd_id}.log" if background else f"shell_out_{cmd_id}.txt")
+        status_path = output_path.with_suffix(".status")
+        quote = self._shell_quote
 
-        if not blocking and sys.platform != "win32":
-            log_dir = os.path.join(tempfile.gettempdir(), "agent_bg_logs")
-            os.makedirs(log_dir, exist_ok=True)
-            log_file = os.path.join(log_dir, f"bg_{cmd_id}.log")
+        if background:
+            script = 'bash -c "$1"; code=$?; printf "%s\n" "$code" > "$2"; exit "$code"'
             wrapped = (
-                f"nohup bash -c {self._shell_quote(command)}"
-                f' > "{log_file}" 2>&1 &\n'
-                f'echo "Background PID: $!  Log: {log_file}" > "{out_file}"\n'
-                f"echo {boundary}\n"
+                f"nohup bash -c {quote(script)} aurora {quote(command)} {quote(str(status_path))}"
+                f" > {quote(str(output_path))} 2>&1 &\n"
+                f"printf '{boundary}:%s\\n' \"$!\"\n"
             )
         elif sys.platform == "win32":
+            # Capture ERRORLEVEL on a separate line, before the next command runs.
             wrapped = (
-                f'({command}) > "{out_file}" 2>&1\n'
-                f"echo {boundary}\n"
+                'cmd.exe /D /C exit 0\n'
+                f'({command}) > "{output_path}" 2>&1\n'
+                f'set "{exit_var}=%ERRORLEVEL%"\n'
+                f'> "{status_path}" echo %{exit_var}%\n'
+                f'echo {boundary}:%{exit_var}%\n'
+                f'set "{exit_var}="\n'
             )
         else:
-            # Use ': ;' instead of ';' before '}' — interactive bash (bash -i)
-            # rejects bare '; }' as a syntax error after heredocs.  The ':'
-            # builtin is a POSIX no-op that satisfies the parser requirement.
-            # The trailing ';' after ':' is mandatory: '}' is only recognised
-            # as the closing reserved word when it appears as a command word
-            # (after ';' or a newline).  Without it, '}' becomes an argument
-            # to ':', the brace group never closes, and the boundary echo is
-            # swallowed — so the reader blocks until timeout (no output ever).
+            # Evaluate in the existing shell to retain cwd and environment changes.
+            # Pass the entire command intact, including heredocs and trailing semicolons.
             wrapped = (
-                f'{{ {command}; : ; }} > "{out_file}" 2>&1\n'
-                f"echo {boundary}\n"
+                f"builtin eval -- {quote(command)} > {quote(str(output_path))} 2>&1\n"
+                f"{exit_var}=$?\n"
+                f'printf "%s\\n" "${exit_var}" > {quote(str(status_path))}\n'
+                f'printf "{boundary}:%s\\n" "${exit_var}"\n'
+                f"unset {exit_var}\n"
             )
 
         try:
-            self._proc.stdin.write(wrapped)
-            self._proc.stdin.flush()
-        except Exception as e:
-            return "", f"Failed to write to shell: {e}"
+            proc.stdin.write(wrapped)
+            proc.stdin.flush()
+        except (OSError, ValueError) as exc:
+            return ShellResult("error", detail=f"Failed to write to shell: {exc}")
 
-        found = threading.Event()
+        boundary_pattern = re.compile(rf"{boundary}:(-?\d+)\s*$")
+        numbers = []
 
-        def _wait():
-            while True:
-                line = self._proc.stdout.readline()
-                if not line or boundary in line:
-                    found.set()
+        def read_status():
+            for line in proc.stdout:
+                match = boundary_pattern.search(line)
+                if match:
+                    numbers.append(int(match.group(1)))
                     return
 
-        reader = threading.Thread(target=_wait, daemon=True)
+        reader = threading.Thread(target=read_status, daemon=True)
         reader.start()
         reader.join(timeout=timeout)
 
-        if not found.is_set():
-            logger.warning("Command still running after %ds, spawning new shell: %s", timeout, command[:120])
-            old_pid = self._proc.pid
+        if reader.is_alive():
+            logger.warning("Command still running after %ss, replacing the foreground shell", timeout)
             self._proc = None
-            self.start()
-            return "", (
-                f"Command is still running after {timeout}s (not killed) — continuing in background.\n"
-                f"Terminal PID: {old_pid}\n"
-                f"Output file: {out_file}\n"
-                "Read the log to get the complete result."
+            # The old shell drains its submitted command and exits on EOF.
+            proc.stdin.close()
+
+            def reap():
+                reader.join()
+                proc.stdout.close()
+                proc.wait()
+
+            threading.Thread(target=reap, daemon=True).start()
+            self._start()
+            return ShellResult(
+                "running",
+                detail=(
+                    f"Command is still running after {timeout}s (not killed) — continuing in background.\n"
+                    f"Terminal PID: {proc.pid}"
+                ),
+                output_path=output_path, status_path=status_path,
             )
 
-        stdout = ""
-        try:
-            with open(out_file, "r", encoding="utf-8", errors="replace") as f:
-                stdout = f.read()
-        except FileNotFoundError:
-            pass
-        except Exception as e:
-            stdout = f"[Error reading command output: {e}]"
-        finally:
-            try:
-                os.remove(out_file)
-            except OSError:
-                pass
+        if not numbers:
+            return ShellResult("error", detail="The shell closed before reporting command status.",
+                               output_path=output_path)
+        if background:
+            return ShellResult("running", detail=f"Background PID: {numbers[0]}",
+                               output_path=output_path, status_path=status_path)
 
-        return stdout, ""
+        try:
+            output = output_path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            output = f"[Error reading command output: {exc}]"
+        for path in (output_path, status_path):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                logger.warning("Could not remove finished command file %s", path)
+        return ShellResult("completed", output=output, exit_code=numbers[0])
 
     # -- internals ----------------------------------------------------------
 

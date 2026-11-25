@@ -313,7 +313,14 @@ NATIVE_TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "run_terminal_command",
-            "description": "Executes terminal/shell commands in a persistent, stateful Bash shell. The shell starts in /workspace and its environment and working directory are preserved between commands. For long-running processes (servers, training, etc.), set blocking=false so the command runs in the background — output streams to a log file whose path is returned. You can read that log file later to check progress. Do NOT use nohup or trailing & yourself; use blocking=false instead. If a blocking command times out, the command keeps running in the old terminal and a new terminal is started automatically — the log file path is returned so you can check progress.",
+            "description": (
+                "Run commands in a persistent shell that starts in /workspace and preserves its "
+                "working directory and environment. Completed commands report their actual exit code, "
+                "including commands that print nothing. Use blocking=false for long-running commands. "
+                "A detached command or foreground timeout reports running, the output file, and an "
+                "exit status file written on completion. Read those files to check the original "
+                "command's result."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -327,7 +334,7 @@ NATIVE_TOOL_DEFINITIONS = [
                     },
                     "blocking": {
                         "type": "boolean",
-                        "description": "If false, run the command in the background and return immediately with the PID and log file path. Use for servers, training scripts, or any long-running process. Default is true."
+                        "description": "If false, start a background command and return its PID, log path, and exit status path. Default is true."
                     },
                     "new_terminal": {
                         "type": "boolean",

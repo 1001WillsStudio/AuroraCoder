@@ -69,30 +69,20 @@ class TerminalRunner:
             if not shell.is_alive:
                 return "Error: Persistent shell is not available. Use new_terminal=true to restart it."
 
-            stdout, stderr = shell.run(command, timeout=timeout, blocking=blocking)
-
-            output = []
-
-            if stdout:
-                output.append("STDOUT:")
-                output.append(_truncate_output(stdout))
-
-            if stderr:
-                if output:
-                    output.append("")
-                # Timeout messages from PersistentShell are informational — not errors.
-                if "Command is still running after" in stderr:
-                    output.append(_truncate_output(stderr))
-                else:
-                    output.append("STDERR:")
-                    output.append(_truncate_output(stderr))
-
-            if not stdout and not stderr:
-                output.append(
-                    "[NOTE: Command produced no output. "
-                    "If empty-output issues persist, try calling this tool again "
-                    "with new_terminal=true to restart the shell.]"
-                )
+            result = shell.run(command, timeout=timeout, blocking=blocking)
+            output = [f"Status: {result.status}"]
+            if result.exit_code is not None:
+                output.append(f"Exit Code: {result.exit_code}")
+            if result.output:
+                output.extend(["STDOUT:", _truncate_output(result.output)])
+            elif result.status == "completed":
+                output.append("[NOTE: Command produced no output.]")
+            if result.detail:
+                output.append(result.detail)
+            if result.output_path:
+                output.append(f"Output file: {result.output_path}")
+            if result.status_path:
+                output.append(f"Exit status file (written on completion): {result.status_path}")
 
             return '\n'.join(output)
 
