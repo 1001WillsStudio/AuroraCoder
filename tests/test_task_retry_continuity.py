@@ -9,7 +9,9 @@ from src.task_checklist import TaskCheckpointUpdate, TaskItem, TaskResume, TaskS
 @pytest.mark.parametrize(("reason", "restored_status", "provider"), [
     ("error", "active", "recovery"),
     ("error", "active", None),
+    ("interrupted", "active", "recovery"),
     ("paused", "historical", "recovery"),
+    ("blocked", "historical", "recovery"),
 ])
 async def test_retry_uses_saved_task_without_restarting_it(tmp_path, monkeypatch, reason, restored_status, provider):
     store = ConversationStore(tmp_path / "conversations")
@@ -60,7 +62,7 @@ async def test_retry_uses_saved_task_without_restarting_it(tmp_path, monkeypatch
     assert saved.conversation_ids == [cid]
     assert saved.request == task.request
     assert saved.progress == task.progress
-    if reason == "error":
+    if restored_status == "active":
         assert stream.task_active
         assert saved.status == "active"
         assert saved.options.provider_id == (provider or "original")

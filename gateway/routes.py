@@ -313,7 +313,7 @@ async def _start_chat_turn(request: Request, body: dict, t0: float, t1: float):
         body["task_token"] = stream.task_token
         if task:
             if (retry and task.conversation_id == conversation_id and task.status == "paused"
-                    and task.reason == "error" and task.workspace == task_workspace()):
+                    and task.reason in {"error", "interrupted"} and task.workspace == task_workspace()):
                 if not stream.task_options.model_dump(exclude_none=True):
                     stream.task_options = task.options
                     body.update(task.options.model_dump(exclude_none=True))
