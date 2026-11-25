@@ -10,7 +10,7 @@ import time
 import datetime
 from pathlib import Path
 import logging
-from typing import Dict, List, Generator, Optional
+from typing import Callable, Dict, List, Generator, Optional
 
 from httpx import TransportError
 from openai import APIConnectionError
@@ -107,6 +107,7 @@ def generate_chat_responses_stream_native(
     tools_override: Optional[List[Dict]] = None,
     conversation_id: str | None = None,
     workspace_tree: str = "",
+    stop_requested: Callable[[], bool] | None = None,
 ) -> Generator[dict, None, None]:
     """
     Handles chat interaction using native OpenAI tool calling with thinking/reasoning support.
@@ -121,6 +122,12 @@ def generate_chat_responses_stream_native(
     Yields:
         dict: Contains 'messages' (updated message list), 'status', and 'provider' info
     """
+    def stopped() -> bool:
+        return stop_requested is not None and stop_requested()
+
+    if stopped():
+        return
+
     # Use default provider if not specified
     if provider_id is None:
         provider_id = DEFAULT_PROVIDER
@@ -206,6 +213,8 @@ def generate_chat_responses_stream_native(
     save_training = load_save_training_flag()
 
     while iteration_count < max_iterations:
+        if stopped():
+            return
         iteration_count += 1
         
         # Filter continuation tool out of the default tool set until context
@@ -249,6 +258,8 @@ def generate_chat_responses_stream_native(
             raise
 
         try:
+            if stopped():
+                return
             yield {
                 "messages": messages + [assistant_message],
                 "status": "running",
@@ -258,6 +269,8 @@ def generate_chat_responses_stream_native(
             t_first_chunk = time.time()
             t_first_content = None
             for chunk in completion_stream:
+                if stopped():
+                    return
                 if not chunk.choices:
                     # Usage info may come on a chunk with no choices
                     if hasattr(chunk, "usage") and chunk.usage:
@@ -395,10 +408,16 @@ def generate_chat_responses_stream_native(
         }
 
         # Delegate to the tool execution engine
-        restrictions = {} if restricted_tool_names is None else {"allowed_tools": restricted_tool_names}
+        if stopped():
+            return
+        tool_options = {} if restricted_tool_names is None else {"allowed_tools": restricted_tool_names}
+        if stop_requested is not None:
+            tool_options["stop_requested"] = stop_requested
         triggered_trackers = execute_tool_calls(
-            current_tool_calls, messages, conversation_id=conversation_id, **restrictions,
+            current_tool_calls, messages, conversation_id=conversation_id, **tool_options,
         )
+        if stopped():
+            return
 
         # Warn once when estimated context nears the model's window.
         if context_window and current_usage and not _has_continuation_notice_been_shown(messages):

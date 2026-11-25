@@ -8,7 +8,7 @@ loop focused.
 
 import json
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .tool_definitions import execute_tool_call, PARALLEL_SAFE_TOOLS
@@ -158,6 +158,8 @@ def execute_tool_calls(
     messages: List[Dict],
     conversation_id: str | None = None,
     allowed_tools: set[str] | None = None,
+    *,
+    stop_requested: Callable[[], bool] | None = None,
 ) -> Dict[str, int]:
     """
     Execute tool calls, running concurrent-safe tools in parallel.
@@ -173,7 +175,12 @@ def execute_tool_calls(
     def allowed(name: str) -> bool:
         return allowed_tools is None or name in allowed_tools
 
-    def run_tool(call: Dict) -> Tuple[Dict, str, str]:
+    def stopped() -> bool:
+        return stop_requested is not None and stop_requested()
+
+    def run_tool(call: Dict) -> Tuple[Dict, str, str] | None:
+        if stopped():
+            return None
         name = call["function"]["name"]
         if not allowed(name):
             return call, name, f"Error: tool '{name}' is not available in this session."
@@ -186,6 +193,8 @@ def execute_tool_calls(
             triggered[panel_name] = len(messages) - 1  # index just appended
 
     for is_safe, batch in partition_tool_calls(current_tool_calls):
+        if stopped():
+            break
         if is_safe and len(batch) > 1:
             futures = {
                 _get_executor().submit(run_tool, tc): tc
@@ -194,11 +203,15 @@ def execute_tool_calls(
             # Collect results keyed by tool_call id to preserve original order
             results_by_id = {}
             for future in as_completed(futures):
-                tc, tool_name, result = future.result()
-                results_by_id[tc["id"]] = (tc, tool_name, result)
+                outcome = future.result()
+                if outcome is not None:
+                    results_by_id[outcome[0]["id"]] = outcome
             # Append in original batch order
             for tc in batch:
-                tc_out, tool_name, result = results_by_id[tc["id"]]
+                outcome = results_by_id.get(tc["id"])
+                if outcome is None:
+                    continue
+                tc_out, tool_name, result = outcome
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc_out["id"],
@@ -219,7 +232,10 @@ def execute_tool_calls(
                     })
                     _mark(tool_name)
                     continue
-                tc_out, tool_name, result = run_tool(tc)
+                outcome = run_tool(tc)
+                if outcome is None:
+                    break
+                tc_out, tool_name, result = outcome
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc_out["id"],

@@ -203,6 +203,7 @@ async def stream_chat_response(
                     model=model,
                     conversation_id=conversation_id,
                     workspace_tree=workspace_tree,
+                    stop_requested=cancel_event.is_set,
                 ):
                     if cancel_event.is_set():
                         break
