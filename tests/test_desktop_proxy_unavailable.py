@@ -8,6 +8,10 @@ from fastapi.testclient import TestClient
 from frontend import server
 
 
+async def _stay_connected():
+    await asyncio.Future()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("path", ["/health", "/api/chat", "/api/conversations/abc/stream"])
 async def test_desktop_bounds_time_before_chat_or_health_response_headers(monkeypatch, path):
@@ -28,7 +32,8 @@ async def test_desktop_bounds_time_before_chat_or_health_response_headers(monkey
     async def body():
         return b""
 
-    request = SimpleNamespace(url=SimpleNamespace(query=""), method="GET", headers={}, body=body)
+    request = SimpleNamespace(url=SimpleNamespace(query=""), method="GET", headers={}, body=body,
+                              receive=_stay_connected)
     response = await server._proxy(request, path)
     assert response.status_code == 504
     assert closed == [True]
@@ -57,14 +62,53 @@ async def test_desktop_leaves_body_stream_and_non_chat_request_unbounded(monkeyp
     async def body():
         return b""
 
-    request = SimpleNamespace(url=SimpleNamespace(query=""), method="POST", headers={}, body=body)
+    request = SimpleNamespace(url=SimpleNamespace(query=""), method="POST", headers={}, body=body,
+                              receive=_stay_connected)
     response = await server._proxy(request, path)
     assert response.status_code == 200
     assert [chunk async for chunk in response.body_iterator] == [b"completed"]
 
 
+@pytest.mark.asyncio
+async def test_desktop_disconnect_cancels_chat_while_waiting_for_gateway_headers(monkeypatch):
+    sending, disconnected = asyncio.Event(), asyncio.Event()
+    released = []
+
+    async def send(*_args, **_kwargs):
+        sending.set()
+        try:
+            await asyncio.Future()
+        finally:
+            released.append("request")
+
+    async def close():
+        released.append("client")
+
+    async def receive():
+        await disconnected.wait()
+        return {"type": "http.disconnect"}
+
+    async def body():
+        return b"{}"
+
+    monkeypatch.setattr(server.httpx, "AsyncClient", lambda **_: SimpleNamespace(
+        build_request=lambda *_args, **_kwargs: None, send=send, aclose=close,
+    ))
+    request = SimpleNamespace(url=SimpleNamespace(query=""), method="POST", headers={}, body=body,
+                              receive=receive)
+    pending = asyncio.create_task(server._proxy(request, "/api/chat"))
+    await asyncio.wait_for(sending.wait(), 1)
+    disconnected.set()
+    response = await asyncio.wait_for(pending, 1)
+    assert response.status_code == 499
+    assert released == ["request", "client"]
+
+
 @pytest.mark.parametrize(("error_type", "expected"), [(httpx.ConnectError, 502), (httpx.ConnectTimeout, 504)])
-def test_desktop_gateway_outage_releases_client_and_returns_actionable_error(monkeypatch, error_type, expected):
+@pytest.mark.parametrize(("method", "path"), [("GET", "/health"), ("POST", "/api/chat")])
+def test_desktop_gateway_outage_releases_client_and_returns_actionable_error(
+    monkeypatch, error_type, expected, method, path,
+):
     closed = []
 
     class NoGateway:
@@ -83,7 +127,7 @@ def test_desktop_gateway_outage_releases_client_and_returns_actionable_error(mon
             closed.append(self.timeout)
 
     monkeypatch.setattr(server.httpx, "AsyncClient", NoGateway)
-    response = TestClient(server.app, raise_server_exceptions=False).get("/health")
+    response = TestClient(server.app, raise_server_exceptions=False).request(method, path)
     assert response.status_code == expected
     assert "gateway" in response.json()["detail"].lower()
     timeout, = closed

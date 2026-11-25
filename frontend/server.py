@@ -11,7 +11,7 @@ file display, settings, providers, workspace management.
 from pathlib import Path
 
 import httpx
-from anyio import CancelScope, fail_after
+from anyio import CancelScope, create_task_group, fail_after
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -27,6 +27,28 @@ app = FastAPI(title="AuroraCoder Frontend")
 
 
 # ── Proxy helpers ──────────────────────────────────────────────────────────
+
+async def _watch_disconnect(request: Request, scope: CancelScope) -> None:
+    while (await request.receive())["type"] != "http.disconnect":
+        pass
+    scope.cancel()
+
+
+async def _send_chat(client: httpx.AsyncClient, upstream: httpx.Request, request: Request) -> httpx.Response | None:
+    """Close an unaccepted upstream chat request when the browser leaves."""
+    error = None
+    async with create_task_group() as watchers:
+        watchers.start_soon(_watch_disconnect, request, watchers.cancel_scope)
+        try:
+            return await client.send(upstream, stream=True)
+        except Exception as exc:
+            error = exc
+        finally:
+            watchers.cancel_scope.cancel()
+    if error is not None:
+        raise error
+    return None
+
 
 async def _proxy(request: Request, target_path: str):
     """Forward a request to the internal gateway and stream the response back.
@@ -54,7 +76,13 @@ async def _proxy(request: Request, target_path: str):
     try:
         req = client.build_request(request.method, url, content=body, headers=req_headers)
         with fail_after(_INTERACTIVE_HEADER_TIMEOUT_SECONDS if interactive else None):
-            resp = await client.send(req, stream=True)
+            if target_path == "/api/chat":
+                resp = await _send_chat(client, req, request)
+            else:
+                resp = await client.send(req, stream=True)
+        if resp is None:
+            await client.aclose()
+            return JSONResponse({"detail": "Client disconnected before the chat response."}, status_code=499)
     except BaseException as error:
         with CancelScope(shield=True):
             await client.aclose()
