@@ -126,35 +126,36 @@ def _format_code(code: str) -> str:
     )
 
 
-# Display-specific truncation window (threshold is MAX_FILE_READ_SIZE from config).
-_TRUNC_HEAD = 8_000  # chars shown from the beginning
-_TRUNC_TAIL = 4_000  # chars shown from the end
+# Bounded byte windows for files that exceed the display budget.
+_TRUNC_HEAD = 8_000
+_TRUNC_TAIL = 4_000
 
 def _display_file(filepath: str) -> str:
     """Read a single file (relative to WORKSPACE) with line numbers.
 
-    Files larger than ``_MAX_DISPLAY_SIZE`` are truncated: only the first
-    ``_TRUNC_HEAD`` and last ``_TRUNC_TAIL`` characters are shown.
+    Large files use a head and tail preview with bounded reads.
     """
     try:
         full_path = WORKSPACE / filepath
         if not full_path.is_file():
             return f"--- {filepath} ---\n[File not found: {filepath}]"
-        size = full_path.stat().st_size
-        if size > MAX_FILE_READ_SIZE:
-            with open(full_path, 'r', encoding='utf-8') as f:
-                head = f.read(_TRUNC_HEAD)
-                f.seek(max(0, size - _TRUNC_TAIL))
-                tail = f.read(_TRUNC_TAIL)
-            skipped = size - len(head.encode('utf-8')) - len(tail.encode('utf-8'))
-            return (
-                f"--- {filepath} (TRUNCATED — {size:,} bytes, {size / (1024*1024):.1f} MB) ---\n"
-                f"{head}\n\n... [{skipped / (1024*1024):.1f} MB omitted] ...\n\n{tail}\n"
-                f"--- END TRUNCATED ---"
-            )
-        with open(full_path, 'r', encoding='utf-8') as f:
-            code = f.read()
-        return f"--- {filepath} ---\n{_format_code(code)}"
+        limit = min(MAX_FILE_READ_SIZE, CODE_PANEL_WARN_CHARS // 3)
+        with full_path.open("rb") as f:
+            prefix = f.read(limit + 1)
+            if len(prefix) <= limit:
+                formatted = _format_code(prefix.decode("utf-8"))
+                if len(formatted) <= limit:
+                    return f"--- {filepath} ---\n{formatted}"
+            size = f.seek(0, 2)
+            head = prefix[:min(_TRUNC_HEAD, size // 2)]
+            f.seek(max(len(head), size - _TRUNC_TAIL))
+            tail = f.read(_TRUNC_TAIL)
+        skipped = max(0, size - len(head) - len(tail))
+        return (
+            f"--- {filepath} (TRUNCATED — {size:,} bytes) ---\n"
+            f"{head.decode('utf-8', errors='replace')}\n\n... [{skipped:,} bytes omitted] ...\n\n"
+            f"{tail.decode('utf-8', errors='replace')}\n--- END TRUNCATED ---"
+        )
     except Exception as e:
         return f"--- {filepath} ---\n[Error reading file: {str(e)}]"
 
@@ -179,7 +180,20 @@ class CodeInterpreterPanel(Panel):
             return ""
 
         sorted_files = sorted(state)
-        combined = "\n\n".join(_display_file(f) for f in sorted_files)
+        files = []
+        omitted = 0
+        remaining = CODE_PANEL_WARN_CHARS
+        for filepath in sorted_files:
+            if remaining <= 0:
+                omitted += 1
+                continue
+            display = _display_file(filepath)
+            if len(display) + 2 > remaining:
+                omitted += 1
+                continue
+            files.append(display)
+            remaining -= len(display) + 2
+        combined = "\n\n".join(files)
 
         notes = (
             "\n\nNote: This display shows the LATEST state of each file "
@@ -190,11 +204,17 @@ class CodeInterpreterPanel(Panel):
             "contents unless you open it again. Only close a file "
             "after you have fully extracted all information you need from it."
         )
+        if omitted:
+            notes += (
+                f"\n{omitted} open file(s) omitted to keep the display within its context budget. "
+                "Close files you no longer need or inspect the relevant lines in the terminal."
+            )
+        file_names = ", ".join(sorted_files[:CODE_PANEL_CRITICAL_ITEMS])[:2000]
         # ── Tiered warnings: severe overrides mild ────────────────────
         if len(state) >= CODE_PANEL_CRITICAL_ITEMS or len(combined) >= CODE_PANEL_CRITICAL_CHARS:
             notes += (
                 f"\n⚠️ CODE INTERPRETER OVERLOAD WARNING: You have {len(state)} files open "
-                f"({', '.join(sorted_files)}) totalling {len(combined):,} characters. "
+                f"({file_names}) totalling {len(combined):,} characters. "
                 "This severely strains the context window and risks "
                 "degradation or truncation of critical information. "
                 "CLOSE every file you no longer absolutely need RIGHT NOW: "
@@ -206,7 +226,7 @@ class CodeInterpreterPanel(Panel):
         elif len(state) > CODE_PANEL_WARN_ITEMS or len(combined) > CODE_PANEL_WARN_CHARS:
             notes += (
                 f"\n⚠️ CODE INTERPRETER LOAD WARNING: You have {len(state)} files open "
-                f"({', '.join(sorted_files)}). "
+                f"({file_names}). "
                 "To avoid running out of context, close files you no longer "
                 "need: close multiple at once with "
                 "close_file(file=['a.py','b.py']), or keep only what you "
