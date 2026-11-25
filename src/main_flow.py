@@ -12,6 +12,9 @@ from pathlib import Path
 import logging
 from typing import Dict, List, Generator, Optional
 
+from httpx import TransportError
+from openai import APIConnectionError
+
 from .tool_definitions import get_tool_definitions
 from .core_tools.tool_store_client import get_toolstore_tools_prompt
 from .config import (
@@ -240,13 +243,13 @@ def generate_chat_responses_stream_native(
                 _f.write(_j.dumps({"ts": _dt.datetime.now().isoformat(), "conversation_id": conversation_id, "provider": provider_id, "model": model_name, "error": f"{type(exc).__name__}: {exc}", "status": getattr(exc, "status_code", None), "upstream": getattr(getattr(exc, "response", None), "text", None), "api_kwargs": api_kwargs}, ensure_ascii=False, default=str) + "\n")
             raise
 
-        yield {
-            "messages": messages + [assistant_message],
-            "status": "running",
-            "provider": provider_id,
-        }
-
         try:
+            yield {
+                "messages": messages + [assistant_message],
+                "status": "running",
+                "provider": provider_id,
+            }
+
             t_first_chunk = time.time()
             t_first_content = None
             for chunk in completion_stream:
@@ -322,20 +325,18 @@ def generate_chat_responses_stream_native(
             _log_api_timing(iteration_count, model_name,
                             t_api_start, t_first_chunk, t_first_content)
         
-        except Exception as e:
-            # Retry the *same* iteration — transient stream errors
-            # shouldn't burn an iteration slot.
-            streaming_errors += 1
-            _main_logger.warning("Streaming error (%s/%s): %s", streaming_errors, MAX_STREAMING_RETRIES, e)
+        except (TransportError, APIConnectionError) as exc:
             if streaming_errors >= MAX_STREAMING_RETRIES:
-                yield {
-                    "messages": messages,
-                    "status": "error",
-                    "error": f"Streaming failed after {MAX_STREAMING_RETRIES} retries: {e}",
-                    "provider": provider_id
-                }
-                return
+                raise RuntimeError(f"Connection lost while reading the model response: {exc}") from exc
+            streaming_errors += 1
+            iteration_count -= 1
+            _main_logger.warning("Retrying interrupted model stream (%s/%s): %s",
+                                 streaming_errors, MAX_STREAMING_RETRIES, exc)
             continue
+        finally:
+            close = getattr(completion_stream, "close", None)
+            if close is not None:
+                close()
 
         streaming_errors = 0
 
