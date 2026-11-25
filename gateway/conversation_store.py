@@ -528,13 +528,19 @@ class ConversationStore:
             f"[store] Saved {len(messages)} messages for {conversation_id[:8]}..."
         )
 
-    def update_status(self, conversation_id: str, status: str) -> None:
-        """Update the status field of a conversation."""
+    _KEEP_ACCEPTED_TURN = object()
+
+    def update_status(self, conversation_id: str, status: str, *, accepted_turn_id=_KEEP_ACCEPTED_TURN) -> None:
+        """Update status and optionally replace the current turn receipt."""
         with self._lock:
             meta = self._index.get(conversation_id)
             if meta is None:
                 raise KeyError(f"Conversation {conversation_id} not found")
             meta["status"] = status
+            if accepted_turn_id is None:
+                meta.pop("accepted_turn_id", None)
+            elif accepted_turn_id is not self._KEEP_ACCEPTED_TURN:
+                meta["accepted_turn_id"] = accepted_turn_id
             if status != "error":
                 meta.pop("recovery_reason", None)
             meta["updated_at"] = datetime.now(timezone.utc).isoformat()

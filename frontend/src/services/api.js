@@ -4,6 +4,7 @@
  * Handles communication with the FastAPI backend, including SSE streaming.
  */
 import { getAuthHeader, clearToken } from '../utils/auth.js';
+import { newConversationId } from '../utils/uuid.js';
 
 const API_BASE = '/api'
 
@@ -148,11 +149,13 @@ async function readConversationEvents(response, callbacks) {
   }
 }
 
-async function attachConversationStream(conversationId, callbacks, signal) {
-  const response = await fetch(`${API_BASE}/conversations/${encodeURIComponent(conversationId)}/stream`, {
+async function attachConversationStream(conversationId, callbacks, signal, { turnId, confirm = false } = {}) {
+  const suffix = turnId ? `?turn_id=${encodeURIComponent(turnId)}` : ''
+  const response = await fetch(`${API_BASE}/conversations/${encodeURIComponent(conversationId)}/stream${suffix}`, {
     signal, headers: _headers(),
   })
   if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+  if (confirm) callbacks.onConversationId?.(response.headers.get('X-Conversation-ID') || conversationId)
   await readConversationEvents(response, callbacks)
 }
 
@@ -176,10 +179,11 @@ export async function streamChat(message, conversationId, callbacks, signal, exi
   _tlog('streamChat() called', seq)
 
   const { onError, onConversationId } = callbacks
+  const turnId = newConversationId()
   
   const requestBody = {
     message,
-    conversation_id: conversationId || null,
+    conversation_id: conversationId || newConversationId(),
     messages: existingMessages,
     prefer_saved_history: true,
     provider: provider,
@@ -192,29 +196,48 @@ export async function streamChat(message, conversationId, callbacks, signal, exi
   const bodyJson = JSON.stringify(requestBody)
   _tlog(`JSON.stringify done (${(bodyJson.length / 1024).toFixed(1)}KB)`, seq, t0)
 
+  const recoverBeforeHeaders = async error => {
+    if (signal?.aborted) throw error
+    try {
+      await attachConversationStream(requestBody.conversation_id, callbacks, signal, { turnId, confirm: true })
+    } catch (reconnectError) {
+      throw signal?.aborted ? reconnectError : error
+    }
+  }
+
   try {
     _tlog('fetch() about to fire', seq, t0)
-    const response = await fetch(`${API_BASE}/chat`, {
-      method: 'POST',
-      headers: _headers({ 'Content-Type': 'application/json' }),
-      body: bodyJson,
-      signal
-    })
+    let response
+    try {
+      response = await fetch(`${API_BASE}/chat`, {
+        method: 'POST',
+        headers: _headers({ 'Content-Type': 'application/json', 'X-Aurora-Turn-ID': turnId }),
+        body: bodyJson,
+        signal,
+      })
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error
+      await recoverBeforeHeaders(error)
+      return
+    }
     _tlog(`fetch() resolved, status=${response.status}`, seq, t0)
     console.log('[streamChat] Response status:', response.status)
     const headerCid = response.headers.get('X-Conversation-ID')
     if (headerCid) onConversationId?.(headerCid)
     
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`)
+      const error = new Error(`HTTP error! status: ${response.status}`)
+      if (response.status !== 502 && response.status !== 504) throw error
+      await recoverBeforeHeaders(error)
+      return
     }
 
     try {
       await readConversationEvents(response, callbacks)
     } catch (error) {
-      const acceptedId = headerCid || conversationId
+      const acceptedId = headerCid || requestBody.conversation_id
       if (!canReattach(error, acceptedId, signal)) throw error
-      await attachConversationStream(acceptedId, callbacks, signal)
+      await attachConversationStream(acceptedId, callbacks, signal, { turnId, confirm: !headerCid })
     }
     
   } catch (error) {

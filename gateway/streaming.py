@@ -68,6 +68,7 @@ class ActiveStream:
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
     task: Optional[asyncio.Task] = None
     new_conversation_id: Optional[str] = None   # set when continuation detected
+    turn_id: Optional[str] = None
     task_token: Optional[str] = None
     task_request: Optional[str] = None
     task_options: TaskResume = field(default_factory=TaskResume)
@@ -513,7 +514,7 @@ def start_task_segment(task: TaskChecklist, *, fresh: bool, handoff: str = "", s
         task, status="active", reason="", stalled=stalled, handoff=handoff, started=True,
         conversation_ids=[*task.conversation_ids, cid] if fresh else task.conversation_ids,
     )
-    store.update_status(cid, "running")
+    store.update_status(cid, "running", accepted_turn_id=None)
     stream = ActiveStream(
         conversation_id=cid, provider=provider, task_token=secrets.token_urlsafe(32),
         initial_task_progress=task.progress,

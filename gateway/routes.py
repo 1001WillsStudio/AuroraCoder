@@ -20,10 +20,10 @@ import time
 import uuid
 import zipfile
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Annotated, Optional, Dict, Any, List
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, Header
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 
 from pydantic import BaseModel, Field
@@ -181,7 +181,9 @@ def _require_workspace_path(work_dir: Path, path: str, *, for_mutation: bool = F
 # ============================================================================
 
 @app.post("/api/chat")
-async def proxy_chat(request: Request):
+async def proxy_chat(
+    request: Request, turn_id: Annotated[uuid.UUID | None, Header(alias="X-Aurora-Turn-ID")] = None,
+):
     """Proxy a chat request to the backend.
 
     Accepts the same body as the backend's ``POST /api/chat``.
@@ -215,10 +217,10 @@ async def proxy_chat(request: Request):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     async with _turn_admission_lock(conversation_id):
-        return await _start_chat_turn(request, body, t0, t1)
+        return await _start_chat_turn(request, body, t0, t1, turn_id=str(turn_id) if turn_id else None)
 
 
-async def _start_chat_turn(request: Request, body: dict, t0: float, t1: float):
+async def _start_chat_turn(request: Request, body: dict, t0: float, t1: float, *, turn_id: str | None):
     conversation_id = body["conversation_id"]
     cid_tag = conversation_id[:8]
 
@@ -261,7 +263,6 @@ async def _start_chat_turn(request: Request, body: dict, t0: float, t1: float):
     await _cancel_active_stream(conversation_id)
     t3 = time.perf_counter()
     logger.info(f"[proxy] [{cid_tag}...] cancel_stream={t3-t2:.3f}s")
-    store.update_status(conversation_id, "running")
 
     # Retry: keep the current transcript (orphan tool calls are filled in
     # below) and do not append another user message.
@@ -295,6 +296,7 @@ async def _start_chat_turn(request: Request, body: dict, t0: float, t1: float):
         parent_id=parent_id,
         tool_call_id=tool_call_id,
         provider=body.get("provider"),
+        turn_id=turn_id,
     )
     user_message = body.get("message")
     if retry:
@@ -338,6 +340,7 @@ async def _start_chat_turn(request: Request, body: dict, t0: float, t1: float):
         store.save_messages(conversation_id, accepted)
     if message:
         store.seed_frontend_user_message(conversation_id, message)
+    store.update_status(conversation_id, "running", accepted_turn_id=turn_id)
     t5 = time.perf_counter()
     logger.info(f"[proxy] [{cid_tag}...] store_ops={t5-t4:.3f}s")
 
@@ -381,11 +384,20 @@ async def _start_chat_turn(request: Request, body: dict, t0: float, t1: float):
 
 
 @app.get("/api/conversations/{conversation_id}/stream")
-async def resume_stream(conversation_id: str, request: Request):
+async def resume_stream(conversation_id: str, request: Request, turn_id: uuid.UUID | None = None):
     """Attach to an in-progress stream (mid-stream resume)."""
+    if turn_id is None:
+        return _resume_conversation_stream(conversation_id, request)
+    async with _turn_admission_lock(conversation_id):
+        return _resume_conversation_stream(conversation_id, request, turn_id=str(turn_id))
+
+
+def _resume_conversation_stream(conversation_id: str, request: Request, *, turn_id: str | None = None):
     stream = active_streams.get(conversation_id)
 
     if stream:
+        if turn_id is not None and stream.turn_id != turn_id:
+            raise HTTPException(status_code=409, detail="That turn is no longer current for this conversation.")
         queue: asyncio.Queue = asyncio.Queue(maxsize=256)
         stream.subscribers.append(queue)
         return StreamingResponse(
@@ -405,6 +417,8 @@ async def resume_stream(conversation_id: str, request: Request):
     except KeyError:
         raise HTTPException(status_code=404, detail="No active or stored conversation")
 
+    if turn_id is not None and conv.get("accepted_turn_id") != turn_id:
+        raise HTTPException(status_code=409, detail="That turn is no longer current for this conversation.")
     status = conv.get("status", "completed")
     frontend_msgs = frontend_messages_for_status(store.get_frontend_messages(conversation_id), conv)
     task = store.tasks.get(conversation_id)
