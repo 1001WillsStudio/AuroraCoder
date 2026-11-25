@@ -49,6 +49,7 @@ DEFAULT_STORAGE_DIR = _default_storage_dir()
 TERMINAL_STATUSES = frozenset({
     "completed", "error", "max_iterations_reached", "interrupted",
 })
+GATEWAY_RESTARTED = "gateway_restarted"
 
 TITLE_MAX_LENGTH = 100
 _CONVERSATION_ID = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}\Z")
@@ -138,6 +139,23 @@ def ensure_error_frontend_message(
         "canRetry": True,
     })
     return msgs
+
+
+def frontend_messages_for_status(frontend_messages: List[Dict], conversation: dict) -> List[Dict]:
+    if conversation.get("status") != "error":
+        return frontend_messages
+    if conversation.get("recovery_reason") != GATEWAY_RESTARTED:
+        return ensure_error_frontend_message(frontend_messages)
+
+    visible = frontend_messages or sanitize_frontend_messages([
+        {"role": msg["role"], "content": msg.get("content", "")}
+        for msg in conversation.get("messages", [])
+        if isinstance(msg, dict) and msg.get("role") in ("user", "assistant")
+    ])
+    return ensure_error_frontend_message(visible, {
+        "message": "AuroraCoder restarted before this turn finished. Use Try Again to continue the same conversation.",
+        "type": "GatewayRestarted",
+    })
 
 
 def _extract_title(messages: List[Dict]) -> str:
@@ -517,8 +535,24 @@ class ConversationStore:
             if meta is None:
                 raise KeyError(f"Conversation {conversation_id} not found")
             meta["status"] = status
+            if status != "error":
+                meta.pop("recovery_reason", None)
             meta["updated_at"] = datetime.now(timezone.utc).isoformat()
             self._save_index()
+
+    def recover_running_after_restart(self) -> int:
+        """Make unfinished turns from the prior gateway process retryable."""
+        with self._lock:
+            interrupted = {
+                cid: {**meta, "status": "error", "recovery_reason": GATEWAY_RESTARTED}
+                for cid, meta in self._index.items()
+                if isinstance(meta, dict) and meta.get("status") == "running"
+            }
+            if interrupted:
+                recovered = {**self._index, **interrupted}
+                _atomic_write_json(self._index_path(), recovered)
+                self._index = recovered
+            return len(interrupted)
 
     def get_conversation(self, conversation_id: str) -> Dict[str, Any]:
         """Return metadata **and** messages for a single conversation."""

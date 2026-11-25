@@ -36,7 +36,7 @@ try:
 except ImportError:
     ConfigManager = None
 
-from gateway.conversation_store import store, ensure_error_frontend_message, messages_for_retry, require_conversation_id
+from gateway.conversation_store import store, frontend_messages_for_status, messages_for_retry, require_conversation_id
 from gateway.task_checklist import TaskConflict
 from src.task_checklist import TaskCheckpointUpdate, TaskEdit, TaskReopen, TaskResume, TaskStart
 from gateway.settings_store import (
@@ -406,10 +406,8 @@ async def resume_stream(conversation_id: str, request: Request):
         raise HTTPException(status_code=404, detail="No active or stored conversation")
 
     status = conv.get("status", "completed")
-    frontend_msgs = store.get_frontend_messages(conversation_id)
+    frontend_msgs = frontend_messages_for_status(store.get_frontend_messages(conversation_id), conv)
     task = store.tasks.get(conversation_id)
-    if status == "error":
-        frontend_msgs = ensure_error_frontend_message(frontend_msgs)
 
     async def _replay():
         data = {
@@ -1079,8 +1077,7 @@ async def get_conversation(conversation_id: str):
     except KeyError:
         raise HTTPException(status_code=404, detail="Conversation not found")
     frontend_messages = store.get_frontend_messages(conversation_id)
-    if conv.get("status") == "error":
-        frontend_messages = ensure_error_frontend_message(frontend_messages)
+    frontend_messages = frontend_messages_for_status(frontend_messages, conv)
     conv["frontend_messages"] = frontend_messages
     return conv
 

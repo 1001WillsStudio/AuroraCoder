@@ -69,6 +69,12 @@ async def _startup_sync():
     case), so there's no need to gate the ``create_task`` call itself on
     any setting; see ``memory/ops/gap_scheduler.py``.
     """
+    try:
+        recovered = store.recover_running_after_restart()
+        if recovered:
+            logger.info("Recovered %s unfinished conversations from the previous gateway process", recovered)
+    except OSError:
+        logger.exception("Could not save recovery state during gateway startup")
     sync_tool_env_vars()
     configure_github_auth()
     try:
