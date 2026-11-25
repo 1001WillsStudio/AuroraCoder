@@ -215,6 +215,7 @@ def generate_chat_responses_stream_native(
 
     # Read the user's training-data preference *once* — it cannot change mid-request.
     save_training = load_save_training_flag()
+    retrying_empty_reply = False
 
     while iteration_count < max_iterations:
         if stopped():
@@ -235,6 +236,11 @@ def generate_chat_responses_stream_native(
             task_context = task_tools.prompt()
             api_messages = [{**system, "content": f"{system['content']}\n\n{task_context}"}, *api_messages[1:]]
 
+        if retrying_empty_reply:
+            api_messages = [*api_messages, {
+                "role": "system",
+                "content": "The previous response was empty. Reply to the user or call the next appropriate tool.",
+            }]
         api_kwargs = {
             "model": model_name,
             "messages": api_messages,
@@ -388,14 +394,13 @@ def generate_chat_responses_stream_native(
         if current_tool_calls:
             assistant_message["tool_calls"] = current_tool_calls
         
-        # If no tool calls, we're done (or retry if also no content)
+        # A single empty completion is retryable. Never spend the agent's
+        # remaining task budget sending the same ineffective request.
         if not current_tool_calls:
-            if not current_content:
-                messages.append({
-                    "role": "system",
-                    "content": """This message only appears when you made this mistake in previous (removed) responses.
-                    You did not provide any tool call or reply last time."""
-                })
+            if not current_content.strip():
+                if retrying_empty_reply or iteration_count >= max_iterations:
+                    raise RuntimeError("The model provider returned no answer or tool call.")
+                retrying_empty_reply = True
                 continue
             else:
                 messages.append(assistant_message)
@@ -405,6 +410,8 @@ def generate_chat_responses_stream_native(
                     "provider": provider_id
                 }
                 return
+
+        retrying_empty_reply = False
 
         # Add tool call requests to messages
         messages.append(assistant_message)
