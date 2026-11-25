@@ -224,8 +224,11 @@ async def proxy_chat(
 
     receipt = str(turn_id) if turn_id else None
     wait_for_current_turn = body.pop("wait_for_current_turn", False) is True
+    waited_for_current_turn = False
     while True:
         async with _turn_admission_lock(conversation_id):
+            if waited_for_current_turn and await request.is_disconnected():
+                raise HTTPException(status_code=499, detail="Client disconnected before the follow-up was accepted.")
             owner = active_streams.get(conversation_id)
             same_receipt = (owner and receipt and body.get("retry_receipt") is True
                             and owner.turn_id == receipt and owner.status in _REATTACHABLE_TURN_STATUSES)
@@ -233,6 +236,7 @@ async def proxy_chat(
                 return await _start_chat_turn(request, body, t0, t1, turn_id=receipt,
                                               after_current_turn=wait_for_current_turn)
         # Leave the admission lock free for Stop and receipt reattachment.
+        waited_for_current_turn = True
         await asyncio.wait({owner.task}, timeout=1)
 
 

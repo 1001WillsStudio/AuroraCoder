@@ -49,7 +49,8 @@ async def test_concurrent_sends_wait_to_replace_the_same_stream(tmp_path, monkey
 
 
 @pytest.mark.asyncio
-async def test_desktop_followup_waits_for_active_turn_and_uses_persisted_history(tmp_path, monkeypatch):
+@pytest.mark.parametrize("disconnected", [False, True])
+async def test_desktop_followup_waits_for_active_turn_and_uses_persisted_history(tmp_path, monkeypatch, disconnected):
     history = ConversationStore(tmp_path)
     cid = history.create_conversation()
     owner = streaming.ActiveStream(cid)
@@ -72,6 +73,9 @@ async def test_desktop_followup_waits_for_active_turn_and_uses_persisted_history
         pytest.fail("A desktop follow-up attempted to cancel an active turn.")
 
     class Request:
+        async def is_disconnected(self):
+            return disconnected
+
         async def json(self):
             return {"conversation_id": cid, "message": "Second request", "max_iterations": 2,
                     "prefer_saved_history": True, "wait_for_current_turn": True,
@@ -88,6 +92,14 @@ async def test_desktop_followup_waits_for_active_turn_and_uses_persisted_history
     assert not follow_up.done() and not owner.cancel_event.is_set()
     assert seen == []
     release.set()
+    if disconnected:
+        with pytest.raises(routes.HTTPException) as response:
+            await asyncio.wait_for(follow_up, 2)
+        assert response.value.status_code == 499
+        assert cid not in active and seen == []
+        assert history.get_messages(cid) == final
+        return
+
     await asyncio.wait_for(follow_up, 2)
     await active[cid].task
     assert seen[0]["message"] == "Second request"

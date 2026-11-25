@@ -10,7 +10,7 @@ import { applyAtPick, enterActionForPicker, fileNameOf, MAX_ATTACHED_FILES, pars
  *
  * 1. Normal         — textarea + send button
  * 2. Streaming      — textarea with a Stop or queue button
- * 3. Queued         — disabled textarea with a button to restore the draft
+ * 3. Queued         — disabled textarea with Stop and a separate queued-input action
  * 4. Hidden         — not rendered (subagent view)
  *
  * Workspace files can be attached as chips (`@` picker or the file-tree
@@ -271,18 +271,19 @@ const ChatInput = forwardRef(({
                 <AtSign size={18} />
               </button>
             )}
+            {isStreaming && (queuedInput || !canSend) && (
+              <button className="stop-btn" onClick={(e) => { if (!isPrimaryClick(e)) return; onStop() }} title={t('chat.title.stop')} data-testid="chat-stop">
+                <div className="stop-icon" />
+              </button>
+            )}
             {queuedInput ? (
               <button
                 className="send-btn pending-btn"
                 onClick={goalSteeringPending ? onRetrySteering : onRestoreQueuedInput}
                 title={t(goalSteeringPending ? 'task.retryReceipt' : 'chat.title.cancelPending')}
-                data-testid="chat-stop"
+                data-testid="chat-queued-action"
               >
                 <RotateCcw size={18} />
-              </button>
-            ) : isStreaming && !canSend ? (
-              <button className="stop-btn" onClick={(e) => { if (!isPrimaryClick(e)) return; onStop() }} title={t('chat.title.stop')} data-testid="chat-stop">
-                <div className="stop-icon" />
               </button>
             ) : isStreaming && canSend ? (
               <button
@@ -293,7 +294,7 @@ const ChatInput = forwardRef(({
               >
                 <Send size={20} />
               </button>
-            ) : (
+            ) : !isStreaming && (
               <button
                 className="send-btn"
                 onClick={(e) => { if (!isPrimaryClick(e)) return; onSend() }}
