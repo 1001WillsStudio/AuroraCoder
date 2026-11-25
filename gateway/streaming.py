@@ -34,7 +34,7 @@ from gateway.workspace import (
     generate_workspace_tree_text,
 )
 from src.code_sandbox import WORKSPACE
-from src.task_checklist import TaskProgress, TaskResume
+from src.task_checklist import TASK_TOOL_NAMES, TaskProgress, TaskResume
 from memory.ops.extractor import run_extraction
 from memory.ops.consolidator import run_consolidation
 
@@ -540,7 +540,28 @@ def pause_task(conversation_id: str, reason: str = "paused") -> TaskChecklist | 
     return task
 
 
-def _finish_task_segment(stream: ActiveStream, raw_messages: list, prior_tool_ids: set) -> None:
+def _has_work_beyond_checkpoint(messages: list) -> bool:
+    completed_calls = set()
+    for message in reversed(messages):
+        role = message.get("role")
+        if role == "user":
+            break
+        if role == "tool":
+            completed_calls.add(message.get("tool_call_id"))
+        elif role == "assistant":
+            calls = message.get("tool_calls") or []
+            content = message.get("content")
+            if not calls and isinstance(content, str) and content.strip():
+                return True
+            for call in calls:
+                name = call.get("function", {}).get("name")
+                if (name and name not in TASK_TOOL_NAMES and name != "continue_as_new_chat"
+                        and call.get("id") in completed_calls):
+                    return True
+    return False
+
+
+def _finish_task_segment(stream: ActiveStream, raw_messages: list, prior_tool_ids: set[str]) -> None:
     cid = stream.conversation_id
     task = store.tasks.get(cid)
     if not task or task.status != "active" or task.conversation_id != cid:
@@ -553,7 +574,11 @@ def _finish_task_segment(stream: ActiveStream, raw_messages: list, prior_tool_id
         pause_task(cid, "blocked")
         stream.status = "interrupted"
     else:
-        stalled = task.stalled + 1 if task.progress == stream.initial_task_progress else 0
+        previous = stream.initial_task_progress
+        progressed = previous is None or task.progress.items != previous.items or (
+            task.progress.checkpoint != previous.checkpoint and _has_work_beyond_checkpoint(raw_messages)
+        )
+        stalled = 0 if progressed else task.stalled + 1
         if stalled >= 2:
             pause_task(cid, "no_progress")
             stream.status = "interrupted"
