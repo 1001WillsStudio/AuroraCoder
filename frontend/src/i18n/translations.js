@@ -15,6 +15,15 @@
 
 const LANG = {
   en: {
+    'task.title': 'Task checklist',
+    'task.openCurrent': 'Open current chat',
+    'task.status.active': 'Running',
+    'task.status.paused': 'Paused',
+    'task.status.completed': 'Verified',
+    'task.reason.blocked': 'The task needs help to continue. Open the checklist for details.',
+    'task.reason.no_progress': 'The agent paused after two attempts without a new checkpoint.',
+    'task.reason.error': 'The conversation ended with an error. Ask the agent to continue from the saved checklist.',
+    'task.reason.interrupted': 'The previous run was interrupted. Ask the agent to continue from the saved checklist.',
     // ── Settings header ───────────────────────────────────────────
     'settings.title': 'Settings',
     'settings.subtitle':
@@ -298,6 +307,15 @@ const LANG = {
   },
 
   zh: {
+    'task.title': '任务清单',
+    'task.openCurrent': '打开当前会话',
+    'task.status.active': '执行中',
+    'task.status.paused': '已暂停',
+    'task.status.completed': '已验证',
+    'task.reason.blocked': '任务遇到阻碍，展开清单查看详情。',
+    'task.reason.no_progress': '连续两次执行都没有新的进度记录，任务已暂停。',
+    'task.reason.error': '会话运行出错。可以在对话中让 Agent 从已保存的清单继续。',
+    'task.reason.interrupted': '上次执行已中断。可以在对话中让 Agent 从已保存的清单继续。',
     // ── Settings header ───────────────────────────────────────────
     'settings.title': '设置',
     'settings.subtitle':

@@ -63,6 +63,8 @@ class ChatRequest(BaseModel):
     # Injected by the gateway before proxying — gives the agent a
     # pre-built workspace tree so it doesn't waste turns exploring.
     workspace_tree: Optional[str] = Field(None)
+    task_state: Optional[dict] = Field(None)
+    task_token: Optional[str] = Field(None)
 
 
 # ============================================================================
@@ -180,6 +182,8 @@ async def stream_chat_response(
     model: Optional[str] = None,
     tools_override: Optional[list] = None,
     workspace_tree: str = "",
+    task_state: Optional[dict] = None,
+    task_token: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:
     cancel_event = threading.Event()
     cancel_active_stream(conversation_id)
@@ -198,6 +202,11 @@ async def stream_chat_response(
                 status = "running"
                 current_provider = provider
 
+                task_options = {}
+                if task_token:
+                    from src.task_checklist import AgentTaskTools
+
+                    task_options["task_tools"] = AgentTaskTools(conversation_id, task_token, task_state)
                 for response in generate_chat_responses_stream_native(
                     messages=messages, max_iterations=max_iterations,
                     provider_id=provider, tools_override=tools_override,
@@ -205,6 +214,7 @@ async def stream_chat_response(
                     conversation_id=conversation_id,
                     workspace_tree=workspace_tree,
                     stop_requested=cancel_event.is_set,
+                    **task_options,
                 ):
                     if cancel_event.is_set():
                         break
@@ -374,11 +384,14 @@ async def chat(chat_request: ChatRequest, request: Request):
     max_iterations = chat_request.max_iterations or 30
 
     workspace_tree = chat_request.workspace_tree or ""
+    task_options = {}
+    if chat_request.task_token:
+        task_options = {"task_state": chat_request.task_state, "task_token": chat_request.task_token}
     return StreamingResponse(
         stream_chat_response(messages, conversation_id, request, provider=provider,
                              model=chat_request.model, max_iterations=max_iterations,
                              tools_override=tools_override,
-                             workspace_tree=workspace_tree),
+                             workspace_tree=workspace_tree, **task_options),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache", "Connection": "keep-alive",

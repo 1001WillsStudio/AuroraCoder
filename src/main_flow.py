@@ -40,6 +40,7 @@ from .code_tools.code_interpreter_panel import CodeInterpreterPanel
 from .code_tools.tool_store_panel import ToolStorePanel
 from .code_tools.memory_panel import MemoryPanel
 from .core_tools import memory_client
+from .task_checklist import AgentTaskTools
 
 # ── Register all Living Tool State panels ──────────────────────────
 register(CodeInterpreterPanel())
@@ -109,6 +110,7 @@ def generate_chat_responses_stream_native(
     conversation_id: str | None = None,
     workspace_tree: str = "",
     stop_requested: Callable[[], bool] | None = None,
+    task_tools: AgentTaskTools | None = None,
 ) -> Generator[dict, None, None]:
     """
     Handles chat interaction using native OpenAI tool calling with thinking/reasoning support.
@@ -226,6 +228,12 @@ def generate_chat_responses_stream_native(
         )
         
         api_messages = messages_for_provider(messages)
+        if task_tools and tools_override is None:
+            tools_for_iteration = [*tools_for_iteration, *task_tools.schemas()]
+            system = api_messages[0]
+            task_context = task_tools.prompt()
+            api_messages = [{**system, "content": f"{system['content']}\n\n{task_context}"}, *api_messages[1:]]
+
         api_kwargs = {
             "model": model_name,
             "messages": api_messages,
@@ -410,6 +418,8 @@ def generate_chat_responses_stream_native(
         tool_options = {} if restricted_tool_names is None else {"allowed_tools": restricted_tool_names}
         if stop_requested is not None:
             tool_options["stop_requested"] = stop_requested
+        if task_tools and tools_override is None:
+            tool_options["task_tool_handler"] = task_tools.call
         triggered_trackers = execute_tool_calls(
             current_tool_calls, messages, conversation_id=conversation_id, **tool_options,
         )
@@ -444,6 +454,10 @@ def generate_chat_responses_stream_native(
             idx = triggered_trackers.get(panel.name)
             if idx is not None:
                 panel.refresh(messages, at_index=idx)
+
+        if task_tools and task_tools.active and context_window and total_tokens / context_window >= CONTEXT_WARN_THRESHOLD:
+            yield {"messages": messages, "status": "context_limit_reached", "provider": provider_id}
+            return
 
         yield {
             "messages": messages,

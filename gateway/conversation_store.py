@@ -220,11 +220,14 @@ class ConversationStore:
     """
 
     def __init__(self, storage_dir: Optional[Path] = None):
+        from gateway.task_checklist import TaskChecklistStore
+
         self._dir = storage_dir or DEFAULT_STORAGE_DIR
         self._dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._index: Dict[str, Dict] = {}
         self._load_index()
+        self.tasks = TaskChecklistStore(self._dir / "tasks", _atomic_write_json)
 
     # ------------------------------------------------------------------
     # Internal helpers

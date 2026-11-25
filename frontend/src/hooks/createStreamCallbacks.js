@@ -49,6 +49,14 @@ export function createStreamCallbacks({
     return true
   }
 
+  const followContinuation = (data) => {
+    if (data?.new_conversation_id && !continuationNavigatedRef?.current.has(data.new_conversation_id)) {
+      continuationNavigatedRef?.current.add(data.new_conversation_id)
+      setTimeout(() => {
+        if (isCurrentView()) handleLoadConversation?.(data.new_conversation_id)
+      }, 500)
+    }
+  }
   const onMessages = (frontendMessages, _status, data) => {
     if (_firstMessage) { _firstMessage = false; onFirstSse?.() }
     if (ensureAssistantTail) {
@@ -62,12 +70,7 @@ export function createStreamCallbacks({
       if (!data.new_conversation_id) dispatchPending(data.raw_messages, true)
     }
     if (data?.conversation_id) setConversationId(data.conversation_id)
-    if (data?.new_conversation_id && !continuationNavigatedRef?.current.has(data.new_conversation_id)) {
-      continuationNavigatedRef?.current.add(data.new_conversation_id)
-      setTimeout(() => {
-        if (isCurrentView()) handleLoadConversation?.(data.new_conversation_id)
-      }, 500)
-    }
+    followContinuation(data)
     // Trigger a diff refresh on every full-state messages event so the
     // code panel always reflects the latest file state after a round.
     onMessagesRefresh?.()
@@ -160,7 +163,10 @@ export function createStreamCallbacks({
   }
   return {
     onMessages: forCurrentView(overrides.onMessages || onMessages),
-    onDone: forCurrentView(overrides.onDone || onDone),
+    onDone: forCurrentView((data) => {
+      (overrides.onDone || onDone)(data)
+      followContinuation(data)
+    }),
     onError: forCurrentView(overrides.onError || onError),
     onSubagentEvent: forCurrentView(overrides.onSubagentEvent || onSubagentEvent),
     onDelta: forCurrentView(overrides.onDelta || onDelta),

@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .tool_definitions import execute_tool_call, PARALLEL_SAFE_TOOLS
 from .code_tools.panel_manager import triggered_by
+from .task_checklist import TASK_TOOL_NAMES
 from .config import MAX_TOOL_CONCURRENCY
 
 
@@ -88,7 +89,8 @@ def partition_tool_calls(tool_calls: List[Dict]) -> List[Tuple[bool, List[Dict]]
     return batches
 
 
-def _execute_single_tool(tool_call: Dict, conversation_id: str | None = None) -> Tuple[Dict, str, str]:
+def _execute_single_tool(tool_call: Dict, conversation_id: str | None = None,
+                         task_tool_handler=None) -> Tuple[Dict, str, str]:
     """Execute one tool call and return (tool_call, tool_name, result).
 
     Every tool execution yields the applied argument dict plus the result
@@ -107,6 +109,10 @@ def _execute_single_tool(tool_call: Dict, conversation_id: str | None = None) ->
         return (tool_call, tool_name,
                 f"Error: failed to parse tool call arguments: {str(e)}")
     try:
+        if tool_name in TASK_TOOL_NAMES:
+            result = (task_tool_handler(tool_name, arguments) if task_tool_handler
+                      else "Task tools are unavailable for this turn.")
+            return tool_call, tool_name, result
         arguments, result = execute_tool_call(
             tool_name, arguments, tool_call_id=tool_call.get("id"),
             conversation_id=conversation_id)
@@ -160,6 +166,7 @@ def execute_tool_calls(
     allowed_tools: set[str] | None = None,
     *,
     stop_requested: Callable[[], bool] | None = None,
+    task_tool_handler=None,
 ) -> Dict[str, int]:
     """
     Execute tool calls, running concurrent-safe tools in parallel.
@@ -184,6 +191,8 @@ def execute_tool_calls(
         name = call["function"]["name"]
         if not allowed(name):
             return call, name, f"Error: tool '{name}' is not available in this session."
+        if name in TASK_TOOL_NAMES:
+            return _execute_single_tool(call, conversation_id, task_tool_handler)
         return _execute_single_tool(call, conversation_id)
 
     def _mark(tool_name: str):

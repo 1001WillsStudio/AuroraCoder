@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import os
+import secrets
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -23,11 +24,16 @@ from src.backend_access import backend_auth_headers
 from src.config import WORKSPACE_DIR, MAX_FILE_READ_SIZE, CONTINUATION_TOOL_RESULT
 from src.workspace_paths import WorkspacePathError, resolve_under_workspace
 from gateway.conversation_store import store, sanitize_frontend_messages, ensure_error_frontend_message
+from gateway.provider_registry import get_max_iterations
+from gateway.task_checklist import TaskChecklist, TaskConflict
 from gateway.workspace import (
     file_snapshots,
     mark_file_touched,
     snapshot_file,
+    generate_workspace_tree_text,
 )
+from src.code_sandbox import WORKSPACE
+from src.task_checklist import TaskProgress, TaskResume
 from memory.ops.extractor import run_extraction
 from memory.ops.consolidator import run_consolidation
 
@@ -61,6 +67,14 @@ class ActiveStream:
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
     task: Optional[asyncio.Task] = None
     new_conversation_id: Optional[str] = None   # set when continuation detected
+    task_token: Optional[str] = None
+    task_request: Optional[str] = None
+    task_options: TaskResume = field(default_factory=TaskResume)
+    initial_task_progress: Optional[TaskProgress] = None
+
+    @property
+    def task_active(self) -> bool:
+        return self.initial_task_progress is not None
 
 
 active_streams: Dict[str, ActiveStream] = {}
@@ -476,6 +490,82 @@ def _continuation_message(raw_messages: list, summary: str) -> str:
     )
 
 
+def task_workspace() -> str:
+    return str(Path(WORKSPACE).resolve())
+
+
+def start_task_segment(task: TaskChecklist, *, fresh: bool, handoff: str = "", stalled: int = 0) -> str:
+    """Register the new stream before yielding, so pause and resume cannot race a handoff."""
+    if task.workspace != task_workspace():
+        raise TaskConflict("Reopen the task in its original workspace before resuming.")
+    provider = task.options.provider_id or task.options.provider
+    cid = str(uuid.uuid4()) if fresh else task.conversation_id
+    if fresh:
+        store.create_conversation(conversation_id=cid, provider_id=provider)
+    message = (
+        f"Continue task: {task.objective}" if fresh else task.objective
+    )
+    prior = _fix_orphan_tool_calls(store.get_messages(cid))
+    store.save_messages(cid, [*prior, {"role": "user", "content": message}])
+    store.seed_frontend_user_message(cid, message)
+    task = store.tasks.save(
+        task, status="active", reason="", stalled=stalled, handoff=handoff, started=True,
+        conversation_ids=[*task.conversation_ids, cid] if fresh else task.conversation_ids,
+    )
+    store.update_status(cid, "running")
+    stream = ActiveStream(
+        conversation_id=cid, provider=provider, task_token=secrets.token_urlsafe(32),
+        initial_task_progress=task.progress,
+    )
+    try:
+        tree = generate_workspace_tree_text(WORKSPACE) if not prior else ""
+    except Exception:
+        logger.exception("Could not build workspace tree for task %s", task.id)
+        tree = ""
+    body = {
+        **task.options.model_dump(exclude_none=True),
+        "conversation_id": cid, "message": message, "messages": prior, "max_iterations": get_max_iterations(),
+        "workspace_tree": tree, "task_state": task.prompt_state(), "task_token": stream.task_token,
+    }
+    active_streams[cid] = stream
+    stream.task = asyncio.create_task(_proxy_backend_stream(stream, body))
+    return cid
+
+
+def pause_task(conversation_id: str, reason: str = "paused") -> TaskChecklist | None:
+    task = store.tasks.get(conversation_id)
+    if task and task.status == "active":
+        task = store.tasks.save(task, status="paused", reason=reason)
+    return task
+
+
+def _finish_task_segment(stream: ActiveStream, raw_messages: list, prior_tool_ids: set) -> None:
+    cid = stream.conversation_id
+    task = store.tasks.get(cid)
+    if not task or task.status != "active" or task.conversation_id != cid:
+        return
+    if stream.status not in {"completed", "max_iterations_reached", "context_limit_reached"}:
+        pause_task(cid, "error")
+    elif task.progress.verified:
+        store.tasks.save(task, status="completed", reason="")
+    elif task.progress.blocker:
+        pause_task(cid, "blocked")
+        stream.status = "interrupted"
+    else:
+        stalled = task.stalled + 1 if task.progress == stream.initial_task_progress else 0
+        if stalled >= 2:
+            pause_task(cid, "no_progress")
+            stream.status = "interrupted"
+            return
+        prompt = _scan_for_continuation(raw_messages, prior_tool_ids)
+        handoff = prompt[-6000:] if isinstance(prompt, str) else task.handoff
+        store.save_messages(cid, raw_messages)
+        stream.new_conversation_id = start_task_segment(task, fresh=True, handoff=handoff, stalled=stalled)
+        stream.status = "continued"
+        store.update_status(cid, "continued")
+        _memory_ops_executor.submit(_run_session_end_memory_ops, cid, "user_chat", "continued")
+
+
 async def _start_continuation(new_cid: str, provider_id: str, user_msg: str, options: dict):
     """
     Simulate a user opening a new chat, typing the continuation message,
@@ -561,9 +651,16 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                         for etype, edata in _parse_sse_blocks(raw + "\n\n"):
                             stream.latest_event_type = etype
                             stream.latest_event_data = edata
+                            stream.status = edata.get("status", stream.status)
+                            stream.provider = edata.get("provider", stream.provider)
+                            raw_msgs = edata.get("raw_messages", [])
+
+                            if stream.task_active and etype == "done":
+                                _finish_task_segment(stream, raw_msgs, prior_tool_ids)
+                                edata["status"] = stream.status
 
                             # --- Continuation detection ---
-                            if not stream.new_conversation_id and etype == "messages":
+                            if not stream.task_active and not stream.new_conversation_id and etype == "messages":
                                 prompt = None
                                 if (edata.get("status") == "completed" and stream.conv_type == "user_chat"
                                         and request_body.get("tools") not in {
@@ -619,6 +716,8 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
 
                             # Annotate events with new_conversation_id if continuation was detected
                             if stream.new_conversation_id:
+                                stream.status = "continued"
+                                edata["status"] = "continued"
                                 edata["new_conversation_id"] = stream.new_conversation_id
                                 edata["status"] = "continued"
 
@@ -626,15 +725,12 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                             # The backend now always includes full messages in
                             # every event (delta or messages), so the gateway
                             # always has fresh data for persistence.
-                            stream.status = edata.get("status", stream.status)
-                            stream.provider = edata.get("provider", stream.provider)
                             if edata.get("messages"):
                                 edata["messages"] = sanitize_frontend_messages(edata["messages"])
                                 stream.latest_frontend_messages = edata["messages"]
 
 
                             # --- File tracking for diff endpoint ---
-                            raw_msgs = edata.get("raw_messages", [])
                             if raw_msgs:
                                 try:
                                     _track_file_changes(cid, raw_msgs)
@@ -720,6 +816,9 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
         # latest_frontend_messages and latest_event_data are always
         # fresh regardless of the last event type.
         if not superseded:
+            task = store.tasks.get(cid) if stream.task_active else None
+            if task and task.conversation_id == cid and task.status == "active":
+                pause_task(cid, "paused" if stream.cancel_event.is_set() else "error")
             _persist_finished_stream(stream, persist_status)
 
         # Signal end to all subscribers

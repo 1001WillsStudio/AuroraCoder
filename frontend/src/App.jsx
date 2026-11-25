@@ -4,6 +4,7 @@ import { useAutoScroll } from './hooks/useAutoScroll'
 import { RotateCcw, X, ArrowDown, Menu } from 'lucide-react'
 import ChatMessage from './components/ChatMessage'
 import ChatInput from './components/ChatInput'
+import TaskChecklist from './components/TaskChecklist'
 import LoginScreen from './components/LoginScreen'
 import Sidebar from './components/Sidebar'
 import WelcomeScreen from './components/WelcomeScreen'
@@ -1050,6 +1051,15 @@ function App() {
               {t('app.backToParent')}
             </button>
           </div>
+        )}
+
+        {viewMode !== 'subagent' && (
+          <TaskChecklist
+            key={conversationId || 'new'}
+            conversationId={conversationId}
+            isStreaming={isStreaming}
+            onOpenConversation={handleLoadConversation}
+          />
         )}
 
         {viewMode !== 'subagent' && (

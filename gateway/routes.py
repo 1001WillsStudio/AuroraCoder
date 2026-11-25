@@ -11,6 +11,7 @@ import asyncio
 import io
 import json
 import logging
+import secrets
 import subprocess
 import os
 import shutil
@@ -36,6 +37,8 @@ except ImportError:
     ConfigManager = None
 
 from gateway.conversation_store import store, ensure_error_frontend_message, messages_for_retry, require_conversation_id
+from gateway.task_checklist import TaskConflict
+from src.task_checklist import TaskEdit, TaskProgress, TaskReopen, TaskResume, TaskStart
 from gateway.settings_store import (
     get_all_settings,
     update_settings as _store_update_settings,
@@ -72,6 +75,9 @@ from gateway.streaming import (
     _subscriber_sse,
     _format_sse,
     _snapshotted_tool_calls,
+    pause_task,
+    start_task_segment,
+    task_workspace,
 )
 from memory.settings import memory_enabled, heavy_ops_enabled
 from memory.store import get_repository as get_memory_repository
@@ -184,6 +190,8 @@ async def proxy_chat(request: Request):
     """
     t0 = time.perf_counter()
     body = await request.json()
+    body.pop("task_state", None)
+    body.pop("task_token", None)
     t1 = time.perf_counter()
     body_size = len(json.dumps(body)) if body else 0
     requested_id = body.get("conversation_id")
@@ -257,7 +265,8 @@ async def _start_chat_turn(request: Request, body: dict, t0: float, t1: float):
 
     # Retry: keep the current transcript (orphan tool calls are filled in
     # below) and do not append another user message.
-    if body.pop("retry", False):
+    retry = body.pop("retry", False)
+    if retry:
         prior = store.get_messages(conversation_id) or body.get("messages")
         body["messages"] = messages_for_retry(
             prior, body.get("message") or "",
@@ -280,6 +289,34 @@ async def _start_chat_turn(request: Request, body: dict, t0: float, t1: float):
         tool_call_id=tool_call_id,
         provider=body.get("provider"),
     )
+    user_message = body.get("message")
+    if retry:
+        user_message = next(
+            (item.get("content") for item in reversed(body.get("messages") or []) if item.get("role") == "user"),
+            None,
+        )
+    if (conv_type == "user_chat" and not parent_id and not body.get("tools")
+            and isinstance(user_message, str) and user_message.strip()):
+        stream.task_token = secrets.token_urlsafe(32)
+        stream.task_request = user_message[:6000]
+        stream.task_options = TaskResume(
+            provider=body.get("provider"), provider_id=body.get("provider_id"), model=body.get("model"),
+        )
+        task = _task_for_conversation(conversation_id)
+        body["task_token"] = stream.task_token
+        if task:
+            if (retry and task.conversation_id == conversation_id and task.status == "paused"
+                    and task.reason == "error" and task.workspace == task_workspace()):
+                if not stream.task_options.model_dump(exclude_none=True):
+                    stream.task_options = task.options
+                    body.update(task.options.model_dump(exclude_none=True))
+                stream.provider = stream.task_options.provider_id or stream.task_options.provider
+                task = store.tasks.save(task, status="active", reason="", options=stream.task_options)
+                stream.initial_task_progress = task.progress
+            state = task.prompt_state()
+            if task.conversation_id != conversation_id or (retry and task.status == "paused"):
+                state["status"] = "historical"
+            body["task_state"] = state
     t4 = time.perf_counter()
 
     # Seed frontend_messages so loading the conversation before the first
@@ -363,16 +400,20 @@ async def resume_stream(conversation_id: str, request: Request):
 
     status = conv.get("status", "completed")
     frontend_msgs = store.get_frontend_messages(conversation_id)
+    task = store.tasks.get(conversation_id)
     if status == "error":
         frontend_msgs = ensure_error_frontend_message(frontend_msgs)
 
     async def _replay():
-        yield _format_sse("done", {
+        data = {
             "conversation_id": conversation_id,
             "status": status,
             "messages": frontend_msgs or conv.get("messages", []),
             "raw_messages": conv.get("messages", []),
-        })
+        }
+        if status == "continued" and task and task.conversation_id != conversation_id:
+            data["new_conversation_id"] = task.conversation_id
+        yield _format_sse("done", data)
 
     return StreamingResponse(
         _replay(),
@@ -394,17 +435,142 @@ async def cancel_conversation_stream(conversation_id: str):
     closes the gap where content streamed via deltas was never persisted
     into the frontend's ``rawMessages`` and would be lost on interrupt.
     """
+    task_cid = None
     async with _turn_admission_lock(conversation_id):
-        await _cancel_active_stream(conversation_id)
+        task = store.tasks.get(conversation_id)
+        stream = active_streams.get(conversation_id)
+        if task and task.status == "active" and (not stream or stream.task_active):
+            pause_task(conversation_id)
+            task_cid = task.conversation_id
+        if task_cid and task_cid != conversation_id:
+            current_task_stream = active_streams.get(task_cid)
+            async with _turn_admission_lock(task_cid):
+                if active_streams.get(task_cid) is current_task_stream:
+                    await _cancel_active_stream(task_cid)
+        else:
+            await _cancel_active_stream(conversation_id)
         raw_messages = store.get_messages(conversation_id)
         frontend_messages = store.get_frontend_messages(conversation_id)
 
     return {
         "cancelled": conversation_id,
+        **({"task_conversation_id": task_cid} if task_cid else {}),
         "raw_messages": raw_messages,
         "frontend_messages": frontend_messages,
     }
 
+
+# The authenticated frontend proxies /api only. Each backend stream also
+# proves ownership of its internal task routes with a per-run token.
+def _task_stream(conversation_id: str, request: Request) -> ActiveStream:
+    stream = active_streams.get(conversation_id)
+    token = request.headers.get("X-Task-Token", "").encode()
+    if (not stream or not stream.task_token or stream.new_conversation_id
+            or stream.finished or stream.cancel_event.is_set()
+            or not secrets.compare_digest(stream.task_token.encode(), token)):
+        raise HTTPException(status_code=409, detail="This task stream is no longer active.")
+    return stream
+
+
+@app.post("/internal/task-start/{conversation_id}")
+async def start_agent_task(conversation_id: str, plan: TaskStart, request: Request):
+    stream = _task_stream(conversation_id, request)
+    if not stream.task_request:
+        raise HTTPException(status_code=409, detail="A new task needs a user request.")
+    try:
+        task = store.tasks.start(conversation_id, plan, task_workspace(),
+                                 stream.task_request, stream.task_options)
+    except TaskConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    stream.initial_task_progress = task.progress
+    return {"task_state": task.prompt_state()}
+
+
+@app.post("/internal/task-reopen/{conversation_id}")
+async def reopen_agent_task(conversation_id: str, reopen: TaskReopen, request: Request):
+    stream = _task_stream(conversation_id, request)
+    task = store.tasks.get(conversation_id)
+    if (not task or task.conversation_id != conversation_id or task.status != "paused"
+            or not stream.task_request or task.workspace != task_workspace()):
+        raise HTTPException(status_code=409, detail="Resume a paused task in its current conversation and workspace.")
+    try:
+        task = store.tasks.reopen(task, stream.task_request, stream.task_options, reopen.revised_plan)
+    except TaskConflict as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    stream.initial_task_progress = task.progress
+    return {"task_state": task.prompt_state()}
+
+
+@app.post("/internal/task-checkpoint/{conversation_id}")
+async def save_task_checkpoint(conversation_id: str, progress: TaskProgress, request: Request):
+    stream = _task_stream(conversation_id, request)
+    task = store.tasks.get(conversation_id)
+    if (not stream.task_active or not task or task.conversation_id != conversation_id
+            or task.status != "active"):
+        raise HTTPException(status_code=409, detail="This task stream is no longer active.")
+    try:
+        task = store.tasks.checkpoint(task, progress)
+    except TaskConflict as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"saved": True, "task_state": task.prompt_state()}
+
+
+def _task_for_conversation(conversation_id: str):
+    task = store.tasks.get(conversation_id)
+    if task and task.status == "active" and task.conversation_id not in active_streams:
+        return pause_task(conversation_id, "interrupted")
+    return task
+
+
+@app.get("/api/conversations/{conversation_id}/task")
+async def get_task(conversation_id: str):
+    task = _task_for_conversation(conversation_id)
+    return {"task": task.public() if task else None}
+
+
+@app.put("/api/conversations/{conversation_id}/task")
+async def edit_task(conversation_id: str, edit: TaskEdit):
+    try:
+        uuid.UUID(conversation_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid conversation ID.") from exc
+    _task_for_conversation(conversation_id)
+    if conversation_id in active_streams:
+        raise HTTPException(status_code=409, detail="Wait for the conversation to stop before editing.")
+    try:
+        conv = store.get_conversation(conversation_id)
+    except KeyError:
+        store.create_conversation(conversation_id=conversation_id)
+    else:
+        if conv["type"] != "user_chat":
+            raise HTTPException(status_code=409, detail="A task needs a main conversation.")
+    try:
+        task = store.tasks.edit(conversation_id, edit, task_workspace())
+    except TaskConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"task": task.public()}
+
+
+@app.post("/api/conversations/{conversation_id}/task/resume")
+async def resume_task(conversation_id: str, options: TaskResume):
+    task = _task_for_conversation(conversation_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    if task.status == "active":
+        return {"conversation_id": task.conversation_id}
+    if (task.status != "paused" or task.conversation_id != conversation_id
+            or conversation_id in active_streams):
+        raise HTTPException(status_code=409, detail="Resume a paused task from its current conversation.")
+    try:
+        if task.workspace != task_workspace():
+            raise TaskConflict("Reopen the task in its original workspace before resuming.")
+        progress = task.progress.model_copy(update={"blocker": ""})
+        task = store.tasks.save(task, options=options if options.model_fields_set else task.options,
+                                progress=progress)
+        cid = start_task_segment(task, fresh=task.started, handoff=task.handoff)
+    except TaskConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"conversation_id": cid}
 
 
 
@@ -932,12 +1098,16 @@ async def delete_conversation(conversation_id: str):
     except KeyError:
         raise HTTPException(status_code=404, detail="Conversation not found")
     for cid in subtree:
+        task = store.tasks.get(cid)
+        if task and task.conversation_id == cid:
+            pause_task(cid)
         await _cancel_active_stream(cid)
     try:
         deleted_ids = store.delete_conversation(conversation_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Conversation not found")
     for cid in deleted_ids:
+        store.tasks.remove_conversation(cid)
         clear_conversation_snapshots(cid)
         _snapshotted_tool_calls.pop(cid, None)
     return {"deleted": deleted_ids[0], "deleted_ids": deleted_ids}

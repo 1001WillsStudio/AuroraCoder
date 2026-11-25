@@ -1,0 +1,120 @@
+.task-checklist {
+  width: calc(100% - 48px);
+  max-width: var(--chat-max-width);
+  margin: 0 auto;
+  color: var(--text-primary);
+  font-size: 0.875rem;
+}
+
+.task-checklist-card {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+}
+
+.task-checklist-header,
+.task-checklist-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.task-checklist-header {
+  padding: 6px 8px;
+}
+
+.task-checklist button {
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.task-checklist button:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.task-checklist button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.task-checklist button.task-checklist-open {
+  flex-shrink: 0;
+  border-color: var(--border-default);
+}
+
+.task-checklist-summary {
+  min-width: 0;
+  flex: 1;
+  text-align: left;
+}
+
+.task-checklist-summary svg,
+.task-checklist-summary small {
+  flex-shrink: 0;
+}
+
+.task-checklist-summary span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.task-checklist-summary[aria-expanded="true"] span {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.task-checklist-details {
+  padding: 10px 14px;
+  max-height: 35vh;
+  overflow-y: auto;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.task-checklist-details ul {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+}
+
+.task-checklist-details li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 5px 0;
+}
+
+.task-checklist-details li svg {
+  flex-shrink: 0;
+  align-self: start;
+  margin-top: 3px;
+}
+
+.task-checklist-details p,
+.task-checklist-details li div {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.task-checklist-details small {
+  display: block;
+  color: var(--text-secondary);
+}
+
+.task-checklist-check {
+  color: var(--success);
+}
+
+.task-checklist-notice {
+  margin: 4px 12px 8px;
+  color: var(--warning);
+  overflow-wrap: anywhere;
+}

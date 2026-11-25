@@ -318,6 +318,14 @@ export async function getConversation(conversationId, signal) {
   return response.json()
 }
 
+export async function readTask(conversationId, signal) {
+  const response = await fetch(`${API_BASE}/conversations/${encodeURIComponent(conversationId)}/task`, {
+    signal, headers: _headers(),
+  })
+  if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+  return (await response.json()).task
+}
+
 /**
  * Delete a conversation and its descendant subagent chats.
  * @param {string} conversationId
