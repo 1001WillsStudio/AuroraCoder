@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
+from src.message_provenance import TURN_INPUT_RECEIPT
 from gateway.attached_files import (
     ATTACHED_FILES_START,
     apply_attached_files,
@@ -539,6 +540,47 @@ class ConversationStore:
             f"[store] Saved {len(messages)} messages for {conversation_id[:8]}..."
         )
 
+    def has_turn_input(self, conversation_id: str, receipt: str) -> bool:
+        with self._lock:
+            return receipt in self._index.get(conversation_id, {}).get("turn_inputs", {})
+
+    def queue_turn_input(self, conversation_id: str, receipt: str, content: str) -> None:
+        with self._lock:
+            meta = self._index[conversation_id]
+            if receipt in meta.get("turn_inputs", {}):
+                return
+            inputs = {**meta.get("turn_inputs", {}), receipt: content}
+            updated = {**self._index, conversation_id: {**meta, "turn_inputs": inputs}}
+            _atomic_write_json(self._index_path(), updated)
+            self._index = updated
+
+    def pending_turn_inputs(self, conversation_id: str) -> list[dict]:
+        with self._lock:
+            inputs = dict(self._index.get(conversation_id, {}).get("turn_inputs", {}))
+        if not any(inputs.values()):
+            return []
+        persisted = {message.get(TURN_INPUT_RECEIPT) for message in self.get_messages(conversation_id)}
+        return [
+            {"role": "user", "content": content, TURN_INPUT_RECEIPT: receipt}
+            for receipt, content in inputs.items() if content is not None and receipt not in persisted
+        ]
+
+    def acknowledge_turn_inputs(self, conversation_id: str, messages: list[dict]) -> None:
+        """Keep accepted receipts, releasing the payload after transcript persistence."""
+        with self._lock:
+            meta = self._index[conversation_id]
+            inputs = dict(meta.get("turn_inputs", {}))
+            if not inputs:
+                return
+            applied = {message.get(TURN_INPUT_RECEIPT) for message in messages}
+            if not any(inputs.get(receipt) for receipt in applied):
+                return
+            for receipt in applied & inputs.keys():
+                inputs[receipt] = None
+            updated = {**self._index, conversation_id: {**meta, "turn_inputs": inputs}}
+            _atomic_write_json(self._index_path(), updated)
+            self._index = updated
+
     _KEEP_ACCEPTED_TURN = object()
 
     def update_status(
@@ -648,6 +690,7 @@ class ConversationStore:
                 raise KeyError(f"Conversation {conversation_id} not found")
             meta = dict(meta)
             meta.pop("accepted_turn_ids", None)
+            meta.pop("turn_inputs", None)
 
         messages = self.get_messages(conversation_id)
         return {**meta, "messages": messages}
@@ -685,7 +728,7 @@ class ConversationStore:
         """
         with self._lock:
             items = [
-                {key: value for key, value in meta.items() if key != "accepted_turn_ids"}
+                {key: value for key, value in meta.items() if key not in {"accepted_turn_ids", "turn_inputs"}}
                 for meta in self._index.values()
             ]
 

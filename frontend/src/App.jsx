@@ -462,6 +462,18 @@ function App() {
         onStreamEnd: restoreQueuedInput,
         onQueuedInputSent: () => setQueuedInput(null),
         ensureAssistantTail: true,
+        overrides: {
+          onConversationId: (id) => {
+            if (!id) return
+            conversationIdRef.current = id
+            setConversationId(id)
+            const pending = queuedInputRef.current
+            if (pending && goalSteering.send(id, pending.message, pending.attachedFiles)) {
+              queuedInputRef.current = null
+              setQueuedInput(null)
+            }
+          },
+        },
       })
       await streamChat(apiMessage, requestedId, callbacks, controller.signal, messagesToSend, selectedProvider, opts)
     } catch (error) {

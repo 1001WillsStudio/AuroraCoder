@@ -30,6 +30,7 @@ from pydantic import BaseModel, Field
 
 from src.config import WORKSPACE_DIR
 from src.code_sandbox import shell, WORKSPACE
+from src.message_provenance import TURN_INPUT_RECEIPT
 
 try:
     from toolstore.config_manager import ConfigManager
@@ -206,6 +207,8 @@ async def proxy_chat(
     body.pop("task_state", None)
     body.pop("task_token", None)
     body.pop("message_source", None)
+    body.pop("message_receipt", None)
+    body.pop("accept_turn_inputs", None)
     t1 = time.perf_counter()
     body_size = len(json.dumps(body)) if body else 0
     requested_id = body.get("conversation_id")
@@ -363,6 +366,7 @@ async def _start_chat_turn(request: Request, body: dict, t0: float, t1: float, *
         )
         task = _task_for_conversation(conversation_id)
         body["task_token"] = stream.task_token
+        body["accept_turn_inputs"] = True
         if task:
             if (retry and task.conversation_id == conversation_id and task.status == "paused"
                     and task.reason in {"error", "interrupted"} and task.workspace == task_workspace()):
@@ -386,10 +390,18 @@ async def _start_chat_turn(request: Request, body: dict, t0: float, t1: float, *
     # entire history is lost if the backend never produces events.
     message = body.get("message")
     accepted = [dict(msg) for msg in body.get("messages") or []]
+    queued = store.pending_turn_inputs(conversation_id) if stream.task_token else []
+    if queued:
+        accepted.extend(queued)
+        body["messages"] = accepted.copy()
     if message:
         accepted.append({"role": "user", "content": message})
     if accepted:
         store.save_messages(conversation_id, accepted, pending_turn_id=turn_id if message else None)
+    if queued:
+        store.acknowledge_turn_inputs(conversation_id, queued)
+        for queued_message in queued:
+            store.seed_frontend_user_message(conversation_id, queued_message["content"])
     if message:
         store.seed_frontend_user_message(conversation_id, message)
     store.update_status(conversation_id, "running", accepted_turn_id=turn_id)
@@ -559,17 +571,23 @@ class TaskSteeringSubmission(BaseModel):
 
 @app.post("/api/conversations/{conversation_id}/task/steering", status_code=202)
 async def submit_task_steering(conversation_id: str, submission: TaskSteeringSubmission):
-    tasks = store.tasks.list_for_conversation(require_conversation_id(conversation_id))
+    conversation_id = require_conversation_id(conversation_id)
+    tasks = store.tasks.list_for_conversation(conversation_id)
     receipt = str(submission.receipt)
-    if any(entry.receipt == receipt for saved in tasks for entry in saved.steering_history):
+    if store.has_turn_input(conversation_id, receipt) or any(
+        entry.receipt == receipt for saved in tasks for entry in saved.steering_history
+    ):
         return {"receipt": receipt}
     task = tasks[0] if tasks else None
-    owner = active_streams.get(task.conversation_id) if task else None
-    if (not task or task.status != "active" or not owner or not owner.task_active
-            or owner.finished or owner.cancel_event.is_set()):
+    goal_owner = active_streams.get(task.conversation_id) if task and task.status == "active" else None
+    if not goal_owner or not goal_owner.task_active:
+        task = None
+    owner = goal_owner if task else active_streams.get(conversation_id)
+    if (not owner or not owner.task_token or not owner.accept_turn_inputs
+            or owner.finished or owner.new_conversation_id or owner.cancel_event.is_set()):
         raise HTTPException(status_code=409, detail={"code": "no_active_goal"})
     files = submission.attached_files or extract_attached_files(submission.message) or []
-    workspace = Path(task.workspace)
+    workspace = Path(task.workspace if task else task_workspace())
     if len(files) > MAX_ATTACHED_FILES:
         raise HTTPException(status_code=422, detail="Too many steering attachments.")
     normalized = [normalize_attached_paths([path], workspace) for path in files]
@@ -580,8 +598,62 @@ async def submit_task_steering(conversation_id: str, submission: TaskSteeringSub
     if not content or not content.strip():
         raise HTTPException(status_code=422, detail="Send steering text or a workspace attachment.")
     # This handler does not yield between owner lookup and the durable receipt.
-    store.tasks.queue_steering(task, content, receipt)
+    if task:
+        store.tasks.queue_steering(task, content, receipt)
+    else:
+        store.queue_turn_input(conversation_id, receipt, content)
     return {"receipt": receipt}
+
+
+class TurnInputBoundary(BaseModel):
+    messages: list[dict] | None = None
+    finishing: bool = False
+
+
+@app.post("/internal/turn-inputs/{conversation_id}")
+async def take_turn_inputs(conversation_id: str, boundary: TurnInputBoundary, request: Request):
+    stream = _task_stream(conversation_id, request)
+    task = store.tasks.get(conversation_id) if stream.task_active else None
+    if task and (task.conversation_id != conversation_id or task.status != "active"):
+        task = None
+    history = task.steering_history if task else []
+    first_pending = next((i for i, entry in enumerate(history) if entry.applied_to is None), len(history))
+    task_inputs = history[first_pending:]
+    task_receipts = {entry.receipt for entry in task_inputs}
+    inputs = [
+        message for message in store.pending_turn_inputs(conversation_id)
+        if message[TURN_INPUT_RECEIPT] not in task_receipts
+    ] + [entry.as_message() for entry in task_inputs]
+    if boundary.messages is None:
+        if boundary.finishing and not inputs:
+            stream.accept_turn_inputs = False
+        return {"pending": bool(inputs)}
+
+    if not inputs:
+        return {"inputs": []}
+    persisted = {msg.get(TURN_INPUT_RECEIPT) for msg in store.get_messages(conversation_id)}
+    messages = list(boundary.messages)
+    existing = {msg.get(TURN_INPUT_RECEIPT) for msg in messages}
+    inputs = [message for message in inputs if message.get(TURN_INPUT_RECEIPT) not in existing
+              or TURN_INPUT_RECEIPT not in message]
+    new_messages = [*messages, *inputs]
+    store.save_messages(conversation_id, new_messages)
+    stream.input_message_count = len(new_messages)
+    store.acknowledge_turn_inputs(conversation_id, inputs)
+    for message in inputs:
+        if message.get(TURN_INPUT_RECEIPT) not in persisted or TURN_INPUT_RECEIPT not in message:
+            store.seed_frontend_user_message(conversation_id, message["content"])
+    stream.latest_frontend_messages = store.get_frontend_messages(conversation_id)
+    if task_inputs:
+        applied = [entry.model_copy(update={"applied_to": conversation_id}) for entry in task_inputs]
+        task = store.tasks.save(
+            task, steering_entries=[*history[:first_pending], *applied],
+            progress=task.progress.model_copy(update={"blocker": ""}), stalled=0,
+        )
+    if inputs:
+        stream.task_request = inputs[-1]["content"]
+        stream.task_request_is_retry = False
+    return {"inputs": inputs, "task_state": task.prompt_state() if task else None}
 
 
 @app.post("/internal/task-request/{conversation_id}")
@@ -616,6 +688,8 @@ async def start_agent_task(conversation_id: str, plan: TaskStart, request: Reque
     try:
         task = store.tasks.start(conversation_id, plan, task_workspace(),
                                  stream.task_request, stream.task_options)
+        for message in store.pending_turn_inputs(conversation_id):
+            task = store.tasks.queue_steering(task, message["content"], message[TURN_INPUT_RECEIPT])
     except TaskConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     stream.initial_task_progress = task.progress

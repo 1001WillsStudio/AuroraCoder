@@ -54,6 +54,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     message: Optional[str] = Field(None)
     message_source: Optional[str] = Field(None)
+    message_receipt: Optional[str] = Field(None)
     conversation_id: Optional[str] = Field(None)
     messages: Optional[list] = Field(None)
     provider: Optional[str] = Field(None)
@@ -66,6 +67,7 @@ class ChatRequest(BaseModel):
     workspace_tree: Optional[str] = Field(None)
     task_state: Optional[dict] = Field(None)
     task_token: Optional[str] = Field(None)
+    accept_turn_inputs: bool = Field(False)
 
 
 # ============================================================================
@@ -188,6 +190,7 @@ async def stream_chat_response(
     workspace_tree: str = "",
     task_state: Optional[dict] = None,
     task_token: Optional[str] = None,
+    accept_turn_inputs: bool = False,
 ) -> AsyncGenerator[str, None]:
     cancel_event = threading.Event()
     cancel_active_stream(conversation_id)
@@ -210,7 +213,9 @@ async def stream_chat_response(
                 if task_token:
                     from src.task_checklist import AgentTaskTools
 
-                    task_options["task_tools"] = AgentTaskTools(conversation_id, task_token, task_state)
+                    task_options["task_tools"] = AgentTaskTools(
+                        conversation_id, task_token, task_state, accept_turn_inputs=accept_turn_inputs,
+                    )
                 for response in generate_chat_responses_stream_native(
                     messages=messages, max_iterations=max_iterations,
                     provider_id=provider, tools_override=tools_override,
@@ -384,6 +389,8 @@ async def chat(chat_request: ChatRequest, request: Request):
         message = {"role": "user", "content": chat_request.message}
         if chat_request.message_source:
             message["source"] = chat_request.message_source
+        if chat_request.message_receipt:
+            message["turn_input_receipt"] = chat_request.message_receipt
         messages.append(message)
 
     provider = chat_request.provider_id or chat_request.provider or DEFAULT_PROVIDER
@@ -393,7 +400,10 @@ async def chat(chat_request: ChatRequest, request: Request):
     workspace_tree = chat_request.workspace_tree or ""
     task_options = {}
     if chat_request.task_token:
-        task_options = {"task_state": chat_request.task_state, "task_token": chat_request.task_token}
+        task_options = {
+            "task_state": chat_request.task_state, "task_token": chat_request.task_token,
+            "accept_turn_inputs": chat_request.accept_turn_inputs,
+        }
     return StreamingResponse(
         stream_chat_response(messages, conversation_id, request, provider=provider,
                              model=chat_request.model, max_iterations=max_iterations,

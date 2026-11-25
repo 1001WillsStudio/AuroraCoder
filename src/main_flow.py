@@ -404,6 +404,11 @@ def generate_chat_responses_stream_native(
                 continue
             else:
                 messages.append(assistant_message)
+                if task_tools and task_tools.take_turn_inputs(messages, finishing=True):
+                    iteration_count = 0
+                    retrying_empty_reply = False
+                    yield {"messages": messages, "status": "running", "provider": provider_id}
+                    continue
                 yield {
                     "messages": messages,
                     "status": "completed",
@@ -470,6 +475,9 @@ def generate_chat_responses_stream_native(
         if task_tools and task_tools.active and context_window and total_tokens / context_window >= CONTEXT_WARN_THRESHOLD:
             yield {"messages": messages, "status": "context_limit_reached", "provider": provider_id}
             return
+
+        if task_tools and task_tools.take_turn_inputs(messages, finishing=iteration_count >= max_iterations):
+            iteration_count = 0
 
         yield {
             "messages": messages,

@@ -25,7 +25,7 @@ import httpx
 from src.backend_access import backend_auth_headers
 from src.config import WORKSPACE_DIR, MAX_FILE_READ_SIZE, CONTINUATION_TOOL_RESULT
 from src.workspace_paths import WorkspacePathError, resolve_under_workspace
-from src.message_provenance import HANDOFF_PREFIX, TASK_RESUME_SOURCE
+from src.message_provenance import HANDOFF_PREFIX, TASK_RESUME_SOURCE, TURN_INPUT_RECEIPT
 from gateway.conversation_store import store, sanitize_frontend_messages, ensure_error_frontend_message
 from gateway.provider_registry import get_max_iterations
 from gateway.task_checklist import TaskChecklist, TaskConflict
@@ -77,6 +77,8 @@ class ActiveStream:
     task_request_is_retry: bool = False
     task_options: TaskResume = field(default_factory=TaskResume)
     initial_task_progress: Optional[TaskProgress] = None
+    accept_turn_inputs: bool = True
+    input_message_count: int = 0
 
     @property
     def task_active(self) -> bool:
@@ -518,11 +520,12 @@ def start_task_segment(task: TaskChecklist, *, fresh: bool, handoff: str = "", s
     first_pending = next((index for index, entry in enumerate(history) if entry.applied_to is None), len(history))
     # A stop followed by a chat resume can add a newer direction before the
     # older admitted one is applied. The successor must see them in order.
-    directions = [{"role": "user", "content": entry.content} for entry in history[first_pending:]]
+    directions = [entry.as_message() for entry in history[first_pending:]]
     store.save_messages(cid, [*prior, synthetic, *directions])
     store.seed_frontend_user_message(cid, message, source=TASK_RESUME_SOURCE)
     for direction in directions:
         store.seed_frontend_user_message(cid, direction["content"])
+    store.acknowledge_turn_inputs(task.conversation_id, directions)
     applied = [
         entry if index < first_pending else entry.model_copy(update={"applied_to": cid})
         for index, entry in enumerate(history)
@@ -547,9 +550,12 @@ def start_task_segment(task: TaskChecklist, *, fresh: bool, handoff: str = "", s
         "conversation_id": cid, "message": message, "messages": prior, "max_iterations": get_max_iterations(),
         "message_source": TASK_RESUME_SOURCE,
         "workspace_tree": tree, "task_state": task.prompt_state(), "task_token": stream.task_token,
+        "accept_turn_inputs": True,
     }
     if directions:
-        body.update(messages=[*prior, synthetic, *directions[:-1]], message=directions[-1]["content"])
+        body.update(messages=[*prior, synthetic, *directions[:-1]], message=directions[-1]["content"],
+                    message_receipt=directions[-1].get(TURN_INPUT_RECEIPT))
+        stream.task_request = directions[-1]["content"]
         body.pop("message_source")
     active_streams[cid] = stream
     stream.task = asyncio.create_task(_proxy_backend_stream(stream, body))
@@ -642,7 +648,7 @@ def _record_task_terminal_jobs(stream: ActiveStream, messages: list[dict], prior
         store.tasks.save(task, terminal_jobs=jobs)
 
 
-async def _start_continuation(new_cid: str, provider_id: str, user_msg: str, options: dict):
+async def _start_continuation(new_cid: str, provider_id: str, user_msg: str, options: dict, inputs: list[dict]):
     """
     Simulate a user opening a new chat, typing the continuation message,
     and pressing Send.  POSTs to the backend via the normal proxy flow.
@@ -663,7 +669,17 @@ async def _start_continuation(new_cid: str, provider_id: str, user_msg: str, opt
         conv_type="user_chat",
         parent_id=None,
         provider=provider_id,
+        task_token=secrets.token_urlsafe(32),
     )
+    body.update(task_token=stream.task_token, accept_turn_inputs=True)
+    if inputs:
+        stream.task_request = inputs[-1]["content"]
+        body.update(
+            messages=[{"role": "user", "content": user_msg}, *inputs[:-1]],
+            message=inputs[-1]["content"], message_receipt=inputs[-1][TURN_INPUT_RECEIPT],
+        )
+    else:
+        body["task_state"] = {"status": "conversation_handoff"}
 
     async with _streams_lock:
         active_streams[new_cid] = stream
@@ -725,12 +741,14 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                     while "\n\n" in buffer:
                         raw, buffer = buffer.split("\n\n", 1)
                         for etype, edata in _parse_sse_blocks(raw + "\n\n"):
+                            raw_msgs = edata.get("raw_messages", [])
+                            if raw_msgs and len(raw_msgs) < stream.input_message_count:
+                                # An older SSE frame can arrive after the boundary write.
+                                continue
                             stream.latest_event_type = etype
                             stream.latest_event_data = edata
                             stream.status = edata.get("status", stream.status)
                             stream.provider = edata.get("provider", stream.provider)
-                            raw_msgs = edata.get("raw_messages", [])
-
                             if stream.task_active and etype in {"messages", "done"}:
                                 _record_task_terminal_jobs(stream, raw_msgs, prior_tool_ids)
                             if stream.task_active and etype == "done":
@@ -751,6 +769,7 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                                     raw_messages = edata.get("raw_messages", [])
                                     user_msg = _continuation_message(raw_messages, prompt)
                                     provider = edata.get("provider") or stream.provider
+                                    pending_inputs = store.pending_turn_inputs(cid)
 
                                     # Continuation is a new standalone main chat —
                                     # no parent_id, so the frontend does NOT display
@@ -762,11 +781,14 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                                         provider_id=provider,
                                     )
                                     store.save_messages(new_cid, [
-                                        {"role": "user", "content": user_msg},
+                                        {"role": "user", "content": user_msg}, *pending_inputs,
                                     ])
                                     store.save_frontend_messages(new_cid, [
                                         {"role": "user", "content": user_msg},
                                     ])
+                                    for pending in pending_inputs:
+                                        store.seed_frontend_user_message(new_cid, pending["content"])
+                                    store.acknowledge_turn_inputs(cid, pending_inputs)
                                     # Persist the old conversation's segment BEFORE marking it
                                     # "continued" — its raw_msgs (including any `remember` calls
                                     # made before the handoff) must be on disk before we hand off
@@ -788,7 +810,7 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                                     _memory_ops_executor.submit(_run_session_end_memory_ops, cid, "user_chat", "continued")
 
                                     # Simulate user pressing Send — POST to backend immediately
-                                    await _start_continuation(new_cid, provider, user_msg, request_body)
+                                    await _start_continuation(new_cid, provider, user_msg, request_body, pending_inputs)
 
                                     logger.info(f"[proxy] Created continuation {new_cid[:8]}... from {cid[:8]}... — auto-started")
 
@@ -939,7 +961,7 @@ def _persist_finished_stream(stream: ActiveStream, persist_status: str) -> None:
         elif stream.latest_frontend_messages:
             store.save_frontend_messages(cid, stream.latest_frontend_messages)
         raw_msgs = stream.latest_event_data.get("raw_messages", []) if stream.latest_event_data else []
-        if raw_msgs:
+        if raw_msgs and len(raw_msgs) >= stream.input_message_count:
             store.save_messages(cid, raw_msgs)
 
         if current_status != "continued":

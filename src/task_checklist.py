@@ -151,10 +151,32 @@ REQUEST_SCHEMA = {
 class AgentTaskTools:
     """Expose the task tools for the current turn and refresh state after each saved call."""
 
-    def __init__(self, conversation_id: str, token: str, state: dict | None):
+    def __init__(self, conversation_id: str, token: str, state: dict | None, *, accept_turn_inputs: bool = False):
         self.conversation_id = conversation_id
         self.token = token
         self.state = state
+        self.accept_turn_inputs = accept_turn_inputs
+
+    def take_turn_inputs(self, messages: list[dict], *, finishing: bool = False) -> bool:
+        """Insert admitted user input at a completed model/tool exchange."""
+        if not self.accept_turn_inputs:
+            return False
+        base = os.environ.get("GATEWAY_URL", "http://localhost:8081")
+        url = f"{base}/internal/turn-inputs/{self.conversation_id}"
+        headers = {"X-Task-Token": self.token}
+        response = httpx.post(url, headers=headers, json={"finishing": finishing}, timeout=5, trust_env=False)
+        response.raise_for_status()
+        if not response.json()["pending"]:
+            return False
+        response = httpx.post(url, headers=headers, json={"messages": messages}, timeout=10, trust_env=False)
+        response.raise_for_status()
+        data = response.json()
+        if data.get("task_state") is not None:
+            self.state = data["task_state"]
+        elif data["inputs"] and self.state and self.state["status"] == "conversation_handoff":
+            self.state = None
+        messages.extend(data["inputs"])
+        return bool(data["inputs"])
 
     @property
     def active(self) -> bool:
@@ -205,6 +227,8 @@ class AgentTaskTools:
                     " separately and verbatim from the new request. Respond normally to questions, small"
                     " requests, or discussion of the completed work."
                 )
+        elif self.state["status"] == "conversation_handoff":
+            instruction = "Continue from the conversation handoff and preserve the user's scope."
         else:
             instruction = "This is an earlier segment of a task. Use the saved state only as background."
         if self.state["status"] in {"active", "paused"}:

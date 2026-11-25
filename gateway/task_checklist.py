@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
+from src.message_provenance import TURN_INPUT_RECEIPT
 
 from src.task_checklist import TaskCheckpointUpdate, TaskCriteriaChange, TaskEdit, TaskItem, TaskProgress, TaskResume, TaskStart
 from gateway.attached_files import strip_attached_files
@@ -81,6 +82,12 @@ class TaskSteeringEntry(BaseModel):
     content: str
     receipt: str | None = None
     applied_to: str | None = None
+
+    def as_message(self) -> dict:
+        message = {"role": "user", "content": self.content}
+        if self.receipt is not None:
+            message[TURN_INPUT_RECEIPT] = self.receipt
+        return message
 
 
 class TaskChecklist(BaseModel):

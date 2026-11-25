@@ -8,12 +8,13 @@ import pytest
 from gateway import routes, streaming
 from gateway.api import app
 from gateway.conversation_store import ConversationStore
+from src.message_provenance import TURN_INPUT_RECEIPT
 from src.task_checklist import TaskResume, TaskStart
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_status", ["context_limit_reached", "completed"])
-async def test_enqueued_steering_waits_for_turn_end_and_reaches_successor(tmp_path, monkeypatch, terminal_status):
+async def test_enqueued_steering_survives_context_handoff(tmp_path, monkeypatch, terminal_status):
     db = ConversationStore(tmp_path / "store")
     cid = db.create_conversation()
     task = db.tasks.start(cid, TaskStart(objective="Verify build", items=["Check output"]), str(tmp_path),
@@ -99,3 +100,49 @@ async def test_handoff_orders_pending_receipt_before_a_new_natural_resume(tmp_pa
     assert bodies[0]["messages"][-1]["content"] == "Check the original fixture first."
     assert bodies[0]["message"] == "Continue, and use the updated fixture."
     assert [entry.applied_to for entry in db.tasks.get(cid).steering_history] == [successor, successor]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("with_goal", [False, True])
+async def test_model_boundary_inserts_accepted_followup_without_new_conversation(tmp_path, monkeypatch, with_goal):
+    directory = tmp_path / "store"
+    db = ConversationStore(directory)
+    cid = db.create_conversation()
+    stream = streaming.ActiveStream(cid, task_token="lease")
+    if with_goal:
+        task = db.tasks.start(cid, TaskStart(objective="Verify", items=["Check fixture"]),
+                              str(tmp_path), "First request", TaskResume())
+        stream.initial_task_progress = task.progress
+    (tmp_path / "scope.txt").write_text("new scope", encoding="utf-8")
+    monkeypatch.setattr(routes, "task_workspace", lambda: str(tmp_path))
+    monkeypatch.setattr(routes, "store", db)
+    monkeypatch.setattr(routes, "active_streams", {cid: stream})
+    receipt = str(uuid4())
+    request_body = {"receipt": receipt, "message": "Read this instead.", "attached_files": ["scope.txt"]}
+    first_exchange = [
+        {"role": "user", "content": "First request"},
+        {"role": "assistant", "tool_calls": [{"id": "call", "function": {"name": "read_file", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "call", "content": "Observed result"},
+    ]
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gateway") as client:
+        admission = f"/api/conversations/{cid}/task/steering"
+        boundary = f"/internal/turn-inputs/{cid}"
+        headers = {"X-Task-Token": "lease"}
+        assert (await client.post(admission, json=request_body)).status_code == 202
+        db = ConversationStore(directory)
+        monkeypatch.setattr(routes, "store", db)
+        assert (await client.post(boundary, json={})).status_code == 409
+        assert (await client.post(boundary, json={}, headers=headers)).json() == {"pending": True}
+        result = (await client.post(boundary, json={"messages": first_exchange}, headers=headers)).json()
+        assert len(result["inputs"]) == 1 and result["inputs"][0][TURN_INPUT_RECEIPT] == receipt
+        assert "scope.txt" in result["inputs"][0]["content"]
+        assert [message["role"] for message in db.get_messages(cid)] == ["user", "assistant", "tool", "user"]
+        assert stream.new_conversation_id is None and not stream.cancel_event.is_set()
+        assert (await client.post(admission, json=request_body)).json() == {"receipt": receipt}
+        assert (await client.post(boundary, json={"finishing": True}, headers=headers)).json() == {"pending": False}
+        assert (await client.post(admission, json={**request_body, "receipt": str(uuid4())})).status_code == 409
+        if with_goal:
+            task = db.tasks.get(cid)
+            assert not task.pending_steering and result["task_state"]["steering_count"] == 1
+        else:
+            assert not db.pending_turn_inputs(cid) and db.has_turn_input(cid, receipt)
