@@ -27,22 +27,10 @@ if exist "ports.conf" (
 )
 
 :: ── Auto-find available ports ──────────────────────────────────────────
-echo [ports] Scanning for available ports...
-netstat -ano > "%TEMP%\_ac_ports.tmp" 2>nul
-call :resolve_port BACKEND_PORT
-echo [ports] BACKEND_PORT=%BACKEND_PORT%
-call :resolve_port FRONTEND_PORT
-echo [ports] FRONTEND_PORT=%FRONTEND_PORT%
-call :resolve_port VNC_PORT
-echo [ports] VNC_PORT=%VNC_PORT%
-call :resolve_port TOOLSTORE_PORT
-echo [ports] TOOLSTORE_PORT=%TOOLSTORE_PORT%
-set /a "DEV_WIDTH=%DEV_PORT_END% - %DEV_PORT_START% + 1"
-if %DEV_WIDTH% lss 1 set "DEV_WIDTH=3"
-call :resolve_port_range DEV_PORT_START %DEV_WIDTH%
-set /a "DEV_PORT_END=%DEV_PORT_START%+%DEV_WIDTH%-1"
+call "%~dp0port-availability.bat"
+if errorlevel 1 exit /b 1
+echo [ports] BACKEND_PORT=%BACKEND_PORT% FRONTEND_PORT=%FRONTEND_PORT% VNC_PORT=%VNC_PORT% TOOLSTORE_PORT=%TOOLSTORE_PORT%
 echo [ports] DEV range=%DEV_PORT_START%-%DEV_PORT_END%
-del "%TEMP%\_ac_ports.tmp" 2>nul
 
 echo ========================================
 echo   AuroraCoder GPU  (NVIDIA vLLM)
@@ -121,54 +109,3 @@ timeout /t 3 /nobreak >nul
 start "" "http://localhost:%FRONTEND_PORT%"
 
 goto :eof
-
-:: ── Port utility subroutines ───────────────────────────────────────────
-
-:resolve_port
-setlocal enabledelayedexpansion
-set "TRY=!%~1!"
-set /a "MAX=!TRY!+1000"
-:resolve_port_loop
-findstr /c:":!TRY! " "%TEMP%\_ac_ports.tmp" >nul 2>&1
-if errorlevel 1 (
-    for %%v in ("!TRY!") do (
-        endlocal
-        set "%~1=%%~v"
-    )
-    exit /b
-)
-set /a "TRY+=1"
-if !TRY! lss !MAX! goto :resolve_port_loop
-for %%v in ("!TRY!") do (
-    endlocal
-    set "%~1=%%~v"
-)
-exit /b
-
-:resolve_port_range
-setlocal enabledelayedexpansion
-set "BASE=!%~1!"
-set "COUNT=%~2"
-set /a "SAVE=!BASE!"
-set /a "MAX=!BASE!+10000"
-:resolve_range_loop
-set /a "END=!BASE!+!COUNT!-1"
-set "ALL_FREE=1"
-for /l %%p in (!BASE!,1,!END!) do (
-    findstr /c:":%%p " "%TEMP%\_ac_ports.tmp" >nul 2>&1
-    if not errorlevel 1 set "ALL_FREE=0"
-)
-if "!ALL_FREE!"=="1" (
-    for %%v in ("!BASE!") do (
-        endlocal
-        set "%~1=%%~v"
-    )
-    exit /b
-)
-set /a "BASE+=1"
-if !BASE! lss !MAX! goto :resolve_range_loop
-for %%v in ("!SAVE!") do (
-    endlocal
-    set "%~1=%%~v"
-)
-exit /b

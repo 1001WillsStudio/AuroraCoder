@@ -67,60 +67,8 @@ if [ -f "ports.conf" ]; then
     done < <(grep -v '^#' ports.conf 2>/dev/null | grep -v '^$')
 fi
 
-# ── Port availability helpers ───────────────────────────────────────────
-port_is_free() {
-    local port=$1
-    # bash-native TCP connect — zero subprocess overhead
-    ! (: </dev/tcp/127.0.0.1/$port) 2>/dev/null
-}
-
-find_free_port() {
-    local start=$1
-    local port=$start
-    while ! port_is_free "$port"; do
-        port=$((port + 1))
-        if [ "$port" -gt $((start + 1000)) ]; then
-            echo "$start"
-            return
-        fi
-    done
-    echo "$port"
-}
-
-find_free_port_range() {
-    local start=$1
-    local count=$2
-    local base=$start
-    while true; do
-        local all_free=true
-        local p
-        for (( p=base; p<=base+count-1; p++ )); do
-            if ! port_is_free "$p"; then
-                all_free=false
-                break
-            fi
-        done
-        if $all_free; then
-            echo "$base"
-            return
-        fi
-        base=$((base + 1))
-        if [ "$base" -gt $((start + 10000)) ]; then
-            echo "$start"
-            return
-        fi
-    done
-}
-
-# ── Resolve ports: auto-find available ──────────────────────────────────
-BACKEND_PORT=$(find_free_port "$BACKEND_PORT")
-FRONTEND_PORT=$(find_free_port "$FRONTEND_PORT")
-VNC_PORT=$(find_free_port "$VNC_PORT")
-TOOLSTORE_PORT=$(find_free_port "$TOOLSTORE_PORT")
-DEV_WIDTH=$((DEV_PORT_END - DEV_PORT_START + 1))
-[ "$DEV_WIDTH" -lt 1 ] && DEV_WIDTH=3
-DEV_PORT_START=$(find_free_port_range "$DEV_PORT_START" "$DEV_WIDTH")
-DEV_PORT_END=$((DEV_PORT_START + DEV_WIDTH - 1))
+source "$SCRIPT_DIR/port-availability.sh"
+resolve_auroracoder_ports
 
 echo "========================================"
 echo "  AuroraCoder"

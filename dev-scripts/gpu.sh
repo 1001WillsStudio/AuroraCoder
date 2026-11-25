@@ -25,14 +25,8 @@ DEV_PORT_START=8900; DEV_PORT_END=8902
         DEV_PORT_START) DEV_PORT_START="$v";; DEV_PORT_END) DEV_PORT_END="$v";; esac
 done < <(grep -v '^#' ports.conf 2>/dev/null | grep -v '^$')
 
-port_is_free() { ! (: </dev/tcp/127.0.0.1/$1) 2>/dev/null; }
-find_free_port() { local p=$1; while ! port_is_free "$p"; do p=$((p+1)); [ "$p" -gt $(($1+1000)) ] && { echo "$1"; return; }; done; echo "$p"; }
-find_free_port_range() { local b=$1 c=$2; while true; do local ok=true; for ((p=b;p<=b+c-1;p++)); do port_is_free "$p" || { ok=false; break; }; done; $ok && { echo "$b"; return; }; b=$((b+1)); [ "$b" -gt $(($1+10000)) ] && { echo "$1"; return; }; done; }
-
-BACKEND_PORT=$(find_free_port "$BACKEND_PORT"); FRONTEND_PORT=$(find_free_port "$FRONTEND_PORT")
-VNC_PORT=$(find_free_port "$VNC_PORT"); TOOLSTORE_PORT=$(find_free_port "$TOOLSTORE_PORT")
-DEV_WIDTH=$((DEV_PORT_END-DEV_PORT_START+1)); [ "$DEV_WIDTH" -lt 1 ] && DEV_WIDTH=3
-DEV_PORT_START=$(find_free_port_range "$DEV_PORT_START" "$DEV_WIDTH"); DEV_PORT_END=$((DEV_PORT_START+DEV_WIDTH-1))
+source "$SCRIPT_DIR/port-availability.sh"
+resolve_auroracoder_ports
 
 echo "=== AuroraCoder GPU ==="
 echo "  Frontend:     http://localhost:$FRONTEND_PORT"
