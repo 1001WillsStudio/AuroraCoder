@@ -59,6 +59,7 @@ from gateway.workspace import (
 )
 from gateway.attached_files import apply_request_attachments, AttachedFilesError
 from gateway.paths import WorkspacePathError, resolve_under_workspace
+from src.workspace_paths import workspace_mutation_target
 from gateway.streaming import (
     ActiveStream,
     active_streams,
@@ -148,7 +149,7 @@ def _get_workspace() -> Optional[Path]:
     return None
 
 
-def _require_workspace_path(work_dir: Path, path: str) -> Path:
+def _require_workspace_path(work_dir: Path, path: str, *, for_mutation: bool = False) -> Path:
     """Resolve a user-supplied path inside *work_dir*, or raise HTTPException.
 
     Maps containment failure to 403 and unresolvable input to 400. Callers
@@ -156,7 +157,8 @@ def _require_workspace_path(work_dir: Path, path: str) -> Path:
     the same way the old copied ``startswith`` blocks did.
     """
     try:
-        return resolve_under_workspace(work_dir, path)
+        resolve = workspace_mutation_target if for_mutation else resolve_under_workspace
+        return resolve(work_dir, path)
     except WorkspacePathError as exc:
         if exc.outside:
             raise HTTPException(
@@ -1024,7 +1026,7 @@ async def upload_workspace(
     safe_name = Path(project_name).name
     if not safe_name:
         safe_name = "project"
-    project_dir = work_dir / safe_name
+    project_dir = _require_workspace_path(work_dir, safe_name, for_mutation=True)
     project_dir.mkdir(parents=True, exist_ok=True)
 
     content = await archive.read()
@@ -1040,7 +1042,11 @@ async def upload_workspace(
                 logger.warning(f"[upload] Rejected unsafe path: {info.filename}")
                 continue
 
-            dest = project_dir / safe_path
+            try:
+                dest = workspace_mutation_target(project_dir, info.filename)
+            except WorkspacePathError:
+                logger.warning("[upload] Rejected unsafe path: %s", info.filename)
+                continue
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(zf.read(info))
             count += 1
@@ -1061,13 +1067,13 @@ async def delete_workspace_item(req: DeleteRequest):
     if not work_dir or not work_dir.exists():
         raise HTTPException(status_code=400, detail="No active session")
 
-    full_path = _require_workspace_path(work_dir, req.path)
+    full_path = _require_workspace_path(work_dir, req.path, for_mutation=True)
 
-    if not full_path.exists():
+    if not full_path.exists() and not full_path.is_symlink():
         raise HTTPException(status_code=404, detail="Path not found")
 
     try:
-        if full_path.is_dir():
+        if full_path.is_dir() and not full_path.is_symlink():
             shutil.rmtree(full_path)
         else:
             full_path.unlink()

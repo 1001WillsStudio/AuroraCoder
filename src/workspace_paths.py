@@ -42,7 +42,7 @@ def resolve_under_workspace(work_dir: PathLike, path: str) -> Path:
         candidate = root / path
     try:
         resolved = candidate.resolve()
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RuntimeError) as exc:
         raise WorkspacePathError("Invalid path") from exc
 
     if not resolved.is_relative_to(root):
@@ -54,5 +54,5 @@ def workspace_mutation_target(work_dir: PathLike, path: str) -> Path:
     """Validate the target and keep final-link semantics for replace and unlink."""
     root = Path(work_dir).resolve()
     if resolve_under_workspace(root, path) == root:
-        raise WorkspacePathError("The workspace root cannot be modified by a file tool")
+        raise WorkspacePathError("The workspace root cannot be modified by a file operation")
     return root / path
