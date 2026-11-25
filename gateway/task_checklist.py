@@ -59,6 +59,8 @@ class TaskChecklist(BaseModel):
             "objective", "criteria", "workspace", "progress", "handoff", "steering", "request", "status",
         })
         state["request"] = _scope_excerpt(self.request)
+        if len(self.request) > _SCOPE_LIMIT:
+            state["request_length"] = len(self.request)
         return state
 
 

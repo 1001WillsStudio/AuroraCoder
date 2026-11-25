@@ -38,7 +38,7 @@ except ImportError:
 
 from gateway.conversation_store import store, frontend_messages_for_status, messages_for_retry, require_conversation_id
 from gateway.task_checklist import TaskConflict
-from src.task_checklist import TaskCheckpointUpdate, TaskEdit, TaskReopen, TaskResume, TaskStart
+from src.task_checklist import TaskCheckpointUpdate, TaskEdit, TaskReopen, TaskRequestSlice, TaskResume, TaskStart
 from gateway.settings_store import (
     get_all_settings,
     update_settings as _store_update_settings,
@@ -475,6 +475,19 @@ def _task_stream(conversation_id: str, request: Request) -> ActiveStream:
             or not secrets.compare_digest(stream.task_token.encode(), token)):
         raise HTTPException(status_code=409, detail="This task stream is no longer active.")
     return stream
+
+
+@app.post("/internal/task-request/{conversation_id}")
+async def read_agent_task_request(conversation_id: str, extent: TaskRequestSlice, request: Request):
+    _task_stream(conversation_id, request)
+    task = store.tasks.get(conversation_id)
+    if not task or task.conversation_id != conversation_id:
+        raise HTTPException(status_code=409, detail="No task source for this stream.")
+    total = len(task.request)
+    start = min(extent.offset, total)
+    end = min(start + extent.max_chars, total)
+    return {"text": task.request[start:end], "offset": start,
+            "total_chars": total, "next_offset": end if end < total else None}
 
 
 @app.post("/internal/task-start/{conversation_id}")
