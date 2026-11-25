@@ -81,6 +81,7 @@ from memory.ops.judge_io import (
 )
 from memory.ops.conversation_search import search_conversations
 from memory.ops.similarity import tokens
+from src.message_provenance import HANDOFF_PREFIX, is_synthetic_handoff
 
 logger = logging.getLogger(__name__)
 
@@ -95,20 +96,15 @@ OTHER_CONVERSATIONS_PER_NOMINATION_LIMIT = 3
 NOMINATION_TOOL_NAMES = ("remember", "report_findings")
 
 # Session wrappers the write-pass must not treat as user-stated standing rules.
-HANDOFF_PREFIX = "[Continued from previous agent session]"
 _ECHO_CONTAINMENT = 0.5
 _SENTENCE_RE = re.compile(r"[^\n.!?]+")
 
 
-def _is_handoff(content: str) -> bool:
-    return bool(content) and content.lstrip().startswith(HANDOFF_PREFIX)
-
-
-def _split_user_content(content: str) -> Tuple[str, str]:
+def _split_user_content(content: str, source: str | None = None) -> Tuple[str, str]:
     """Return ``(scaffold_text, genuine_user_text)`` for one user message."""
     if not content:
         return "", ""
-    if _is_handoff(content):
+    if is_synthetic_handoff(content, source):
         return content.strip(), ""
     if TASK_INSTRUCTION_START in content:
         return (extract_task_instruction(content) or "").strip(), strip_task_instruction(content)
@@ -121,7 +117,7 @@ def _collect_scaffold_and_genuine(messages: List[Dict[str, Any]]) -> Tuple[str, 
     for msg in messages:
         if msg.get("role") != "user":
             continue
-        scaffold, genuine = _split_user_content(msg.get("content") or "")
+        scaffold, genuine = _split_user_content(msg.get("content") or "", msg.get("source"))
         if scaffold:
             scaffolds.append(scaffold)
         if genuine:
@@ -129,18 +125,18 @@ def _collect_scaffold_and_genuine(messages: List[Dict[str, Any]]) -> Tuple[str, 
     return "\n".join(scaffolds), "\n".join(genuines)
 
 
-def _render_user_for_extraction(content: str) -> List[str]:
+def _render_user_for_extraction(content: str, source: str | None = None) -> List[str]:
     """Omit task-instruction / handoff bodies from the judge transcript."""
-    scaffold, genuine = _split_user_content(content)
+    scaffold, genuine = _split_user_content(content, source)
     lines: List[str] = []
-    if _is_handoff(content):
+    if is_synthetic_handoff(content, source):
         lines.append(
             "HANDOFF: agent-authored one-shot session context "
             "(not a user standing rule; do not mine preferences from it)."
         )
     if genuine:
         lines.append(f"USER: {genuine}")
-    elif scaffold and not _is_handoff(content):
+    elif scaffold and not is_synthetic_handoff(content, source):
         lines.append("USER: (session task instruction only — not a user request)")
     return lines
 
@@ -200,7 +196,7 @@ def _transcript_to_text(messages: List[Dict[str, Any]], max_chars: int = MAX_TRA
         if role == "user":
             content = (msg.get("content") or "").strip()
             if content:
-                lines.extend(_render_user_for_extraction(content))
+                lines.extend(_render_user_for_extraction(content, msg.get("source")))
         elif role == "assistant":
             content = (msg.get("content") or "").strip()
             if content:

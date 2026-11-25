@@ -84,6 +84,21 @@ def test_transcript_rendering():
     assert "USER: Always run ruff" in text
 
 
+def test_task_resume_is_scaffold_in_memory_and_other_conversation_search(monkeypatch):
+    messages = [
+        {"role": "user", "content": "Continue task: Generated automation objective.", "source": "task_resume"},
+        {"role": "user", "content": "Continue task: A phrase the user actually typed."},
+    ]
+    transcript = extractor._transcript_to_text(messages)
+    assert "HANDOFF:" in transcript and "Generated automation objective" not in transcript
+    assert "USER: Continue task: A phrase" in transcript
+    assert extractor._collect_scaffold_and_genuine(messages) == (
+        messages[0]["content"], messages[1]["content"],
+    )
+    monkeypatch.setattr(conversation_search.store, "get_messages", lambda _: messages)
+    assert conversation_search._conversation_text("fixture") == messages[1]["content"]
+
+
 def test_json_extraction_helper():
     assert extractor._extract_json('{"memories": []}') == {"memories": []}
     assert extractor._extract_json('noise {"memories": [{"a": 1}]} noise') == {"memories": [{"a": 1}]}

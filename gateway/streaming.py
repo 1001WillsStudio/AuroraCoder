@@ -23,6 +23,7 @@ import httpx
 from src.backend_access import backend_auth_headers
 from src.config import WORKSPACE_DIR, MAX_FILE_READ_SIZE, CONTINUATION_TOOL_RESULT
 from src.workspace_paths import WorkspacePathError, resolve_under_workspace
+from src.message_provenance import HANDOFF_PREFIX, TASK_RESUME_SOURCE
 from gateway.conversation_store import store, sanitize_frontend_messages, ensure_error_frontend_message
 from gateway.provider_registry import get_max_iterations
 from gateway.task_checklist import TaskChecklist, TaskConflict
@@ -450,7 +451,7 @@ def _scan_for_continuation(raw_messages: list, prior_tool_ids: set[str]) -> str 
     return None
 
 
-_CONTINUED_MARKER = "[Continued from previous agent session]"
+_CONTINUED_MARKER = HANDOFF_PREFIX
 _PRIOR_USER_PREFIX = "Prior user messages (chronological): "
 
 
@@ -458,7 +459,8 @@ def _continuation_message(raw_messages: list, summary: str) -> str:
     user_messages = []
     for message in raw_messages:
         content = message.get("content")
-        if message.get("role") != "user" or not isinstance(content, str) or not content.strip():
+        if (message.get("role") != "user" or message.get("source") == TASK_RESUME_SOURCE
+                or not isinstance(content, str) or not content.strip()):
             continue
         if not content.startswith(_CONTINUED_MARKER):
             user_messages.append(content)
@@ -508,8 +510,8 @@ def start_task_segment(task: TaskChecklist, *, fresh: bool, handoff: str = "", s
         f"Continue task: {task.objective}" if fresh else task.objective
     )
     prior = _fix_orphan_tool_calls(store.get_messages(cid))
-    store.save_messages(cid, [*prior, {"role": "user", "content": message}])
-    store.seed_frontend_user_message(cid, message)
+    store.save_messages(cid, [*prior, {"role": "user", "content": message, "source": TASK_RESUME_SOURCE}])
+    store.seed_frontend_user_message(cid, message, source=TASK_RESUME_SOURCE)
     task = store.tasks.save(
         task, status="active", reason="", stalled=stalled, handoff=handoff, started=True,
         conversation_ids=[*task.conversation_ids, cid] if fresh else task.conversation_ids,
@@ -527,6 +529,7 @@ def start_task_segment(task: TaskChecklist, *, fresh: bool, handoff: str = "", s
     body = {
         **task.options.model_dump(exclude_none=True),
         "conversation_id": cid, "message": message, "messages": prior, "max_iterations": get_max_iterations(),
+        "message_source": TASK_RESUME_SOURCE,
         "workspace_tree": tree, "task_state": task.prompt_state(), "task_token": stream.task_token,
     }
     active_streams[cid] = stream

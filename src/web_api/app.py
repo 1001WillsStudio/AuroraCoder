@@ -53,6 +53,7 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     message: Optional[str] = Field(None)
+    message_source: Optional[str] = Field(None)
     conversation_id: Optional[str] = Field(None)
     messages: Optional[list] = Field(None)
     provider: Optional[str] = Field(None)
@@ -130,7 +131,10 @@ def convert_messages_for_frontend(messages: list) -> list:
             i += 1
             continue
         elif role == "user":
-            frontend_messages.append({"role": "user", "content": msg.get("content", "")})
+            visible = {"role": "user", "content": msg.get("content", "")}
+            if "source" in msg:
+                visible["source"] = msg["source"]
+            frontend_messages.append(visible)
             i += 1
         elif role == "assistant":
             activities = []
@@ -377,7 +381,10 @@ async def chat(chat_request: ChatRequest, request: Request):
 
     messages = (chat_request.messages or []).copy()
     if chat_request.message:
-        messages.append({"role": "user", "content": chat_request.message})
+        message = {"role": "user", "content": chat_request.message}
+        if chat_request.message_source:
+            message["source"] = chat_request.message_source
+        messages.append(message)
 
     provider = chat_request.provider_id or chat_request.provider or DEFAULT_PROVIDER
     tools_override = get_filtered_tools(chat_request.tools) if chat_request.tools else None

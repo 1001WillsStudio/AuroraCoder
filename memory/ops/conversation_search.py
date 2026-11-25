@@ -37,6 +37,7 @@ from typing import Any, Dict, List, Optional
 
 from gateway.conversation_store import store
 from memory.ops.similarity import tokens
+from src.message_provenance import is_synthetic_handoff
 
 # Only look at the N most recently touched conversations before scoring —
 # same "recency-cap before ranking" pattern as retrieval.py's RECENCY_CAP,
@@ -53,6 +54,8 @@ def _conversation_text(conversation_id: str) -> str:
     for msg in store.get_messages(conversation_id):
         if msg.get("role") in ("user", "assistant"):
             content = (msg.get("content") or "").strip()
+            if msg["role"] == "user" and is_synthetic_handoff(content, msg.get("source")):
+                continue
             if content:
                 parts.append(content)
     return " ".join(parts)[:MAX_CHARS_PER_CONVERSATION]

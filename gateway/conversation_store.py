@@ -787,7 +787,7 @@ class ConversationStore:
         _atomic_write_json(self._frontend_messages_path(conversation_id), messages)
         self._unlink_if_missing_from_index(conversation_id)
 
-    def seed_frontend_user_message(self, conversation_id: str, raw_content: str) -> None:
+    def seed_frontend_user_message(self, conversation_id: str, raw_content: str, *, source: str | None = None) -> None:
         """Persist a user bubble before the first SSE event.
 
         Strips transport wrappers from the visible text and keeps chips
@@ -795,6 +795,8 @@ class ConversationStore:
         shows what was applied.
         """
         new_user_msg = user_message_for_frontend(raw_content)
+        if source:
+            new_user_msg["source"] = source
         existing = self.get_frontend_messages(conversation_id)
         if existing:
             existing.append(new_user_msg)

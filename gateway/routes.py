@@ -194,6 +194,7 @@ async def proxy_chat(
     body = await request.json()
     body.pop("task_state", None)
     body.pop("task_token", None)
+    body.pop("message_source", None)
     t1 = time.perf_counter()
     body_size = len(json.dumps(body)) if body else 0
     requested_id = body.get("conversation_id")
