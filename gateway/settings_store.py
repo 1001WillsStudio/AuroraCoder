@@ -17,9 +17,10 @@ import json
 import logging
 import os
 from pathlib import Path
-import subprocess
 from threading import Lock
 from typing import Any, Dict, List, Optional
+
+from src.git_credentials import configure_github_credentials, resolve_github_token
 
 logger = logging.getLogger(__name__)
 
@@ -310,6 +311,9 @@ def get_api_key(provider_id: str) -> str:
     with _lock:
         raw = _load_raw()
 
+    if provider_id.lower() == "github":
+        return resolve_github_token(raw)
+
     # 1) Check custom_providers first
     for cp in raw.get("custom_providers", []):
         if isinstance(cp, dict) and cp.get("id") == provider_id:
@@ -324,17 +328,11 @@ def get_api_key(provider_id: str) -> str:
         return settings_val
 
 
-    # 3) Fall back to environment variable (supports _API_KEY and GitHub's _TOKEN convention)
+    # 3) Fall back to environment variable
     env_var = f"{provider_id.upper()}_API_KEY"
     env_val = os.environ.get(env_var, "")
     if env_val:
         return env_val
-
-    # Special case: GITHUB_TOKEN
-    if provider_id.lower() == "github":
-        github_token = os.environ.get("GITHUB_TOKEN", "")
-        if github_token:
-            return github_token
 
     return ""
 
@@ -342,24 +340,8 @@ def get_api_key(provider_id: str) -> str:
 # ── GitHub auth ─────────────────────────────────────────────────────────────
 
 def configure_github_auth():
-    """If a GitHub PAT is saved in settings, configure git so that push/clone
-    to github.com works without prompting for credentials.
-
-    Uses the same url.insteadOf trick as docker/entrypoint.sh.
-    Safe to call repeatedly — git config is idempotent."""
-    token = get_api_key("github")
-    if not token:
-        return
-    try:
-        subprocess.run(
-            ["git", "config", "--global",
-             f"url.https://oauth2:{token}@github.com/.insteadOf",
-             "https://github.com/"],
-            check=True, capture_output=True, text=True, timeout=10,
-        )
-        logger.info("GitHub auth: configured for all github.com repos (via settings).")
-    except Exception as exc:
-        logger.warning(f"GitHub auth: git config failed — {exc}")
+    """Use configured credentials for GitHub without embedding tokens in Git URLs."""
+    configure_github_credentials(SETTINGS_PATH)
 
 
 def get_custom_providers() -> List[Dict[str, Any]]:
