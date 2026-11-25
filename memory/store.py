@@ -132,13 +132,14 @@ class MemoryRepository:
     # Public API
     # ------------------------------------------------------------------
 
-    def upsert(self, item: MemoryItem) -> MemoryItem:
+    def upsert(self, item: MemoryItem, *, deduplicate_exact: bool = False) -> MemoryItem:
         """Create or overwrite a memory. Applies secret redaction first.
 
         "Update an existing memory before writing a new one" (design doc
         §7.1 item 2 / Claude Code convention) is the caller's
         responsibility — pass the existing ``id`` via ``supersedes`` or
-        reuse it directly to dedupe.
+        reuse it directly to dedupe. New agent nominations can also reuse
+        an exact match under the same classification and expiry policy.
 
         Usage history is preserved on update: ``usage_count`` / ``last_used``
         live in the SQLite index (kept fresh by ``bump_usage``) and are never
@@ -153,49 +154,66 @@ class MemoryRepository:
         path = self._file_path(item)
         rel_path = str(path.relative_to(self._dir))
 
-        with self._lock:
-            # Usage history is owned by the SQLite index — bump_usage() writes
-            # it there and the markdown files only carry the value as of their
-            # last upsert. If this id already exists, pull the live values
-            # BEFORE writing the file (so the file doesn't resurrect a stale
-            # counter), and leave usage/last_used out of the ON CONFLICT clause
-            # below so a bump landing between this read and the write is never
-            # rolled back.
-            with self._connect() as conn:
-                existing = conn.execute(
-                    "SELECT usage_count, last_used FROM memories WHERE id=?",
-                    (item.id,),
-                ).fetchone()
+        with self._lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if deduplicate_exact:
+                matching = self._match_existing_content(conn, item)
+                if matching is not None:
+                    return matching
+            # The index owns live usage history. Refresh those values for the
+            # markdown file and preserve them in the index when updating an ID.
+            existing = conn.execute(
+                "SELECT usage_count, last_used FROM memories WHERE id=?",
+                (item.id,),
+            ).fetchone()
             if existing is not None:
                 item.usage_count = existing["usage_count"]
                 item.last_used = existing["last_used"]
             _atomic_write_text(path, item.to_markdown())
-            with self._connect() as conn:
-                conn.execute(
-                    """
-                    INSERT INTO memories
-                        (id, plane, type, scope, description, confidence, provenance,
-                         volatile, ttl_days, usage_count, last_used, created, supersedes,
-                         corroboration_count, file_path)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET
-                        plane=excluded.plane, type=excluded.type, scope=excluded.scope,
-                        description=excluded.description, confidence=excluded.confidence,
-                        provenance=excluded.provenance, volatile=excluded.volatile,
-                        ttl_days=excluded.ttl_days, created=excluded.created,
-                        supersedes=excluded.supersedes, corroboration_count=excluded.corroboration_count,
-                        file_path=excluded.file_path
-                    """,
-                    (
-                        item.id, item.plane, item.type, item.scope, item.description,
-                        item.confidence, item.provenance, int(item.volatile), item.ttl_days,
-                        item.usage_count, item.last_used, item.created, item.supersedes,
-                        item.corroboration_count, rel_path,
-                    ),
-                )
+            conn.execute(
+                """
+                INSERT INTO memories
+                    (id, plane, type, scope, description, confidence, provenance,
+                     volatile, ttl_days, usage_count, last_used, created, supersedes,
+                     corroboration_count, file_path)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    plane=excluded.plane, type=excluded.type, scope=excluded.scope,
+                    description=excluded.description, confidence=excluded.confidence,
+                    provenance=excluded.provenance, volatile=excluded.volatile,
+                    ttl_days=excluded.ttl_days, created=excluded.created,
+                    supersedes=excluded.supersedes, corroboration_count=excluded.corroboration_count,
+                    file_path=excluded.file_path
+                """,
+                (
+                    item.id, item.plane, item.type, item.scope, item.description,
+                    item.confidence, item.provenance, int(item.volatile), item.ttl_days,
+                    item.usage_count, item.last_used, item.created, item.supersedes,
+                    item.corroboration_count, rel_path,
+                ),
+            )
         logger.info("[memory] Upserted %s (%s/%s, scope=%s)", item.id, item.plane, item.type, item.scope)
         self.enforce_capacity()
         return item
+
+    def _match_existing_content(self, conn: sqlite3.Connection, item: MemoryItem) -> Optional[MemoryItem]:
+        key = (item.plane, item.type, item.scope, item.volatile, item.ttl_days)
+        content = item.content.replace("\r\n", "\n").replace("\r", "\n").strip()
+        rows = conn.execute(
+            """SELECT file_path, usage_count, last_used FROM memories
+               WHERE plane=? AND type=? AND scope=? AND volatile=? AND ttl_days IS ?
+               ORDER BY created, id""",
+            key,
+        )
+        for row in rows:
+            existing = self._read_file(Path(row["file_path"]))
+            if existing and existing.content == content and (
+                existing.plane, existing.type, existing.scope, existing.volatile, existing.ttl_days
+            ) == key:
+                existing.usage_count = row["usage_count"]
+                existing.last_used = row["last_used"]
+                return existing
+        return None
 
     def get(self, memory_id: str) -> Optional[MemoryItem]:
         with self._lock, self._connect() as conn:

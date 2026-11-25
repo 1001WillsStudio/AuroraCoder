@@ -666,7 +666,7 @@ def apply_extraction_plan(
                     conversation_id[:8], supersedes,
                 )
         try:
-            saved = repo.upsert(MemoryItem(**kwargs))
+            saved = repo.upsert(MemoryItem(**kwargs), deduplicate_exact="id" not in kwargs)
         except Exception:
             logger.warning("[memory-extract] [%s] Skipping invalid candidate", conversation_id[:8], exc_info=True)
             continue
