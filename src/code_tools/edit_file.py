@@ -4,10 +4,12 @@ Provides tolerant anchor matching with ±N line shift, two-pass
 (strict then relaxed whitespace), and whole-file diagnostic hints.
 """
 
-from typing import Any, Dict, List, Optional, Tuple
-from pathlib import Path
 import os
 import tempfile
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+from ..workspace_paths import workspace_mutation_target
 
 MAX_ANCHOR_SHIFT = 3
 _NO_CHANGES = "\nNo edits were applied — the file is unchanged."
@@ -233,7 +235,7 @@ class RangeReplaceEditor:
         self.applied_arguments = {"file": target_file, "edits": edits}
 
         try:
-            file_path = self._resolve_path(target_file)
+            file_path = workspace_mutation_target(self.workspace_root, target_file)
             if not file_path.exists() or not file_path.is_file():
                 return (f"Error: File '{target_file}' not found.", None)
 
@@ -318,10 +320,6 @@ class RangeReplaceEditor:
             return (f"Error applying range replace edits to '{target_file}': {str(e)}", None)
 
     # ── path resolution ─────────────────────────────────────────────
-
-    def _resolve_path(self, path: str) -> Path:
-        path_obj = Path(path)
-        return path_obj if path_obj.is_absolute() else self.workspace_root / path_obj
 
     # ── edit-validation helpers (static — pure logic, no side effects) ──
 

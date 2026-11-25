@@ -15,11 +15,13 @@ Key behaviour (matching the ecosystem consensus):
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple
-from pathlib import Path
 import os
 import re
 import tempfile
+from pathlib import Path
+from typing import Any, Dict, List, Tuple
+
+from ..workspace_paths import workspace_mutation_target
 
 
 def _normalise(line: str) -> str:
@@ -67,7 +69,7 @@ class StringReplaceEditor:
         }
 
         try:
-            file_path = self._resolve_path(target_file)
+            file_path = workspace_mutation_target(self.workspace_root, target_file)
             if not file_path.exists() or not file_path.is_file():
                 return (
                     f"Error: File '{target_file}' not found.",
@@ -146,15 +148,6 @@ class StringReplaceEditor:
                 f"Error applying edit to '{target_file}': {str(e)}",
                 None,
             )
-
-    # ── path resolution ────────────────────────────────────────────
-
-    def _resolve_path(self, path: str) -> Path:
-        path_obj = Path(path)
-        return (
-            path_obj if path_obj.is_absolute()
-            else self.workspace_root / path_obj
-        )
 
     # ── exact matching ─────────────────────────────────────────────
 

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from ..code_sandbox import WORKSPACE
 from ..config import MAX_FILE_READ_SIZE, count_lines_buffered
+from ..workspace_paths import workspace_mutation_target
 from .edit_file import RangeReplaceEditor
 from .edit_file_normal import StringReplaceEditor
 
@@ -69,7 +70,7 @@ class FileOperations:
 
     def full_file_write(self, target_file: str, code_edit: str) -> str:
         try:
-            file_path = self._resolve_path(target_file)
+            file_path = workspace_mutation_target(self.workspace_root, target_file)
             if not file_path.exists():
                 file_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(file_path, 'w', encoding='utf-8') as f:
@@ -86,7 +87,7 @@ class FileOperations:
 
     def delete_file(self, target_file: str) -> str:
         try:
-            file_path = self._resolve_path(target_file)
+            file_path = workspace_mutation_target(self.workspace_root, target_file)
             if not file_path.exists():
                 return f"File '{target_file}' does not exist"
             if file_path.is_file():

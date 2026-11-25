@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from src.config import WORKSPACE_DIR, MAX_FILE_READ_SIZE
+from src.workspace_paths import WorkspacePathError, resolve_under_workspace
 from gateway.conversation_store import store, sanitize_frontend_messages, ensure_error_frontend_message
 from gateway.workspace import (
     file_snapshots,
@@ -219,10 +220,14 @@ def _track_file_changes(conversation_id: str, raw_messages: list):
             if not file_path:
                 continue
 
+            try:
+                full_path = resolve_under_workspace(work_dir, file_path)
+            except WorkspacePathError:
+                continue
+
             # Phase 1: snapshot BEFORE the write (tool_call seen, no result yet)
             if tc_id not in _snapshotted_tool_calls[conversation_id]:
                 _snapshotted_tool_calls[conversation_id].add(tc_id)
-                full_path = work_dir / file_path
                 if file_path not in file_snapshots.get(conversation_id, {}):
                     try:
                         if full_path.exists() and full_path.is_file():
