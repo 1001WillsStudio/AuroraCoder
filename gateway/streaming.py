@@ -356,6 +356,19 @@ def _format_sse(event_type: str, data: Any) -> str:
     return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+_TERMINAL_EVENTS = {"done", "error"}
+
+
+def _broadcast_stream_event(stream: ActiveStream, event_type: str, data: dict) -> None:
+    for queue in list(stream.subscribers):
+        if queue.full():
+            if event_type not in _TERMINAL_EVENTS and event_type != "messages":
+                continue
+            # Keep the latest full snapshot or terminal outcome for a slow subscriber.
+            queue.get_nowait()
+        queue.put_nowait((event_type, data))
+
+
 def _parse_sse_blocks(text: str) -> List[tuple]:
     """Parse SSE-formatted text into (event_type, data_dict) pairs."""
     results = []
@@ -522,8 +535,7 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                     err = {"message": f"Backend returned {response.status_code}: {body[:500]}", "type": "BackendError"}
                     stream.latest_event_type = "error"
                     stream.latest_event_data = err
-                    for q in list(stream.subscribers):
-                        q.put_nowait(("error", err))
+                    _broadcast_stream_event(stream, "error", err)
                     return
 
                 buffer = ""
@@ -645,11 +657,7 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                             else:
                                 frontend_edata = edata
 
-                            for q in list(stream.subscribers):
-                                try:
-                                    q.put_nowait((etype, frontend_edata))
-                                except asyncio.QueueFull:
-                                    pass
+                            _broadcast_stream_event(stream, etype, frontend_edata)
 
                             # Notify parent stream about child activity
                             if stream.parent_id:
@@ -671,11 +679,7 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
         err = {"message": f"Cannot connect to backend at {BACKEND_URL}", "type": "ConnectionError"}
         stream.latest_event_type = "error"
         stream.latest_event_data = err
-        for q in list(stream.subscribers):
-            try:
-                q.put_nowait(("error", err))
-            except asyncio.QueueFull:
-                pass
+        _broadcast_stream_event(stream, "error", err)
 
     except asyncio.CancelledError:
         logger.info(f"[proxy] Cancelled {cid[:8]}...")
@@ -685,11 +689,7 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
         err = {"message": str(e), "type": type(e).__name__}
         stream.latest_event_type = "error"
         stream.latest_event_data = err
-        for q in list(stream.subscribers):
-            try:
-                q.put_nowait(("error", err))
-            except asyncio.QueueFull:
-                pass
+        _broadcast_stream_event(stream, "error", err)
 
     finally:
         stream.finished = True
@@ -777,6 +777,10 @@ async def _subscriber_sse(
         # frontend messages so the subscriber gets the current state,
         # regardless of what the actual last SSE event type was.
         if replay_latest:
+            if (queue.empty() and stream.latest_event_type in _TERMINAL_EVENTS
+                    and stream.latest_event_data):
+                yield _format_sse(stream.latest_event_type, stream.latest_event_data)
+                return
             replay_data = None
             if stream.latest_event_data and stream.latest_event_type in ("messages", "done"):
                 replay_data = stream.latest_event_data
@@ -792,11 +796,8 @@ async def _subscriber_sse(
             if replay_data:
                 yield _format_sse("messages", replay_data)
 
-        if stream.finished:
-            return
-
         idle_ticks = 0
-        while True:
+        while not stream.finished or not queue.empty():
             try:
                 if await request.is_disconnected():
                     break
