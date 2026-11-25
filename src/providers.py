@@ -127,6 +127,35 @@ def _coerce_model_selection(value) -> tuple:
     return ("", "")
 
 
+_MESSAGE_FIELDS = {
+    "system": {"role", "content", "name"},
+    "developer": {"role", "content", "name"},
+    "user": {"role", "content", "name"},
+    "assistant": {
+        "role", "content", "name", "tool_calls", "function_call", "refusal", "audio", "reasoning_content",
+    },
+    "tool": {"role", "content", "tool_call_id"},
+    "function": {"role", "content", "name"},
+}
+
+
+def messages_for_provider(messages: list[dict]) -> list[dict]:
+    """Build provider messages without replaying transcript or desktop-only metadata."""
+    wire = []
+    for message in messages:
+        role = message.get("role")
+        fields = _MESSAGE_FIELDS.get(role, {"role", "content"})
+        item = {key: value for key, value in message.items() if key in fields}
+        # Older transcripts used "thinking". Keep the reasoning needed by
+        # tool-calling models while sending only the canonical extension.
+        if role == "assistant" and item.get("reasoning_content") is None:
+            legacy = message.get("thinking")
+            if isinstance(legacy, str) and legacy:
+                item["reasoning_content"] = legacy
+        wire.append(item)
+    return wire
+
+
 # =============================================================================
 # Provider Manager
 # =============================================================================

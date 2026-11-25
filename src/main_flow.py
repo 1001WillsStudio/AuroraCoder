@@ -22,7 +22,7 @@ from .config import (
     CONTEXT_WINDOW_TOKENS, CONTEXT_WARN_THRESHOLD,
     _CONTINUATION_NOTICE_MARKER, CONTINUATION_NOTICE,
 )
-from .providers import provider_manager
+from .providers import messages_for_provider, provider_manager
 from .core_tools.tool_store_client import prefetch_primary_tools  # noqa: E402 — redefined in function body
 from .code_tools.panel_manager import get_all as get_panels
 from .code_tools.panel_manager import register
@@ -203,9 +203,10 @@ def generate_chat_responses_stream_native(
             if filter_continuation else tools
         )
         
+        api_messages = messages_for_provider(messages)
         api_kwargs = {
             "model": model_name,
-            "messages": messages,
+            "messages": api_messages,
             "tools": tools_for_iteration,
             "tool_choice": "auto",
             "max_tokens": api_max_tokens,
@@ -337,7 +338,7 @@ def generate_chat_responses_stream_native(
         if current_usage:
             total_tokens = current_usage.get("total_tokens", 0)
 
-        record_api_call(messages, assistant_message, enabled=save_training)
+        record_api_call(api_messages, assistant_message, enabled=save_training)
 
         # ── Process tool calls ──────────────────────────────────────────
         current_tool_calls = [
