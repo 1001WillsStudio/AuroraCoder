@@ -62,14 +62,18 @@ export function createStreamCallbacks({
 
   const onError = (error) => {
     if (error?.conversation_id) setConversationId(error.conversation_id)
+    if (error?.raw_messages) setRawMessages(error.raw_messages)
+    const stableMessages = Array.isArray(error?.messages) ? error.messages : null
     if (withRetry) {
       const isTimeout = error.message?.toLowerCase().includes('timeout') ||
         error.type === 'TimeoutError' || error.message?.toLowerCase().includes('timed out') ||
         error.message?.toLowerCase().includes('504') || error.message?.toLowerCase().includes('gateway timeout')
-      setMessages(prev => [...prev, {
+      setMessages(prev => [...(stableMessages ?? prev), {
         role: 'assistant', content: `Error: ${error.message}`,
         isError: true, isTimeout, canRetry: true
       }])
+    } else if (stableMessages) {
+      setMessages(stableMessages)
     }
     setIsStreaming(false)
     setHistoryRefreshTrigger(prev => prev + 1)

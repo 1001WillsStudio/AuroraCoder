@@ -15,6 +15,11 @@ from typing import Dict, List, Generator, Optional
 from httpx import TransportError
 from openai import APIConnectionError
 
+try:
+    from httpx2 import TransportError as SDKTransportError
+except ImportError:
+    SDKTransportError = TransportError
+
 from .tool_definitions import get_tool_definitions
 from .core_tools.tool_store_client import get_toolstore_tools_prompt
 from .config import (
@@ -325,7 +330,7 @@ def generate_chat_responses_stream_native(
             _log_api_timing(iteration_count, model_name,
                             t_api_start, t_first_chunk, t_first_content)
         
-        except (TransportError, APIConnectionError) as exc:
+        except (TransportError, SDKTransportError, APIConnectionError) as exc:
             if streaming_errors >= MAX_STREAMING_RETRIES:
                 yield {
                     "messages": messages,
