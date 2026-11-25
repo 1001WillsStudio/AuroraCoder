@@ -90,6 +90,76 @@ function parseSSEEvents(text) {
   return events
 }
 
+class IncompleteStreamError extends Error {
+  constructor(cause) {
+    super('The connection ended before AuroraCoder reported the result.', { cause })
+    this.name = 'IncompleteStreamError'
+  }
+}
+
+async function readConversationEvents(response, callbacks) {
+  if (!response.body) throw new IncompleteStreamError()
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let lastSeq = 0
+  let needsFullRefresh = false
+  try {
+    while (true) {
+      let chunk
+      try {
+        chunk = await reader.read()
+      } catch (error) {
+        if (error.name === 'AbortError') throw error
+        throw new IncompleteStreamError(error)
+      }
+      if (chunk.done) throw new IncompleteStreamError()
+      buffer += decoder.decode(chunk.value, { stream: true })
+      const parts = buffer.split('\n\n')
+      buffer = parts.pop() || ''
+      for (const part of parts) {
+        for (const { type, data } of parseSSEEvents(part)) {
+          switch (type) {
+            case 'delta':
+              if (data.seq && data.seq !== lastSeq + 1) needsFullRefresh = true
+              lastSeq = data.seq || lastSeq
+              if (!needsFullRefresh) callbacks.onDelta?.(data.delta, data.status)
+              break
+            case 'messages':
+              lastSeq = data.seq || lastSeq
+              needsFullRefresh = false
+              callbacks.onMessages?.(data.messages, data.status, data)
+              break
+            case 'subagent_event':
+              callbacks.onSubagentEvent?.(data)
+              break
+            case 'done':
+            case 'error':
+              if (type === 'done') callbacks.onDone?.(data)
+              else callbacks.onError?.(data)
+              await reader.cancel().catch(() => {})
+              return
+          }
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock()
+  }
+}
+
+async function attachConversationStream(conversationId, callbacks, signal) {
+  const response = await fetch(`${API_BASE}/conversations/${encodeURIComponent(conversationId)}/stream`, {
+    signal, headers: _headers(),
+  })
+  if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+  await readConversationEvents(response, callbacks)
+}
+
+function canReattach(error, conversationId, signal) {
+  return error instanceof IncompleteStreamError && conversationId && !signal?.aborted
+}
+
 /**
  * Stream chat responses from the API
  * 
@@ -105,9 +175,7 @@ export async function streamChat(message, conversationId, callbacks, signal, exi
   const t0 = performance.now()
   _tlog('streamChat() called', seq)
 
-  const { onMessages, onDone, onError, onSubagentEvent, onDelta, onConversationId } = callbacks
-  let _lastSeq = 0
-  let _needsFullRefresh = false
+  const { onError, onConversationId } = callbacks
   
   const requestBody = {
     message,
@@ -140,78 +208,18 @@ export async function streamChat(message, conversationId, callbacks, signal, exi
       throw new Error(`HTTP error! status: ${response.status}`)
     }
 
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    let firstChunk = true
-
-    while (true) {
-      const { done, value } = await reader.read()
-      
-      if (done) {
-        _tlog('stream done', seq, t0)
-        console.log('[streamChat] Stream done')
-        break
-      }
-
-      if (firstChunk) {
-        _tlog('first SSE chunk received', seq, t0)
-        firstChunk = false
-      }
-      
-      buffer += decoder.decode(value, { stream: true })
-      
-      // Split on double newlines (SSE event separator)
-      const parts = buffer.split('\n\n')
-      buffer = parts.pop() || ''
-      
-      for (const part of parts) {
-        if (!part.trim()) continue
-        
-        const events = parseSSEEvents(part)
-        
-        for (const event of events) {
-          if (event.type !== 'messages') {
-            console.log('[streamChat] Event:', event.type)
-          }
-          
-          switch (event.type) {
-            case 'delta':
-              if (event.data.seq && event.data.seq !== _lastSeq + 1) {
-                _needsFullRefresh = true;
-              }
-              _lastSeq = event.data.seq || _lastSeq;
-              if (!_needsFullRefresh) {
-                onDelta?.(event.data.delta, event.data.status);
-              }
-              break;
-
-            case 'messages':
-              _lastSeq = event.data.seq || _lastSeq;
-              _needsFullRefresh = false;
-              onMessages?.(event.data.messages, event.data.status, event.data);
-              break;
-
-            case 'done':
-              onDone?.(event.data);
-              break;
-
-            case 'error':
-              onError?.(event.data);
-              break;
-
-            case 'subagent_event':
-              onSubagentEvent?.(event.data);
-              break;
-          }
-        }
-      }
+    try {
+      await readConversationEvents(response, callbacks)
+    } catch (error) {
+      const acceptedId = headerCid || conversationId
+      if (!canReattach(error, acceptedId, signal)) throw error
+      await attachConversationStream(acceptedId, callbacks, signal)
     }
     
   } catch (error) {
     _tlog(`error: ${error.name} — ${error.message}`, seq, t0)
     console.error('[streamChat] Error:', error)
-    if (error.name === 'AbortError') {
+    if (error.name === 'AbortError' || signal?.aborted) {
       throw error
     }
     onError?.({ message: error.message, type: error.name })
@@ -354,58 +362,16 @@ export async function getActiveStreams() {
  * @param {AbortSignal} signal
  */
 export async function resumeStream(conversationId, callbacks, signal) {
-  const { onMessages, onDone, onError, onSubagentEvent, onDelta } = callbacks
-
   try {
-    const response = await fetch(`${API_BASE}/conversations/${conversationId}/stream`, { signal, headers: _headers() })
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`)
-    }
-
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-
-      buffer += decoder.decode(value, { stream: true })
-      const parts = buffer.split('\n\n')
-      buffer = parts.pop() || ''
-
-      for (const part of parts) {
-        if (!part.trim()) continue
-        const events = parseSSEEvents(part)
-        for (const event of events) {
-          switch (event.type) {
-            case 'delta':
-              onDelta?.(event.data.delta, event.data.status);
-              break;
-
-            case 'messages':
-              onMessages?.(event.data.messages, event.data.status, event.data);
-              break;
-
-            case 'done':
-              onDone?.(event.data);
-              break;
-
-            case 'error':
-              onError?.(event.data);
-              break;
-
-            case 'subagent_event':
-              onSubagentEvent?.(event.data);
-              break;
-          }
-        }
-      }
+    try {
+      await attachConversationStream(conversationId, callbacks, signal)
+    } catch (error) {
+      if (!canReattach(error, conversationId, signal)) throw error
+      await attachConversationStream(conversationId, callbacks, signal)
     }
   } catch (error) {
-    if (error.name === 'AbortError') throw error
-    onError?.({ message: error.message, type: error.name })
+    if (error.name === 'AbortError' || signal?.aborted) throw error
+    callbacks.onError?.({ message: error.message, type: error.name })
     throw error
   }
 }
