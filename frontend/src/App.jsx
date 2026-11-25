@@ -696,8 +696,21 @@ function App() {
     pendingConversationLoadRef.current = loadController
     let isSubagent = false // declared here so the finally block can read it
     try {
-      const conv = await getConversation(targetConversationId, loadController.signal)
+      let conv = await getConversation(targetConversationId, loadController.signal)
       if (!isCurrentView()) return
+      if (options.followContinuation && conv.new_conversation_id) {
+        const nextId = conv.new_conversation_id
+        const next = await getConversation(nextId, loadController.signal).catch(error => {
+          if (error.name === 'AbortError') throw error
+          return null
+        })
+        if (!isCurrentView()) return
+        if (next) {
+          conv = next
+          targetConversationId = nextId
+          syncConversationUrl(nextId, { mode: 'replace' })
+        }
+      }
       pendingConversationLoadRef.current = null
       isSubagent = conv.type === 'subagent'
       conversationIdRef.current = targetConversationId
@@ -900,7 +913,7 @@ function App() {
       return undefined
     }
     let cancelled = false
-    Promise.resolve(handleLoadConversation(id, { skipNavigate: true }))
+    Promise.resolve(handleLoadConversation(id, { skipNavigate: true, followContinuation: true }))
       .finally(() => {
         if (!cancelled) setUrlRestorePending(false)
       })

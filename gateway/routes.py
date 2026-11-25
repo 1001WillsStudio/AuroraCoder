@@ -434,8 +434,6 @@ def _resume_conversation_stream(conversation_id: str, request: Request, *, turn_
         raise HTTPException(status_code=409, detail="That turn is no longer current for this conversation.")
     status = conv.get("status", "completed")
     frontend_msgs = frontend_messages_for_status(store.get_frontend_messages(conversation_id), conv)
-    task = store.tasks.get(conversation_id)
-
     async def _replay():
         data = {
             "conversation_id": conversation_id,
@@ -443,8 +441,10 @@ def _resume_conversation_stream(conversation_id: str, request: Request, *, turn_
             "messages": frontend_msgs or conv.get("messages", []),
             "raw_messages": conv.get("messages", []),
         }
-        if status == "continued" and task and task.conversation_id != conversation_id:
-            data["new_conversation_id"] = task.conversation_id
+        if status == "continued":
+            continuation = _saved_continuation(conversation_id)
+            if continuation:
+                data["new_conversation_id"] = continuation
         yield _format_sse("done", data)
 
     return StreamingResponse(
@@ -455,6 +455,13 @@ def _resume_conversation_stream(conversation_id: str, request: Request, *, turn_
             "X-Conversation-ID": conversation_id,
         },
     )
+
+
+def _saved_continuation(conversation_id: str) -> str | None:
+    task = store.tasks.get(conversation_id)
+    if task and task.conversation_id != conversation_id:
+        return task.conversation_id
+    return store.latest_continuation(conversation_id)
 
 
 @app.post("/api/conversations/{conversation_id}/cancel")
@@ -1123,6 +1130,10 @@ async def get_conversation(conversation_id: str):
     frontend_messages = store.get_frontend_messages(conversation_id)
     frontend_messages = frontend_messages_for_status(frontend_messages, conv)
     conv["frontend_messages"] = frontend_messages
+    if conv.get("status") == "continued":
+        continuation = _saved_continuation(conversation_id)
+        if continuation:
+            conv["new_conversation_id"] = continuation
     return conv
 
 

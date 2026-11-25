@@ -7,7 +7,8 @@ from types import SimpleNamespace
 
 import httpx
 
-from gateway import streaming
+from gateway import routes, streaming
+from gateway.api import app
 from gateway.conversation_store import ConversationStore
 from src.config import CONTINUATION_TOOL_RESULT
 
@@ -47,6 +48,22 @@ def test_user_scope_survives_more_than_one_handoff():
     assert follow_up["content"] in second
     assert "Keep both existing default ports." in second
     assert "The first agent discussed a base rebuild." not in second
+
+
+def test_stored_handoff_skips_stale_successors_and_keeps_the_source(tmp_path):
+    store = ConversationStore(tmp_path)
+    first = store.create_conversation()
+    second = store.create_conversation()
+    last = store.create_conversation()
+    store.mark_continued(first, second)
+    store.mark_continued(second, last)
+    reloaded = ConversationStore(tmp_path)
+    assert reloaded.latest_continuation(first) == last
+    assert reloaded.latest_continuation(second) == last
+    reloaded.delete_conversation(last)
+    assert reloaded.latest_continuation(first) == second
+    assert reloaded.latest_continuation(second) is None
+    assert reloaded.get_conversation(first)["status"] == "continued"
 
 
 def test_gateway_starts_child_after_tool_result_and_retains_model(tmp_path, monkeypatch):
@@ -108,5 +125,15 @@ def test_gateway_starts_child_after_tool_result_and_retains_model(tmp_path, monk
         assert user["content"] in child["message"]
         assert "Continue checking the logs." in child["message"]
         assert store.get_conversation(cid)["status"] == "continued"
+        reloaded = ConversationStore(tmp_path)
+        monkeypatch.setattr(routes, "store", reloaded)
+        monkeypatch.setattr(routes, "active_streams", {})
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gateway") as client:
+            replay = await client.get(f"/api/conversations/{cid}/stream")
+            assert replay.status_code == 200
+            assert f'"new_conversation_id": "{stream.new_conversation_id}"' in replay.text
+            source = await client.get(f"/api/conversations/{cid}")
+            assert source.json()["new_conversation_id"] == stream.new_conversation_id
+            assert source.json()["messages"][-1]["tool_call_id"] == "new"
 
     asyncio.run(run())

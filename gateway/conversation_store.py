@@ -577,6 +577,35 @@ class ConversationStore:
                 self._index = recovered
             return len(interrupted)
 
+    def mark_continued(self, conversation_id: str, next_id: str) -> None:
+        """Commit the status and successor together after both transcripts are saved."""
+        with self._lock:
+            if conversation_id == next_id or next_id not in self._index:
+                raise ValueError("The continuation must be a separate saved conversation.")
+            entry = {
+                **self._index[conversation_id],
+                "status": "continued",
+                "continued_to": next_id,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            updated = {**self._index, conversation_id: entry}
+            _atomic_write_json(self._index_path(), updated)
+            self._index = updated
+
+    def latest_continuation(self, conversation_id: str) -> str | None:
+        with self._lock:
+            visited = {conversation_id}
+            current = self._index.get(conversation_id, {})
+            latest = None
+            while current.get("status") == "continued":
+                next_id = current.get("continued_to")
+                if not isinstance(next_id, str) or next_id in visited or next_id not in self._index:
+                    break
+                visited.add(next_id)
+                latest = next_id
+                current = self._index[next_id]
+            return latest
+
     def get_conversation(self, conversation_id: str) -> Dict[str, Any]:
         """Return metadata **and** messages for a single conversation."""
         with self._lock:

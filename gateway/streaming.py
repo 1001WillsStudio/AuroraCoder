@@ -734,7 +734,7 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                                     # re-fetches messages from the store rather than taking them
                                     # as an argument.
                                     store.save_messages(cid, edata.get("raw_messages", []))
-                                    store.update_status(cid, "continued")
+                                    store.mark_continued(cid, new_cid)
                                     stream.new_conversation_id = new_cid
 
                                     # A "continued" conversation is otherwise EXCLUDED from
