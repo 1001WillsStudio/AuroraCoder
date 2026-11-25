@@ -60,7 +60,10 @@ from gateway.workspace import (
     count_workspace_files,
     search_workspace_files,
 )
-from gateway.attached_files import apply_request_attachments, AttachedFilesError
+from gateway.attached_files import (
+    MAX_ATTACHED_FILES, AttachedFilesError, apply_attached_files, apply_request_attachments,
+    extract_attached_files, normalize_attached_paths,
+)
 from gateway.paths import WorkspacePathError, resolve_under_workspace
 from src.backend_access import backend_auth_headers
 from src.workspace_paths import workspace_mutation_target
@@ -521,7 +524,7 @@ def _task_stream(conversation_id: str, request: Request) -> ActiveStream:
 class TaskSteeringSubmission(BaseModel):
     receipt: uuid.UUID
     message: str = Field(default="", max_length=262144)
-    attached_files: list[str] = Field(default_factory=list)
+    attached_files: list[str] = Field(default_factory=list, max_length=MAX_ATTACHED_FILES)
 
 
 @app.post("/api/conversations/{conversation_id}/task/steering", status_code=202)
@@ -535,12 +538,15 @@ async def submit_task_steering(conversation_id: str, submission: TaskSteeringSub
     if (not task or task.status != "active" or not owner or not owner.task_active
             or owner.finished or owner.cancel_event.is_set()):
         raise HTTPException(status_code=409, detail={"code": "no_active_goal"})
-    body = {"message": submission.message, "attached_files": submission.attached_files}
-    try:
-        apply_request_attachments(body, Path(task.workspace))
-    except AttachedFilesError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    content = body["message"]
+    files = submission.attached_files or extract_attached_files(submission.message) or []
+    workspace = Path(task.workspace)
+    if len(files) > MAX_ATTACHED_FILES:
+        raise HTTPException(status_code=422, detail="Too many steering attachments.")
+    normalized = [normalize_attached_paths([path], workspace) for path in files]
+    if not all(normalized):
+        raise HTTPException(status_code=400, detail="Every steering attachment must be an existing workspace file.")
+    paths = list(dict.fromkeys(path[0] for path in normalized))
+    content = apply_attached_files(submission.message, paths) if files else submission.message
     if not content or not content.strip():
         raise HTTPException(status_code=422, detail="Send steering text or a workspace attachment.")
     # This handler does not yield between owner lookup and the durable receipt.

@@ -514,14 +514,18 @@ def start_task_segment(task: TaskChecklist, *, fresh: bool, handoff: str = "", s
     )
     prior = _fix_orphan_tool_calls(store.get_messages(cid))
     synthetic = {"role": "user", "content": message, "source": TASK_RESUME_SOURCE}
-    directions = [{"role": "user", "content": entry.content} for entry in task.pending_steering]
+    history = task.steering_history
+    first_pending = next((index for index, entry in enumerate(history) if entry.applied_to is None), len(history))
+    # A stop followed by a chat resume can add a newer direction before the
+    # older admitted one is applied. The successor must see them in order.
+    directions = [{"role": "user", "content": entry.content} for entry in history[first_pending:]]
     store.save_messages(cid, [*prior, synthetic, *directions])
     store.seed_frontend_user_message(cid, message, source=TASK_RESUME_SOURCE)
     for direction in directions:
         store.seed_frontend_user_message(cid, direction["content"])
     applied = [
-        entry if entry.applied_to else entry.model_copy(update={"applied_to": cid})
-        for entry in task.steering_history
+        entry if index < first_pending else entry.model_copy(update={"applied_to": cid})
+        for index, entry in enumerate(history)
     ]
     task = store.tasks.save(
         task, status="active", reason="", stalled=stalled, handoff=handoff, started=True,

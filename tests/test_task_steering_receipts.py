@@ -38,6 +38,11 @@ async def test_enqueued_steering_survives_reload_and_is_applied_before_successor
         assert first.status_code == 202 and first.json() == {"receipt": submission["receipt"]}
         again = await client.post(path, json=submission)
         assert again.json() == first.json()
+        rejected = await client.post(path, json={
+            "receipt": str(uuid4()), "message": "Do not save half of this.",
+            "attached_files": ["scope.txt", "missing.txt"],
+        })
+        assert rejected.status_code == 400
         second = await client.post(path, json={"receipt": str(uuid4()), "message": "Keep the release files read-only."})
         assert second.status_code == 202
         db = ConversationStore(tmp_path / "store")
@@ -56,3 +61,28 @@ async def test_enqueued_steering_survives_reload_and_is_applied_before_successor
         assert not db.tasks.get(cid).pending_steering
         assert (await client.post(path, json=submission)).json() == first.json()
         assert len(db.tasks.get(cid).steering_history) == 2
+
+
+@pytest.mark.asyncio
+async def test_handoff_orders_pending_receipt_before_a_new_natural_resume(tmp_path, monkeypatch):
+    db = ConversationStore(tmp_path / "store")
+    cid = db.create_conversation()
+    task = db.tasks.start(cid, TaskStart(objective="Verify build", items=["Check output"]), str(tmp_path),
+                          "Verify build", TaskResume())
+    monkeypatch.setattr(streaming, "store", db)
+    monkeypatch.setattr(streaming, "WORKSPACE", tmp_path)
+    monkeypatch.setattr(streaming, "active_streams", {})
+    bodies = []
+
+    async def backend(_stream, body):
+        bodies.append(body)
+
+    monkeypatch.setattr(streaming, "_proxy_backend_stream", backend)
+    queued = db.tasks.queue_steering(task, "Check the original fixture first.", str(uuid4()))
+    paused = db.tasks.save(queued, status="paused")
+    reopened = db.tasks.reopen(paused, "Continue, and use the updated fixture.", TaskResume(), None)
+    successor = streaming.start_task_segment(reopened, fresh=True)
+    await streaming.active_streams[successor].task
+    assert bodies[0]["messages"][-1]["content"] == "Check the original fixture first."
+    assert bodies[0]["message"] == "Continue, and use the updated fixture."
+    assert [entry.applied_to for entry in db.tasks.get(cid).steering_history] == [successor, successor]
