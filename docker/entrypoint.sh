@@ -1,14 +1,8 @@
 #!/bin/bash
 set -e
 
-# ── GitHub auth via Personal Access Token ─────────────────────────────────
-# Works for ANY repo on github.com — no per-project setup needed.
-# Set GITHUB_TOKEN in your .env file.
-if [ -n "$GITHUB_TOKEN" ]; then
-    git config --global url."https://oauth2:${GITHUB_TOKEN}@github.com/".insteadOf \
-        "https://github.com/"
-    echo "GitHub auth: GITHUB_TOKEN configured for all github.com repos."
-fi
+# ── GitHub authentication ────────────────────────────────────────────────
+python3 /app/src/git_credentials.py /app/data/settings.json configure
 
 # Seed workspace from bind mount if present
 if [ -d /seed ] && [ "$(ls -A /seed 2>/dev/null)" ]; then

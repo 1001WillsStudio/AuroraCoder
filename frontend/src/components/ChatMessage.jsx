@@ -130,8 +130,8 @@ function ChatMessage({ message, msgIdx, isLatest, isStreaming, onRetry, onStopTo
       </div>
 
       <div className="message-content" data-testid="chat-message-content">
-        {senderLabel && (
-          <div className="sender-label">{senderLabel}</div>
+        {(senderLabel || message.source === 'task_resume') && (
+          <div className="sender-label">{message.source === 'task_resume' ? t('task.resumeSource') : senderLabel}</div>
         )}
         {isUser ? (
           <>

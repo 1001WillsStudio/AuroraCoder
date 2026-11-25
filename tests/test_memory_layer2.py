@@ -16,6 +16,8 @@ import json
 import types
 import pathlib
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("AURORACODER_DATA_DIR", tempfile.mkdtemp())
@@ -80,6 +82,21 @@ def test_prompt_renders_other_conversation_snippets():
 def test_transcript_rendering():
     text = extractor._transcript_to_text(_SAMPLE_MSGS)
     assert "USER: Always run ruff" in text
+
+
+def test_task_resume_is_scaffold_in_memory_and_other_conversation_search(monkeypatch):
+    messages = [
+        {"role": "user", "content": "Continue task: Generated automation objective.", "source": "task_resume"},
+        {"role": "user", "content": "Continue task: A phrase the user actually typed."},
+    ]
+    transcript = extractor._transcript_to_text(messages)
+    assert "HANDOFF:" in transcript and "Generated automation objective" not in transcript
+    assert "USER: Continue task: A phrase" in transcript
+    assert extractor._collect_scaffold_and_genuine(messages) == (
+        messages[0]["content"], messages[1]["content"],
+    )
+    monkeypatch.setattr(conversation_search.store, "get_messages", lambda _: messages)
+    assert conversation_search._conversation_text("fixture") == messages[1]["content"]
 
 
 def test_json_extraction_helper():
@@ -221,7 +238,7 @@ def test_nominated_duplicate_of_updates_existing_memory_in_place():
 
 
 # ---------------------------------------------------------------------------
-# Extraction checkpoint (memory/store.py's get/set_extraction_checkpoint) —
+# Extraction checkpoints (memory/store.py) —
 # run_extraction() only scans the messages added since the LAST pass for a
 # given conversation_id, since _schedule_memory_distillation fires after
 # EVERY turn (gateway/streaming.py), not once at the end.
@@ -336,6 +353,40 @@ def test_extraction_checkpoint_is_reserved_before_the_slow_llm_call():
     extractor.run_extraction(cid, _MSGS_WITH_REMEMBER_CALL)
 
     assert reentrant_results == [[]], reentrant_results
+
+
+def test_two_extractions_cannot_reserve_the_same_messages(tmp_path, monkeypatch):
+    repo = MemoryRepository(tmp_path / "memory")
+    gate = Barrier(2)
+    calls = []
+
+    def config():
+        gate.wait(timeout=3)
+        return {"api_key": "fixture", "base_url": "http://fixture.invalid"}
+
+    def write_pass(_cid, messages, **_kwargs):
+        calls.append(messages)
+        return []
+
+    monkeypatch.setattr(extractor, "get_repository", lambda: repo)
+    monkeypatch.setattr(extractor, "get_memory_extraction_config", config)
+    monkeypatch.setattr(extractor, "_run_write_pass", write_pass)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        one = executor.submit(extractor.run_extraction, "same-chat", _MSGS_WITH_REMEMBER_CALL)
+        two = executor.submit(extractor.run_extraction, "same-chat", _MSGS_WITH_REMEMBER_CALL)
+        assert one.result(timeout=5) == two.result(timeout=5) == []
+
+    assert calls == [_MSGS_WITH_REMEMBER_CALL]
+    assert repo.get_extraction_checkpoint("same-chat") == len(_MSGS_WITH_REMEMBER_CALL)
+
+
+def test_older_extraction_snapshot_cannot_move_the_checkpoint_backward(tmp_path):
+    first = MemoryRepository(tmp_path)
+    second = MemoryRepository(tmp_path)
+    assert first.claim_extraction_through("shared", 5) == 0
+    assert second.claim_extraction_through("shared", 3) is None
+    assert second.claim_extraction_through("shared", 8) == 5
+    assert first.get_extraction_checkpoint("shared") == 8
 
 
 # ---------------------------------------------------------------------------

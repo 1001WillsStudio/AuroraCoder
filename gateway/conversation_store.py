@@ -10,6 +10,7 @@ Thread-safe: all public methods acquire self._lock before mutating state.
 
 import json
 import os
+import re
 import uuid
 import threading
 import tempfile
@@ -18,12 +19,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
+from src.message_provenance import TURN_INPUT_RECEIPT
 from gateway.attached_files import (
     ATTACHED_FILES_START,
+    apply_attached_files,
     extract_attached_files,
     strip_attached_files,
 )
 from gateway.task_instruction_display import (
+    TASK_INSTRUCTION_END,
     TASK_INSTRUCTION_START,
     sanitize_frontend_messages,
     strip_task_instruction,
@@ -46,20 +50,66 @@ DEFAULT_STORAGE_DIR = _default_storage_dir()
 TERMINAL_STATUSES = frozenset({
     "completed", "error", "max_iterations_reached", "interrupted",
 })
+GATEWAY_RESTARTED = "gateway_restarted"
+TURN_WRITE_INTERRUPTED = "turn_write_interrupted"
+_PENDING_TURN_ID = "pending_turn_id"
 
 TITLE_MAX_LENGTH = 100
+_CONVERSATION_ID = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}\Z")
+_WINDOWS_DEVICE = re.compile(r"(?:con|prn|aux|nul|com[1-9]|lpt[1-9])\Z")
+_MEMORY_TRACE_ID = re.compile(
+    r"memory-maintenance:(extraction|consolidation):maint-\1-[a-f0-9]{10}\Z"
+)
+_PORTABLE_TRACE_PREFIX = "~memory-maintenance~"
+
+
+class InvalidConversationId(ValueError):
+    """An ID that cannot be used as an unambiguous transcript filename."""
+
+
+def require_conversation_id(value: str) -> str:
+    if not isinstance(value, str):
+        raise InvalidConversationId("Invalid conversation ID")
+    if _MEMORY_TRACE_ID.fullmatch(value):
+        return value
+    if not _CONVERSATION_ID.fullmatch(value):
+        raise InvalidConversationId("Invalid conversation ID")
+    folded = value.lower()
+    if (folded == "index" or folded.startswith("index.corrupt-") or folded.endswith(".frontend")
+            or _WINDOWS_DEVICE.fullmatch(folded.split(".", 1)[0])):
+        raise InvalidConversationId("Reserved conversation ID")
+    return value
 
 
 def messages_for_retry(
     messages: Optional[List[Dict]],
     user_text: str = "",
+    *,
+    frontend_messages: Optional[List[Dict]] = None,
 ) -> List[Dict]:
-    """Keep the existing transcript for retry; seed the user line only if empty.
+    """Keep the stored transcript and recover a pending turn from older histories.
 
     Incomplete tool rounds are made sendable by ``_fix_orphan_tool_calls``
     on the chat path — this helper does not re-trim them.
     """
     msgs = list(messages or [])
+    if frontend_messages and frontend_messages[-1].get("isError"):
+        visible_users = [msg for msg in frontend_messages if msg.get("role") == "user"]
+        raw_users = [user_message_for_frontend(msg.get("content"))["content"]
+                     for msg in msgs if msg.get("role") == "user"]
+        if len(visible_users) == len(raw_users) + 1 and raw_users == [
+            msg.get("content", "") for msg in visible_users[:-1]
+        ]:
+            pending = visible_users[-1]
+            text = pending.get("content", "")
+            instruction = pending.get("taskInstruction")
+            if instruction:
+                text = f"{TASK_INSTRUCTION_START}\n{instruction}\n{TASK_INSTRUCTION_END}\n\n{text}"
+            text = apply_attached_files(text, pending.get("attachedFiles") or [])
+            msg = {"role": "user", "content": text}
+            if pending.get("ts"):
+                msg["ts"] = pending["ts"]
+            msgs.append(msg)
     if msgs:
         return msgs
     if user_text:
@@ -92,6 +142,26 @@ def ensure_error_frontend_message(
         "canRetry": True,
     })
     return msgs
+
+
+def frontend_messages_for_status(frontend_messages: List[Dict], conversation: dict) -> List[Dict]:
+    if conversation.get("status") != "error":
+        return frontend_messages
+    recovery_reason = conversation.get("recovery_reason")
+    if recovery_reason not in {GATEWAY_RESTARTED, TURN_WRITE_INTERRUPTED}:
+        return ensure_error_frontend_message(frontend_messages)
+
+    visible = frontend_messages or sanitize_frontend_messages([
+        {"role": msg["role"], "content": msg.get("content", "")}
+        for msg in conversation.get("messages", [])
+        if isinstance(msg, dict) and msg.get("role") in ("user", "assistant")
+    ])
+    detail = (
+        "AuroraCoder stopped while saving this turn. Use Try Again to continue the same conversation."
+        if recovery_reason == TURN_WRITE_INTERRUPTED
+        else "AuroraCoder restarted before this turn finished. Use Try Again to continue the same conversation."
+    )
+    return ensure_error_frontend_message(visible, {"message": detail, "type": recovery_reason})
 
 
 def _extract_title(messages: List[Dict]) -> str:
@@ -174,11 +244,14 @@ class ConversationStore:
     """
 
     def __init__(self, storage_dir: Optional[Path] = None):
+        from gateway.task_checklist import TaskChecklistStore
+
         self._dir = storage_dir or DEFAULT_STORAGE_DIR
         self._dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._index: Dict[str, Dict] = {}
         self._load_index()
+        self.tasks = TaskChecklistStore(self._dir / "tasks", _atomic_write_json, self.get_messages)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -187,11 +260,22 @@ class ConversationStore:
     def _index_path(self) -> Path:
         return self._dir / "index.json"
 
+    def _conversation_path(self, conversation_id: str, suffix: str) -> Path:
+        cid = require_conversation_id(conversation_id)
+        if _MEMORY_TRACE_ID.fullmatch(cid):
+            # Older Linux stores used the logical trace ID directly on disk.
+            if os.name != "nt":
+                legacy = self._dir / f"{cid}{suffix}"
+                if legacy.is_file():
+                    return legacy
+            return self._dir / f"~{cid.replace(':', '~')}{suffix}"
+        return self._dir / f"{cid}{suffix}"
+
     def _messages_path(self, conversation_id: str) -> Path:
-        return self._dir / f"{conversation_id}.json"
+        return self._conversation_path(conversation_id, ".json")
 
     def _frontend_messages_path(self, conversation_id: str) -> Path:
-        return self._dir / f"{conversation_id}.frontend.json"
+        return self._conversation_path(conversation_id, ".frontend.json")
 
     def _load_index(self) -> None:
         path = self._index_path()
@@ -244,8 +328,8 @@ class ConversationStore:
         """Reconstruct index metadata by scanning surviving message files.
 
         Type and parent/child relationships are not stored in the message
-        files, so recovered conversations default to ``type="user_chat"`` with
-        ``status="completed"`` and are flagged with ``recovered=True``.
+        files. Only memory maintenance has a recognizable ID. Others default
+        to user chats. All recovered entries are marked completed and recovered.
         """
         index: Dict[str, Dict] = {}
         try:
@@ -266,12 +350,18 @@ class ConversationStore:
             ):
                 continue
             if name.endswith(".frontend.json"):
-                cids.add(name[: -len(".frontend.json")])
+                stem = name[: -len(".frontend.json")]
             else:
-                cids.add(name[: -len(".json")])
+                stem = name[: -len(".json")]
+            if stem.startswith(_PORTABLE_TRACE_PREFIX):
+                stem = stem[1:].replace("~", ":")
+            cids.add(stem)
 
         for cid in cids:
-            meta = self._reconstruct_meta(cid)
+            try:
+                meta = self._reconstruct_meta(cid)
+            except InvalidConversationId:
+                continue
             if meta is not None:
                 index[cid] = meta
         return index
@@ -341,7 +431,7 @@ class ConversationStore:
             "id": cid,
             "parent_id": None,
             "session_id": None,
-            "type": "user_chat",
+            "type": "memory_maintenance" if _MEMORY_TRACE_ID.fullmatch(cid) else "user_chat",
             "status": "completed",
             "provider_id": None,
             "created_at": created,
@@ -379,12 +469,14 @@ class ConversationStore:
         extracted from the actual message list by ``save_messages`` or
         ``save_frontend_messages``.
         """
-        cid = conversation_id or str(uuid.uuid4())
+        cid = str(uuid.uuid4()) if conversation_id in (None, "") else require_conversation_id(conversation_id)
         now = datetime.now(timezone.utc).isoformat()
 
         with self._lock:
             if cid in self._index:
                 return cid
+            if any(key.lower() == cid.lower() for key in self._index):
+                raise InvalidConversationId("Conversation ID differs only in letter case")
 
             self._index[cid] = {
                 "id": cid,
@@ -401,7 +493,7 @@ class ConversationStore:
         logger.info(f"[store] Created conversation {cid[:8]}... (type={conv_type})")
         return cid
 
-    def save_messages(self, conversation_id: str, messages: List[Dict]) -> None:
+    def save_messages(self, conversation_id: str, messages: List[Dict], *, pending_turn_id: str | None = None) -> None:
         """
         Full-replace the stored message list for a conversation.
 
@@ -423,8 +515,14 @@ class ConversationStore:
         """
         now = datetime.now(timezone.utc).isoformat()
         for msg in messages:
-            if isinstance(msg, dict) and not msg.get("ts"):
-                msg["ts"] = now
+            if isinstance(msg, dict):
+                msg.pop(_PENDING_TURN_ID, None)
+                if not msg.get("ts"):
+                    msg["ts"] = now
+        if pending_turn_id:
+            # Keep the receipt beside the new raw user message until the gateway
+            # commits admission in the index. No provider call has started yet.
+            messages = [*messages[:-1], {**messages[-1], _PENDING_TURN_ID: pending_turn_id}]
 
         with self._lock:
             meta = self._index.get(conversation_id)
@@ -442,15 +540,150 @@ class ConversationStore:
             f"[store] Saved {len(messages)} messages for {conversation_id[:8]}..."
         )
 
-    def update_status(self, conversation_id: str, status: str) -> None:
-        """Update the status field of a conversation."""
+    def has_turn_input(self, conversation_id: str, receipt: str) -> bool:
+        with self._lock:
+            return receipt in self._index.get(conversation_id, {}).get("turn_inputs", {})
+
+    def queue_turn_input(self, conversation_id: str, receipt: str, content: str) -> None:
+        with self._lock:
+            meta = self._index[conversation_id]
+            if receipt in meta.get("turn_inputs", {}):
+                return
+            inputs = {**meta.get("turn_inputs", {}), receipt: content}
+            updated = {**self._index, conversation_id: {**meta, "turn_inputs": inputs}}
+            _atomic_write_json(self._index_path(), updated)
+            self._index = updated
+
+    def pending_turn_inputs(self, conversation_id: str) -> list[dict]:
+        with self._lock:
+            inputs = dict(self._index.get(conversation_id, {}).get("turn_inputs", {}))
+        if not any(inputs.values()):
+            return []
+        persisted = {message.get(TURN_INPUT_RECEIPT) for message in self.get_messages(conversation_id)}
+        return [
+            {"role": "user", "content": content, TURN_INPUT_RECEIPT: receipt}
+            for receipt, content in inputs.items() if content is not None and receipt not in persisted
+        ]
+
+    def acknowledge_turn_inputs(self, conversation_id: str, messages: list[dict]) -> None:
+        """Keep accepted receipts, releasing the payload after transcript persistence."""
+        with self._lock:
+            meta = self._index[conversation_id]
+            inputs = meta.get("turn_inputs", {})
+            released = self._released_turn_inputs(inputs, messages)
+            if released == inputs:
+                return
+            updated = {**self._index, conversation_id: {**meta, "turn_inputs": released}}
+            _atomic_write_json(self._index_path(), updated)
+            self._index = updated
+
+    @staticmethod
+    def _released_turn_inputs(inputs: dict, messages: list[dict]) -> dict:
+        applied = {message.get(TURN_INPUT_RECEIPT) for message in messages}
+        return {receipt: None if receipt in applied else content for receipt, content in inputs.items()}
+
+    _KEEP_ACCEPTED_TURN = object()
+
+    def update_status(
+        self, conversation_id: str, status: str, *, accepted_turn_id=_KEEP_ACCEPTED_TURN,
+        recovery_reason: str | None = None,
+    ) -> None:
+        """Update status and optionally replace the current turn receipt."""
         with self._lock:
             meta = self._index.get(conversation_id)
             if meta is None:
                 raise KeyError(f"Conversation {conversation_id} not found")
-            meta["status"] = status
+            meta = {**meta, "status": status}
+            if accepted_turn_id is not self._KEEP_ACCEPTED_TURN:
+                receipts = meta.get("accepted_turn_ids", [])
+                for receipt in (meta.get("accepted_turn_id"), accepted_turn_id):
+                    if receipt and receipt not in receipts:
+                        receipts = [*receipts, receipt]
+                if receipts:
+                    meta["accepted_turn_ids"] = receipts
+            if accepted_turn_id is None:
+                meta.pop("accepted_turn_id", None)
+            elif accepted_turn_id is not self._KEEP_ACCEPTED_TURN:
+                meta["accepted_turn_id"] = accepted_turn_id
+            if recovery_reason:
+                meta["recovery_reason"] = recovery_reason
+            elif status != "error":
+                meta.pop("recovery_reason", None)
             meta["updated_at"] = datetime.now(timezone.utc).isoformat()
-            self._save_index()
+            updated = {**self._index, conversation_id: meta}
+            _atomic_write_json(self._index_path(), updated)
+            self._index = updated
+
+    def recover_turn_write(self, conversation_id: str) -> None:
+        """Recover a user message written just before the gateway could record admission."""
+        raw_users = [
+            message for message in self._read_messages(conversation_id)
+            if isinstance(message, dict) and message.get("role") == "user"
+        ]
+        receipt = raw_users[-1].get(_PENDING_TURN_ID) if raw_users else None
+        if not receipt or self.turn_state(conversation_id, receipt) != "unaccepted":
+            return
+        visible_users = [m.get("content", "") for m in self.get_frontend_messages(conversation_id)
+                         if m.get("role") == "user"]
+        preceding = [user_message_for_frontend(m.get("content"))["content"] for m in raw_users[:-1]]
+        if visible_users == preceding:
+            self.seed_frontend_user_message(conversation_id, raw_users[-1]["content"])
+        self.update_status(conversation_id, "error", accepted_turn_id=receipt, recovery_reason=TURN_WRITE_INTERRUPTED)
+
+    def turn_state(self, conversation_id: str, turn_id: str) -> str:
+        """Distinguish an unaccepted turn from the current or a superseded one."""
+        with self._lock:
+            meta = self._index.get(conversation_id, {})
+            if meta.get("accepted_turn_id") == turn_id:
+                return "current"
+            if turn_id in meta.get("accepted_turn_ids", []):
+                return "superseded"
+        return "unaccepted"
+
+    def recover_running_after_restart(self) -> int:
+        """Make unfinished turns from the prior gateway process retryable."""
+        with self._lock:
+            interrupted = {
+                cid: {**meta, "status": "error", "recovery_reason": GATEWAY_RESTARTED}
+                for cid, meta in self._index.items()
+                if isinstance(meta, dict) and meta.get("status") == "running"
+            }
+            if interrupted:
+                recovered = {**self._index, **interrupted}
+                _atomic_write_json(self._index_path(), recovered)
+                self._index = recovered
+            return len(interrupted)
+
+    def mark_continued(self, conversation_id: str, next_id: str, *, inputs: list[dict] | None = None) -> None:
+        """Commit the successor and release transferred inputs after both transcripts are saved."""
+        with self._lock:
+            if conversation_id == next_id or next_id not in self._index:
+                raise ValueError("The continuation must be a separate saved conversation.")
+            entry = {
+                **self._index[conversation_id],
+                "status": "continued",
+                "continued_to": next_id,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            if inputs:
+                entry["turn_inputs"] = self._released_turn_inputs(entry.get("turn_inputs", {}), inputs)
+            updated = {**self._index, conversation_id: entry}
+            _atomic_write_json(self._index_path(), updated)
+            self._index = updated
+
+    def latest_continuation(self, conversation_id: str) -> str | None:
+        with self._lock:
+            visited = {conversation_id}
+            current = self._index.get(conversation_id, {})
+            latest = None
+            while current.get("status") == "continued":
+                next_id = current.get("continued_to")
+                if not isinstance(next_id, str) or next_id in visited or next_id not in self._index:
+                    break
+                visited.add(next_id)
+                latest = next_id
+                current = self._index[next_id]
+            return latest
 
     def get_conversation(self, conversation_id: str) -> Dict[str, Any]:
         """Return metadata **and** messages for a single conversation."""
@@ -459,12 +692,21 @@ class ConversationStore:
             if meta is None:
                 raise KeyError(f"Conversation {conversation_id} not found")
             meta = dict(meta)
+            meta.pop("accepted_turn_ids", None)
+            meta.pop("turn_inputs", None)
 
         messages = self.get_messages(conversation_id)
         return {**meta, "messages": messages}
 
     def get_messages(self, conversation_id: str) -> List[Dict]:
         """Return the stored message list (for feeding back to the model)."""
+        messages = self._read_messages(conversation_id)
+        for message in messages:
+            if isinstance(message, dict):
+                message.pop(_PENDING_TURN_ID, None)
+        return messages
+
+    def _read_messages(self, conversation_id: str) -> List[Dict]:
         path = self._messages_path(conversation_id)
         if not path.exists():
             return []
@@ -488,7 +730,10 @@ class ConversationStore:
         Sorted by updated_at descending.
         """
         with self._lock:
-            items = list(self._index.values())
+            items = [
+                {key: value for key, value in meta.items() if key not in {"accepted_turn_ids", "turn_inputs"}}
+                for meta in self._index.values()
+            ]
 
         if conv_type is not None:
             items = [c for c in items if c.get("type") == conv_type]
@@ -588,7 +833,7 @@ class ConversationStore:
         _atomic_write_json(self._frontend_messages_path(conversation_id), messages)
         self._unlink_if_missing_from_index(conversation_id)
 
-    def seed_frontend_user_message(self, conversation_id: str, raw_content: str) -> None:
+    def seed_frontend_user_message(self, conversation_id: str, raw_content: str, *, source: str | None = None) -> None:
         """Persist a user bubble before the first SSE event.
 
         Strips transport wrappers from the visible text and keeps chips
@@ -596,6 +841,8 @@ class ConversationStore:
         shows what was applied.
         """
         new_user_msg = user_message_for_frontend(raw_content)
+        if source:
+            new_user_msg["source"] = source
         existing = self.get_frontend_messages(conversation_id)
         if existing:
             existing.append(new_user_msg)
@@ -633,7 +880,11 @@ class ConversationStore:
             self._save_index()
 
         for cid in deleted_ids:
-            msg_path = self._messages_path(cid)
+            try:
+                msg_path = self._messages_path(cid)
+            except InvalidConversationId:
+                # An old invalid entry can be deleted from the index without following its path.
+                continue
             if msg_path.exists():
                 msg_path.unlink()
             fe_path = self._frontend_messages_path(cid)

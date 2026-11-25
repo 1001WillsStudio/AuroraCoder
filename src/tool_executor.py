@@ -8,11 +8,12 @@ loop focused.
 
 import json
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .tool_definitions import execute_tool_call, PARALLEL_SAFE_TOOLS
 from .code_tools.panel_manager import triggered_by
+from .task_checklist import TASK_TOOL_NAMES
 from .config import MAX_TOOL_CONCURRENCY
 
 
@@ -88,7 +89,8 @@ def partition_tool_calls(tool_calls: List[Dict]) -> List[Tuple[bool, List[Dict]]
     return batches
 
 
-def _execute_single_tool(tool_call: Dict, conversation_id: str | None = None) -> Tuple[Dict, str, str]:
+def _execute_single_tool(tool_call: Dict, conversation_id: str | None = None,
+                         task_tool_handler=None) -> Tuple[Dict, str, str]:
     """Execute one tool call and return (tool_call, tool_name, result).
 
     Every tool execution yields the applied argument dict plus the result
@@ -107,6 +109,10 @@ def _execute_single_tool(tool_call: Dict, conversation_id: str | None = None) ->
         return (tool_call, tool_name,
                 f"Error: failed to parse tool call arguments: {str(e)}")
     try:
+        if tool_name in TASK_TOOL_NAMES:
+            result = (task_tool_handler(tool_name, arguments) if task_tool_handler
+                      else "Task tools are unavailable for this turn.")
+            return tool_call, tool_name, result
         arguments, result = execute_tool_call(
             tool_name, arguments, tool_call_id=tool_call.get("id"),
             conversation_id=conversation_id)
@@ -157,6 +163,10 @@ def execute_tool_calls(
     current_tool_calls: List[Dict],
     messages: List[Dict],
     conversation_id: str | None = None,
+    allowed_tools: set[str] | None = None,
+    *,
+    stop_requested: Callable[[], bool] | None = None,
+    task_tool_handler=None,
 ) -> Dict[str, int]:
     """
     Execute tool calls, running concurrent-safe tools in parallel.
@@ -169,25 +179,48 @@ def execute_tool_calls(
     triggered: Dict[str, int] = {}
     files_edited_this_turn: set = set()
 
+    def allowed(name: str) -> bool:
+        return allowed_tools is None or name in allowed_tools
+
+    def stopped() -> bool:
+        return stop_requested is not None and stop_requested()
+
+    def run_tool(call: Dict) -> Tuple[Dict, str, str] | None:
+        if stopped():
+            return None
+        name = call["function"]["name"]
+        if not allowed(name):
+            return call, name, f"Error: tool '{name}' is not available in this session."
+        if name in TASK_TOOL_NAMES:
+            return _execute_single_tool(call, conversation_id, task_tool_handler)
+        return _execute_single_tool(call, conversation_id)
+
     def _mark(tool_name: str):
-        nonlocal triggered
+        if not allowed(tool_name):
+            return
         for panel_name in triggered_by(tool_name):
             triggered[panel_name] = len(messages) - 1  # index just appended
 
     for is_safe, batch in partition_tool_calls(current_tool_calls):
+        if stopped():
+            break
         if is_safe and len(batch) > 1:
             futures = {
-                _get_executor().submit(_execute_single_tool, tc, conversation_id): tc
+                _get_executor().submit(run_tool, tc): tc
                 for tc in batch
             }
             # Collect results keyed by tool_call id to preserve original order
             results_by_id = {}
             for future in as_completed(futures):
-                tc, tool_name, result = future.result()
-                results_by_id[tc["id"]] = (tc, tool_name, result)
+                outcome = future.result()
+                if outcome is not None:
+                    results_by_id[outcome[0]["id"]] = outcome
             # Append in original batch order
             for tc in batch:
-                tc_out, tool_name, result = results_by_id[tc["id"]]
+                outcome = results_by_id.get(tc["id"])
+                if outcome is None:
+                    continue
+                tc_out, tool_name, result = outcome
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc_out["id"],
@@ -196,7 +229,11 @@ def execute_tool_calls(
                 _mark(tool_name)
         else:
             for tc in batch:
-                guard_err = _check_same_file_edit_guard(tc, files_edited_this_turn)
+                if stopped():
+                    break
+                guard_err = None
+                if allowed(tc["function"]["name"]):
+                    guard_err = _check_same_file_edit_guard(tc, files_edited_this_turn)
                 if guard_err:
                     tool_name = tc["function"]["name"]
                     messages.append({
@@ -206,7 +243,10 @@ def execute_tool_calls(
                     })
                     _mark(tool_name)
                     continue
-                tc_out, tool_name, result = _execute_single_tool(tc, conversation_id)
+                outcome = run_tool(tc)
+                if outcome is None:
+                    break
+                tc_out, tool_name, result = outcome
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc_out["id"],

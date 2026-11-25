@@ -6,25 +6,38 @@ and subscriber SSE — all the plumbing that powers the SSE-based chat streaming
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
+import re
+import secrets
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from weakref import WeakValueDictionary
 
 import httpx
 
-from src.config import WORKSPACE_DIR, MAX_FILE_READ_SIZE
+from src.backend_access import backend_auth_headers
+from src.config import WORKSPACE_DIR, MAX_FILE_READ_SIZE, CONTINUATION_TOOL_RESULT
+from src.workspace_paths import WorkspacePathError, resolve_under_workspace
+from src.message_provenance import HANDOFF_PREFIX, TASK_RESUME_SOURCE, TURN_INPUT_RECEIPT
 from gateway.conversation_store import store, sanitize_frontend_messages, ensure_error_frontend_message
+from gateway.provider_registry import get_max_iterations
+from gateway.task_checklist import TaskChecklist, TaskConflict
+from gateway.task_terminal_jobs import pending_terminal_jobs
 from gateway.workspace import (
     file_snapshots,
     mark_file_touched,
     snapshot_file,
+    generate_workspace_tree_text,
 )
+from src.code_sandbox import WORKSPACE
+from src.task_checklist import TASK_TOOL_NAMES, TaskProgress, TaskResume
 from memory.ops.extractor import run_extraction
 from memory.ops.consolidator import run_consolidation
 
@@ -58,10 +71,32 @@ class ActiveStream:
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
     task: Optional[asyncio.Task] = None
     new_conversation_id: Optional[str] = None   # set when continuation detected
+    turn_id: Optional[str] = None
+    task_token: Optional[str] = None
+    task_request: Optional[str] = None
+    task_request_is_retry: bool = False
+    task_options: TaskResume = field(default_factory=TaskResume)
+    initial_task_progress: Optional[TaskProgress] = None
+    accept_turn_inputs: bool = True
+    input_message_count: int = 0
+
+    @property
+    def task_active(self) -> bool:
+        return self.initial_task_progress is not None
 
 
 active_streams: Dict[str, ActiveStream] = {}
 _streams_lock = asyncio.Lock()
+_admission_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
+_CANCEL_TIMEOUT_SECONDS = 2.0
+
+
+def _turn_admission_lock(conversation_id: str) -> asyncio.Lock:
+    lock = _admission_locks.get(conversation_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _admission_locks[conversation_id] = lock
+    return lock
 
 
 # ============================================================================
@@ -219,10 +254,14 @@ def _track_file_changes(conversation_id: str, raw_messages: list):
             if not file_path:
                 continue
 
+            try:
+                full_path = resolve_under_workspace(work_dir, file_path)
+            except WorkspacePathError:
+                continue
+
             # Phase 1: snapshot BEFORE the write (tool_call seen, no result yet)
             if tc_id not in _snapshotted_tool_calls[conversation_id]:
                 _snapshotted_tool_calls[conversation_id].add(tc_id)
-                full_path = work_dir / file_path
                 if file_path not in file_snapshots.get(conversation_id, {}):
                     try:
                         if full_path.exists() and full_path.is_file():
@@ -311,15 +350,9 @@ async def _cancel_active_stream(conversation_id: str) -> None:
                         tasks_to_await.append(gc.task)
                     streams_to_kill.append(gc)
 
-    # Await all cancelled tasks concurrently — total wait bounded to 2 s
+    # Waiting for a cancellation-resistant task must not extend the deadline.
     if tasks_to_await:
-        try:
-            await asyncio.wait_for(
-                asyncio.gather(*tasks_to_await, return_exceptions=True),
-                timeout=2.0,
-            )
-        except (asyncio.TimeoutError, Exception):
-            pass
+        await asyncio.wait(tasks_to_await, timeout=_CANCEL_TIMEOUT_SECONDS)
 
     # GUARANTEE: force-remove any stream that survived the timeout.
     # The orphaned task will finish on its own eventually; its finally
@@ -331,6 +364,12 @@ async def _cancel_active_stream(conversation_id: str) -> None:
             if not s.finished and active_streams.get(s.conversation_id) is s:
                 s.finished = True
                 del active_streams[s.conversation_id]
+                if s.status == "running":
+                    s.status = "interrupted"
+                    try:
+                        store.update_status(s.conversation_id, s.status)
+                    except KeyError:
+                        pass
                 logger.warning(
                     f"[cancel] Force-removed zombie stream "
                     f"{s.conversation_id[:8]}... after timeout"
@@ -349,6 +388,19 @@ async def _cancel_active_stream(conversation_id: str) -> None:
 
 def _format_sse(event_type: str, data: Any) -> str:
     return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+_TERMINAL_EVENTS = {"done", "error"}
+
+
+def _broadcast_stream_event(stream: ActiveStream, event_type: str, data: dict) -> None:
+    for queue in list(stream.subscribers):
+        if queue.full():
+            if event_type not in _TERMINAL_EVENTS and event_type != "messages":
+                continue
+            # Keep the latest full snapshot or terminal outcome for a slow subscriber.
+            queue.get_nowait()
+        queue.put_nowait((event_type, data))
 
 
 def _parse_sse_blocks(text: str) -> List[tuple]:
@@ -376,61 +428,262 @@ def _parse_sse_blocks(text: str) -> List[tuple]:
 # Continuation Helpers
 # ============================================================================
 
-def _scan_for_continuation(raw_messages: list) -> dict | None:
+def _scan_for_continuation(raw_messages: list, prior_tool_ids: set[str]) -> str | None:
     """
-    Scan assistant messages for the LAST (most recent) continue_as_new_chat
-    tool call.  Returns its parsed arguments dict, or None if the most recent
-    call is missing or has invalid JSON.  Earlier calls are never used.
+    Use the latest handoff from this turn only after its tool completed.
     """
+    results = {
+        msg.get("tool_call_id"): msg.get("content")
+        for msg in raw_messages if msg.get("role") == "tool"
+    }
     for msg in reversed(raw_messages):
         if msg.get("role") != "assistant":
             continue
-        for tc in msg.get("tool_calls", []):
-            if tc.get("function", {}).get("name") == "continue_as_new_chat":
-                try:
-                    return json.loads(tc["function"]["arguments"])
-                except json.JSONDecodeError:
-                    logger.warning(
-                        "[continuation] Most recent continue_as_new_chat (id=%s) "
-                        "has invalid JSON — aborting continuation.  Arguments: %s",
-                        tc.get("id", "?"),
-                        tc.get("function", {}).get("arguments", "")[:200],
-                    )
-                    return None
+        for tc in reversed(msg.get("tool_calls") or []):
+            function = tc.get("function", {})
+            tool_id = tc.get("id")
+            if function.get("name") != "continue_as_new_chat" or tool_id in prior_tool_ids:
+                continue
+            if not tool_id or results.get(tool_id) != CONTINUATION_TOOL_RESULT:
+                continue
+            try:
+                args = json.loads(function["arguments"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            prompt = args.get("prompt") if isinstance(args, dict) else None
+            if isinstance(prompt, str) and prompt.strip():
+                return prompt
     return None
 
 
-async def _start_continuation(new_cid: str, provider_id: str, user_msg: str):
-    """
-    Simulate a user opening a new chat, typing the continuation message,
-    and pressing Send.  POSTs to the backend via the normal proxy flow.
+_CONTINUED_MARKER = HANDOFF_PREFIX
+_PRIOR_USER_PREFIX = "Prior user messages (chronological): "
 
-    The continuation is a standalone main chat (conv_type="user_chat",
-    parent_id=None) so the frontend displays it at the same level as the
-    original chat — NOT as a subagent child in the sidebar.
-    """
-    body = {
-        "conversation_id": new_cid,
-        "message": user_msg,
-        "provider": provider_id,
-    }
 
-    stream = ActiveStream(
-        conversation_id=new_cid,
-        conv_type="user_chat",
-        parent_id=None,
-        provider=provider_id,
+def _continuation_message(raw_messages: list, summary: str) -> str:
+    user_messages = []
+    for message in raw_messages:
+        content = message.get("content")
+        if (message.get("role") != "user" or message.get("source") == TASK_RESUME_SOURCE
+                or not isinstance(content, str) or not content.strip()):
+            continue
+        if not content.startswith(_CONTINUED_MARKER):
+            user_messages.append(content)
+            continue
+        line = content[len(_CONTINUED_MARKER):].lstrip().split("\n", 1)[0]
+        if line.startswith(_PRIOR_USER_PREFIX):
+            try:
+                previous = json.loads(line[len(_PRIOR_USER_PREFIX):])
+            except ValueError:
+                continue
+            if isinstance(previous, list):
+                user_messages.extend(text for text in previous if isinstance(text, str))
+
+    clipped = [
+        text if len(text) <= 3000 else f"{text[:1500]}\n[Earlier text omitted]\n{text[-1450:]}"
+        for text in user_messages
+    ]
+    context = clipped[:1]
+    remaining = 12000 - sum(map(len, context))
+    recent = []
+    for text in reversed(clipped[1:]):
+        if len(text) > remaining:
+            break
+        recent.append(text)
+        remaining -= len(text)
+    context.extend(reversed(recent))
+    return (
+        f"{_CONTINUED_MARKER}\n\n{_PRIOR_USER_PREFIX}{json.dumps(context, ensure_ascii=False)}\n\n"
+        "Keep the user's earlier scope and the latest corrections. The following summary "
+        f"was written by the previous agent and may omit details.\n\n{summary}"
     )
 
-    async with _streams_lock:
-        active_streams[new_cid] = stream
 
+def task_workspace() -> str:
+    return str(Path(WORKSPACE).resolve())
+
+
+def start_task_segment(task: TaskChecklist, *, fresh: bool, handoff: str = "", stalled: int = 0) -> str:
+    """Register the new stream before yielding, so pause and resume cannot race a handoff."""
+    if task.workspace != task_workspace():
+        raise TaskConflict("Reopen the task in its original workspace before resuming.")
+    provider = task.options.provider_id or task.options.provider
+    cid = str(uuid.uuid4()) if fresh else task.conversation_id
+    if fresh:
+        store.create_conversation(conversation_id=cid, provider_id=provider)
+    message = f"Continue task: {task.objective}" if fresh else task.objective
+    prior = _fix_orphan_tool_calls(store.get_messages(cid))
+    synthetic = {"role": "user", "content": message, "source": TASK_RESUME_SOURCE}
+    applied_steering, pending_steering = task.split_steering_at_pending()
+    directions = [entry.as_message() for entry in pending_steering]
+    store.save_messages(cid, [*prior, synthetic, *directions])
+    store.seed_frontend_user_message(cid, message, source=TASK_RESUME_SOURCE)
+    for direction in directions:
+        store.seed_frontend_user_message(cid, direction["content"])
+    store.acknowledge_turn_inputs(task.conversation_id, directions)
+    applied_steering.extend(entry.model_copy(update={"applied_to": cid}) for entry in pending_steering)
+    task = store.tasks.save(
+        task, status="active", reason="", stalled=stalled, handoff=handoff, started=True,
+        conversation_ids=[*task.conversation_ids, cid] if fresh else task.conversation_ids,
+        steering_entries=applied_steering,
+    )
+    store.update_status(cid, "running", accepted_turn_id=None)
+    stream = ActiveStream(
+        conversation_id=cid, provider=provider, task_token=secrets.token_urlsafe(32),
+        initial_task_progress=task.progress,
+    )
+    try:
+        tree = generate_workspace_tree_text(WORKSPACE) if not prior else ""
+    except Exception:
+        logger.exception("Could not build workspace tree for task %s", task.id)
+        tree = ""
+    body = {
+        **task.options.model_dump(exclude_none=True),
+        "conversation_id": cid, "message": message, "messages": prior, "max_iterations": get_max_iterations(),
+        "message_source": TASK_RESUME_SOURCE,
+        "workspace_tree": tree, "task_state": task.prompt_state(), "task_token": stream.task_token,
+        "accept_turn_inputs": True,
+    }
+    if directions:
+        body.update(messages=[*prior, synthetic, *directions[:-1]], message=directions[-1]["content"],
+                    message_receipt=directions[-1].get(TURN_INPUT_RECEIPT))
+        stream.task_request = directions[-1]["content"]
+        body.pop("message_source")
+    active_streams[cid] = stream
     stream.task = asyncio.create_task(_proxy_backend_stream(stream, body))
-
-    logger.info(f"[proxy] Continuation {new_cid[:8]}... auto-started")
-
+    return cid
 
 
+def pause_task(conversation_id: str, reason: str = "paused") -> TaskChecklist | None:
+    task = store.tasks.get(conversation_id)
+    if task and task.status == "active":
+        task = store.tasks.save(task, status="paused", reason=reason)
+    return task
+
+
+def _task_work_observations(messages: list, prior_tool_ids: set[str]) -> list[str]:
+    names = {}
+    observations = {}
+    for message in messages:
+        if message.get("role") == "user":
+            names.clear()
+            observations.clear()
+        elif message.get("role") == "assistant":
+            for call in message.get("tool_calls") or []:
+                call_id = call.get("id")
+                name = call.get("function", {}).get("name")
+                if call_id and call_id not in prior_tool_ids and name and name not in TASK_TOOL_NAMES:
+                    if name != "continue_as_new_chat":
+                        names[call_id] = name
+        elif message.get("role") == "tool":
+            name = names.get(message.get("tool_call_id"))
+            result = message.get("content")
+            if not name or not isinstance(result, str):
+                continue
+            result = result.strip()
+            if (not result or result.startswith(("Error", "Skipped:", "Command timed out"))
+                    or re.search(r"^Exit Code: (?!0$)-?\d+$", result, re.MULTILINE)):
+                continue
+            value = f"{name}\0{' '.join(result.split())}"
+            observations[hashlib.sha256(value.encode()).hexdigest()] = None
+    return list(observations)
+
+
+def _finish_task_segment(stream: ActiveStream, raw_messages: list, prior_tool_ids: set[str]) -> None:
+    cid = stream.conversation_id
+    task = store.tasks.get(cid)
+    if not task or task.status != "active" or task.conversation_id != cid:
+        return
+    steering = bool(task.pending_steering)
+    if stream.status not in {"completed", "max_iterations_reached", "context_limit_reached"}:
+        pause_task(cid, "error")
+    elif task.verified and not steering:
+        store.tasks.save(task, status="completed", reason="")
+    elif task.progress.blocker and not steering:
+        pause_task(cid, "blocked")
+        stream.status = "interrupted"
+    else:
+        previous = stream.initial_task_progress
+        observations = _task_work_observations(raw_messages, prior_tool_ids)
+        new_observation = bool(set(observations).difference(task.work_observations))
+        progressed = previous is None or (
+            {item.text: item.evidence for item in task.progress.items}
+            != {item.text: item.evidence for item in previous.items}
+        ) or (
+            task.progress.checkpoint != previous.checkpoint and new_observation
+        )
+        recent = list(dict.fromkeys([*task.work_observations, *observations]))[-128:]
+        if recent != task.work_observations:
+            task = store.tasks.save(task, work_observations=recent)
+        stalled = 0 if steering or progressed else task.stalled + 1
+        if stalled >= 2:
+            pause_task(cid, "no_progress")
+            stream.status = "interrupted"
+            return
+        prompt = _scan_for_continuation(raw_messages, prior_tool_ids)
+        handoff = prompt[-6000:] if isinstance(prompt, str) else task.handoff
+        store.save_messages(cid, raw_messages)
+        if steering and task.progress.blocker:
+            task = store.tasks.save(task, progress=task.progress.model_copy(update={"blocker": ""}))
+        stream.new_conversation_id = start_task_segment(task, fresh=True, handoff=handoff, stalled=stalled)
+        stream.status = "continued"
+        store.update_status(cid, "continued")
+        _memory_ops_executor.submit(_run_session_end_memory_ops, cid, "user_chat", "continued")
+
+
+def _record_task_terminal_jobs(stream: ActiveStream, messages: list[dict], prior_tool_ids: set[str]) -> None:
+    task = store.tasks.get(stream.conversation_id)
+    if not task or task.status != "active" or task.conversation_id != stream.conversation_id:
+        return
+    jobs = pending_terminal_jobs(task.terminal_jobs, messages, prior_tool_ids)
+    if jobs != task.terminal_jobs:
+        store.tasks.save(task, terminal_jobs=jobs)
+
+
+async def _start_continuation(source: ActiveStream, prompt: str, messages: list[dict], options: dict) -> None:
+    """Persist an ordinary chat handoff before dispatching its successor."""
+    cid = source.conversation_id
+    provider = source.provider
+    user_msg = _continuation_message(messages, prompt)
+    inputs = store.pending_turn_inputs(cid)
+    new_cid = store.create_conversation(provider_id=provider)
+    store.save_messages(new_cid, [{"role": "user", "content": user_msg}, *inputs])
+    store.save_frontend_messages(new_cid, [{"role": "user", "content": user_msg}])
+    for pending in inputs:
+        store.seed_frontend_user_message(new_cid, pending["content"])
+    store.save_messages(cid, messages)
+    store.mark_continued(cid, new_cid, inputs=inputs)
+    source.new_conversation_id = new_cid
+
+    # The finalizer skips continued chats, so distill the saved source here.
+    _memory_ops_executor.submit(_run_session_end_memory_ops, cid, "user_chat", "continued")
+
+    body = {
+        **{key: options[key] for key in ("provider_id", "model", "max_iterations") if key in options},
+        "conversation_id": new_cid,
+        "message": user_msg,
+        "provider": provider,
+    }
+    successor = ActiveStream(
+        conversation_id=new_cid,
+        provider=provider,
+        task_token=secrets.token_urlsafe(32),
+    )
+    body.update(task_token=successor.task_token, accept_turn_inputs=True)
+    if inputs:
+        successor.task_request = inputs[-1]["content"]
+        body.update(
+            messages=[{"role": "user", "content": user_msg}, *inputs[:-1]],
+            message=inputs[-1]["content"], message_receipt=inputs[-1][TURN_INPUT_RECEIPT],
+        )
+    else:
+        body["task_state"] = {"status": "conversation_handoff"}
+
+    async with _streams_lock:
+        active_streams[new_cid] = successor
+
+    successor.task = asyncio.create_task(_proxy_backend_stream(successor, body))
+    logger.info("[proxy] Started continuation %s from %s", new_cid[:8], cid[:8])
 
 # ============================================================================
 # Backend Proxy — background task
@@ -449,6 +702,10 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
     stream stays alive even if all subscribers disconnect.
     """
     cid = stream.conversation_id
+    prior_tool_ids = {
+        call["id"] for message in request_body.get("messages") or []
+        for call in message.get("tool_calls") or [] if call.get("id")
+    }
     last_saved_msg_count = 0
     backend_connect_start = time.perf_counter()
     try:
@@ -457,7 +714,7 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                 "POST",
                 f"{BACKEND_URL}/api/chat",
                 json=request_body,
-                headers={"Content-Type": "application/json"},
+                headers={"Content-Type": "application/json", **backend_auth_headers()},
             ) as response:
                 backend_connect_elapsed = time.perf_counter() - backend_connect_start
                 logger.info(f"[proxy] [{cid[:8]}...] backend_connect={backend_connect_elapsed:.3f}s status={response.status_code}")
@@ -466,8 +723,7 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                     err = {"message": f"Backend returned {response.status_code}: {body[:500]}", "type": "BackendError"}
                     stream.latest_event_type = "error"
                     stream.latest_event_data = err
-                    for q in list(stream.subscribers):
-                        q.put_nowait(("error", err))
+                    _broadcast_stream_event(stream, "error", err)
                     return
 
                 buffer = ""
@@ -479,79 +735,45 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                     while "\n\n" in buffer:
                         raw, buffer = buffer.split("\n\n", 1)
                         for etype, edata in _parse_sse_blocks(raw + "\n\n"):
+                            raw_msgs = edata.get("raw_messages", [])
+                            if raw_msgs and len(raw_msgs) < stream.input_message_count:
+                                # An older SSE frame can arrive after the boundary write.
+                                continue
                             stream.latest_event_type = etype
                             stream.latest_event_data = edata
+                            stream.status = edata.get("status", stream.status)
+                            stream.provider = edata.get("provider", stream.provider)
+                            if stream.task_active and etype in {"messages", "done"}:
+                                _record_task_terminal_jobs(stream, raw_msgs, prior_tool_ids)
+                            if stream.task_active and etype == "done":
+                                _finish_task_segment(stream, raw_msgs, prior_tool_ids)
+                                edata["status"] = stream.status
 
-                            # --- Continuation detection ---
-                            # Only scan on full-state events (messages), never during
-                            # active streaming (delta) — tool-call arguments are still
-                            # being built up during deltas, producing bogus warnings.
-                            if not stream.new_conversation_id and etype == "messages":
-                                args = _scan_for_continuation(edata.get("raw_messages", []))
-                                if args:
-                                    prompt = args.get("prompt", "")
-                                    new_cid = str(uuid.uuid4())
-
-                                    # Build the user message: just the agent's prompt with a note
-                                    user_msg = f"[Continued from previous agent session]\n\n{prompt}"
-
-                                    # Continuation is a new standalone main chat —
-                                    # no parent_id, so the frontend does NOT display
-                                    # it as a subagent child in the sidebar.
-                                    store.create_conversation(
-                                        conversation_id=new_cid,
-                                        parent_id=None,
-                                        conv_type="user_chat",
-                                        provider_id=stream.provider,
-                                    )
-                                    store.save_messages(new_cid, [
-                                        {"role": "user", "content": user_msg},
-                                    ])
-                                    store.save_frontend_messages(new_cid, [
-                                        {"role": "user", "content": user_msg},
-                                    ])
-                                    # Persist the old conversation's segment BEFORE marking it
-                                    # "continued" — its raw_msgs (including any `remember` calls
-                                    # made before the handoff) must be on disk before we hand off
-                                    # to the background distillation pass below, since that pass
-                                    # re-fetches messages from the store rather than taking them
-                                    # as an argument.
-                                    store.save_messages(cid, edata.get("raw_messages", []))
-                                    store.update_status(cid, "continued")
-                                    stream.new_conversation_id = new_cid
-
-                                    # A "continued" conversation is otherwise EXCLUDED from
-                                    # session-end distillation (see the finally block below) since
-                                    # it isn't really "done" — the task keeps going in new_cid.
-                                    # But this segment's transcript (and any `remember` calls in
-                                    # it) would otherwise never be mined at all, since the new
-                                    # conversation starts fresh rather than inheriting messages.
-                                    # Trigger distillation for THIS segment explicitly, right here,
-                                    # rather than widening the general terminal-status gate.
-                                    _memory_ops_executor.submit(_run_session_end_memory_ops, cid, "user_chat", "continued")
-
-                                    # Simulate user pressing Send — POST to backend immediately
-                                    asyncio.create_task(_start_continuation(new_cid, stream.provider, user_msg))
-
-                                    logger.info(f"[proxy] Created continuation {new_cid[:8]}... from {cid[:8]}... — auto-started")
+                            if (etype == "messages" and edata.get("status") == "completed"
+                                    and stream.conv_type == "user_chat" and not stream.task_active
+                                    and not stream.new_conversation_id and request_body.get("tools") not in {
+                                        "read_only", "gap_investigation", "memory_maintenance",
+                                    }):
+                                prompt = _scan_for_continuation(raw_msgs, prior_tool_ids)
+                                if prompt:
+                                    await _start_continuation(stream, prompt, raw_msgs, request_body)
 
                             # Annotate events with new_conversation_id if continuation was detected
                             if stream.new_conversation_id:
+                                stream.status = "continued"
+                                edata["status"] = "continued"
                                 edata["new_conversation_id"] = stream.new_conversation_id
 
                             # ── Always update latest state from *every* event ──
                             # The backend now always includes full messages in
                             # every event (delta or messages), so the gateway
                             # always has fresh data for persistence.
-                            stream.status = edata.get("status", stream.status)
-                            stream.provider = edata.get("provider", stream.provider)
                             if edata.get("messages"):
                                 edata["messages"] = sanitize_frontend_messages(edata["messages"])
                                 stream.latest_frontend_messages = edata["messages"]
 
 
                             # --- File tracking for diff endpoint ---
-                            raw_msgs = edata.get("raw_messages", [])
                             if raw_msgs:
                                 try:
                                     _track_file_changes(cid, raw_msgs)
@@ -586,11 +808,7 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                             else:
                                 frontend_edata = edata
 
-                            for q in list(stream.subscribers):
-                                try:
-                                    q.put_nowait((etype, frontend_edata))
-                                except asyncio.QueueFull:
-                                    pass
+                            _broadcast_stream_event(stream, etype, frontend_edata)
 
                             # Notify parent stream about child activity
                             if stream.parent_id:
@@ -612,11 +830,7 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
         err = {"message": f"Cannot connect to backend at {BACKEND_URL}", "type": "ConnectionError"}
         stream.latest_event_type = "error"
         stream.latest_event_data = err
-        for q in list(stream.subscribers):
-            try:
-                q.put_nowait(("error", err))
-            except asyncio.QueueFull:
-                pass
+        _broadcast_stream_event(stream, "error", err)
 
     except asyncio.CancelledError:
         logger.info(f"[proxy] Cancelled {cid[:8]}...")
@@ -624,15 +838,14 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
     except Exception as e:
         logger.exception(f"[proxy] Error for {cid[:8]}...")
         err = {"message": str(e), "type": type(e).__name__}
+        stream.status = "error"
         stream.latest_event_type = "error"
         stream.latest_event_data = err
-        for q in list(stream.subscribers):
-            try:
-                q.put_nowait(("error", err))
-            except asyncio.QueueFull:
-                pass
+        _broadcast_stream_event(stream, "error", err)
 
     finally:
+        owner = active_streams.get(cid)
+        superseded = stream.finished or (owner is not None and owner is not stream)
         stream.finished = True
 
         # Determine final status
@@ -646,36 +859,11 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
         # messages in every event (delta + messages), so
         # latest_frontend_messages and latest_event_data are always
         # fresh regardless of the last event type.
-        try:
-            current_status = None
-            try:
-                conv = store.get_conversation(cid)
-                current_status = conv.get("status")
-            except Exception:
-                pass
-            if current_status != "continued":
-                store.update_status(cid, persist_status)
-            if persist_status == "error":
-                data = stream.latest_event_data if isinstance(stream.latest_event_data, dict) else {}
-                err = data if stream.latest_event_type == "error" else (
-                    {"message": data["error"]} if data.get("error") else None
-                )
-                fe = ensure_error_frontend_message(
-                    stream.latest_frontend_messages or store.get_frontend_messages(cid),
-                    err,
-                )
-                stream.latest_frontend_messages = fe
-                store.save_frontend_messages(cid, fe)
-            elif stream.latest_frontend_messages:
-                store.save_frontend_messages(cid, stream.latest_frontend_messages)
-            raw_msgs = stream.latest_event_data.get("raw_messages", []) if stream.latest_event_data else []
-            if raw_msgs:
-                store.save_messages(cid, raw_msgs)
-
-            if current_status != "continued":
-                _schedule_memory_distillation(cid, stream.conv_type, persist_status)
-        except Exception as e:
-            logger.error(f"[proxy] Final persist failed for {cid[:8]}...: {e}")
+        if not superseded:
+            task = store.tasks.get(cid) if stream.task_active else None
+            if task and task.conversation_id == cid and task.status == "active":
+                pause_task(cid, "paused" if stream.cancel_event.is_set() else "error")
+            _persist_finished_stream(stream, persist_status)
 
         # Signal end to all subscribers
         for q in list(stream.subscribers):
@@ -690,6 +878,40 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                 del active_streams[cid]
 
         logger.info(f"[proxy] Ended {cid[:8]}... status={persist_status}")
+
+
+def _persist_finished_stream(stream: ActiveStream, persist_status: str) -> None:
+    cid = stream.conversation_id
+    try:
+        current_status = None
+        try:
+            conv = store.get_conversation(cid)
+            current_status = conv.get("status")
+        except Exception:
+            pass
+        if current_status != "continued":
+            store.update_status(cid, persist_status)
+        if persist_status == "error":
+            data = stream.latest_event_data if isinstance(stream.latest_event_data, dict) else {}
+            err = data if stream.latest_event_type == "error" else (
+                {"message": data["error"]} if data.get("error") else None
+            )
+            fe = ensure_error_frontend_message(
+                stream.latest_frontend_messages or store.get_frontend_messages(cid),
+                err,
+            )
+            stream.latest_frontend_messages = fe
+            store.save_frontend_messages(cid, fe)
+        elif stream.latest_frontend_messages:
+            store.save_frontend_messages(cid, stream.latest_frontend_messages)
+        raw_msgs = stream.latest_event_data.get("raw_messages", []) if stream.latest_event_data else []
+        if raw_msgs and len(raw_msgs) >= stream.input_message_count:
+            store.save_messages(cid, raw_msgs)
+
+        if current_status != "continued":
+            _schedule_memory_distillation(cid, stream.conv_type, persist_status)
+    except Exception as e:
+        logger.error(f"[proxy] Final persist failed for {cid[:8]}...: {e}")
 
 
 # ============================================================================
@@ -718,6 +940,10 @@ async def _subscriber_sse(
         # frontend messages so the subscriber gets the current state,
         # regardless of what the actual last SSE event type was.
         if replay_latest:
+            if (queue.empty() and stream.latest_event_type in _TERMINAL_EVENTS
+                    and stream.latest_event_data):
+                yield _format_sse(stream.latest_event_type, stream.latest_event_data)
+                return
             replay_data = None
             if stream.latest_event_data and stream.latest_event_type in ("messages", "done"):
                 replay_data = stream.latest_event_data
@@ -733,11 +959,8 @@ async def _subscriber_sse(
             if replay_data:
                 yield _format_sse("messages", replay_data)
 
-        if stream.finished:
-            return
-
         idle_ticks = 0
-        while True:
+        while not stream.finished or not queue.empty():
             try:
                 if await request.is_disconnected():
                     break

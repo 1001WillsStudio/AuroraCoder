@@ -18,6 +18,8 @@ import uuid
 
 import requests
 
+from ..gateway_access import gateway_tool_request
+
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +56,8 @@ def cancel_active_subagents(parent_conversation_id: str | None = None) -> None:
             except Exception:
                 pass
         try:
-            requests.post(
+            gateway_tool_request(
+                "POST",
                 f"{CONVO_SERVER_URL}/api/conversations/{child_id}/cancel",
                 timeout=5,
             )
@@ -104,7 +107,8 @@ def run_subagent(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
         body["provider"] = provider_id
 
     try:
-        resp = requests.post(
+        resp = gateway_tool_request(
+            "POST",
             f"{CONVO_SERVER_URL}/api/chat",
             json=body,
             stream=True,

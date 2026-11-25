@@ -170,6 +170,6 @@ def test_routes_and_attachments_use_the_shared_helper():
     attached = ATTACHED.read_text(encoding="utf-8")
     assert "startswith(str(work_dir" not in routes
     assert "resolve_under_workspace" in routes
-    assert routes.count("_require_workspace_path(") == 6  # def + 5 call sites
+    assert routes.count("_require_workspace_path(") == 7  # def + 6 call sites including archive upload
     assert "from gateway.paths import" in attached
     assert "resolve_under_workspace" in attached

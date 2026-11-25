@@ -11,11 +11,13 @@ file display, settings, providers, workspace management.
 from pathlib import Path
 
 import httpx
+from anyio import CancelScope, create_task_group, fail_after
 from fastapi import FastAPI, Request
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 GATEWAY_URL = "http://localhost:8081"
+_INTERACTIVE_HEADER_TIMEOUT_SECONDS = 20
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_FRONTEND_DIR = Path(__file__).resolve().parent / "dist"
@@ -25,6 +27,28 @@ app = FastAPI(title="AuroraCoder Frontend")
 
 
 # ── Proxy helpers ──────────────────────────────────────────────────────────
+
+async def _watch_disconnect(request: Request, scope: CancelScope) -> None:
+    while (await request.receive())["type"] != "http.disconnect":
+        pass
+    scope.cancel()
+
+
+async def _send_chat(client: httpx.AsyncClient, upstream: httpx.Request, request: Request) -> httpx.Response | None:
+    """Close an unaccepted upstream chat request when the browser leaves."""
+    error = None
+    async with create_task_group() as watchers:
+        watchers.start_soon(_watch_disconnect, request, watchers.cancel_scope)
+        try:
+            return await client.send(upstream, stream=True)
+        except Exception as exc:
+            error = exc
+        finally:
+            watchers.cancel_scope.cancel()
+    if error is not None:
+        raise error
+    return None
+
 
 async def _proxy(request: Request, target_path: str):
     """Forward a request to the internal gateway and stream the response back.
@@ -42,9 +66,31 @@ async def _proxy(request: Request, target_path: str):
         if k.lower() not in ("host", "content-length")
     }
 
-    client = httpx.AsyncClient(timeout=httpx.Timeout(None))
-    req = client.build_request(request.method, url, content=body, headers=req_headers)
-    resp = await client.send(req, stream=True)
+    # Limit the wait for the local gateway to accept an interactive request.
+    # Once it starts responding, an SSE stream can be silent while a tool runs.
+    interactive = target_path in {"/health", "/api/chat"} or (
+        target_path.startswith("/api/conversations/") and target_path.endswith("/stream")
+    )
+    timeout = httpx.Timeout(connect=5, read=None, write=30, pool=5)
+    client = httpx.AsyncClient(timeout=timeout, trust_env=False)
+    try:
+        req = client.build_request(request.method, url, content=body, headers=req_headers)
+        with fail_after(_INTERACTIVE_HEADER_TIMEOUT_SECONDS if interactive else None):
+            if target_path == "/api/chat":
+                resp = await _send_chat(client, req, request)
+            else:
+                resp = await client.send(req, stream=True)
+        if resp is None:
+            await client.aclose()
+            return JSONResponse({"detail": "Client disconnected before the chat response."}, status_code=499)
+    except BaseException as error:
+        with CancelScope(shield=True):
+            await client.aclose()
+        if isinstance(error, (httpx.TimeoutException, TimeoutError)):
+            return JSONResponse({"detail": "AuroraCoder gateway did not respond in time."}, status_code=504)
+        if isinstance(error, httpx.RequestError):
+            return JSONResponse({"detail": "AuroraCoder gateway is unavailable."}, status_code=502)
+        raise
 
     # Strip hop-by-hop headers so SSE streaming works
     resp_headers = {
@@ -57,8 +103,11 @@ async def _proxy(request: Request, target_path: str):
             async for chunk in resp.aiter_bytes():
                 yield chunk
         finally:
-            await resp.aclose()
-            await client.aclose()
+            with CancelScope(shield=True):
+                try:
+                    await resp.aclose()
+                finally:
+                    await client.aclose()
 
     return StreamingResponse(
         stream_body(),

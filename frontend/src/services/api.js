@@ -4,6 +4,7 @@
  * Handles communication with the FastAPI backend, including SSE streaming.
  */
 import { getAuthHeader, clearToken } from '../utils/auth.js';
+import { newConversationId } from '../utils/uuid.js';
 
 const API_BASE = '/api'
 
@@ -90,6 +91,78 @@ function parseSSEEvents(text) {
   return events
 }
 
+class IncompleteStreamError extends Error {
+  constructor(cause) {
+    super('The connection ended before AuroraCoder reported the result.', { cause })
+    this.name = 'IncompleteStreamError'
+  }
+}
+
+async function readConversationEvents(response, callbacks) {
+  if (!response.body) throw new IncompleteStreamError()
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let lastSeq = 0
+  let needsFullRefresh = false
+  try {
+    while (true) {
+      let chunk
+      try {
+        chunk = await reader.read()
+      } catch (error) {
+        if (error.name === 'AbortError') throw error
+        throw new IncompleteStreamError(error)
+      }
+      if (chunk.done) throw new IncompleteStreamError()
+      buffer += decoder.decode(chunk.value, { stream: true })
+      const parts = buffer.split('\n\n')
+      buffer = parts.pop() || ''
+      for (const part of parts) {
+        for (const { type, data } of parseSSEEvents(part)) {
+          switch (type) {
+            case 'delta':
+              if (data.seq && data.seq !== lastSeq + 1) needsFullRefresh = true
+              lastSeq = data.seq || lastSeq
+              if (!needsFullRefresh) callbacks.onDelta?.(data.delta, data.status)
+              break
+            case 'messages':
+              lastSeq = data.seq || lastSeq
+              needsFullRefresh = false
+              callbacks.onMessages?.(data.messages, data.status, data)
+              break
+            case 'subagent_event':
+              callbacks.onSubagentEvent?.(data)
+              break
+            case 'done':
+            case 'error':
+              if (type === 'done') callbacks.onDone?.(data)
+              else callbacks.onError?.(data)
+              await reader.cancel().catch(() => {})
+              return
+          }
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock()
+  }
+}
+
+async function attachConversationStream(conversationId, callbacks, signal, { turnId, confirm = false } = {}) {
+  const suffix = turnId ? `?turn_id=${encodeURIComponent(turnId)}` : ''
+  const response = await fetch(`${API_BASE}/conversations/${encodeURIComponent(conversationId)}/stream${suffix}`, {
+    signal, headers: _headers(),
+  })
+  if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+  if (confirm) callbacks.onConversationId?.(response.headers.get('X-Conversation-ID') || conversationId)
+  await readConversationEvents(response, callbacks)
+}
+
+function canReattach(error, conversationId, signal) {
+  return error instanceof IncompleteStreamError && conversationId && !signal?.aborted
+}
+
 /**
  * Stream chat responses from the API
  * 
@@ -97,7 +170,7 @@ function parseSSEEvents(text) {
  * @param {string|null} conversationId - Optional conversation ID to continue
  * @param {object} callbacks - Event callbacks
  * @param {AbortSignal} signal - Optional abort signal
- * @param {array|null} existingMessages - Optional: existing raw messages to continue from (for interrupt/resume)
+ * @param {array|null} existingMessages - Optional raw history for a follow-up or resume
  * @param {string|null} provider - Optional: model provider to use
  */
 export async function streamChat(message, conversationId, callbacks, signal, existingMessages = null, provider = null, options = {}) {
@@ -105,113 +178,77 @@ export async function streamChat(message, conversationId, callbacks, signal, exi
   const t0 = performance.now()
   _tlog('streamChat() called', seq)
 
-  const { onMessages, onDone, onError, onSubagentEvent, onDelta, onConversationId } = callbacks
-  let _lastSeq = 0
-  let _needsFullRefresh = false
+  const { onError, onConversationId } = callbacks
+  const { turnId = newConversationId(), ...requestOptions } = options
   
   const requestBody = {
     message,
-    conversation_id: conversationId || null,
+    conversation_id: conversationId || newConversationId(),
     messages: existingMessages,
+    prefer_saved_history: true,
+    wait_for_current_turn: true,
     provider: provider,
     provider_id: options.provider_id || null,
     model: options.model || null,
-    ...options
+    ...requestOptions
   }
 
   _tlog('request body built, JSON.stringify next', seq, t0)
   const bodyJson = JSON.stringify(requestBody)
   _tlog(`JSON.stringify done (${(bodyJson.length / 1024).toFixed(1)}KB)`, seq, t0)
 
+  const recoverBeforeHeaders = async error => {
+    if (signal?.aborted) throw error
+    try {
+      await attachConversationStream(requestBody.conversation_id, callbacks, signal, { turnId, confirm: true })
+    } catch (reconnectError) {
+      throw signal?.aborted ? reconnectError : error
+    }
+  }
+
   try {
     _tlog('fetch() about to fire', seq, t0)
-    const response = await fetch(`${API_BASE}/chat`, {
-      method: 'POST',
-      headers: _headers({ 'Content-Type': 'application/json' }),
-      body: bodyJson,
-      signal
-    })
+    let response
+    try {
+      response = await fetch(`${API_BASE}/chat`, {
+        method: 'POST',
+        headers: _headers({ 'Content-Type': 'application/json', 'X-Aurora-Turn-ID': turnId }),
+        body: bodyJson,
+        signal,
+      })
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error
+      await recoverBeforeHeaders(error)
+      return
+    }
     _tlog(`fetch() resolved, status=${response.status}`, seq, t0)
     console.log('[streamChat] Response status:', response.status)
     const headerCid = response.headers.get('X-Conversation-ID')
     if (headerCid) onConversationId?.(headerCid)
     
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`)
+      if (response.status === 409 && requestOptions.retry_receipt) {
+        const result = await response.json().catch(() => ({}))
+        if (typeof result.detail === 'string') throw new Error(result.detail)
+      }
+      const error = new Error(`HTTP error! status: ${response.status}`)
+      if (response.status !== 502 && response.status !== 504) throw error
+      await recoverBeforeHeaders(error)
+      return
     }
 
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    let firstChunk = true
-
-    while (true) {
-      const { done, value } = await reader.read()
-      
-      if (done) {
-        _tlog('stream done', seq, t0)
-        console.log('[streamChat] Stream done')
-        break
-      }
-
-      if (firstChunk) {
-        _tlog('first SSE chunk received', seq, t0)
-        firstChunk = false
-      }
-      
-      buffer += decoder.decode(value, { stream: true })
-      
-      // Split on double newlines (SSE event separator)
-      const parts = buffer.split('\n\n')
-      buffer = parts.pop() || ''
-      
-      for (const part of parts) {
-        if (!part.trim()) continue
-        
-        const events = parseSSEEvents(part)
-        
-        for (const event of events) {
-          if (event.type !== 'messages') {
-            console.log('[streamChat] Event:', event.type)
-          }
-          
-          switch (event.type) {
-            case 'delta':
-              if (event.data.seq && event.data.seq !== _lastSeq + 1) {
-                _needsFullRefresh = true;
-              }
-              _lastSeq = event.data.seq || _lastSeq;
-              if (!_needsFullRefresh) {
-                onDelta?.(event.data.delta, event.data.status);
-              }
-              break;
-
-            case 'messages':
-              _lastSeq = event.data.seq || _lastSeq;
-              _needsFullRefresh = false;
-              onMessages?.(event.data.messages, event.data.status, event.data);
-              break;
-
-            case 'done':
-              onDone?.(event.data);
-              break;
-
-            case 'error':
-              onError?.(event.data);
-              break;
-
-            case 'subagent_event':
-              onSubagentEvent?.(event.data);
-              break;
-          }
-        }
-      }
+    try {
+      await readConversationEvents(response, callbacks)
+    } catch (error) {
+      const acceptedId = headerCid || requestBody.conversation_id
+      if (!canReattach(error, acceptedId, signal)) throw error
+      await attachConversationStream(acceptedId, callbacks, signal, { turnId, confirm: !headerCid })
     }
     
   } catch (error) {
     _tlog(`error: ${error.name} — ${error.message}`, seq, t0)
     console.error('[streamChat] Error:', error)
-    if (error.name === 'AbortError') {
+    if (error.name === 'AbortError' || signal?.aborted) {
       throw error
     }
     onError?.({ message: error.message, type: error.name })
@@ -302,12 +339,33 @@ export async function listConversations(filters = {}) {
  * Get a full conversation (metadata + messages).
  * @param {string} conversationId
  */
-export async function getConversation(conversationId) {
-  const response = await fetch(`${API_BASE}/conversations/${conversationId}`, { headers: _headers() })
+export async function getConversation(conversationId, signal) {
+  const response = await fetch(`${API_BASE}/conversations/${conversationId}`, { headers: _headers(), signal })
   if (!response.ok) {
     throw new Error(`HTTP error! status: ${response.status}`)
   }
   return response.json()
+}
+
+export async function readTask(conversationId, signal) {
+  const response = await fetch(`${API_BASE}/conversations/${encodeURIComponent(conversationId)}/task`, {
+    signal, headers: _headers(),
+  })
+  if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+  return response.json()
+}
+
+export async function submitTaskSteering(conversationId, { receipt, message, attachedFiles }) {
+  const response = await fetch(`${API_BASE}/conversations/${encodeURIComponent(conversationId)}/task/steering`, {
+    method: 'POST',
+    headers: _headers({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ receipt, message, attached_files: attachedFiles }),
+  })
+  const result = await response.json().catch(() => null)
+  if (response.ok && result?.receipt === receipt) return 'accepted'
+  if (response.status === 409 && result?.detail?.code === 'no_active_goal') return 'no-goal'
+  if (response.status === 400 || response.status === 422) return 'rejected'
+  throw new Error('Could not confirm Goal steering receipt.')
 }
 
 /**
@@ -354,58 +412,16 @@ export async function getActiveStreams() {
  * @param {AbortSignal} signal
  */
 export async function resumeStream(conversationId, callbacks, signal) {
-  const { onMessages, onDone, onError, onSubagentEvent, onDelta } = callbacks
-
   try {
-    const response = await fetch(`${API_BASE}/conversations/${conversationId}/stream`, { signal, headers: _headers() })
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`)
-    }
-
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-
-      buffer += decoder.decode(value, { stream: true })
-      const parts = buffer.split('\n\n')
-      buffer = parts.pop() || ''
-
-      for (const part of parts) {
-        if (!part.trim()) continue
-        const events = parseSSEEvents(part)
-        for (const event of events) {
-          switch (event.type) {
-            case 'delta':
-              onDelta?.(event.data.delta, event.data.status);
-              break;
-
-            case 'messages':
-              onMessages?.(event.data.messages, event.data.status, event.data);
-              break;
-
-            case 'done':
-              onDone?.(event.data);
-              break;
-
-            case 'error':
-              onError?.(event.data);
-              break;
-
-            case 'subagent_event':
-              onSubagentEvent?.(event.data);
-              break;
-          }
-        }
-      }
+    try {
+      await attachConversationStream(conversationId, callbacks, signal)
+    } catch (error) {
+      if (!canReattach(error, conversationId, signal)) throw error
+      await attachConversationStream(conversationId, callbacks, signal)
     }
   } catch (error) {
-    if (error.name === 'AbortError') throw error
-    onError?.({ message: error.message, type: error.name })
+    if (error.name === 'AbortError' || signal?.aborted) throw error
+    callbacks.onError?.({ message: error.message, type: error.name })
     throw error
   }
 }

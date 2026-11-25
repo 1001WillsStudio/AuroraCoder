@@ -23,7 +23,7 @@ from .code_tools.file_operations import (
     execute_edit_file_normal,
 )
 # from .code_tools.grep_search import grep_search_tool  # COMMENTED OUT — agent can use terminal grep
-from .code_tools.terminal_runner import run_terminal_cmd_tool
+from .code_tools.terminal_runner import run_terminal_cmd_tool, terminal_job_status_tool
 from .core_tools.tool_store_client import (
     tool_store_tool,
     get_primary_tool_schemas,
@@ -127,7 +127,8 @@ NATIVE_TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "Reads a file and displays its content in the code interpreter. Checks for file existence and confirms it can be opened.",
+            "description": "Open file contents in the code interpreter, or use start_line/end_line for a "
+                           "bounded excerpt with original line numbers without opening the whole file.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -136,6 +137,10 @@ NATIVE_TOOL_DEFINITIONS = [
                         "description": "Path to the file(s) to read (relative to workspace). Pass a single string or an array of strings to open multiple files at once.",
                         "items": {"type": "string"}
                     },
+                    "start_line": {"type": "integer", "minimum": 1,
+                                   "description": "First line of an excerpt for one file. Default 1."},
+                    "end_line": {"type": "integer", "minimum": 1,
+                                 "description": "Last line (inclusive). An excerpt contains at most 200 lines."},
                 },
                 "required": ["file"]
             }
@@ -313,7 +318,13 @@ NATIVE_TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "run_terminal_command",
-            "description": "Executes terminal/shell commands in a persistent, stateful Bash shell. The shell starts in /workspace and its environment and working directory are preserved between commands. For long-running processes (servers, training, etc.), set blocking=false so the command runs in the background — output streams to a log file whose path is returned. You can read that log file later to check progress. Do NOT use nohup or trailing & yourself; use blocking=false instead. If a blocking command times out, the command keeps running in the old terminal and a new terminal is started automatically — the log file path is returned so you can check progress.",
+            "description": (
+                "Run commands in a persistent shell that starts in /workspace and preserves its "
+                "working directory and environment. Completed commands report their actual exit code, "
+                "including commands that print nothing. Use blocking=false for long-running commands. "
+                "A detached command or foreground timeout reports its Job ID and output paths. "
+                "Keep the Job ID in your checkpoint and use terminal_job_status to follow the original command."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -327,7 +338,11 @@ NATIVE_TOOL_DEFINITIONS = [
                     },
                     "blocking": {
                         "type": "boolean",
-                        "description": "If false, run the command in the background and return immediately with the PID and log file path. Use for servers, training scripts, or any long-running process. Default is true."
+                        "description": "If false, start a background command and return its PID, log path, and exit status path. Default is true."
+                    },
+                    "cwd": {
+                        "type": "string",
+                        "description": "Optional directory inside the workspace. A relative path starts at the workspace root. For foreground commands this becomes the terminal's current directory.",
                     },
                     "new_terminal": {
                         "type": "boolean",
@@ -337,6 +352,23 @@ NATIVE_TOOL_DEFINITIONS = [
                 "required": ["command"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "terminal_job_status",
+            "description": "Inspect a terminal job without running it again. Returns recent output "
+                           "and the exit code when the command has completed. Use the previously returned Job ID.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "job_id": {"type": "string", "description": "Job ID from run_terminal_command."},
+                    "wait_seconds": {"type": "integer", "minimum": 0, "maximum": 30,
+                                     "description": "Wait up to this long for completion. Default is 0."},
+                },
+                "required": ["job_id"],
+            },
+        },
     },
     {
         "type": "function",
@@ -725,6 +757,7 @@ TOOL_FUNCTION_MAP = {
     # "search_files": file_search_tool,  # COMMENTED OUT — agent can use terminal: find / fd
     # "grep_search": grep_search_tool,  # COMMENTED OUT — agent can use terminal grep
     "run_terminal_command": run_terminal_cmd_tool,
+    "terminal_job_status": terminal_job_status_tool,
     "tool_store": tool_store_tool,
     "subagent": run_subagent,
     "continue_as_new_chat": continue_as_new_chat,
@@ -869,6 +902,10 @@ def execute_tool_call(tool_name: str, arguments: Dict[str, Any], tool_call_id: s
     # All tools in the function map have signature:
     #   (arguments: Dict[str, Any]) -> (result: str, arguments: Dict[str, Any])
     function = function_map[tool_name]
+
+    if tool_name == "run_terminal_command":
+        result, applied_args = function(arguments, conversation_id=conversation_id)
+        return applied_args, result
 
     # Subagent: inject execution-only metadata.  The subagent function strips
     # tool_call_id and conversation_id from the returned applied args so the

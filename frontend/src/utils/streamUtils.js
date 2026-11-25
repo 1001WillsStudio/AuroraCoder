@@ -18,19 +18,12 @@ export const FILE_SYSTEM_TOOLS = [
 ]
 
 /**
- * Check if the raw message list is in a safe state to interrupt.
- * 
- * Safe to interrupt when:
- * - Model is generating reasoning/content (no tool_calls, or tool_calls with no valid IDs yet)
- * - All tool calls have their corresponding tool results
- * 
- * NOT safe to interrupt when:
- * - Model has requested tool calls (valid IDs present) but tool responses haven't all arrived
- * 
+ * Check the terminal transcript before starting a queued follow-up.
+ *
  * @param {array} messages - Raw backend format messages
- * @returns {boolean} - True if safe to interrupt
+ * @returns {boolean} - Whether the last tool batch has all of its results
  */
-export function isInterruptible(messages) {
+export function hasCompleteToolBatch(messages) {
   if (!messages || messages.length === 0) return true
 
   const lastMessage = messages[messages.length - 1]

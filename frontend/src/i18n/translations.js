@@ -15,6 +15,21 @@
 
 const LANG = {
   en: {
+    'task.title': 'Task checklist',
+    'task.history': 'Completed Goals',
+    'task.openCurrent': 'Open current chat',
+    'task.status.active': 'Running',
+    'task.status.paused': 'Paused',
+    'task.status.completed': 'Verified',
+    'task.resumeSource': 'Automatic Goal continuation',
+    'task.awaitingReceipt': 'Confirming follow-up: {msg}',
+    'task.retryReceipt': 'Retry follow-up receipt',
+    'task.steeringReceived': 'Follow-up received. It will be added before the next model request.',
+    'task.reason.blocked': 'The task needs help to continue. Open the checklist for details.',
+    'task.reason.no_progress': 'The agent paused after two attempts without a new checkpoint.',
+    'task.reason.error': 'The conversation ended with an error. Ask the agent to continue from the saved checklist.',
+    'task.reason.interrupted': 'The previous run was interrupted. Ask the agent to continue from the saved checklist.',
+    'task.reason.criteria_recovered': 'An earlier acceptance condition was recovered and still needs evidence.',
     // ── Settings header ───────────────────────────────────────────
     'settings.title': 'Settings',
     'settings.subtitle':
@@ -134,14 +149,14 @@ const LANG = {
 
     // ── Chat input ─────────────────────────────────────────────────
     'chat.placeholder.normal': 'Ask me anything…',
-    'chat.placeholder.streaming': 'Type to interrupt and redirect the agent…',
-    'chat.placeholder.pendingInterrupt': 'Interrupt queued — waiting for safe point…',
+    'chat.placeholder.streaming': 'Type a follow-up…',
+    'chat.placeholder.queuedInput': 'Follow-up queued…',
     'chat.hint.normal': 'AuroraCoder can search, browse, write code, and execute commands.',
-    'chat.hint.streaming': 'Type a message to interrupt and redirect the agent with your new instructions.',
+    'chat.hint.streaming': 'Follow-ups are added after the current model response and its tools.',
     'chat.hint.attach': 'Type @ to attach a workspace file, or right-click one in the file tree.',
     'chat.title.stop': 'Stop generation',
-    'chat.title.interrupt': 'Send and interrupt current generation',
-    'chat.title.cancelPending': 'Cancel pending interrupt',
+    'chat.title.queueInput': 'Queue follow-up',
+    'chat.title.cancelPending': 'Return queued follow-up to draft',
     'chat.attachFileTitle': 'Attach a workspace file',
     'chat.attachFileLimit': 'You can attach up to 8 workspace files',
     'chat.detachFile': 'Remove attached file',
@@ -150,7 +165,7 @@ const LANG = {
     'chat.filePickerHint': 'Keep typing to search the workspace',
     'chat.continueNewChat': 'Continue in new chat',
     'chat.continueNewChatTitle': 'Ask the agent to summarize progress and continue in a fresh context',
-    'chat.interruptQueued': 'Interrupt queued: "{msg}" — Waiting for tool calls to complete…',
+    'chat.inputQueued': 'Queued follow-up: "{msg}"',
 
     // ── Chat message ───────────────────────────────────────────────
     'chat.thinking': 'Thinking…',
@@ -298,6 +313,21 @@ const LANG = {
   },
 
   zh: {
+    'task.title': '任务清单',
+    'task.history': '已完成的目标',
+    'task.openCurrent': '打开当前会话',
+    'task.status.active': '执行中',
+    'task.status.paused': '已暂停',
+    'task.status.completed': '已验证',
+    'task.resumeSource': 'Goal 自动续跑',
+    'task.awaitingReceipt': '正在确认后续指令「{msg}」是否收件',
+    'task.retryReceipt': '重试确认后续指令收件',
+    'task.steeringReceived': '后续指令已收件，将在下一次模型请求前插入。',
+    'task.reason.blocked': '任务遇到阻碍，展开清单查看详情。',
+    'task.reason.no_progress': '连续两次执行都没有新的进度记录，任务已暂停。',
+    'task.reason.error': '会话运行出错。可以在对话中让 Agent 从已保存的清单继续。',
+    'task.reason.interrupted': '上次执行已中断。可以在对话中让 Agent 从已保存的清单继续。',
+    'task.reason.criteria_recovered': '已找回早期的验收条件，该条件仍需验证。',
     // ── Settings header ───────────────────────────────────────────
     'settings.title': '设置',
     'settings.subtitle':
@@ -418,14 +448,14 @@ const LANG = {
 
     // ── Chat input ─────────────────────────────────────────────────
     'chat.placeholder.normal': '尽管问我任何问题…',
-    'chat.placeholder.streaming': '输入以中断并重定向智能体…',
-    'chat.placeholder.pendingInterrupt': '中断已排队 — 等待安全点…',
+    'chat.placeholder.streaming': '输入后续指令…',
+    'chat.placeholder.queuedInput': '后续指令已排队…',
     'chat.hint.normal': 'AuroraCoder 可以搜索、浏览、编写代码和执行命令。',
-    'chat.hint.streaming': '输入消息以中断并重定向智能体。',
+    'chat.hint.streaming': '当前模型响应及其工具执行结束后，会插入后续指令。',
     'chat.hint.attach': '输入 @ 附加工作区文件，或在文件树中右键添加。',
     'chat.title.stop': '停止生成',
-    'chat.title.interrupt': '发送并中断当前生成',
-    'chat.title.cancelPending': '取消待处理的中断',
+    'chat.title.queueInput': '排队发送后续指令',
+    'chat.title.cancelPending': '将待发送指令恢复为草稿',
     'chat.attachFileTitle': '附加工作区文件',
     'chat.attachFileLimit': '最多可以附加 8 个工作区文件',
     'chat.detachFile': '移除附加文件',
@@ -434,7 +464,7 @@ const LANG = {
     'chat.filePickerHint': '继续输入以搜索工作区',
     'chat.continueNewChat': '在新对话中继续',
     'chat.continueNewChatTitle': '要求智能体总结进度并在新的上下文中继续',
-    'chat.interruptQueued': '中断已排队："{msg}" — 等待工具调用完成…',
+    'chat.inputQueued': '已排队「{msg}」',
 
     // ── Chat message ───────────────────────────────────────────────
     'chat.thinking': '思考中…',

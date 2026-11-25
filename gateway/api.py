@@ -27,9 +27,11 @@ from fastapi.staticfiles import StaticFiles
 
 from pydantic import BaseModel
 
-from gateway.conversation_store import store
+from gateway.conversation_store import InvalidConversationId, store
 from gateway.provider_registry import sync_tool_env_vars
 from gateway.settings_store import configure_github_auth
+from src.backend_access import backend_auth_headers
+from src.gateway_access import HEADER as GATEWAY_AUTH_HEADER, gateway_service_allowed
 
 logging.basicConfig(
     level=logging.INFO,
@@ -51,6 +53,11 @@ app = FastAPI(
 )
 
 
+@app.exception_handler(InvalidConversationId)
+async def _invalid_conversation_id(_request: Request, exc: InvalidConversationId):
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
 @app.on_event("startup")
 async def _startup_sync():
     """On boot: sync env vars for src tools, configure GitHub auth from
@@ -62,11 +69,17 @@ async def _startup_sync():
     case), so there's no need to gate the ``create_task`` call itself on
     any setting; see ``memory/ops/gap_scheduler.py``.
     """
+    try:
+        recovered = store.recover_running_after_restart()
+        if recovered:
+            logger.info("Recovered %s unfinished conversations from the previous gateway process", recovered)
+    except OSError:
+        logger.exception("Could not save recovery state during gateway startup")
     sync_tool_env_vars()
     configure_github_auth()
     try:
         async with httpx.AsyncClient() as c:
-            await c.post(f"{BACKEND_URL}/api/reload", timeout=5)
+            await c.post(f"{BACKEND_URL}/api/reload", headers=backend_auth_headers(), timeout=5)
     except Exception:
         logger.warning("Backend not reachable at startup — will sync on first request")
 
@@ -117,7 +130,7 @@ def _validate_token(token: str) -> bool:
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    """Require Bearer token for all /api/* routes (except /api/auth/*, /health).
+    """Protect /api/* with a login or a scoped loopback service signature.
 
     If ACCESS_PASSWORD is not set, no auth is required.
     Public paths: /health, /api/auth/*
@@ -132,6 +145,12 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
 
     if not path.startswith("/api/"):
+        return await call_next(request)
+
+    if request.client and gateway_service_allowed(
+        request.client.host, request.method, path,
+        request.headers.get(GATEWAY_AUTH_HEADER, ""), AUTH_PASSWORD,
+    ):
         return await call_next(request)
 
     auth_header = request.headers.get("Authorization", "")

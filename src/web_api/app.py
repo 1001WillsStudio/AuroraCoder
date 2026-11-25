@@ -17,13 +17,15 @@ from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
 
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from ..main_flow import generate_chat_responses_stream_native
+from ..backend_access import backend_access_allowed
 from ..code_sandbox import shell, get_workspace, WORKSPACE
+from ..code_sandbox.terminal_sessions import stop_terminal_sessions
 from ..core_tools.subagent import cancel_active_subagents
 from ..config import DEFAULT_PROVIDER
 from ..providers import provider_manager
@@ -51,6 +53,8 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     message: Optional[str] = Field(None)
+    message_source: Optional[str] = Field(None)
+    message_receipt: Optional[str] = Field(None)
     conversation_id: Optional[str] = Field(None)
     messages: Optional[list] = Field(None)
     provider: Optional[str] = Field(None)
@@ -61,6 +65,9 @@ class ChatRequest(BaseModel):
     # Injected by the gateway before proxying — gives the agent a
     # pre-built workspace tree so it doesn't waste turns exploring.
     workspace_tree: Optional[str] = Field(None)
+    task_state: Optional[dict] = Field(None)
+    task_token: Optional[str] = Field(None)
+    accept_turn_inputs: bool = Field(False)
 
 
 # ============================================================================
@@ -126,7 +133,10 @@ def convert_messages_for_frontend(messages: list) -> list:
             i += 1
             continue
         elif role == "user":
-            frontend_messages.append({"role": "user", "content": msg.get("content", "")})
+            visible = {"role": "user", "content": msg.get("content", "")}
+            if "source" in msg:
+                visible["source"] = msg["source"]
+            frontend_messages.append(visible)
             i += 1
         elif role == "assistant":
             activities = []
@@ -176,8 +186,11 @@ async def stream_chat_response(
     messages: list, conversation_id: str, request: Request,
     max_iterations: int, provider: Optional[str] = None,
     model: Optional[str] = None,
-    tools_override: Optional[list] = None, restart_shell: bool = False,
+    tools_override: Optional[list] = None,
     workspace_tree: str = "",
+    task_state: Optional[dict] = None,
+    task_token: Optional[str] = None,
+    accept_turn_inputs: bool = False,
 ) -> AsyncGenerator[str, None]:
     cancel_event = threading.Event()
     cancel_active_stream(conversation_id)
@@ -192,22 +205,25 @@ async def stream_chat_response(
         def run_generator():
             nonlocal seq
             try:
-                if restart_shell:
-                    try:
-                        shell.restart()
-                    except Exception as e:
-                        logger.warning(f"Failed to restart shell: {e}")
-
                 current_messages = messages
                 status = "running"
                 current_provider = provider
 
+                task_options = {}
+                if task_token:
+                    from src.task_checklist import AgentTaskTools
+
+                    task_options["task_tools"] = AgentTaskTools(
+                        conversation_id, task_token, task_state, accept_turn_inputs=accept_turn_inputs,
+                    )
                 for response in generate_chat_responses_stream_native(
                     messages=messages, max_iterations=max_iterations,
                     provider_id=provider, tools_override=tools_override,
                     model=model,
                     conversation_id=conversation_id,
                     workspace_tree=workspace_tree,
+                    stop_requested=cancel_event.is_set,
+                    **task_options,
                 ):
                     if cancel_event.is_set():
                         break
@@ -232,6 +248,11 @@ async def stream_chat_response(
                         "provider": current_provider,
                     }
 
+                    if status == "error":
+                        common["message"] = response["error"]
+                        common["type"] = "ModelStreamError"
+                        loop.call_soon_threadsafe(queue.put_nowait, ("error", common))
+                        return
                     if llm_delta is not None:
                         common["delta"] = llm_delta
                         loop.call_soon_threadsafe(queue.put_nowait, ("delta", common))
@@ -323,6 +344,7 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to initialize sandbox: {e}")
     yield
     logger.info("Shutting down...")
+    stop_terminal_sessions()
     shell.stop()
     executor.shutdown(wait=False)
 
@@ -345,7 +367,12 @@ async def health_check():
         "shell_alive": shell.is_alive,
     }
 
-@app.post("/api/reload")
+def require_backend_access(request: Request) -> None:
+    if not backend_access_allowed(request.headers):
+        raise HTTPException(status_code=401, detail="Backend authentication required")
+
+
+@app.post("/api/reload", dependencies=[Depends(require_backend_access)])
 async def reload_providers():
     """Called by the gateway after settings change.  Re-reads settings.json
     from disk and rebuilds the in-memory client cache."""
@@ -353,27 +380,35 @@ async def reload_providers():
     return {"ok": True}
 
 
-@app.post("/api/chat")
+@app.post("/api/chat", dependencies=[Depends(require_backend_access)])
 async def chat(chat_request: ChatRequest, request: Request):
     conversation_id = chat_request.conversation_id or str(uuid.uuid4())
-    is_new = not chat_request.conversation_id
-    if is_new:
-        pass  # File tracking is now handled by gateway/_track_file_changes (SSE scanning)
 
     messages = (chat_request.messages or []).copy()
     if chat_request.message:
-        messages.append({"role": "user", "content": chat_request.message})
+        message = {"role": "user", "content": chat_request.message}
+        if chat_request.message_source:
+            message["source"] = chat_request.message_source
+        if chat_request.message_receipt:
+            message["turn_input_receipt"] = chat_request.message_receipt
+        messages.append(message)
 
     provider = chat_request.provider_id or chat_request.provider or DEFAULT_PROVIDER
     tools_override = get_filtered_tools(chat_request.tools) if chat_request.tools else None
     max_iterations = chat_request.max_iterations or 30
 
     workspace_tree = chat_request.workspace_tree or ""
+    task_options = {}
+    if chat_request.task_token:
+        task_options = {
+            "task_state": chat_request.task_state, "task_token": chat_request.task_token,
+            "accept_turn_inputs": chat_request.accept_turn_inputs,
+        }
     return StreamingResponse(
         stream_chat_response(messages, conversation_id, request, provider=provider,
                              model=chat_request.model, max_iterations=max_iterations,
                              tools_override=tools_override,
-                             restart_shell=is_new, workspace_tree=workspace_tree,),
+                             workspace_tree=workspace_tree, **task_options),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache", "Connection": "keep-alive",

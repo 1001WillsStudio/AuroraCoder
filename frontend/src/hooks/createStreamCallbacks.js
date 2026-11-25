@@ -1,26 +1,61 @@
 import { STATUS } from '../constants'
-import { isInterruptible } from '../utils/streamUtils'
+import { hasCompleteToolBatch } from '../utils/streamUtils'
 
 /**
  * Plain factory (NOT a hook).  Called inside handler bodies so closures
- * over the enclosing handler work naturally (e.g. handleSend → onMessages
- * → handleSend for interrupt resend).
+ * over the enclosing handler work naturally.
  */
 export function createStreamCallbacks({
   setMessages, setRawMessages, setConversationId, setCanContinue,
   setIsStreaming, setHistoryRefreshTrigger, setSubagentChildIds,
   handleSend, handleLoadConversation,
-  pendingInterruptRef, continuationNavigatedRef, abortControllerRef,
-  withInterrupt = false,
+  queuedInputRef, continuationNavigatedRef,
+  withQueuedInput = false,
   withRetry = false,
   overrides = {},
   onMessagesRefresh = null,
   onFirstSse = null,
   onStreamEnd = null,
-  onInterruptFired = null,
+  onQueuedInputSent = null,
   ensureAssistantTail = false,
+  isCurrentView = () => true,
 }) {
   let _firstMessage = true
+  let scheduled = null
+  const dispatchPending = (rawMessages) => {
+    const pending = queuedInputRef?.current
+    if (!withQueuedInput || !pending || !handleSend || !rawMessages?.length || !hasCompleteToolBatch(rawMessages)) {
+      return false
+    }
+    if (scheduled?.pending === pending) return true
+    const next = { pending }
+    scheduled = next
+    setTimeout(() => {
+      if (scheduled !== next) return
+      scheduled = null
+      if (!isCurrentView() || queuedInputRef.current !== pending) return
+      queuedInputRef.current = null
+      onQueuedInputSent?.()
+      handleSend(rawMessages, pending.message, {
+        attachedFiles: pending.attachedFiles || [],
+      })
+    }, 50)
+    return true
+  }
+
+  const followContinuation = (data) => {
+    const nextId = data?.new_conversation_id
+    if (!nextId) return
+    scheduled = null
+    if (continuationNavigatedRef?.current.has(nextId)) return
+    continuationNavigatedRef?.current.add(nextId)
+    setTimeout(() => {
+      if (isCurrentView()) {
+        handleLoadConversation?.(nextId, { carryPendingSteering: true, followContinuation: true })
+      }
+    }, 500)
+  }
+
   const onMessages = (frontendMessages, _status, data) => {
     if (_firstMessage) { _firstMessage = false; onFirstSse?.() }
     if (ensureAssistantTail) {
@@ -31,21 +66,9 @@ export function createStreamCallbacks({
     }
     if (data?.raw_messages) {
       setRawMessages(data.raw_messages)
-      if (withInterrupt && pendingInterruptRef?.current && isInterruptible(data.raw_messages)) {
-        const pending = pendingInterruptRef.current
-        const msg = pending.message
-        const files = pending.attachedFiles || []
-        pendingInterruptRef.current = null
-        onInterruptFired?.()
-        if (abortControllerRef?.current) abortControllerRef.current.abort()
-        setTimeout(() => handleSend?.(data.raw_messages, msg, { attachedFiles: files }), 50)
-      }
     }
     if (data?.conversation_id) setConversationId(data.conversation_id)
-    if (data?.new_conversation_id && !continuationNavigatedRef?.current.has(data.new_conversation_id)) {
-      continuationNavigatedRef?.current.add(data.new_conversation_id)
-      setTimeout(() => handleLoadConversation?.(data.new_conversation_id), 500)
-    }
+    followContinuation(data)
     // Trigger a diff refresh on every full-state messages event so the
     // code panel always reflects the latest file state after a round.
     onMessagesRefresh?.()
@@ -54,22 +77,32 @@ export function createStreamCallbacks({
   const onDone = (data) => {
     setConversationId(data.conversation_id)
     setCanContinue(data.status === STATUS.MAX_ITERATIONS_REACHED)
-    setIsStreaming(false)
+    if (!data.new_conversation_id) setIsStreaming(false)
     if (data.messages) setMessages(data.messages)
     if (data.raw_messages) setRawMessages(data.raw_messages)
     setHistoryRefreshTrigger(prev => prev + 1)
+    const finished = [STATUS.COMPLETED, STATUS.MAX_ITERATIONS_REACHED].includes(data.status)
+    if (data.new_conversation_id) {
+      followContinuation(data)
+    } else if (!finished || !dispatchPending(data.raw_messages)) {
+      onStreamEnd?.()
+    }
   }
 
   const onError = (error) => {
     if (error?.conversation_id) setConversationId(error.conversation_id)
+    if (error?.raw_messages) setRawMessages(error.raw_messages)
+    const stableMessages = Array.isArray(error?.messages) ? error.messages : null
     if (withRetry) {
       const isTimeout = error.message?.toLowerCase().includes('timeout') ||
         error.type === 'TimeoutError' || error.message?.toLowerCase().includes('timed out') ||
         error.message?.toLowerCase().includes('504') || error.message?.toLowerCase().includes('gateway timeout')
-      setMessages(prev => [...prev, {
+      setMessages(prev => [...(stableMessages ?? prev), {
         role: 'assistant', content: `Error: ${error.message}`,
         isError: true, isTimeout, canRetry: true
       }])
+    } else if (stableMessages) {
+      setMessages(stableMessages)
     }
     setIsStreaming(false)
     setHistoryRefreshTrigger(prev => prev + 1)
@@ -125,12 +158,15 @@ export function createStreamCallbacks({
    });
  };
 
+  const forCurrentView = (callback) => (...args) => {
+    if (isCurrentView()) callback(...args)
+  }
   return {
-    onMessages: overrides.onMessages || onMessages,
-    onDone: overrides.onDone || onDone,
-    onError: overrides.onError || onError,
-    onSubagentEvent: overrides.onSubagentEvent || onSubagentEvent,
-    onDelta: overrides.onDelta || onDelta,
-    onConversationId: overrides.onConversationId || ((id) => { if (id) setConversationId(id) }),
+    onMessages: forCurrentView(overrides.onMessages || onMessages),
+    onDone: forCurrentView(overrides.onDone || onDone),
+    onError: forCurrentView(overrides.onError || onError),
+    onSubagentEvent: forCurrentView(overrides.onSubagentEvent || onSubagentEvent),
+    onDelta: forCurrentView(overrides.onDelta || onDelta),
+    onConversationId: forCurrentView(overrides.onConversationId || ((id) => { if (id) setConversationId(id) })),
   };
 }

@@ -104,7 +104,7 @@ MAX_TOOL_CALLS = 10  # Increased since native tool calling is more efficient
 
 # Iteration Limits
 MAX_ITERATIONS = 30  # Maximum iterations per turn before requiring user to continue
-MAX_STREAMING_RETRIES = 10  # Consecutive streaming failures before giving up
+MAX_STREAMING_RETRIES = 2  # Additional attempts after a transport failure while reading a stream
 
 # Tool Concurrency
 MAX_TOOL_CONCURRENCY = 5  # Max parallel threads for concurrent-safe tools
@@ -119,6 +119,7 @@ CONTEXT_WARN_THRESHOLD = 0.80
 
 # One-liner notice (injected once when tool first appears)
 _CONTINUATION_NOTICE_MARKER = "[CONTEXT CONTINUATION TOOL AVAILABLE]"
+CONTINUATION_TOOL_RESULT = "Continuing in a new chat with fresh context."
 CONTINUATION_NOTICE = (
     "⚠️ `continue_as_new_chat` is now available in your tool list — "
     "you are at ~80% context."

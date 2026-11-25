@@ -10,7 +10,15 @@ import time
 import datetime
 from pathlib import Path
 import logging
-from typing import Dict, List, Generator, Optional
+from typing import Callable, Dict, List, Generator, Optional
+
+from httpx import TransportError
+from openai import APIConnectionError
+
+try:
+    from httpx2 import TransportError as SDKTransportError
+except ImportError:
+    SDKTransportError = TransportError
 
 from .tool_definitions import get_tool_definitions
 from .core_tools.tool_store_client import get_toolstore_tools_prompt
@@ -20,9 +28,11 @@ from .config import (
     MAX_STREAMING_RETRIES,
     SYSTEM_MESSAGE_TEMPLATE, DISPLAY_GUIDE, TERMINAL_ENV_NOTE,
     CONTEXT_WINDOW_TOKENS, CONTEXT_WARN_THRESHOLD,
+    CONTINUATION_TOOL_RESULT,
     _CONTINUATION_NOTICE_MARKER, CONTINUATION_NOTICE,
 )
-from .providers import provider_manager
+from .providers import messages_for_provider, provider_manager
+from .provider_diagnostics import record_provider_failure
 from .core_tools.tool_store_client import prefetch_primary_tools  # noqa: E402 — redefined in function body
 from .code_tools.panel_manager import get_all as get_panels
 from .code_tools.panel_manager import register
@@ -30,6 +40,8 @@ from .code_tools.code_interpreter_panel import CodeInterpreterPanel
 from .code_tools.tool_store_panel import ToolStorePanel
 from .code_tools.memory_panel import MemoryPanel
 from .core_tools import memory_client
+from .task_checklist import AgentTaskTools
+from .provider_context_errors import is_context_limit_error
 
 # ── Register all Living Tool State panels ──────────────────────────
 register(CodeInterpreterPanel())
@@ -98,6 +110,8 @@ def generate_chat_responses_stream_native(
     tools_override: Optional[List[Dict]] = None,
     conversation_id: str | None = None,
     workspace_tree: str = "",
+    stop_requested: Callable[[], bool] | None = None,
+    task_tools: AgentTaskTools | None = None,
 ) -> Generator[dict, None, None]:
     """
     Handles chat interaction using native OpenAI tool calling with thinking/reasoning support.
@@ -112,6 +126,12 @@ def generate_chat_responses_stream_native(
     Yields:
         dict: Contains 'messages' (updated message list), 'status', and 'provider' info
     """
+    def stopped() -> bool:
+        return stop_requested is not None and stop_requested()
+
+    if stopped():
+        return
+
     # Use default provider if not specified
     if provider_id is None:
         provider_id = DEFAULT_PROVIDER
@@ -142,8 +162,11 @@ def generate_chat_responses_stream_native(
     prefetch_primary_tools()
 
     # Resolve tool definitions — use override if provided, else defaults
-    tools = tools_override or get_tool_definitions()
+    tools = get_tool_definitions() if tools_override is None else tools_override
     filter_continuation = tools_override is None  # only filter for default tools
+    restricted_tool_names = (
+        None if tools_override is None else {tool["function"]["name"] for tool in tools_override}
+    )
 
     # Add system message if not already present.
     if not messages or messages[0].get("role") != "system":
@@ -192,8 +215,11 @@ def generate_chat_responses_stream_native(
 
     # Read the user's training-data preference *once* — it cannot change mid-request.
     save_training = load_save_training_flag()
+    retrying_empty_reply = False
 
     while iteration_count < max_iterations:
+        if stopped():
+            return
         iteration_count += 1
         
         # Filter continuation tool out of the default tool set until context
@@ -203,15 +229,27 @@ def generate_chat_responses_stream_native(
             if filter_continuation else tools
         )
         
+        api_messages = messages_for_provider(messages)
+        if task_tools and tools_override is None:
+            tools_for_iteration = [*tools_for_iteration, *task_tools.schemas()]
+            system = api_messages[0]
+            task_context = task_tools.prompt()
+            api_messages = [{**system, "content": f"{system['content']}\n\n{task_context}"}, *api_messages[1:]]
+
+        if retrying_empty_reply:
+            api_messages = [*api_messages, {
+                "role": "system",
+                "content": "The previous response was empty. Reply to the user or call the next appropriate tool.",
+            }]
         api_kwargs = {
             "model": model_name,
-            "messages": messages,
-            "tools": tools_for_iteration,
-            "tool_choice": "auto",
+            "messages": api_messages,
             "max_tokens": api_max_tokens,
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        if tools_for_iteration:
+            api_kwargs.update(tools=tools_for_iteration, tool_choice="auto")
         
         # Add extra_body if provider requires it (e.g., NVIDIA thinking mode)
         if extra_body:
@@ -228,23 +266,27 @@ def generate_chat_responses_stream_native(
         try:
             completion_stream = client.chat.completions.create(**api_kwargs)
         except Exception as exc:
-            import json as _j, datetime as _dt
-            _p = (Path(__file__).resolve().parent.parent / "data" / "diagnostics" / "llm_failures.jsonl")
-            _p.parent.mkdir(parents=True, exist_ok=True)
-            with open(_p, "a", encoding="utf-8") as _f:
-                _f.write(_j.dumps({"ts": _dt.datetime.now().isoformat(), "conversation_id": conversation_id, "provider": provider_id, "model": model_name, "error": f"{type(exc).__name__}: {exc}", "status": getattr(exc, "status_code", None), "upstream": getattr(getattr(exc, "response", None), "text", None), "api_kwargs": api_kwargs}, ensure_ascii=False, default=str) + "\n")
+            if task_tools and task_tools.active and is_context_limit_error(exc):
+                _main_logger.info("Provider rejected the current context for task recovery (%s/%s)", provider_id, model_name)
+                yield {"messages": messages, "status": "context_limit_reached", "provider": provider_id}
+                return
+            record_provider_failure(exc, provider_id, model_name, conversation_id, api_kwargs)
             raise
 
-        yield {
-            "messages": messages + [assistant_message],
-            "status": "running",
-            "provider": provider_id,
-        }
-
         try:
+            if stopped():
+                return
+            yield {
+                "messages": messages + [assistant_message],
+                "status": "running",
+                "provider": provider_id,
+            }
+
             t_first_chunk = time.time()
             t_first_content = None
             for chunk in completion_stream:
+                if stopped():
+                    return
                 if not chunk.choices:
                     # Usage info may come on a chunk with no choices
                     if hasattr(chunk, "usage") and chunk.usage:
@@ -317,27 +359,31 @@ def generate_chat_responses_stream_native(
             _log_api_timing(iteration_count, model_name,
                             t_api_start, t_first_chunk, t_first_content)
         
-        except Exception as e:
-            # Retry the *same* iteration — transient stream errors
-            # shouldn't burn an iteration slot.
-            streaming_errors += 1
-            _main_logger.warning("Streaming error (%s/%s): %s", streaming_errors, MAX_STREAMING_RETRIES, e)
+        except (TransportError, SDKTransportError, APIConnectionError) as exc:
             if streaming_errors >= MAX_STREAMING_RETRIES:
                 yield {
                     "messages": messages,
                     "status": "error",
-                    "error": f"Streaming failed after {MAX_STREAMING_RETRIES} retries: {e}",
-                    "provider": provider_id
+                    "error": f"Connection lost while reading the model response: {exc}",
+                    "provider": provider_id,
                 }
                 return
+            streaming_errors += 1
+            iteration_count -= 1
+            _main_logger.warning("Retrying interrupted model stream (%s/%s): %s",
+                                 streaming_errors, MAX_STREAMING_RETRIES, exc)
             continue
+        finally:
+            close = getattr(completion_stream, "close", None)
+            if close is not None:
+                close()
 
         streaming_errors = 0
 
         if current_usage:
             total_tokens = current_usage.get("total_tokens", 0)
 
-        record_api_call(messages, assistant_message, enabled=save_training)
+        record_api_call(api_messages, assistant_message, enabled=save_training)
 
         # ── Process tool calls ──────────────────────────────────────────
         current_tool_calls = [
@@ -348,23 +394,29 @@ def generate_chat_responses_stream_native(
         if current_tool_calls:
             assistant_message["tool_calls"] = current_tool_calls
         
-        # If no tool calls, we're done (or retry if also no content)
+        # A single empty completion is retryable. Never spend the agent's
+        # remaining task budget sending the same ineffective request.
         if not current_tool_calls:
-            if not current_content:
-                messages.append({
-                    "role": "system",
-                    "content": """This message only appears when you made this mistake in previous (removed) responses.
-                    You did not provide any tool call or reply last time."""
-                })
+            if not current_content.strip():
+                if retrying_empty_reply or iteration_count >= max_iterations:
+                    raise RuntimeError("The model provider returned no answer or tool call.")
+                retrying_empty_reply = True
                 continue
             else:
                 messages.append(assistant_message)
+                if task_tools and task_tools.take_turn_inputs(messages, finishing=True):
+                    iteration_count = 0
+                    retrying_empty_reply = False
+                    yield {"messages": messages, "status": "running", "provider": provider_id}
+                    continue
                 yield {
                     "messages": messages,
                     "status": "completed",
                     "provider": provider_id
                 }
                 return
+
+        retrying_empty_reply = False
 
         # Add tool call requests to messages
         messages.append(assistant_message)
@@ -378,7 +430,18 @@ def generate_chat_responses_stream_native(
         }
 
         # Delegate to the tool execution engine
-        triggered_trackers = execute_tool_calls(current_tool_calls, messages, conversation_id=conversation_id)
+        if stopped():
+            return
+        tool_options = {} if restricted_tool_names is None else {"allowed_tools": restricted_tool_names}
+        if stop_requested is not None:
+            tool_options["stop_requested"] = stop_requested
+        if task_tools and tools_override is None:
+            tool_options["task_tool_handler"] = task_tools.call
+        triggered_trackers = execute_tool_calls(
+            current_tool_calls, messages, conversation_id=conversation_id, **tool_options,
+        )
+        if stopped():
+            return
 
         # Warn once when estimated context nears the model's window.
         if context_window and current_usage and not _has_continuation_notice_been_shown(messages):
@@ -389,7 +452,13 @@ def generate_chat_responses_stream_native(
                 })
 
         # If continue_as_new_chat was called, end the loop immediately
-        if any(tc["function"]["name"] == "continue_as_new_chat" for tc in current_tool_calls):
+        handoff_ids = {
+            tc["id"] for tc in current_tool_calls if tc["function"]["name"] == "continue_as_new_chat"
+        }
+        if any(
+            msg.get("tool_call_id") in handoff_ids and msg.get("content") == CONTINUATION_TOOL_RESULT
+            for msg in messages[-len(current_tool_calls):]
+        ):
             yield {
                 "messages": messages,
                 "status": "completed",
@@ -402,6 +471,13 @@ def generate_chat_responses_stream_native(
             idx = triggered_trackers.get(panel.name)
             if idx is not None:
                 panel.refresh(messages, at_index=idx)
+
+        if task_tools and task_tools.active and context_window and total_tokens / context_window >= CONTEXT_WARN_THRESHOLD:
+            yield {"messages": messages, "status": "context_limit_reached", "provider": provider_id}
+            return
+
+        if task_tools and task_tools.take_turn_inputs(messages, finishing=iteration_count >= max_iterations):
+            iteration_count = 0
 
         yield {
             "messages": messages,

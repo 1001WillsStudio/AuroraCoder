@@ -11,6 +11,7 @@ import asyncio
 import io
 import json
 import logging
+import secrets
 import subprocess
 import os
 import shutil
@@ -19,23 +20,26 @@ import time
 import uuid
 import zipfile
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Annotated, Optional, Dict, Any, List
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, Header
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 
 from pydantic import BaseModel, Field
 
 from src.config import WORKSPACE_DIR
 from src.code_sandbox import shell, WORKSPACE
+from src.message_provenance import TURN_INPUT_RECEIPT
 
 try:
     from toolstore.config_manager import ConfigManager
 except ImportError:
     ConfigManager = None
 
-from gateway.conversation_store import store, ensure_error_frontend_message, messages_for_retry
+from gateway.conversation_store import store, frontend_messages_for_status, messages_for_retry, require_conversation_id
+from gateway.task_checklist import TaskConflict
+from src.task_checklist import TaskCheckpointUpdate, TaskEdit, TaskReopen, TaskRequestSlice, TaskResume, TaskStart
 from gateway.settings_store import (
     get_all_settings,
     update_settings as _store_update_settings,
@@ -57,18 +61,27 @@ from gateway.workspace import (
     count_workspace_files,
     search_workspace_files,
 )
-from gateway.attached_files import apply_request_attachments, AttachedFilesError
+from gateway.attached_files import (
+    MAX_ATTACHED_FILES, AttachedFilesError, apply_attached_files, apply_request_attachments,
+    extract_attached_files, normalize_attached_paths,
+)
 from gateway.paths import WorkspacePathError, resolve_under_workspace
+from src.backend_access import backend_auth_headers
+from src.workspace_paths import workspace_mutation_target
 from gateway.streaming import (
     ActiveStream,
     active_streams,
     _streams_lock,
+    _turn_admission_lock,
     _cancel_active_stream,
     _fix_orphan_tool_calls,
     _proxy_backend_stream,
     _subscriber_sse,
     _format_sse,
     _snapshotted_tool_calls,
+    pause_task,
+    start_task_segment,
+    task_workspace,
 )
 from memory.settings import memory_enabled, heavy_ops_enabled
 from memory.store import get_repository as get_memory_repository
@@ -148,7 +161,7 @@ def _get_workspace() -> Optional[Path]:
     return None
 
 
-def _require_workspace_path(work_dir: Path, path: str) -> Path:
+def _require_workspace_path(work_dir: Path, path: str, *, for_mutation: bool = False) -> Path:
     """Resolve a user-supplied path inside *work_dir*, or raise HTTPException.
 
     Maps containment failure to 403 and unresolvable input to 400. Callers
@@ -156,7 +169,8 @@ def _require_workspace_path(work_dir: Path, path: str) -> Path:
     the same way the old copied ``startswith`` blocks did.
     """
     try:
-        return resolve_under_workspace(work_dir, path)
+        resolve = workspace_mutation_target if for_mutation else resolve_under_workspace
+        return resolve(work_dir, path)
     except WorkspacePathError as exc:
         if exc.outside:
             raise HTTPException(
@@ -170,8 +184,18 @@ def _require_workspace_path(work_dir: Path, path: str) -> Path:
 # Endpoints — Streaming
 # ============================================================================
 
+_REATTACHABLE_TURN_STATUSES = {"running", "completed", "continued", "max_iterations_reached"}
+
+
+async def _wait_for_client_disconnect(request: Request) -> None:
+    while (await request.receive())["type"] != "http.disconnect":
+        pass
+
+
 @app.post("/api/chat")
-async def proxy_chat(request: Request):
+async def proxy_chat(
+    request: Request, turn_id: Annotated[uuid.UUID | None, Header(alias="X-Aurora-Turn-ID")] = None,
+):
     """Proxy a chat request to the backend.
 
     Accepts the same body as the backend's ``POST /api/chat``.
@@ -180,26 +204,75 @@ async def proxy_chat(request: Request):
     """
     t0 = time.perf_counter()
     body = await request.json()
+    body.pop("task_state", None)
+    body.pop("task_token", None)
+    body.pop("message_source", None)
+    body.pop("message_receipt", None)
+    body.pop("accept_turn_inputs", None)
     t1 = time.perf_counter()
     body_size = len(json.dumps(body)) if body else 0
-    cid_tag = (body.get('conversation_id') or 'new')[:8]
+    requested_id = body.get("conversation_id")
+    conversation_id = str(uuid.uuid4()) if requested_id in (None, "") else require_conversation_id(requested_id)
+    cid_tag = conversation_id[:8] if requested_id else "new"
     logger.info(f"[proxy] [{cid_tag}...] json_parse={t1-t0:.3f}s body_size={body_size}")
 
     # ── Inject max_iterations from settings if not already set ───
     if "max_iterations" not in body:
         body["max_iterations"] = get_max_iterations()
-    conversation_id = body.get("conversation_id") or str(uuid.uuid4())
     body["conversation_id"] = conversation_id
 
-    # Point the agent at files the user attached this turn.  Invalid or
-    # out-of-workspace paths are dropped; the marked block is rewritten
-    # from the survivors so the transcript chips stay honest.  If the
-    # user asked to attach files and none survived, refuse instead of
-    # starting a files-only turn with message=None.
+    receipt = str(turn_id) if turn_id else None
+    wait_for_current_turn = body.pop("wait_for_current_turn", False) is True
+    disconnect = None
     try:
-        apply_request_attachments(body, _get_workspace() or WORKSPACE)
-    except AttachedFilesError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        while True:
+            async with _turn_admission_lock(conversation_id):
+                if disconnect and disconnect.done():
+                    disconnect.result()
+                    raise HTTPException(status_code=499, detail="Client disconnected before the follow-up was accepted.")
+                owner = active_streams.get(conversation_id)
+                same_receipt = (owner and receipt and owner.turn_id == receipt
+                                and (body.get("retry_receipt") is not True
+                                     or owner.status in _REATTACHABLE_TURN_STATUSES))
+                if not wait_for_current_turn or not owner or not owner.task or owner.task.done() or same_receipt:
+                    return await _start_chat_turn(request, body, t0, t1, turn_id=receipt,
+                                                  after_current_turn=wait_for_current_turn)
+            # Leave the admission lock free for Stop and receipt reattachment.
+            if disconnect is None:
+                disconnect = asyncio.create_task(_wait_for_client_disconnect(request))
+            await asyncio.wait({owner.task, disconnect}, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        if disconnect:
+            disconnect.cancel()
+            await asyncio.gather(disconnect, return_exceptions=True)
+
+
+async def _start_chat_turn(request: Request, body: dict, t0: float, t1: float, *, turn_id: str | None,
+                           after_current_turn: bool = False):
+    conversation_id = body["conversation_id"]
+    cid_tag = conversation_id[:8]
+    if conversation_id not in active_streams:
+        store.recover_turn_write(conversation_id)
+    receipt_retry = body.pop("retry_receipt", False) is True
+    if receipt_retry and (not body.get("retry") or not turn_id):
+        raise HTTPException(status_code=400, detail="Retrying a turn requires its original receipt.")
+    turn_state = store.turn_state(conversation_id, turn_id) if turn_id else "unaccepted"
+    if turn_state == "superseded":
+        raise HTTPException(status_code=409, detail="A newer turn already followed this request.")
+    if turn_state == "current":
+        stream = active_streams.get(conversation_id)
+        status = stream.status if stream else store.get_conversation(conversation_id).get("status")
+        if not receipt_retry or status in _REATTACHABLE_TURN_STATUSES:
+            return _resume_conversation_stream(conversation_id, request, turn_id=turn_id)
+    else:
+        if receipt_retry:
+            body["retry"] = False
+        # A replay or retry of an accepted turn already has its original
+        # attachments in the transcript, even if those files moved since.
+        try:
+            apply_request_attachments(body, _get_workspace() or WORKSPACE)
+        except AttachedFilesError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # ── Generate workspace tree for the agent's system message ──
     # Only on the *first* turn — continuations already carry the tree
@@ -235,12 +308,29 @@ async def proxy_chat(request: Request):
         parent_id=parent_id,
     )
 
+    t2 = time.perf_counter()
+    if not after_current_turn:
+        await _cancel_active_stream(conversation_id)
+    t3 = time.perf_counter()
+    logger.info(f"[proxy] [{cid_tag}...] cancel_stream={t3-t2:.3f}s")
+
     # Retry: keep the current transcript (orphan tool calls are filled in
     # below) and do not append another user message.
-    if body.pop("retry", False):
-        prior = body.get("messages") or store.get_messages(conversation_id)
-        body["messages"] = messages_for_retry(prior, body.get("message") or "")
+    prefer_saved_history = body.pop("prefer_saved_history", False) is True
+    retry = body.pop("retry", False)
+    if retry:
+        prior = store.get_messages(conversation_id) or body.get("messages")
+        body["messages"] = messages_for_retry(
+            prior, body.get("message") or "",
+            frontend_messages=store.get_frontend_messages(conversation_id),
+        )
         body["message"] = None
+    elif prefer_saved_history:
+        # A desktop snapshot can be stale after streaming, reconnection or
+        # another tab's turn. A new fork has no saved history yet.
+        saved = store.get_messages(conversation_id)
+        if saved:
+            body["messages"] = saved
 
     # ── Fix orphan tool calls before forwarding to the backend ────────────
     # If the previous stream was cancelled mid-tool-execution, the
@@ -249,16 +339,6 @@ async def proxy_chat(request: Request):
     # these, so we inject synthetic "stopped by user" results now.
     if body.get("messages"):
         body["messages"] = _fix_orphan_tool_calls(body["messages"])
-        store.save_messages(conversation_id, body["messages"])
-
-    # ────────────────────────────────────────────────────────────────────
-
-
-    # Cancel any previous stream for the SAME conversation (re-send / continue)
-    t2 = time.perf_counter()
-    await _cancel_active_stream(conversation_id)
-    t3 = time.perf_counter()
-    logger.info(f"[proxy] [{cid_tag}...] cancel_stream={t3-t2:.3f}s")
 
     stream = ActiveStream(
         conversation_id=conversation_id,
@@ -266,15 +346,63 @@ async def proxy_chat(request: Request):
         parent_id=parent_id,
         tool_call_id=tool_call_id,
         provider=body.get("provider"),
+        turn_id=turn_id,
     )
+    user_message = body.get("message")
+    if retry:
+        user_message = next(
+            (item.get("content") for item in reversed(body.get("messages") or []) if item.get("role") == "user"),
+            None,
+        )
+    if (conv_type == "user_chat" and not parent_id and not body.get("tools")
+            and isinstance(user_message, str) and user_message.strip()):
+        stream.task_token = secrets.token_urlsafe(32)
+        stream.task_request = user_message
+        stream.task_request_is_retry = bool(retry)
+        stream.task_options = TaskResume(
+            provider=body.get("provider"), provider_id=body.get("provider_id"), model=body.get("model"),
+        )
+        task = _task_for_conversation(conversation_id)
+        body["task_token"] = stream.task_token
+        body["accept_turn_inputs"] = True
+        if task:
+            if (retry and task.conversation_id == conversation_id and task.status == "paused"
+                    and task.reason in {"error", "interrupted"} and task.workspace == task_workspace()):
+                if not stream.task_options.model_dump(exclude_none=True):
+                    stream.task_options = task.options
+                    body.update(task.options.model_dump(exclude_none=True))
+                stream.provider = stream.task_options.provider_id or stream.task_options.provider
+                task = store.tasks.save(task, status="active", reason="", options=stream.task_options)
+                stream.initial_task_progress = task.progress
+            state = task.prompt_state()
+            if task.conversation_id != conversation_id or (retry and task.status == "paused"):
+                state["status"] = "historical"
+            elif task.status == "completed":
+                state["can_start_new_task"] = not retry
+            body["task_state"] = state
     t4 = time.perf_counter()
 
     # Seed frontend_messages so loading the conversation before the first
     # backend event still shows something.  For existing conversations
     # (re-send / interrupt), APPEND instead of replacing — otherwise the
     # entire history is lost if the backend never produces events.
-    if body.get("message"):
-        store.seed_frontend_user_message(conversation_id, body["message"])
+    message = body.get("message")
+    accepted = [dict(msg) for msg in body.get("messages") or []]
+    queued = store.pending_turn_inputs(conversation_id) if stream.task_token else []
+    if queued:
+        accepted.extend(queued)
+        body["messages"] = accepted.copy()
+    if message:
+        accepted.append({"role": "user", "content": message})
+    if accepted:
+        store.save_messages(conversation_id, accepted, pending_turn_id=turn_id if message else None)
+    if queued:
+        store.acknowledge_turn_inputs(conversation_id, queued)
+        for queued_message in queued:
+            store.seed_frontend_user_message(conversation_id, queued_message["content"])
+    if message:
+        store.seed_frontend_user_message(conversation_id, message)
+    store.update_status(conversation_id, "running", accepted_turn_id=turn_id)
     t5 = time.perf_counter()
     logger.info(f"[proxy] [{cid_tag}...] store_ops={t5-t4:.3f}s")
 
@@ -299,61 +427,66 @@ async def proxy_chat(request: Request):
 
     stream.task = asyncio.create_task(_proxy_backend_stream(stream, body))
 
-    queue: asyncio.Queue = asyncio.Queue(maxsize=256)
-    stream.subscribers.append(queue)
-
     t_total = time.perf_counter() - t0
     logger.info(f"[proxy] [{cid_tag}...] total_pre_backend={t_total:.3f}s json={t1-t0:.3f}s cancel={t3-t2:.3f}s store={t5-t4:.3f}s")
+    return _subscribe_to_stream(stream, request)
 
+
+def _subscribe_to_stream(stream: ActiveStream, request: Request, *, replay_latest: bool = False) -> StreamingResponse:
+    queue: asyncio.Queue = asyncio.Queue(maxsize=256)
+    stream.subscribers.append(queue)
     return StreamingResponse(
-        _subscriber_sse(stream, queue, request),
+        _subscriber_sse(stream, queue, request, replay_latest=replay_latest),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
-            "X-Conversation-ID": conversation_id,
+            "X-Conversation-ID": stream.conversation_id,
         },
     )
 
 
 @app.get("/api/conversations/{conversation_id}/stream")
-async def resume_stream(conversation_id: str, request: Request):
+async def resume_stream(conversation_id: str, request: Request, turn_id: uuid.UUID | None = None):
     """Attach to an in-progress stream (mid-stream resume)."""
+    if turn_id is None:
+        return _resume_conversation_stream(conversation_id, request)
+    async with _turn_admission_lock(conversation_id):
+        return _resume_conversation_stream(conversation_id, request, turn_id=str(turn_id))
+
+
+def _resume_conversation_stream(conversation_id: str, request: Request, *, turn_id: str | None = None):
     stream = active_streams.get(conversation_id)
 
     if stream:
-        queue: asyncio.Queue = asyncio.Queue(maxsize=256)
-        stream.subscribers.append(queue)
-        return StreamingResponse(
-            _subscriber_sse(stream, queue, request, replay_latest=True),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-                "X-Conversation-ID": conversation_id,
-            },
-        )
+        if turn_id is not None and stream.turn_id != turn_id:
+            raise HTTPException(status_code=409, detail="That turn is no longer current for this conversation.")
+        return _subscribe_to_stream(stream, request, replay_latest=True)
 
     # No active stream — serve the stored conversation as a done event
+    store.recover_turn_write(conversation_id)
     try:
         conv = store.get_conversation(conversation_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="No active or stored conversation")
 
+    if turn_id is not None and conv.get("accepted_turn_id") != turn_id:
+        raise HTTPException(status_code=409, detail="That turn is no longer current for this conversation.")
     status = conv.get("status", "completed")
-    frontend_msgs = store.get_frontend_messages(conversation_id)
-    if status == "error":
-        frontend_msgs = ensure_error_frontend_message(frontend_msgs)
-
+    frontend_msgs = frontend_messages_for_status(store.get_frontend_messages(conversation_id), conv)
     async def _replay():
-        yield _format_sse("done", {
+        data = {
             "conversation_id": conversation_id,
             "status": status,
             "messages": frontend_msgs or conv.get("messages", []),
             "raw_messages": conv.get("messages", []),
-        })
+        }
+        if status == "continued":
+            continuation = _saved_continuation(conversation_id)
+            if continuation:
+                data["new_conversation_id"] = continuation
+        yield _format_sse("done", data)
 
     return StreamingResponse(
         _replay(),
@@ -363,6 +496,13 @@ async def resume_stream(conversation_id: str, request: Request):
             "X-Conversation-ID": conversation_id,
         },
     )
+
+
+def _saved_continuation(conversation_id: str) -> str | None:
+    task = store.tasks.get(conversation_id)
+    if task and task.conversation_id != conversation_id:
+        return task.conversation_id
+    return store.latest_continuation(conversation_id)
 
 
 @app.post("/api/conversations/{conversation_id}/cancel")
@@ -375,17 +515,265 @@ async def cancel_conversation_stream(conversation_id: str):
     closes the gap where content streamed via deltas was never persisted
     into the frontend's ``rawMessages`` and would be lost on interrupt.
     """
-    await _cancel_active_stream(conversation_id)
-
-    raw_messages = store.get_messages(conversation_id)
-    frontend_messages = store.get_frontend_messages(conversation_id)
+    task_cid = None
+    async with _turn_admission_lock(conversation_id):
+        task = store.tasks.get(conversation_id)
+        stream = active_streams.get(conversation_id)
+        if task and task.status == "active" and (not stream or stream.task_active):
+            pause_task(conversation_id)
+            task_cid = task.conversation_id
+        if task_cid and task_cid != conversation_id:
+            current_task_stream = active_streams.get(task_cid)
+            async with _turn_admission_lock(task_cid):
+                if active_streams.get(task_cid) is current_task_stream:
+                    await _cancel_active_stream(task_cid)
+        else:
+            await _cancel_active_stream(conversation_id)
+        raw_messages = store.get_messages(conversation_id)
+        frontend_messages = store.get_frontend_messages(conversation_id)
 
     return {
         "cancelled": conversation_id,
+        **({"task_conversation_id": task_cid} if task_cid else {}),
         "raw_messages": raw_messages,
         "frontend_messages": frontend_messages,
     }
 
+
+# The authenticated frontend proxies /api only. Each backend stream also
+# proves ownership of its internal task routes with a per-run token.
+def _task_stream(conversation_id: str, request: Request) -> ActiveStream:
+    stream = active_streams.get(conversation_id)
+    token = request.headers.get("X-Task-Token", "").encode()
+    if (not stream or not stream.task_token or stream.new_conversation_id
+            or stream.finished or stream.cancel_event.is_set()
+            or not secrets.compare_digest(stream.task_token.encode(), token)):
+        raise HTTPException(status_code=409, detail="This task stream is no longer active.")
+    return stream
+
+
+class TaskSteeringSubmission(BaseModel):
+    receipt: uuid.UUID
+    message: str = Field(default="", max_length=262144)
+    attached_files: list[str] = Field(default_factory=list, max_length=MAX_ATTACHED_FILES)
+
+
+@app.post("/api/conversations/{conversation_id}/task/steering", status_code=202)
+async def submit_task_steering(conversation_id: str, submission: TaskSteeringSubmission):
+    conversation_id = require_conversation_id(conversation_id)
+    tasks = store.tasks.list_for_conversation(conversation_id)
+    receipt = str(submission.receipt)
+    if store.has_turn_input(conversation_id, receipt) or any(
+        entry.receipt == receipt for saved in tasks for entry in saved.steering_history
+    ):
+        return {"receipt": receipt}
+    task = tasks[0] if tasks else None
+    goal_owner = active_streams.get(task.conversation_id) if task and task.status == "active" else None
+    if not goal_owner or not goal_owner.task_active:
+        task = None
+    owner = goal_owner if task else active_streams.get(conversation_id)
+    if (not owner or not owner.task_token or not owner.accept_turn_inputs
+            or owner.finished or owner.new_conversation_id or owner.cancel_event.is_set()):
+        raise HTTPException(status_code=409, detail={"code": "no_active_goal"})
+    files = submission.attached_files or extract_attached_files(submission.message) or []
+    workspace = Path(task.workspace if task else task_workspace())
+    if len(files) > MAX_ATTACHED_FILES:
+        raise HTTPException(status_code=422, detail="Too many steering attachments.")
+    normalized = [normalize_attached_paths([path], workspace) for path in files]
+    if not all(normalized):
+        raise HTTPException(status_code=400, detail="Every steering attachment must be an existing workspace file.")
+    paths = list(dict.fromkeys(path[0] for path in normalized))
+    content = apply_attached_files(submission.message, paths) if files else submission.message
+    if not content or not content.strip():
+        raise HTTPException(status_code=422, detail="Send steering text or a workspace attachment.")
+    # This handler does not yield between owner lookup and the durable receipt.
+    if task:
+        store.tasks.queue_steering(task, content, receipt)
+    else:
+        store.queue_turn_input(conversation_id, receipt, content)
+    return {"receipt": receipt}
+
+
+class TurnInputBoundary(BaseModel):
+    messages: list[dict] | None = None
+    finishing: bool = False
+
+
+@app.post("/internal/turn-inputs/{conversation_id}")
+async def take_turn_inputs(conversation_id: str, boundary: TurnInputBoundary, request: Request):
+    stream = _task_stream(conversation_id, request)
+    task = store.tasks.get(conversation_id) if stream.task_active else None
+    if task and (task.conversation_id != conversation_id or task.status != "active"):
+        task = None
+    applied_steering, task_inputs = task.split_steering_at_pending() if task else ([], [])
+    task_receipts = {entry.receipt for entry in task_inputs}
+    inputs = [
+        message for message in store.pending_turn_inputs(conversation_id)
+        if message[TURN_INPUT_RECEIPT] not in task_receipts
+    ] + [entry.as_message() for entry in task_inputs]
+    if boundary.messages is None:
+        if boundary.finishing and not inputs:
+            stream.accept_turn_inputs = False
+        return {"pending": bool(inputs)}
+
+    if not inputs:
+        return {"inputs": []}
+    persisted = {msg.get(TURN_INPUT_RECEIPT) for msg in store.get_messages(conversation_id)}
+    messages = list(boundary.messages)
+    existing = {msg.get(TURN_INPUT_RECEIPT) for msg in messages}
+    inputs = [message for message in inputs if message.get(TURN_INPUT_RECEIPT) not in existing
+              or TURN_INPUT_RECEIPT not in message]
+    new_messages = [*messages, *inputs]
+    store.save_messages(conversation_id, new_messages)
+    stream.input_message_count = len(new_messages)
+    store.acknowledge_turn_inputs(conversation_id, inputs)
+    for message in inputs:
+        if message.get(TURN_INPUT_RECEIPT) not in persisted or TURN_INPUT_RECEIPT not in message:
+            store.seed_frontend_user_message(conversation_id, message["content"])
+    stream.latest_frontend_messages = store.get_frontend_messages(conversation_id)
+    if task_inputs:
+        applied_steering.extend(entry.model_copy(update={"applied_to": conversation_id}) for entry in task_inputs)
+        task = store.tasks.save(
+            task, steering_entries=applied_steering,
+            progress=task.progress.model_copy(update={"blocker": ""}), stalled=0,
+        )
+    if inputs:
+        stream.task_request = inputs[-1]["content"]
+        stream.task_request_is_retry = False
+    return {"inputs": inputs, "task_state": task.prompt_state() if task else None}
+
+
+@app.post("/internal/task-request/{conversation_id}")
+async def read_agent_task_request(conversation_id: str, extent: TaskRequestSlice, request: Request):
+    _task_stream(conversation_id, request)
+    task = store.tasks.get(conversation_id)
+    if not task or task.conversation_id != conversation_id:
+        raise HTTPException(status_code=409, detail="No task source for this stream.")
+    history = task.applied_steering
+    if extent.source == "steering":
+        if extent.index is None or extent.index >= len(history):
+            raise HTTPException(status_code=404, detail="No steering at that index.")
+        source = history[extent.index].content
+    elif extent.source == "latest":
+        source = history[-1].content if history else ""
+        if not source:
+            raise HTTPException(status_code=404, detail="No later steering has been applied to this task.")
+    else:
+        source = task.request
+    total = len(source)
+    start = min(extent.offset, total)
+    end = min(start + extent.max_chars, total)
+    return {"text": source[start:end], "offset": start,
+            "total_chars": total, "next_offset": end if end < total else None}
+
+
+@app.post("/internal/task-start/{conversation_id}")
+async def start_agent_task(conversation_id: str, plan: TaskStart, request: Request):
+    stream = _task_stream(conversation_id, request)
+    if not stream.task_request or (stream.task_request_is_retry and store.tasks.get(conversation_id)):
+        raise HTTPException(status_code=409, detail="A new task needs a user request.")
+    try:
+        task = store.tasks.start(conversation_id, plan, task_workspace(),
+                                 stream.task_request, stream.task_options)
+        for message in store.pending_turn_inputs(conversation_id):
+            task = store.tasks.queue_steering(task, message["content"], message[TURN_INPUT_RECEIPT])
+    except TaskConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    stream.initial_task_progress = task.progress
+    return {"task_state": task.prompt_state()}
+
+
+@app.post("/internal/task-reopen/{conversation_id}")
+async def reopen_agent_task(conversation_id: str, reopen: TaskReopen, request: Request):
+    stream = _task_stream(conversation_id, request)
+    task = store.tasks.get(conversation_id)
+    if (not task or task.conversation_id != conversation_id or task.status != "paused"
+            or not stream.task_request or task.workspace != task_workspace()):
+        raise HTTPException(status_code=409, detail="Resume a paused task in its current conversation and workspace.")
+    try:
+        task = store.tasks.reopen(task, stream.task_request, stream.task_options, reopen.revised_plan,
+                                  receipt=stream.turn_id, criteria_change=reopen.criteria_change)
+    except TaskConflict as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    stream.initial_task_progress = task.progress
+    return {"task_state": task.prompt_state()}
+
+
+@app.post("/internal/task-checkpoint/{conversation_id}")
+async def save_task_checkpoint(conversation_id: str, progress: TaskCheckpointUpdate, request: Request):
+    stream = _task_stream(conversation_id, request)
+    task = store.tasks.get(conversation_id)
+    if (not stream.task_active or not task or task.conversation_id != conversation_id
+            or task.status != "active"):
+        raise HTTPException(status_code=409, detail="This task stream is no longer active.")
+    try:
+        task = store.tasks.checkpoint(task, progress)
+    except TaskConflict as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"saved": True, "task_state": task.prompt_state()}
+
+
+def _task_for_conversation(conversation_id: str):
+    task = store.tasks.get(conversation_id)
+    if task and task.status == "active" and task.conversation_id not in active_streams:
+        return pause_task(conversation_id, "interrupted")
+    return task
+
+
+@app.get("/api/conversations/{conversation_id}/task")
+async def get_task(conversation_id: str):
+    task = _task_for_conversation(conversation_id)
+    completed = [saved.public() for saved in store.tasks.list_for_conversation(conversation_id)
+                 if saved.status == "completed" and saved.id != task.id] if task else []
+    result = {"task": task.public() if task else None}
+    if completed:
+        result["completed_tasks"] = completed
+    return result
+
+
+@app.put("/api/conversations/{conversation_id}/task")
+async def edit_task(conversation_id: str, edit: TaskEdit):
+    try:
+        uuid.UUID(conversation_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid conversation ID.") from exc
+    _task_for_conversation(conversation_id)
+    if conversation_id in active_streams:
+        raise HTTPException(status_code=409, detail="Wait for the conversation to stop before editing.")
+    try:
+        conv = store.get_conversation(conversation_id)
+    except KeyError:
+        store.create_conversation(conversation_id=conversation_id)
+    else:
+        if conv["type"] != "user_chat":
+            raise HTTPException(status_code=409, detail="A task needs a main conversation.")
+    try:
+        task = store.tasks.edit(conversation_id, edit, task_workspace())
+    except TaskConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"task": task.public()}
+
+
+@app.post("/api/conversations/{conversation_id}/task/resume")
+async def resume_task(conversation_id: str, options: TaskResume):
+    task = _task_for_conversation(conversation_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    if task.status == "active":
+        return {"conversation_id": task.conversation_id}
+    if (task.status != "paused" or task.conversation_id != conversation_id
+            or conversation_id in active_streams):
+        raise HTTPException(status_code=409, detail="Resume a paused task from its current conversation.")
+    try:
+        if task.workspace != task_workspace():
+            raise TaskConflict("Reopen the task in its original workspace before resuming.")
+        progress = task.progress.model_copy(update={"blocker": ""})
+        task = store.tasks.save(task, options=options if options.model_fields_set else task.options,
+                                progress=progress)
+        cid = start_task_segment(task, fresh=task.started, handoff=task.handoff)
+    except TaskConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"conversation_id": cid}
 
 
 
@@ -453,7 +841,7 @@ async def update_settings(update: _SettingsUpdate):
 
     try:
         async with httpx.AsyncClient() as c:
-            await c.post(f"{BACKEND_URL}/api/reload", timeout=5)
+            await c.post(f"{BACKEND_URL}/api/reload", headers=backend_auth_headers(), timeout=5)
     except Exception:
         logger.warning("Backend not reachable — provider reload skipped")
     return result
@@ -477,6 +865,12 @@ def _count_tools_in_dict(tools_dict: dict, by_source: dict) -> int:
     return added
 
 
+def _toolstore_home() -> str:
+    if ConfigManager is not None:
+        return str(ConfigManager().config_dir)
+    return os.environ.get("TOOLSTORE_HOME", os.path.expanduser("~/.toolstore"))
+
+
 @app.get("/api/toolstore/status")
 async def get_toolstore_status():
     """Return tool counts — registry (online) + MCP/skills (local)."""
@@ -484,10 +878,7 @@ async def get_toolstore_status():
     by_source: dict = {}
     total = 0
 
-    try:
-        home = Path(ConfigManager().config_dir)
-    except ImportError:
-        home = Path(os.environ.get("TOOLSTORE_HOME", os.path.expanduser("~/.toolstore")))
+    home = Path(_toolstore_home())
 
     index_path = home / "index.json"
     if index_path.exists():
@@ -514,14 +905,11 @@ async def get_toolstore_status():
 async def refresh_toolstore():
     """Run `toolstore update` to rebuild the local tool index."""
     try:
-        _home = str(ConfigManager().config_dir)
-    except ImportError:
-        _home = os.environ.get("TOOLSTORE_HOME", os.path.expanduser("~/.toolstore"))
-    try:
-        result = subprocess.run(
+        result = await asyncio.to_thread(
+            subprocess.run,
             ["toolstore", "update"],
             capture_output=True, text=True, timeout=60,
-            env={**os.environ, "TOOLSTORE_HOME": _home}
+            env={**os.environ, "TOOLSTORE_HOME": _toolstore_home()},
         )
         return {"ok": True, "output": result.stdout[-2000:], "errors": result.stderr[-500:] if result.returncode != 0 else None}
     except Exception as e:
@@ -883,13 +1271,18 @@ async def list_conversations(
 async def get_conversation(conversation_id: str):
     """Return full conversation: metadata + messages + frontend_messages."""
     try:
+        if conversation_id not in active_streams:
+            store.recover_turn_write(conversation_id)
         conv = store.get_conversation(conversation_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Conversation not found")
     frontend_messages = store.get_frontend_messages(conversation_id)
-    if conv.get("status") == "error":
-        frontend_messages = ensure_error_frontend_message(frontend_messages)
+    frontend_messages = frontend_messages_for_status(frontend_messages, conv)
     conv["frontend_messages"] = frontend_messages
+    if conv.get("status") == "continued":
+        continuation = _saved_continuation(conversation_id)
+        if continuation:
+            conv["new_conversation_id"] = continuation
     return conv
 
 
@@ -913,12 +1306,16 @@ async def delete_conversation(conversation_id: str):
     except KeyError:
         raise HTTPException(status_code=404, detail="Conversation not found")
     for cid in subtree:
+        task = store.tasks.get(cid)
+        if task and task.conversation_id == cid:
+            pause_task(cid)
         await _cancel_active_stream(cid)
     try:
         deleted_ids = store.delete_conversation(conversation_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Conversation not found")
     for cid in deleted_ids:
+        store.tasks.remove_conversation(cid)
         clear_conversation_snapshots(cid)
         _snapshotted_tool_calls.pop(cid, None)
     return {"deleted": deleted_ids[0], "deleted_ids": deleted_ids}
@@ -1024,7 +1421,7 @@ async def upload_workspace(
     safe_name = Path(project_name).name
     if not safe_name:
         safe_name = "project"
-    project_dir = work_dir / safe_name
+    project_dir = _require_workspace_path(work_dir, safe_name, for_mutation=True)
     project_dir.mkdir(parents=True, exist_ok=True)
 
     content = await archive.read()
@@ -1040,7 +1437,11 @@ async def upload_workspace(
                 logger.warning(f"[upload] Rejected unsafe path: {info.filename}")
                 continue
 
-            dest = project_dir / safe_path
+            try:
+                dest = workspace_mutation_target(project_dir, info.filename)
+            except WorkspacePathError:
+                logger.warning("[upload] Rejected unsafe path: %s", info.filename)
+                continue
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(zf.read(info))
             count += 1
@@ -1061,13 +1462,13 @@ async def delete_workspace_item(req: DeleteRequest):
     if not work_dir or not work_dir.exists():
         raise HTTPException(status_code=400, detail="No active session")
 
-    full_path = _require_workspace_path(work_dir, req.path)
+    full_path = _require_workspace_path(work_dir, req.path, for_mutation=True)
 
-    if not full_path.exists():
+    if not full_path.exists() and not full_path.is_symlink():
         raise HTTPException(status_code=404, detail="Path not found")
 
     try:
-        if full_path.is_dir():
+        if full_path.is_dir() and not full_path.is_symlink():
             shutil.rmtree(full_path)
         else:
             full_path.unlink()

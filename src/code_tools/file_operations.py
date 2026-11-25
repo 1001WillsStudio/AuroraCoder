@@ -9,8 +9,13 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from ..code_sandbox import WORKSPACE
 from ..config import MAX_FILE_READ_SIZE, count_lines_buffered
+from ..workspace_paths import workspace_mutation_target
 from .edit_file import RangeReplaceEditor
 from .edit_file_normal import StringReplaceEditor
+
+_READ_RANGE_LINES = 200
+_READ_RANGE_CHARS = 24_000
+_LINE_PREVIEW_BYTES = 4_096
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +57,8 @@ class FileOperations:
                     f"The file '{target_file}' ({lines} lines, {size} bytes) is opened "
                     f"in the code interpreter.\n\n"
                     f"⚠️  This file is {size:,} bytes ({size / (1024*1024):.1f} MB) — "
-                    f"too large to display in full. Use grep_search or edit_file with "
-                    f"specific line ranges to work with it instead."
+                    f"too large to display in full. Use read_file with start_line and end_line "
+                    f"to inspect the relevant part of the file."
                 )
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
@@ -62,6 +67,51 @@ class FileOperations:
         except Exception as e:
             return f"Error reading file '{target_file}': {str(e)}"
 
+    def read_file_range(self, target_file: str, start_line=None, end_line=None) -> str:
+        """Return a bounded, numbered excerpt without adding the file to the panel."""
+        start = 1 if start_line is None else start_line
+        if type(start) is not int or start < 1 or (
+            end_line is not None and (type(end_line) is not int or end_line < start)
+        ):
+            return "Error: line numbers must be positive integers with end_line at or after start_line."
+
+        ceiling = start + _READ_RANGE_LINES - 1
+        end = ceiling if end_line is None else min(end_line, ceiling)
+        content = []
+        total = 0
+        stopped_at = end + 1 if end_line is not None and end_line > end else None
+        try:
+            path = self._resolve_path(target_file)
+            if not path.is_file():
+                return f"Error: '{target_file}' is not a readable file."
+            with path.open("rb") as f:
+                for number in range(1, end + 1):
+                    head = f.readline(_LINE_PREVIEW_BYTES + 1)
+                    if not head:
+                        stopped_at = None
+                        break
+                    long_line = len(head) > _LINE_PREVIEW_BYTES and not head.endswith(b"\n")
+                    if number >= start:
+                        line = head[:_LINE_PREVIEW_BYTES].rstrip(b"\r\n").decode("utf-8", errors="replace")
+                        row = f"{number}\t{line}" + (" [line truncated]" if long_line else "")
+                        if total + len(row) + 1 > _READ_RANGE_CHARS:
+                            stopped_at = number
+                            break
+                        content.append(row)
+                        total += len(row) + 1
+                    if long_line and number < end:
+                        for rest in iter(lambda: f.readline(64 * 1024), b""):
+                            if rest.endswith(b"\n"):
+                                break
+        except (OSError, ValueError) as exc:
+            return f"Error reading file '{target_file}': {exc}"
+
+        if not content:
+            return f"--- {target_file} ---\nNo lines starting at {start}."
+        if stopped_at is not None:
+            content.append(f"[Excerpt limit reached. Use start_line={stopped_at} for more.]")
+        return f"--- {target_file} ---\n" + "\n".join(content)
+
 
     # -------------------------------------------------------------------
     #  Full File Write
@@ -69,7 +119,7 @@ class FileOperations:
 
     def full_file_write(self, target_file: str, code_edit: str) -> str:
         try:
-            file_path = self._resolve_path(target_file)
+            file_path = workspace_mutation_target(self.workspace_root, target_file)
             if not file_path.exists():
                 file_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(file_path, 'w', encoding='utf-8') as f:
@@ -86,7 +136,7 @@ class FileOperations:
 
     def delete_file(self, target_file: str) -> str:
         try:
-            file_path = self._resolve_path(target_file)
+            file_path = workspace_mutation_target(self.workspace_root, target_file)
             if not file_path.exists():
                 return f"File '{target_file}' does not exist"
             if file_path.is_file():
@@ -193,12 +243,18 @@ class FileOperations:
 
 def read_file_tool(arguments: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     target = arguments.get("file")
+    start_line = arguments.get("start_line")
+    end_line = arguments.get("end_line")
+    fo = FileOperations()
+    if start_line is not None or end_line is not None:
+        if not isinstance(target, str):
+            return "Error: a line range applies to one file. Supply a single path.", arguments
+        return fo.read_file_range(target, start_line, end_line), arguments
     if isinstance(target, list):
         targets = target
     else:
         targets = [target]
 
-    fo = FileOperations()
     results = [fo.read_file(t) for t in targets]
     msg = "\n".join(results)
 
