@@ -8,6 +8,7 @@ management is delegated to code_tools/code_interpreter_panel.py.
 
 import time
 import datetime
+import json
 from pathlib import Path
 import logging
 from typing import Callable, Dict, List, Generator, Optional
@@ -51,6 +52,28 @@ from .tool_executor import execute_tool_calls
 from .training_log import record_api_call, load_save_training_flag
 
 _main_logger = logging.getLogger(__name__)
+
+
+class IncompleteModelStream(RuntimeError):
+    """The provider ended a stream before producing a usable response."""
+
+
+def _validate_tool_calls(tool_calls: list[dict], finish_reason: str | None) -> None:
+    if finish_reason not in {"stop", "tool_calls", "function_call"}:
+        raise IncompleteModelStream("The response ended before the tool calls completed")
+    seen = set()
+    for call in tool_calls:
+        call_id = call["id"]
+        function = call["function"]
+        if not call_id or call_id in seen or not function["name"]:
+            raise IncompleteModelStream("A streamed tool call had a missing or duplicate identifier")
+        seen.add(call_id)
+        try:
+            arguments = json.loads(function["arguments"])
+        except (TypeError, ValueError):
+            raise IncompleteModelStream("A streamed tool call had incomplete arguments") from None
+        if not isinstance(arguments, dict):
+            raise IncompleteModelStream("Streamed tool arguments must be a JSON object")
 
 
 # ---------------------------------------------------------------------------
@@ -273,6 +296,7 @@ def generate_chat_responses_stream_native(
             record_provider_failure(exc, provider_id, model_name, conversation_id, api_kwargs)
             raise
 
+        finish_reason = None
         try:
             if stopped():
                 return
@@ -293,7 +317,9 @@ def generate_chat_responses_stream_native(
                         current_usage = chunk.usage.model_dump()
                     continue
                     
-                delta = chunk.choices[0].delta
+                choice = chunk.choices[0]
+                finish_reason = choice.finish_reason or finish_reason
+                delta = choice.delta
                 # Handle reasoning content
                 if hasattr(delta, "reasoning_content") and delta.reasoning_content:
                     current_reasoning += delta.reasoning_content
@@ -307,6 +333,8 @@ def generate_chat_responses_stream_native(
                 if delta.tool_calls:
                     for tool_call_delta in delta.tool_calls:
                         idx = tool_call_delta.index if tool_call_delta.index is not None else 0
+                        if idx < 0:
+                            raise IncompleteModelStream("A streamed tool call had an invalid index")
                         while len(current_tool_calls) <= idx:
                             current_tool_calls.append({
                                 "id": "",
@@ -355,16 +383,28 @@ def generate_chat_responses_stream_native(
                     "llm_delta": llm_delta,
                 }
 
+            if stopped():
+                return
+            if finish_reason is None and (current_content.strip() or current_reasoning.strip() or current_tool_calls):
+                raise IncompleteModelStream("The model stream ended without a finish reason")
+            if current_tool_calls:
+                _validate_tool_calls(current_tool_calls, finish_reason)
+
             # Log timing for this API call
             _log_api_timing(iteration_count, model_name,
                             t_api_start, t_first_chunk, t_first_content)
         
-        except (TransportError, SDKTransportError, APIConnectionError) as exc:
+        except (TransportError, SDKTransportError, APIConnectionError, IncompleteModelStream) as exc:
+            if stopped():
+                return
             if streaming_errors >= MAX_STREAMING_RETRIES:
+                error = "Connection lost while reading the model response"
+                if isinstance(exc, IncompleteModelStream):
+                    error = "The model repeatedly returned an incomplete response"
                 yield {
                     "messages": messages,
                     "status": "error",
-                    "error": f"Connection lost while reading the model response: {exc}",
+                    "error": f"{error}: {exc}",
                     "provider": provider_id,
                 }
                 return
@@ -376,7 +416,10 @@ def generate_chat_responses_stream_native(
         finally:
             close = getattr(completion_stream, "close", None)
             if close is not None:
-                close()
+                try:
+                    close()
+                except Exception:
+                    _main_logger.debug("Could not close the model response stream")
 
         streaming_errors = 0
 
@@ -385,15 +428,6 @@ def generate_chat_responses_stream_native(
 
         record_api_call(api_messages, assistant_message, enabled=save_training)
 
-        # ── Process tool calls ──────────────────────────────────────────
-        current_tool_calls = [
-            tc for tc in current_tool_calls 
-            if tc["function"]["name"]
-        ]
-        
-        if current_tool_calls:
-            assistant_message["tool_calls"] = current_tool_calls
-        
         # A single empty completion is retryable. Never spend the agent's
         # remaining task budget sending the same ineffective request.
         if not current_tool_calls:
@@ -404,14 +438,14 @@ def generate_chat_responses_stream_native(
                 continue
             else:
                 messages.append(assistant_message)
-                if task_tools and task_tools.take_turn_inputs(messages, finishing=True):
+                if finish_reason != "length" and task_tools and task_tools.take_turn_inputs(messages, finishing=True):
                     iteration_count = 0
                     retrying_empty_reply = False
                     yield {"messages": messages, "status": "running", "provider": provider_id}
                     continue
                 yield {
                     "messages": messages,
-                    "status": "completed",
+                    "status": "interrupted" if finish_reason == "length" else "completed",
                     "provider": provider_id
                 }
                 return

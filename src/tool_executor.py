@@ -9,7 +9,7 @@ loop focused.
 import json
 import os
 from typing import Callable, Dict, List, Optional, Tuple
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
 from .tool_definitions import execute_tool_call, PARALLEL_SAFE_TOOLS
 from .code_tools.panel_manager import triggered_by
@@ -205,16 +205,23 @@ def execute_tool_calls(
         if stopped():
             break
         if is_safe and len(batch) > 1:
-            futures = {
-                _get_executor().submit(run_tool, tc): tc
-                for tc in batch
-            }
+            pending = {_get_executor().submit(run_tool, tc) for tc in batch}
             # Collect results keyed by tool_call id to preserve original order
             results_by_id = {}
-            for future in as_completed(futures):
-                outcome = future.result()
-                if outcome is not None:
-                    results_by_id[outcome[0]["id"]] = outcome
+            while pending:
+                done, pending = wait(
+                    pending, timeout=0.05 if stop_requested is not None else None,
+                    return_when=FIRST_COMPLETED,
+                )
+                if stopped():
+                    for future in pending:
+                        if not future.cancel() and future.done():
+                            done.add(future)
+                    pending.clear()
+                for future in done:
+                    outcome = future.result()
+                    if outcome is not None:
+                        results_by_id[outcome[0]["id"]] = outcome
             # Append in original batch order
             for tc in batch:
                 outcome = results_by_id.get(tc["id"])

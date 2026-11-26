@@ -40,7 +40,8 @@ def test_empty_tool_override_stays_empty_and_denies_unavailable_handoff(monkeypa
         )
         delta = SimpleNamespace(content="" if len(requests) == 1 else "Finished",
                                 tool_calls=[call] if len(requests) == 1 else None)
-        return iter([SimpleNamespace(choices=[SimpleNamespace(delta=delta)], usage=None)])
+        reason = "tool_calls" if delta.tool_calls else "stop"
+        return iter([SimpleNamespace(choices=[SimpleNamespace(delta=delta, finish_reason=reason)], usage=None)])
 
     client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
     monkeypatch.setattr(main_flow.provider_manager, "get_client", lambda _provider: client)

@@ -14,6 +14,7 @@ import threading
 from datetime import datetime
 from typing import Optional, Dict, Any, AsyncGenerator, List
 from contextlib import asynccontextmanager
+from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
 
 
@@ -68,6 +69,7 @@ class ChatRequest(BaseModel):
     task_state: Optional[dict] = Field(None)
     task_token: Optional[str] = Field(None)
     accept_turn_inputs: bool = Field(False)
+    compact_delta_history: bool = Field(False)
 
 
 # ============================================================================
@@ -191,6 +193,7 @@ async def stream_chat_response(
     task_state: Optional[dict] = None,
     task_token: Optional[str] = None,
     accept_turn_inputs: bool = False,
+    compact_delta_history: bool = False,
 ) -> AsyncGenerator[str, None]:
     cancel_event = threading.Event()
     cancel_active_stream(conversation_id)
@@ -208,6 +211,8 @@ async def stream_chat_response(
                 current_messages = messages
                 status = "running"
                 current_provider = provider
+                snapshot_prefix = None
+                snapshot_seq = None
 
                 task_options = {}
                 if task_token:
@@ -235,18 +240,24 @@ async def stream_chat_response(
                     llm_delta = response.get("llm_delta")
                     frontend_messages = convert_messages_for_frontend(current_messages)
 
-                    # Always send full state to the gateway (internal, cheap).
-                    # The gateway caches frontend_messages + raw_messages for
-                    # persistence, and strips down to delta-only when forwarding
-                    # to the frontend.
                     common = {
                         "seq": seq,
                         "messages": frontend_messages,
-                        "raw_messages": current_messages,
                         "status": status,
                         "conversation_id": conversation_id,
                         "provider": current_provider,
                     }
+                    prefix = current_messages[:-1]
+                    if (compact_delta_history and llm_delta is not None and current_messages
+                            and prefix == snapshot_prefix and status == "running"):
+                        common["raw_delta"] = {
+                            "snapshot_seq": snapshot_seq,
+                            "message": deepcopy(current_messages[-1]),
+                        }
+                    else:
+                        common["raw_messages"] = current_messages
+                        snapshot_prefix = prefix
+                        snapshot_seq = seq
 
                     if status == "error":
                         common["message"] = response["error"]
@@ -408,7 +419,8 @@ async def chat(chat_request: ChatRequest, request: Request):
         stream_chat_response(messages, conversation_id, request, provider=provider,
                              model=chat_request.model, max_iterations=max_iterations,
                              tools_override=tools_override,
-                             workspace_tree=workspace_tree, **task_options),
+                             workspace_tree=workspace_tree,
+                             compact_delta_history=chat_request.compact_delta_history, **task_options),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache", "Connection": "keep-alive",

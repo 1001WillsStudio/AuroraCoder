@@ -52,7 +52,7 @@ def test_normal_provider_request_accepts_replay_and_records_the_actual_wire_mess
         requests.append(wire)
         yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(
             content="Second half", tool_calls=None, reasoning_content="",
-        ))], usage=None)
+        ), finish_reason="stop")], usage=None)
 
     client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
     monkeypatch.setattr(main_flow.provider_manager, "get_client", lambda _provider: client)
@@ -88,7 +88,8 @@ def test_followup_reaches_the_next_model_request_in_the_same_loop(monkeypatch, w
             content=("" if with_tools else "First answer finished.") if first else "Used the new direction.",
             tool_calls=calls if first and with_tools else None,
         )
-        return iter([SimpleNamespace(choices=[SimpleNamespace(delta=delta)], usage=None)])
+        reason = "tool_calls" if delta.tool_calls else "stop"
+        return iter([SimpleNamespace(choices=[SimpleNamespace(delta=delta, finish_reason=reason)], usage=None)])
 
     def execute(batch, messages, **_kwargs):
         messages.extend(

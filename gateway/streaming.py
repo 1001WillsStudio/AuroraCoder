@@ -713,7 +713,7 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
             async with client.stream(
                 "POST",
                 f"{BACKEND_URL}/api/chat",
-                json=request_body,
+                json={**request_body, "compact_delta_history": True},
                 headers={"Content-Type": "application/json", **backend_auth_headers()},
             ) as response:
                 backend_connect_elapsed = time.perf_counter() - backend_connect_start
@@ -727,6 +727,8 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                     return
 
                 buffer = ""
+                snapshot_prefix = None
+                snapshot_seq = None
                 async for chunk in response.aiter_text():
                     if stream.cancel_event.is_set():
                         break
@@ -736,9 +738,19 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                         raw, buffer = buffer.split("\n\n", 1)
                         for etype, edata in _parse_sse_blocks(raw + "\n\n"):
                             raw_msgs = edata.get("raw_messages", [])
+                            compact = edata.pop("raw_delta", None) if etype == "delta" else None
+                            if compact is not None:
+                                if snapshot_prefix is None or compact["snapshot_seq"] != snapshot_seq:
+                                    continue
+                                # Keep partial assistant output available for stop and reconnect.
+                                raw_msgs = [*snapshot_prefix, compact["message"]]
+                                edata["raw_messages"] = raw_msgs
                             if raw_msgs and len(raw_msgs) < stream.input_message_count:
                                 # An older SSE frame can arrive after the boundary write.
                                 continue
+                            if raw_msgs and compact is None:
+                                snapshot_prefix = raw_msgs[:-1]
+                                snapshot_seq = edata.get("seq")
                             stream.latest_event_type = etype
                             stream.latest_event_data = edata
                             stream.status = edata.get("status", stream.status)
@@ -765,9 +777,6 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                                 edata["new_conversation_id"] = stream.new_conversation_id
 
                             # ── Always update latest state from *every* event ──
-                            # The backend now always includes full messages in
-                            # every event (delta or messages), so the gateway
-                            # always has fresh data for persistence.
                             if edata.get("messages"):
                                 edata["messages"] = sanitize_frontend_messages(edata["messages"])
                                 stream.latest_frontend_messages = edata["messages"]
@@ -796,8 +805,7 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                                     )
 
                             # ── Forward to frontend subscribers ──
-                            # Delta events carry full messages for the gateway's
-                            # benefit — strip down before forwarding to frontend.
+                            # Forward just the display delta to subscribers.
                             if etype == "delta":
                                 frontend_edata = {
                                     "seq": edata.get("seq"),
@@ -855,10 +863,7 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
         elif persist_status == "running":
             persist_status = "error"
 
-        # Final persistence pass — the backend now always includes full
-        # messages in every event (delta + messages), so
-        # latest_frontend_messages and latest_event_data are always
-        # fresh regardless of the last event type.
+        # The latest state includes reconstructed history when the last event was a delta.
         if not superseded:
             task = store.tasks.get(cid) if stream.task_active else None
             if task and task.conversation_id == cid and task.status == "active":

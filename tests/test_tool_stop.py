@@ -35,7 +35,9 @@ async def test_stopping_turn_prevents_later_tool_calls_in_the_same_batch(monkeyp
             for index, command in enumerate(("first", "second"))
         ]
         delta = SimpleNamespace(content="", tool_calls=calls)
-        return iter([SimpleNamespace(choices=[SimpleNamespace(delta=delta)], usage=None)])
+        return iter([SimpleNamespace(
+            choices=[SimpleNamespace(delta=delta, finish_reason="tool_calls")], usage=None,
+        )])
 
     client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
     monkeypatch.setattr(main_flow.provider_manager, "get_client", lambda _provider: client)
@@ -89,3 +91,33 @@ def test_stopping_before_parallel_worker_enters_preserves_only_the_completed_res
 
     assert ran == ["first"]
     assert messages == [{"role": "tool", "tool_call_id": "call-first", "content": "Finished first"}]
+
+
+def test_stop_releases_the_caller_while_parallel_tools_are_still_blocked(monkeypatch):
+    stopped = threading.Event()
+    release = threading.Event()
+    entered = threading.Barrier(3)
+    calls = [
+        {"id": name, "function": {"name": "read_file", "arguments": "{}"}}
+        for name in ("first", "second")
+    ]
+
+    def execute(_, args, **_options):
+        entered.wait(5)
+        assert release.wait(5)
+        return args, "Finished"
+
+    monkeypatch.setattr(tool_executor, "execute_tool_call", execute)
+    messages = []
+    with ThreadPoolExecutor(max_workers=2) as workers, ThreadPoolExecutor(max_workers=1) as turn:
+        monkeypatch.setattr(tool_executor, "_get_executor", lambda: workers)
+        pending = turn.submit(
+            tool_executor.execute_tool_calls, calls, messages, stop_requested=stopped.is_set,
+        )
+        try:
+            entered.wait(5)
+            stopped.set()
+            assert pending.result(timeout=1) == {}
+            assert not messages
+        finally:
+            release.set()

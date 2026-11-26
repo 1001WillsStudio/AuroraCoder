@@ -19,7 +19,7 @@ def provider(monkeypatch):
             return iter([SimpleNamespace(
                 choices=[SimpleNamespace(delta=SimpleNamespace(
                     content=content, tool_calls=None, reasoning_content=None,
-                ))],
+                ), finish_reason="stop")],
                 usage=None,
             )])
 
