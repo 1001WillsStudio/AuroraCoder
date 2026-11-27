@@ -69,7 +69,7 @@ MODEL_PROVIDERS = {
 PROVIDER_DEFAULT_MODELS = {
     "deepseek": [
         {"id": "deepseek-v4-pro", "name": "DeepSeek V4 Pro"},
-        {"id": "deepseek-v4-flash", "name": "DeepSeek V4 Flash"},
+        {"id": "deepseek-flash", "name": "DeepSeek V4.1 Flash"},
     ],
     "opencode": [
         {"id": "deepseek-v4-pro", "name": "OpenCode DS V4 Pro"},

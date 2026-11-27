@@ -623,6 +623,14 @@ function App() {
     inputRef.current?.focus()
   }
 
+  const cancelAndRestoreSnapshot = useCallback(async (cid, viewEpoch) => {
+    if (!cid) return
+    const result = await cancelConversation(cid)
+    if (viewEpoch !== viewEpochRef.current) return
+    if (result?.raw_messages?.length) setRawMessages(result.raw_messages)
+    if (result?.frontend_messages?.length) setMessages(result.frontend_messages)
+  }, [])
+
   const handleStop = async () => {
     if (!shouldAcceptStop(sendStartedAtRef.current)) return
     const viewEpoch = viewEpochRef.current
@@ -630,15 +638,7 @@ function App() {
     const cid = conversationIdRef.current || lastRequest?.conversationId
     restoreQueuedInput()
     if (abortControllerRef.current) abortControllerRef.current.abort()
-    if (cid) {
-      try {
-        const result = await cancelConversation(cid)
-        if (viewEpoch !== viewEpochRef.current) return
-        if (result?.raw_messages?.length > 0) {
-          setRawMessages(result.raw_messages)
-        }
-      } catch { /* ignore — best-effort cancel */ }
-    }
+    await cancelAndRestoreSnapshot(cid, viewEpoch)
     if (viewEpoch !== viewEpochRef.current) return
 
     setIsStreaming(false)
@@ -651,15 +651,11 @@ function App() {
     restoreQueuedInput()
     if (abortControllerRef.current) abortControllerRef.current.abort()
     const cid = conversationIdRef.current
-    if (cid) {
-      try {
-        await cancelConversation(cid)
-      } catch { /* ignore — best-effort cancel */ }
-    }
+    await cancelAndRestoreSnapshot(cid, viewEpoch)
     if (viewEpoch !== viewEpochRef.current) return
 
     setIsStreaming(false)
-  }, [restoreQueuedInput])
+  }, [cancelAndRestoreSnapshot, restoreQueuedInput])
 
   const handleLoadConversation = useCallback(async (targetConversationId, options = {}) => {
     const viewEpoch = beginConversationView()

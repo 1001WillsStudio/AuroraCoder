@@ -6,9 +6,9 @@ from httpx import ReadError
 from src import main_flow
 
 
-def chunk(content="", tool_calls=None):
+def chunk(content="", tool_calls=None, finish_reason="stop"):
     delta = SimpleNamespace(content=content, tool_calls=tool_calls)
-    return SimpleNamespace(choices=[SimpleNamespace(delta=delta)], usage=None)
+    return SimpleNamespace(choices=[SimpleNamespace(delta=delta, finish_reason=finish_reason)], usage=None)
 
 
 def fail_after(chunk_to_yield, exc):
@@ -91,3 +91,57 @@ def test_stream_protocol_error_is_reported_without_a_retry(monkeypatch):
     with pytest.raises(ValueError, match="invalid payload"):
         list(run_turn(max_iterations=1))
     assert len(requests) == 1
+
+
+@pytest.mark.parametrize(
+    "arguments, ids, finish_reason",
+    [
+        ('{"file":', ("first",), "tool_calls"),
+        (" ", ("first",), "tool_calls"),
+        ("[]", ("first",), "tool_calls"),
+        ("{}", ("first", "first"), "tool_calls"),
+        ("{}", ("",), "tool_calls"),
+        ("{}", ("first",), "length"),
+        ("{}", ("first",), None),
+    ],
+)
+def test_unfinished_tool_calls_are_retried_before_commit(monkeypatch, arguments, ids, finish_reason):
+    calls = [
+        SimpleNamespace(index=index, id=call_id, function=SimpleNamespace(name="read_file", arguments=arguments))
+        for index, call_id in enumerate(ids)
+    ]
+    requests = configure(monkeypatch, [
+        iter([chunk(tool_calls=calls, finish_reason=finish_reason)]),
+        iter([chunk("Recovered")]),
+    ])
+    executed = []
+    monkeypatch.setattr(main_flow, "execute_tool_calls", lambda *args, **kwargs: executed.append(args))
+
+    final = list(run_turn(1))[-1]
+
+    assert requests[0] == requests[1]
+    assert not executed
+    assert final["status"] == "completed"
+    assert final["messages"][-1]["content"] == "Recovered"
+    assert all("tool_calls" not in message for message in final["messages"])
+
+
+def test_truncated_text_survives_without_marking_the_turn_completed(monkeypatch):
+    configure(monkeypatch, [iter([chunk("Partial answer", finish_reason="length")])])
+    final = list(run_turn(1))[-1]
+    assert final["status"] == "interrupted"
+    assert final["messages"][-1]["content"] == "Partial answer"
+
+
+def test_sdk_close_error_preserves_stream_retry(monkeypatch):
+    class Interrupted:
+        def __iter__(self):
+            raise ReadError("stream interrupted")
+
+        def close(self):
+            raise OSError("close failed")
+
+    requests = configure(monkeypatch, [Interrupted(), iter([chunk("Recovered")])])
+    final = list(run_turn(1))[-1]
+    assert len(requests) == 2
+    assert final["status"] == "completed"
