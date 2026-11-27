@@ -73,8 +73,9 @@ def test_normal_provider_request_accepts_replay_and_records_the_actual_wire_mess
     assert recorded == requests
 
 
-@pytest.mark.parametrize("with_tools", [False, True])
-def test_followup_reaches_the_next_model_request_in_the_same_loop(monkeypatch, with_tools):
+@pytest.mark.parametrize("finish_reason", ["stop", "tool_calls", "length"])
+def test_followup_reaches_the_next_model_request_in_the_same_loop(monkeypatch, finish_reason):
+    with_tools = finish_reason == "tool_calls"
     sent = []
     calls = [
         SimpleNamespace(index=index, id=f"call-{index}", function=SimpleNamespace(name="read_file", arguments="{}"))
@@ -88,7 +89,7 @@ def test_followup_reaches_the_next_model_request_in_the_same_loop(monkeypatch, w
             content=("" if with_tools else "First answer finished.") if first else "Used the new direction.",
             tool_calls=calls if first and with_tools else None,
         )
-        reason = "tool_calls" if delta.tool_calls else "stop"
+        reason = finish_reason if first else "stop"
         return iter([SimpleNamespace(choices=[SimpleNamespace(delta=delta, finish_reason=reason)], usage=None)])
 
     def execute(batch, messages, **_kwargs):

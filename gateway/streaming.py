@@ -79,6 +79,7 @@ class ActiveStream:
     initial_task_progress: Optional[TaskProgress] = None
     accept_turn_inputs: bool = True
     input_message_count: int = 0
+    backend_stop_token: Optional[str] = None
 
     @property
     def task_active(self) -> bool:
@@ -89,6 +90,7 @@ active_streams: Dict[str, ActiveStream] = {}
 _streams_lock = asyncio.Lock()
 _admission_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
 _CANCEL_TIMEOUT_SECONDS = 2.0
+_CANCEL_DRAIN_SECONDS = 0.35
 
 
 def _turn_admission_lock(conversation_id: str) -> asyncio.Lock:
@@ -283,103 +285,66 @@ def _track_file_changes(conversation_id: str, raw_messages: list):
                 mark_file_touched(conversation_id, file_path)
 
 
+async def _drain_stopped_backend(stream: ActiveStream) -> None:
+    try:
+        async with httpx.AsyncClient(timeout=_CANCEL_DRAIN_SECONDS, trust_env=False) as client:
+            response = await client.post(
+                f"{BACKEND_URL}/internal/chat/{stream.conversation_id}/stop",
+                json={"stop_token": stream.backend_stop_token},
+                headers=backend_auth_headers(),
+            )
+        if response.status_code == 204 and stream.task is not None:
+            # Timing out this waiter must leave the proxy available for forced cancellation.
+            await asyncio.wait({stream.task})
+    except httpx.HTTPError:
+        logger.debug("[cancel] Could not request a final snapshot from the backend", exc_info=True)
+
+
 async def _cancel_active_stream(conversation_id: str) -> None:
-    """Cancel any in-progress stream for a conversation, including child subagent streams.
-
-    All cancellations are initiated concurrently so the total wait is bounded to a
-    single timeout regardless of how many subagent children exist.
-
-    GUARANTEE: any stream that survives cancellation (task doesn't finish within
-    the 2 s timeout) is force-removed from ``active_streams``.  No stream ever
-    outlives a cancel call — a zombie stream would permanently block new
-    conversations via the ``/api/conversations/active`` check.
-    """
-    t_start = time.perf_counter()
-    tasks_to_await: List[asyncio.Task] = []
-    streams_to_kill: List[ActiveStream] = []  # force-removed on timeout
-
-    async with _streams_lock:
-        old = active_streams.get(conversation_id)
-        # Find child streams whose parent_id matches this conversation
-        children = [
-            s for s in active_streams.values()
-            if s.parent_id == conversation_id and not s.finished
-        ]
-
-    # Cancel child subagent streams — signal all first, then await together
-    for child in children:
-        logger.info(f"[cancel] Cascading cancel to child {child.conversation_id[:8]}...")
-        child.cancel_event.set()
-        if child.task and not child.task.done():
-            child.task.cancel()
-            tasks_to_await.append(child.task)
-        streams_to_kill.append(child)
-
-    # Cancel the parent stream
-    if old and not old.finished:
-        old.cancel_event.set()
-        if old.task and not old.task.done():
-            old.task.cancel()
-            tasks_to_await.append(old.task)
-        streams_to_kill.append(old)
-
-    # Cancel any continuation child created by this stream.
-    # Also cascade to grandchildren (subagents spawned by the continuation).
+    """Stop this conversation and its children within a single cancellation deadline."""
+    deadline = time.perf_counter() + _CANCEL_TIMEOUT_SECONDS
     async with _streams_lock:
         parent = active_streams.get(conversation_id)
+        lineage = {conversation_id}
         if parent and parent.new_conversation_id:
-            continuation = active_streams.get(parent.new_conversation_id)
-            if continuation and not continuation.finished:
-                logger.info(f"[cancel] Cascading cancel to continuation {continuation.conversation_id[:8]}...")
-                continuation.cancel_event.set()
-                if continuation.task and not continuation.task.done():
-                    continuation.task.cancel()
-                    tasks_to_await.append(continuation.task)
-                streams_to_kill.append(continuation)
+            lineage.add(parent.new_conversation_id)
+        streams = [
+            stream for stream in active_streams.values()
+            if not stream.finished and (stream.conversation_id in lineage or stream.parent_id in lineage)
+        ]
+        for stream in streams:
+            stream.cancel_event.set()
 
-                # Recursively cancel subagents that were spawned by the continuation
-                grandchild_children = [
-                    s for s in active_streams.values()
-                    if s.parent_id == continuation.conversation_id and not s.finished
-                ]
-                for gc in grandchild_children:
-                    logger.info(f"[cancel] Cascading cancel to grandchild {gc.conversation_id[:8]}...")
-                    gc.cancel_event.set()
-                    if gc.task and not gc.task.done():
-                        gc.task.cancel()
-                        tasks_to_await.append(gc.task)
-                    streams_to_kill.append(gc)
+    # Let the backend send a final snapshot containing any completed tool results.
+    drains = [
+        _drain_stopped_backend(stream) for stream in streams
+        if stream.backend_stop_token and stream.task and not stream.task.done()
+    ]
+    if drains:
+        grace = min(_CANCEL_DRAIN_SECONDS, max(0, (deadline - time.perf_counter()) / 2))
+        try:
+            await asyncio.wait_for(asyncio.gather(*drains), timeout=grace)
+        except asyncio.TimeoutError:
+            pass
 
-    # Waiting for a cancellation-resistant task must not extend the deadline.
-    if tasks_to_await:
-        await asyncio.wait(tasks_to_await, timeout=_CANCEL_TIMEOUT_SECONDS)
+    pending = {stream.task for stream in streams if stream.task and not stream.task.done()}
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.wait(pending, timeout=max(0, deadline - time.perf_counter()))
 
-    # GUARANTEE: force-remove any stream that survived the timeout.
-    # The orphaned task will finish on its own eventually; its finally
-    # block will see a different stream (or nothing) on the identity check
-    # and exit cleanly.  Without this, a stuck task creates a permanent
-    # zombie that blocks all new conversations.
+    # Release ownership even if a transport ignores the hard cancellation.
     async with _streams_lock:
-        for s in streams_to_kill:
-            if not s.finished and active_streams.get(s.conversation_id) is s:
-                s.finished = True
-                del active_streams[s.conversation_id]
-                if s.status == "running":
-                    s.status = "interrupted"
-                    try:
-                        store.update_status(s.conversation_id, s.status)
-                    except KeyError:
-                        pass
-                logger.warning(
-                    f"[cancel] Force-removed zombie stream "
-                    f"{s.conversation_id[:8]}... after timeout"
-                )
-
-    elapsed = time.perf_counter() - t_start
-    if elapsed > 0.1:
-        logger.info(f"[cancel] [{conversation_id[:8]}...] duration={elapsed:.3f}s tasks_awaited={len(tasks_to_await)}")
-
-
+        for stream in streams:
+            cid = stream.conversation_id
+            if stream.finished or active_streams.get(cid) is not stream:
+                continue
+            stream.finished = True
+            del active_streams[cid]
+            if stream.status == "running":
+                stream.status = "interrupted"
+                _persist_finished_stream(stream, stream.status)
+            logger.warning("[cancel] Force-removed stream %.8s after cancellation", cid)
 
 
 # ============================================================================
@@ -707,13 +672,17 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
         for call in message.get("tool_calls") or [] if call.get("id")
     }
     last_saved_msg_count = 0
+    stream.backend_stop_token = secrets.token_urlsafe(32)
     backend_connect_start = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(None)) as client:
             async with client.stream(
                 "POST",
                 f"{BACKEND_URL}/api/chat",
-                json={**request_body, "compact_delta_history": True},
+                json={
+                    **request_body, "compact_delta_history": True,
+                    "stream_stop_token": stream.backend_stop_token,
+                },
                 headers={"Content-Type": "application/json", **backend_auth_headers()},
             ) as response:
                 backend_connect_elapsed = time.perf_counter() - backend_connect_start
@@ -730,13 +699,18 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                 snapshot_prefix = None
                 snapshot_seq = None
                 async for chunk in response.aiter_text():
-                    if stream.cancel_event.is_set():
+                    if stream.finished:
                         break
 
                     buffer += chunk
                     while "\n\n" in buffer:
                         raw, buffer = buffer.split("\n\n", 1)
                         for etype, edata in _parse_sse_blocks(raw + "\n\n"):
+                            stopping = stream.cancel_event.is_set()
+                            if stopping and not (
+                                etype in {"messages", "done"} and edata.get("status") == "interrupted"
+                            ):
+                                continue
                             raw_msgs = edata.get("raw_messages", [])
                             compact = edata.pop("raw_delta", None) if etype == "delta" else None
                             if compact is not None:
@@ -757,7 +731,7 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
                             stream.provider = edata.get("provider", stream.provider)
                             if stream.task_active and etype in {"messages", "done"}:
                                 _record_task_terminal_jobs(stream, raw_msgs, prior_tool_ids)
-                            if stream.task_active and etype == "done":
+                            if stream.task_active and etype == "done" and not stopping:
                                 _finish_task_segment(stream, raw_msgs, prior_tool_ids)
                                 edata["status"] = stream.status
 

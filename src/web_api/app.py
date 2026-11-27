@@ -10,16 +10,18 @@ import json
 import uuid
 import asyncio
 import logging
+import secrets
 import threading
 from datetime import datetime
 from typing import Optional, Dict, Any, AsyncGenerator, List
 from contextlib import asynccontextmanager
 from copy import deepcopy
+from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
 
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -70,35 +72,49 @@ class ChatRequest(BaseModel):
     task_token: Optional[str] = Field(None)
     accept_turn_inputs: bool = Field(False)
     compact_delta_history: bool = Field(False)
+    stream_stop_token: str | None = None
 
 
 # ============================================================================
 # Active stream tracking (for cancelling on new-send)
 # ============================================================================
 
-active_streams: Dict[str, threading.Event] = {}
+@dataclass
+class ChatStream:
+    """One backend stream and its per-turn cancellation credential."""
+
+    stop_token: str | None
+    cancel_event: threading.Event = field(default_factory=threading.Event)
+
+
+active_streams: Dict[str, ChatStream] = {}
 active_streams_lock = threading.Lock()
 
 
-def cancel_active_stream(conversation_id: str) -> bool:
+def cancel_active_stream(conversation_id: str, *, stop_token: str | None = None) -> bool:
     with active_streams_lock:
-        if conversation_id in active_streams:
-            active_streams[conversation_id].set()
-            del active_streams[conversation_id]
-            return True
-    return False
+        stream = active_streams.get(conversation_id)
+        if stream is None:
+            return False
+        if stop_token is not None and not secrets.compare_digest(
+            (stream.stop_token or "").encode(), stop_token.encode(),
+        ):
+            return False
+        stream.cancel_event.set()
+        return True
 
 
-def register_stream(conversation_id: str, cancel_event: threading.Event):
+def register_stream(conversation_id: str, stream: ChatStream):
     with active_streams_lock:
-        if conversation_id in active_streams:
-            active_streams[conversation_id].set()
-        active_streams[conversation_id] = cancel_event
+        previous = active_streams.get(conversation_id)
+        if previous is not None:
+            previous.cancel_event.set()
+        active_streams[conversation_id] = stream
 
 
-def unregister_stream(conversation_id: str, cancel_event: threading.Event):
+def unregister_stream(conversation_id: str, stream: ChatStream):
     with active_streams_lock:
-        if active_streams.get(conversation_id) is cancel_event:
+        if active_streams.get(conversation_id) is stream:
             del active_streams[conversation_id]
 
 
@@ -194,10 +210,11 @@ async def stream_chat_response(
     task_token: Optional[str] = None,
     accept_turn_inputs: bool = False,
     compact_delta_history: bool = False,
+    stream_stop_token: str | None = None,
 ) -> AsyncGenerator[str, None]:
-    cancel_event = threading.Event()
-    cancel_active_stream(conversation_id)
-    register_stream(conversation_id, cancel_event)
+    stream = ChatStream(stream_stop_token)
+    cancel_event = stream.cancel_event
+    register_stream(conversation_id, stream)
 
     seq = 0
 
@@ -231,6 +248,8 @@ async def stream_chat_response(
                     **task_options,
                 ):
                     if cancel_event.is_set():
+                        if response["status"] == "interrupted":
+                            current_messages = response["messages"]
                         break
                     seq += 1
                     current_messages = response["messages"]
@@ -270,35 +289,22 @@ async def stream_chat_response(
                     else:
                         loop.call_soon_threadsafe(queue.put_nowait, ("messages", common))
 
-                if not cancel_event.is_set():
-                    final_messages = convert_messages_for_frontend(current_messages)
-                    # ── Final full snapshot for safety before done ──
-                    seq += 1
-                    loop.call_soon_threadsafe(
-                        queue.put_nowait,
-                        ("messages", {
-                            "seq": seq,
-                            "messages": final_messages,
-                            "raw_messages": current_messages,
-                            "status": status,
-                            "conversation_id": conversation_id,
-                            "provider": current_provider,
-                        })
-                    )
-                    loop.call_soon_threadsafe(
-                        queue.put_nowait,
-                        ("done", {
-                            "seq": seq + 1,
-                            "conversation_id": conversation_id,
-                            "status": status,
-                            "messages": final_messages,
-                            "raw_messages": current_messages,
-                            "provider": current_provider,
-                        })
-                    )
-                # If cancelled, subagent cleanup is handled in the finally
-                # block below (stream_chat_response level) so it always runs
-                # even when the generator thread is stuck inside run_subagent().
+                if cancel_event.is_set():
+                    if stream_stop_token is None:
+                        return
+                    status = "interrupted"
+                    current_messages = deepcopy(current_messages)
+                # Both terminal events carry a full snapshot, including after Stop.
+                final = {
+                    "seq": seq + 1,
+                    "messages": convert_messages_for_frontend(current_messages),
+                    "raw_messages": current_messages,
+                    "status": status,
+                    "conversation_id": conversation_id,
+                    "provider": current_provider,
+                }
+                loop.call_soon_threadsafe(queue.put_nowait, ("messages", final))
+                loop.call_soon_threadsafe(queue.put_nowait, ("done", {**final, "seq": seq + 2}))
             except Exception as e:
                 if not cancel_event.is_set():
                     logger.exception("Error in generator thread")
@@ -329,7 +335,7 @@ async def stream_chat_response(
     finally:
         was_cancelled = cancel_event.is_set()
         cancel_event.set()
-        unregister_stream(conversation_id, cancel_event)
+        unregister_stream(conversation_id, stream)
         # Cancel any active subagents that were spawned by this conversation.
         # This runs at the asyncio level (not the generator thread), so it
         # always executes — even when the generator is stuck inside
@@ -391,6 +397,21 @@ async def reload_providers():
     return {"ok": True}
 
 
+class ChatStopRequest(BaseModel):
+    stop_token: str = Field(min_length=1)
+
+
+@app.post(
+    "/internal/chat/{conversation_id}/stop",
+    dependencies=[Depends(require_backend_access)],
+    status_code=204,
+)
+async def stop_chat(conversation_id: str, stop: ChatStopRequest):
+    if not cancel_active_stream(conversation_id, stop_token=stop.stop_token):
+        raise HTTPException(status_code=404, detail="Chat stream not found")
+    return Response(status_code=204)
+
+
 @app.post("/api/chat", dependencies=[Depends(require_backend_access)])
 async def chat(chat_request: ChatRequest, request: Request):
     conversation_id = chat_request.conversation_id or str(uuid.uuid4())
@@ -420,7 +441,8 @@ async def chat(chat_request: ChatRequest, request: Request):
                              model=chat_request.model, max_iterations=max_iterations,
                              tools_override=tools_override,
                              workspace_tree=workspace_tree,
-                             compact_delta_history=chat_request.compact_delta_history, **task_options),
+                             compact_delta_history=chat_request.compact_delta_history,
+                             stream_stop_token=chat_request.stream_stop_token, **task_options),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache", "Connection": "keep-alive",

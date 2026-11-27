@@ -438,7 +438,7 @@ def generate_chat_responses_stream_native(
                 continue
             else:
                 messages.append(assistant_message)
-                if finish_reason != "length" and task_tools and task_tools.take_turn_inputs(messages, finishing=True):
+                if task_tools and task_tools.take_turn_inputs(messages, finishing=True):
                     iteration_count = 0
                     retrying_empty_reply = False
                     yield {"messages": messages, "status": "running", "provider": provider_id}
@@ -475,6 +475,7 @@ def generate_chat_responses_stream_native(
             current_tool_calls, messages, conversation_id=conversation_id, **tool_options,
         )
         if stopped():
+            yield {"messages": messages, "status": "interrupted", "provider": provider_id}
             return
 
         # Warn once when estimated context nears the model's window.

@@ -46,6 +46,10 @@ def test_checkpoint_survives_context_rollover_pause_and_reload(tmp_path, monkeyp
                 async def __aexit__(self, *_):
                     pass
 
+                async def post(self, *_args, **_kwargs):
+                    # Older backends fall back to closing the SSE connection.
+                    return SimpleNamespace(status_code=404)
+
                 @asynccontextmanager
                 async def stream(self, _method, _url, json, **_kwargs):
                     requests.append(json)
