@@ -19,6 +19,19 @@ def _decode(data: bytes) -> str:
     return data.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
 
 
+MAX_SAVED_OUTPUT_BYTES = 2_000_000
+
+
+def read_saved_terminal_output(path: Path, preview_limit: int) -> str | None:
+    """Capture bounded, completed stdout while the shell still owns its log file."""
+    with path.open("rb") as source:
+        size = os.fstat(source.fileno()).st_size
+        if size <= preview_limit or size > MAX_SAVED_OUTPUT_BYTES:
+            return None
+        text = _decode(source.read(MAX_SAVED_OUTPUT_BYTES + 1))
+    return text if len(text) > preview_limit else None
+
+
 def read_terminal_output(path: Path, limit: int) -> str:
     """Return a first/last excerpt, reading at most four bytes per display character."""
     with path.open("rb") as source:

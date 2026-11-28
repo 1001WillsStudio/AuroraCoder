@@ -21,6 +21,9 @@ try:
 except ImportError:
     SDKTransportError = TransportError
 
+from .tool_evidence import (
+    READ_RESULT_SCHEMA, compact_provider_view, estimated_tokens, has_evidence, load_mode,
+)
 from .tool_definitions import get_tool_definitions
 from .core_tools.conversation_history import reset_turn_token, set_turn_token
 from .core_tools.tool_store_client import get_toolstore_tools_prompt
@@ -263,6 +266,7 @@ def _generate_chat_responses(
     # Read the user's training-data preference *once* — it cannot change mid-request.
     save_training = load_save_training_flag()
     retrying_empty_reply = False
+    compaction_mode = load_mode() if conversation_id and tools_override is None else "off"
 
     while iteration_count < max_iterations:
         if stopped():
@@ -271,12 +275,20 @@ def _generate_chat_responses(
         
         # Filter continuation tool out of the default tool set until context
         # is high enough.  Skipped when tools_override is set.
+        api_messages = messages_for_provider(messages)
+        compact_provider_view(
+            messages, api_messages, compaction_mode, context_window, api_max_tokens, known_window=bool(_ctx),
+        )
+        input_budget = max(1, context_window - api_max_tokens)
         tools_for_iteration = (
-            _filter_tools_by_context(tools, total_tokens, context_window)
+            _filter_tools_by_context(
+                tools, estimated_tokens(api_messages) if compaction_mode != "off" else total_tokens,
+                input_budget if compaction_mode != "off" else context_window,
+            )
             if filter_continuation else tools
         )
-        
-        api_messages = messages_for_provider(messages)
+        if tools_override is None and has_evidence(messages):
+            tools_for_iteration = [*tools_for_iteration, READ_RESULT_SCHEMA]
         if task_tools and tools_override is None:
             tools_for_iteration = [*tools_for_iteration, *task_tools.schemas()]
             system = api_messages[0]

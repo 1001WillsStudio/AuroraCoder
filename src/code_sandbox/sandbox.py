@@ -34,7 +34,7 @@ from typing import Literal, Optional
 
 from ..config import WORKSPACE_DIR, DEFAULT_BASE_ENV_NAME, TERMINAL_MAX_OUTPUT_CHARS
 from .terminal_jobs import job_paths, remember_terminal_job
-from .terminal_output import read_terminal_output
+from .terminal_output import read_saved_terminal_output, read_terminal_output
 
 logger = logging.getLogger(__name__)
 _CMD_PERCENT_ENV = "_AURORA_LITERAL_PERCENT"
@@ -126,6 +126,7 @@ class ShellResult:
     output_path: Path | None = None
     status_path: Path | None = None
     job_id: str | None = None
+    output_evidence: str | None = None
 
 
 class PersistentShell:
@@ -215,12 +216,17 @@ class PersistentShell:
         blocking: bool = True,
         output_limit: int = TERMINAL_MAX_OUTPUT_CHARS,
         cwd: Path | None = None,
+        *,
+        capture_evidence: bool = False,
     ) -> ShellResult:
         """Run once and return a completion code or the live command's output and status files."""
         with self._lock:
-            return self._run(command, timeout, blocking, output_limit, cwd)
+            return self._run(command, timeout, blocking, output_limit, cwd, capture_evidence)
 
-    def _run(self, command: str, timeout: int, blocking: bool, output_limit: int, cwd: Path | None) -> ShellResult:
+    def _run(
+        self, command: str, timeout: int, blocking: bool, output_limit: int,
+        cwd: Path | None, capture_evidence: bool = False,
+    ) -> ShellResult:
         proc = self._proc
         if proc is None or proc.poll() is not None:
             return ShellResult("error", detail="Persistent shell not running.")
@@ -324,12 +330,18 @@ class PersistentShell:
             output = read_terminal_output(output_path, output_limit)
         except OSError as exc:
             output = f"[Error reading command output: {exc}]"
+        evidence = None
+        if capture_evidence:
+            try:
+                evidence = read_saved_terminal_output(output_path, output_limit)
+            except OSError:
+                logger.warning("Could not capture completed terminal output")
         for path in (output_path, status_path):
             try:
                 path.unlink(missing_ok=True)
             except OSError:
                 logger.warning("Could not remove finished command file %s", path)
-        return ShellResult("completed", output=output, exit_code=numbers[0])
+        return ShellResult("completed", output=output, exit_code=numbers[0], output_evidence=evidence)
 
     # -- internals ----------------------------------------------------------
 

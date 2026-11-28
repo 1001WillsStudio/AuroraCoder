@@ -11,6 +11,7 @@ from ..code_sandbox import WORKSPACE
 from ..code_sandbox.terminal_jobs import terminal_job_status
 from ..code_sandbox.terminal_output import truncate_terminal_text
 from ..code_sandbox.terminal_sessions import use_terminal
+from ..tool_evidence import TerminalResultText
 from ..config import (
     TERMINAL_MAX_OUTPUT_CHARS,
     TERMINAL_DEFAULT_TIMEOUT,
@@ -72,6 +73,8 @@ class TerminalRunner:
                 if not shell.is_alive:
                     return "Error: Persistent shell is not available. Use new_terminal=true to restart it."
 
+                if self.conversation_id:
+                    command_options["capture_evidence"] = True
                 result = shell.run(
                     command, timeout=timeout, blocking=blocking,
                     output_limit=_get_terminal_max_output_chars(), **command_options,
@@ -92,7 +95,13 @@ class TerminalRunner:
             if result.status_path:
                 output.append(f"Exit status file (written on completion): {result.status_path}")
 
-            return '\n'.join(output)
+            preview = '\n'.join(output)
+            if result.output_evidence:
+                return TerminalResultText(
+                    preview + "\n[Omitted stdout is saved. Use read_original_tool_result with this tool call's ID.]",
+                    result.output_evidence,
+                )
+            return preview
 
         except Exception as e:
             return f"Error running command: {str(e)}"
