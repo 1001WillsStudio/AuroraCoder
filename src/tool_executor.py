@@ -13,6 +13,7 @@ import os
 from typing import Callable, Dict, List, Optional, Tuple
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
+from .tool_evidence import READ_RESULT, read_result, tool_message
 from .tool_definitions import execute_tool_call, PARALLEL_SAFE_TOOLS
 from .code_tools.panel_manager import triggered_by
 from .task_checklist import TASK_TOOL_NAMES
@@ -193,6 +194,14 @@ def execute_tool_calls(
         name = call["function"]["name"]
         if not allowed(name):
             return call, name, f"Error: tool '{name}' is not available in this session."
+        if name == READ_RESULT:
+            try:
+                arguments = json.loads(call["function"]["arguments"])
+                if not isinstance(arguments, dict):
+                    raise ValueError("expected an argument object")
+                return call, name, read_result(messages, arguments)
+            except (TypeError, ValueError):
+                return call, name, "Error: invalid tool result read arguments."
         if name in TASK_TOOL_NAMES:
             return _execute_single_tool(call, conversation_id, task_tool_handler)
         return _execute_single_tool(call, conversation_id)
@@ -230,11 +239,7 @@ def execute_tool_calls(
                 if outcome is None:
                     continue
                 tc_out, tool_name, result = outcome
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc_out["id"],
-                    "content": result
-                })
+                messages.append(tool_message(tc_out["id"], result))
                 _mark(tool_name)
         else:
             for tc in batch:
@@ -245,22 +250,14 @@ def execute_tool_calls(
                     guard_err = _check_same_file_edit_guard(tc, files_edited_this_turn)
                 if guard_err:
                     tool_name = tc["function"]["name"]
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc["id"],
-                        "content": guard_err
-                    })
+                    messages.append(tool_message(tc["id"], guard_err))
                     _mark(tool_name)
                     continue
                 outcome = run_tool(tc)
                 if outcome is None:
                     break
                 tc_out, tool_name, result = outcome
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc_out["id"],
-                    "content": result
-                })
+                messages.append(tool_message(tc_out["id"], result))
                 _mark(tool_name)
 
     return triggered

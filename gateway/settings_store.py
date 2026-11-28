@@ -135,6 +135,12 @@ def update_settings(partial: Dict[str, Any]) -> Dict[str, Any]:
     """
     _validate_agent_max_iterations(partial)
     _validate_other_int_ranges(partial)
+    other = partial.get("other")
+    agent = other.get("agent") if isinstance(other, dict) else None
+    if isinstance(agent, dict) and "context_compaction" in agent:
+        mode = agent["context_compaction"]
+        if mode not in ("off", "conservative", "balanced", "compact"):
+            raise ValueError("Unknown context compaction mode")
     with _lock:
         current = _load_raw()
 

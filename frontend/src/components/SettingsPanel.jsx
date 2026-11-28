@@ -742,6 +742,17 @@ export default function SettingsPanel({ isOpen, onClose }) {
                 </div>
                 <div className="settings-field-row" style={{ marginTop: 12 }}>
                   <div className="settings-field-col">
+                    <label htmlFor="context-compaction">{t('agent.contextCompaction')}</label>
+                    <select id="context-compaction" className="settings-input"
+                      value={other.agent?.context_compaction || 'balanced'}
+                      onChange={e => setOther('agent', 'context_compaction', e.target.value)}>
+                      <option value="balanced">{t('agent.compactionBalanced')}</option>
+                      <option value="conservative">{t('agent.compactionConservative')}</option>
+                      <option value="compact">{t('agent.compactionCompact')}</option>
+                      <option value="off">{t('agent.compactionOff')}</option>
+                    </select>
+                  </div>
+                  <div className="settings-field">
                     <label>{t('agent.maxToolConcurrency')}</label>
                     <input className="settings-input" type="number"
                       value={other.agent?.max_tool_concurrency || ''}
