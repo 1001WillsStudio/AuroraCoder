@@ -22,6 +22,7 @@ except ImportError:
     SDKTransportError = TransportError
 
 from .tool_definitions import get_tool_definitions
+from .core_tools.conversation_history import reset_turn_token, set_turn_token
 from .core_tools.tool_store_client import get_toolstore_tools_prompt
 from .config import (
     DEFAULT_PROVIDER, PROVIDER_DEFAULT_MODELS,
@@ -126,6 +127,29 @@ def _has_continuation_notice_been_shown(messages: List[Dict]) -> bool:
 # ---------------------------------------------------------------------------
 
 def generate_chat_responses_stream_native(
+    messages: list,
+    max_iterations: int = MAX_ITERATIONS,
+    provider_id: Optional[str] = None,
+    model: Optional[str] = None,
+    tools_override: Optional[List[Dict]] = None,
+    conversation_id: str | None = None,
+    workspace_tree: str = "",
+    stop_requested: Callable[[], bool] | None = None,
+    task_tools: AgentTaskTools | None = None,
+    turn_token: str | None = None,
+) -> Generator[dict, None, None]:
+    """Bind the gateway history credential to one model run and its tools."""
+    token = set_turn_token(turn_token)
+    try:
+        yield from _generate_chat_responses(
+            messages, max_iterations, provider_id, model, tools_override,
+            conversation_id, workspace_tree, stop_requested, task_tools,
+        )
+    finally:
+        reset_turn_token(token)
+
+
+def _generate_chat_responses(
     messages: list,
     max_iterations: int = MAX_ITERATIONS,
     provider_id: Optional[str] = None,
