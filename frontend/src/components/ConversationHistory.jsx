@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { History, X, Search, Trash2 } from 'lucide-react'
-import { listConversations, getActiveStreams } from '../services/api'
+import { listConversations, getActiveStreams, searchConversationHistory } from '../services/api'
 import useLanguage from '../hooks/useLanguage'
 import { childCountForDelete } from '../utils/conversationDelete'
 
@@ -142,6 +142,25 @@ function CurrentSession({ currentConversationId, conversations, activeIds, onSel
 // ─── Full history drawer (opens as a second panel) ──────────────────────
 function HistoryDrawer({ conversations, activeIds, currentConversationId, onSelect, onClose, onDeleteRequest, triggerRef, confirmOpen, t }) {
   const [searchQuery, setSearchQuery] = useState('')
+  const [searchResult, setSearchResult] = useState(null)
+  const query = searchQuery.trim()
+
+  useEffect(() => {
+    if (!query) return
+    const controller = new AbortController()
+    const timer = setTimeout(async () => {
+      try {
+        const response = await searchConversationHistory(query, controller.signal)
+        if (!controller.signal.aborted) setSearchResult({ query, hits: response.results })
+      } catch (error) {
+        if (!controller.signal.aborted) setSearchResult({ query, error: true })
+      }
+    }, 200)
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [query])
   const searchRef = useRef(null)
   const panelRef = useRef(null)
 
@@ -174,9 +193,18 @@ function HistoryDrawer({ conversations, activeIds, currentConversationId, onSele
 
   const grouped = groupConversations(conversations)
 
-  const filtered = searchQuery.trim()
-    ? grouped.filter(c => (c.title || '').toLowerCase().includes(searchQuery.toLowerCase()))
-    : grouped
+  const matching = searchResult?.query === query ? searchResult : null
+  const matches = new Map(grouped
+    .filter(conversation => (conversation.title || '').toLowerCase().includes(query.toLowerCase()))
+    .map(conversation => [conversation.id, conversation]))
+  for (const hit of matching?.hits || []) {
+    const id = hit.conversation_id
+    matches.set(id, {
+      ...grouped.find(conversation => conversation.id === id),
+      id, title: hit.title, updated_at: hit.timestamp, snippet: hit.snippets?.[0]?.text,
+    })
+  }
+  const filtered = query ? [...matches.values()] : grouped
 
   return (
     <div className="history-drawer" ref={panelRef}>
@@ -201,7 +229,9 @@ function HistoryDrawer({ conversations, activeIds, currentConversationId, onSele
       <div className="history-drawer-list">
         {filtered.length === 0 ? (
           <div className="history-drawer-empty">
-            {searchQuery ? t('history.noMatches') : t('history.noConversations')}
+            {query
+              ? t(matching ? (matching.error ? 'history.searchFailed' : 'history.noMatches') : 'history.searching')
+              : t('history.noConversations')}
           </div>
         ) : (
           filtered.map(conv => {
@@ -226,6 +256,7 @@ function HistoryDrawer({ conversations, activeIds, currentConversationId, onSele
                       {isSubagent && <span className="subagent-prefix">↳ </span>}
                       {conv.title || t('history.untitled')}
                     </span>
+                    {conv.snippet && <span className="history-drawer-item-meta">{conv.snippet}</span>}
                     <span className="history-drawer-item-meta">
                       {isActive && <span className="history-drawer-item-status">{t('history.running')}</span>}
                       <span>{relativeTime(conv.updated_at, t)}</span>

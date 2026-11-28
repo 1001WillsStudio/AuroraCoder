@@ -8,6 +8,7 @@ corruption on crash.
 Thread-safe: all public methods acquire self._lock before mutating state.
 """
 
+import copy
 import json
 import os
 import re
@@ -117,6 +118,92 @@ def messages_for_retry(
     return []
 
 
+class InvalidForkPoint(ValueError):
+    """``before_user_message`` does not name a stored user-message boundary."""
+
+
+def _drop_incomplete_tool_rounds(raw_messages: list) -> list:
+    """Remove orphaned tool rounds left by older versions of the gateway.
+
+    A provider rejects an assistant ``tool_calls`` message that is not
+    followed by exactly one result per call, so every copy of a transcript
+    (fork, resume-from-storage) must drop a half-finished round instead of
+    forwarding it. This lives next to storage because both the chat route and
+    ``ConversationStore.fork_conversation`` need it.
+    """
+    complete = []
+    i = 0
+    while i < len(raw_messages):
+        message = raw_messages[i]
+        i += 1
+        calls = message.get("tool_calls") if message.get("role") == "assistant" else None
+        if calls:
+            start = i
+            while i < len(raw_messages) and raw_messages[i].get("role") == "tool":
+                i += 1
+            expected = {call.get("id") for call in calls}
+            results = raw_messages[start:i]
+            if (
+                all(expected) and len(expected) == len(calls) == len(results)
+                and expected == {result.get("tool_call_id") for result in results}
+            ):
+                complete.extend([message, *results])
+        elif message.get("role") != "tool":
+            complete.append(message)
+    return complete
+
+
+def _user_message_indices(messages: List[Dict]) -> List[int]:
+    """Positions of the user turns in *messages* (sparse: tool rounds intervene)."""
+    return [
+        i for i, msg in enumerate(messages)
+        if isinstance(msg, dict) and msg.get("role") == "user"
+    ]
+
+
+def slice_history_for_fork(
+    raw_messages: Optional[List[Dict]],
+    frontend_messages: Optional[List[Dict]],
+    before_user_message: Optional[int] = None,
+) -> tuple:
+    """Split stored history at a user-message boundary — no mutation.
+
+    *before_user_message* is a zero-based ordinal over the STORED user
+    messages of the provider transcript; everything strictly before that
+    message is kept. ``None`` keeps all safely persisted history and ``0`` is
+    a valid empty chat. A stale/out-of-range ordinal raises
+    :class:`InvalidForkPoint` instead of silently copying the wrong prefix.
+
+    The frontend list is cut at the same ordinal even though its shape
+    differs (one bubble per step, no tool messages), so both halves of the
+    copy end on the same user turn.
+    """
+    raw = list(raw_messages or [])
+    frontend = list(frontend_messages or [])
+    if before_user_message is None:
+        return raw, frontend
+    if not isinstance(before_user_message, int) or isinstance(before_user_message, bool):
+        raise InvalidForkPoint("before_user_message must be an integer")
+
+    raw_users = _user_message_indices(raw)
+    if before_user_message < 0 or before_user_message > len(raw_users):
+        raise InvalidForkPoint(
+            f"before_user_message {before_user_message} is out of range "
+            f"for {len(raw_users)} stored user message(s)"
+        )
+    if before_user_message == 0:
+        return [], []
+
+    raw_cut = raw_users[before_user_message] if before_user_message < len(raw_users) else len(raw)
+    frontend_users = _user_message_indices(frontend)
+    frontend_cut = (
+        frontend_users[before_user_message]
+        if before_user_message < len(frontend_users)
+        else len(frontend)
+    )
+    return raw[:raw_cut], frontend[:frontend_cut]
+
+
 def ensure_error_frontend_message(
     messages: Optional[List[Dict]],
     error: Optional[Dict] = None,
@@ -204,6 +291,17 @@ def _extract_title(messages: List[Dict]) -> str:
             title = title[:TITLE_MAX_LENGTH] + "..."
         return title or "Untitled"
     return "Untitled"
+
+
+def _message_file_signature(st: os.stat_result) -> tuple:
+    """Identity of one stored message file version.
+
+    Used by derived-read caches to decide whether cached data still matches
+    what is on disk. Atomic saves replace the inode; an in-place overwrite
+    changes mtime and ctime even when the size is unchanged, so edits are
+    never mistaken for the cached version.
+    """
+    return (st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
 
 
 def _atomic_write_json(path: Path, data: Any) -> None:
@@ -434,6 +532,8 @@ class ConversationStore:
             "type": "memory_maintenance" if _MEMORY_TRACE_ID.fullmatch(cid) else "user_chat",
             "status": "completed",
             "provider_id": None,
+            # Provenance lives in the index only; a rebuild cannot recover it.
+            "forked_from_id": None,
             "created_at": created,
             "updated_at": updated,
             "title": _extract_title(messages) if messages else "Untitled",
@@ -451,6 +551,11 @@ class ConversationStore:
     # Public API
     # ------------------------------------------------------------------
 
+    @property
+    def storage_dir(self) -> Path:
+        """Directory holding ``index.json`` and the per-conversation files."""
+        return self._dir
+
     def create_conversation(
         self,
         conversation_id: Optional[str] = None,
@@ -458,12 +563,24 @@ class ConversationStore:
         session_id: Optional[str] = None,
         provider_id: Optional[str] = None,
         conv_type: str = "user_chat",
+        forked_from_id: Optional[str] = None,
+        status: str = "running",
     ) -> str:
         """
         Create a new conversation and return its ID.
 
         Idempotent: if *conversation_id* already exists, returns it unchanged
         (supports the resume / continue flow).
+
+        *forked_from_id* records durable provenance for a chat copied out of
+        another transcript. It is deliberately a separate field from
+        ``parent_id``: ``parent_id`` means "subagent of" and cascades on
+        delete, while a fork is an independent chat that must outlive its
+        source.
+
+        *status* is the initial status; a caller that already knows the final
+        one (a fork of completed history) passes it so the new chat never
+        flashes as "running".
 
         The ``title`` key is intentionally NOT set here — it is only ever
         extracted from the actual message list by ``save_messages`` or
@@ -483,8 +600,9 @@ class ConversationStore:
                 "parent_id": parent_id,
                 "session_id": session_id,
                 "type": conv_type,
-                "status": "running",
+                "status": status,
                 "provider_id": provider_id,
+                "forked_from_id": forked_from_id,
                 "created_at": now,
                 "updated_at": now,
             }
@@ -716,6 +834,131 @@ class ConversationStore:
         except (json.JSONDecodeError, OSError) as e:
             logger.error(f"Failed to read messages for {conversation_id}: {e}")
             return []
+
+    def messages_signature(self, conversation_id: str) -> Optional[tuple]:
+        """Cheap identity of the current message file, or ``None`` if absent.
+
+        A derived-read cache validates its entry against this value before
+        using it. Any of replace/write/unlink changes the signature.
+        """
+        try:
+            return _message_file_signature(self._messages_path(conversation_id).stat())
+        except OSError:
+            return None
+
+    def read_messages_snapshot(
+        self, conversation_id: str
+    ) -> tuple[Optional[tuple], List[Dict]]:
+        """Read messages together with the identity of the bytes actually read.
+
+        The signature comes from the open descriptor, so a concurrent atomic
+        replace cannot label old content with the new file's identity. Returns
+        ``(None, [])`` when the file is missing, unreadable or not a list.
+        """
+        path = self._messages_path(conversation_id)
+        try:
+            with open(path, "rb") as f:
+                signature = _message_file_signature(os.fstat(f.fileno()))
+                raw = f.read()
+        except OSError:
+            return None, []
+        try:
+            messages = json.loads(raw)
+        except ValueError as e:
+            logger.error(f"Failed to read messages for {conversation_id}: {e}")
+            return None, []
+        if not isinstance(messages, list):
+            logger.error(
+                f"Failed to read messages for {conversation_id}: expected a list"
+            )
+            return None, []
+        return signature, messages
+
+    def fork_conversation(
+        self,
+        conversation_id: str,
+        before_user_message: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Copy a stored transcript into a NEW conversation and persist it now.
+
+        The copy is what lets a client (or another session, or automation)
+        continue earlier work without replaying raw history: it is complete on
+        disk before this returns, so a reload or a gateway restart finds it.
+
+        *before_user_message* is a zero-based ordinal over the stored user
+        messages — everything before that turn is copied, ``None`` copies all
+        safely persisted history, and ``0`` yields a valid empty chat. The
+        assistant ``tool_calls``/``tool`` rounds are copied verbatim, minus any
+        half-finished round the provider would reject.
+
+        Provenance is stored as ``forked_from_id``; ``parent_id`` stays empty
+        because that field means "subagent of" and cascades on delete.
+
+        Raises ``KeyError`` for an unknown source and :class:`InvalidForkPoint`
+        for an out-of-range ordinal.
+        """
+        with self._lock:
+            source = self._index.get(conversation_id)
+            if source is None:
+                raise KeyError(f"Conversation {conversation_id} not found")
+            source = dict(source)
+            raw_source = self.get_messages(conversation_id)
+            frontend_source = self.get_frontend_messages(conversation_id)
+
+        raw_slice, frontend_slice = slice_history_for_fork(
+            raw_source, frontend_source, before_user_message,
+        )
+        # Deep-copy so the caller can never share (or stamp) the source's
+        # message objects, and prune incomplete rounds so the copy is a valid
+        # provider transcript.
+        raw_slice = _drop_incomplete_tool_rounds(copy.deepcopy(raw_slice))
+        frontend_slice = copy.deepcopy(frontend_slice)
+
+        status = source.get("status")
+        if status not in TERMINAL_STATUSES or len(raw_slice) < len(raw_source):
+            # A stale "running" row (gateway killed mid-turn) must not make the
+            # copy look live; the copy is a stable snapshot by construction.
+            status = "completed"
+
+        new_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        sanitize_frontend_messages(frontend_slice)
+        for message in (*raw_slice, *frontend_slice):
+            if isinstance(message, dict) and not message.get("ts"):
+                message["ts"] = now
+        meta = {
+            "id": new_id, "parent_id": None, "session_id": None, "type": "user_chat",
+            "status": status, "provider_id": source.get("provider_id"),
+            "forked_from_id": conversation_id, "created_at": now, "updated_at": now,
+            "title": _extract_title(raw_slice),
+        }
+        files = (self._messages_path(new_id), self._frontend_messages_path(new_id))
+        with self._lock:
+            try:
+                _atomic_write_json(files[0], raw_slice)
+                _atomic_write_json(files[1], frontend_slice)
+                self._index[new_id] = meta
+                self._save_index()
+            except OSError:
+                self._index.pop(new_id, None)
+                for path in files:
+                    path.unlink(missing_ok=True)
+                raise
+
+        record = self.get_conversation(new_id)
+        logger.info(
+            f"[store] Forked {conversation_id[:8]}... -> {new_id[:8]}... "
+            f"({len(raw_slice)} messages, before_user_message={before_user_message})"
+        )
+        return {
+            "id": new_id,
+            "forked_from_id": conversation_id,
+            "title": record.get("title", "Untitled"),
+            "status": status,
+            "provider_id": source.get("provider_id"),
+            "messages": record["messages"],
+            "frontend_messages": self.get_frontend_messages(new_id),
+        }
 
     def list_conversations(
         self,

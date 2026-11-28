@@ -6,6 +6,8 @@ same-turn edit guards.  Separated from main_flow.py to keep the agent
 loop focused.
 """
 
+import contextvars
+from functools import partial
 import json
 import os
 from typing import Callable, Dict, List, Optional, Tuple
@@ -205,7 +207,7 @@ def execute_tool_calls(
         if stopped():
             break
         if is_safe and len(batch) > 1:
-            pending = {_get_executor().submit(run_tool, tc) for tc in batch}
+            pending = {_get_executor().submit(partial(contextvars.copy_context().run, run_tool), tc) for tc in batch}
             # Collect results keyed by tool_call id to preserve original order
             results_by_id = {}
             while pending:

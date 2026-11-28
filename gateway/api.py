@@ -27,6 +27,7 @@ from fastapi.staticfiles import StaticFiles
 
 from pydantic import BaseModel
 
+from gateway.conversation_history import TURN_TOKEN_PATHS
 from gateway.conversation_store import InvalidConversationId, store
 from gateway.provider_registry import sync_tool_env_vars
 from gateway.settings_store import configure_github_auth
@@ -141,7 +142,7 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
 
     public_prefixes = ("/health", "/api/auth/")
-    if any(path.startswith(p) for p in public_prefixes):
+    if path in TURN_TOKEN_PATHS or any(path.startswith(p) for p in public_prefixes):
         return await call_next(request)
 
     if not path.startswith("/api/"):

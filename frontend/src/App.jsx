@@ -10,7 +10,7 @@ import LoginScreen from './components/LoginScreen'
 import Sidebar from './components/Sidebar'
 import WelcomeScreen from './components/WelcomeScreen'
 import SettingsPanel from './components/SettingsPanel'
-import { streamChat, getProviders, cancelConversation, getConversation, deleteConversation, getActiveStreams, resumeStream, getTaskInstruction, setTaskInstruction, getInstanceInfo, searchWorkspaceFiles } from './services/api'
+import { streamChat, getProviders, cancelConversation, getConversation, deleteConversation, getActiveStreams, resumeStream, getTaskInstruction, setTaskInstruction, getInstanceInfo, searchWorkspaceFiles, forkConversation } from './services/api'
 import { hasCompleteToolBatch, TASK_MARKER_START, TASK_MARKER_END } from './utils/streamUtils'
 import { createSendLock, shouldAcceptStop } from './utils/composerGuard'
 import { addAttachedFile, removeAttachedFile } from './utils/attachedFiles'
@@ -544,7 +544,7 @@ function App() {
     return rawMessages.length
   }, [rawMessages, messages])
 
-  const handleForkConversation = useCallback((frontendMsgIdx, skipWarning = false) => {
+  const handleForkConversation = useCallback(async (frontendMsgIdx, skipWarning = false) => {
     const rawIdx = findForkPoint(frontendMsgIdx)
     const CODE_MUTATING = ['run_terminal_command', 'write_file', 'edit_file', 'delete_file']
     const toolsAfterFork = []
@@ -558,16 +558,27 @@ function App() {
       setForkWarning({ frontendMsgIdx, rawIdx, toolsAfterFork })
       return
     }
+    if (!conversationId) return
+    const viewEpoch = viewEpochRef.current
+    const beforeUserMessage = messages.slice(0, frontendMsgIdx).filter(message => message.role === 'user').length
+    let fork
+    try {
+      fork = await forkConversation(conversationId, beforeUserMessage)
+    } catch (error) {
+      if (viewEpoch === viewEpochRef.current) window.alert(error.message)
+      return
+    }
+    if (viewEpoch !== viewEpochRef.current) return
     beginConversationView()
     if (abortControllerRef.current) { abortControllerRef.current.abort(); abortControllerRef.current = null }
     stashConversationDraft(conversationId)
-    const nextId = newConversationId()
+    const nextId = fork.id
     syncConversationUrl(nextId, { mode: 'push' })
     conversationIdRef.current = nextId
     setConversationId(nextId)
     setLastRequest(null)
-    setRawMessages(rawMessages.slice(0, rawIdx))
-    setMessages(messages.slice(0, frontendMsgIdx))
+    setRawMessages(fork.messages)
+    setMessages(fork.frontend_messages)
     setIsStreaming(false)
     setCanContinue(false)
     setForkWarning(null)

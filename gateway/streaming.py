@@ -26,6 +26,7 @@ from src.backend_access import backend_auth_headers
 from src.config import WORKSPACE_DIR, MAX_FILE_READ_SIZE, CONTINUATION_TOOL_RESULT
 from src.workspace_paths import WorkspacePathError, resolve_under_workspace
 from src.message_provenance import HANDOFF_PREFIX, TASK_RESUME_SOURCE, TURN_INPUT_RECEIPT
+from gateway.conversation_history import begin_turn_credential, revoke_turn_credential
 from gateway.conversation_store import store, sanitize_frontend_messages, ensure_error_frontend_message
 from gateway.provider_registry import get_max_iterations
 from gateway.task_checklist import TaskChecklist, TaskConflict
@@ -68,6 +69,7 @@ class ActiveStream:
     status: str = "running"
     subscribers: list = field(default_factory=list)
     finished: bool = False
+    turn_token: str | None = None
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
     task: Optional[asyncio.Task] = None
     new_conversation_id: Optional[str] = None   # set when continuation detected
@@ -340,6 +342,7 @@ async def _cancel_active_stream(conversation_id: str) -> None:
             if stream.finished or active_streams.get(cid) is not stream:
                 continue
             stream.finished = True
+            revoke_turn_credential(stream.turn_token)
             del active_streams[cid]
             if stream.status == "running":
                 stream.status = "interrupted"
@@ -515,7 +518,7 @@ def start_task_segment(task: TaskChecklist, *, fresh: bool, handoff: str = "", s
         stream.task_request = directions[-1]["content"]
         body.pop("message_source")
     active_streams[cid] = stream
-    stream.task = asyncio.create_task(_proxy_backend_stream(stream, body))
+    launch_backend_stream(stream, body)
     return cid
 
 
@@ -647,12 +650,30 @@ async def _start_continuation(source: ActiveStream, prompt: str, messages: list[
     async with _streams_lock:
         active_streams[new_cid] = successor
 
-    successor.task = asyncio.create_task(_proxy_backend_stream(successor, body))
+    launch_backend_stream(successor, body)
     logger.info("[proxy] Started continuation %s from %s", new_cid[:8], cid[:8])
 
 # ============================================================================
 # Backend Proxy — background task
 # ============================================================================
+
+def launch_backend_stream(stream: ActiveStream, body: dict, *, proxy=None) -> None:
+    """Start the admitted run and bind history access to its lifetime."""
+    body.pop("conversation_history_token", None)
+    if stream.conv_type == "user_chat" and not stream.parent_id and not body.get("tools"):
+        stream.turn_token = begin_turn_credential(stream.conversation_id)
+        body["conversation_history_token"] = stream.turn_token
+    task = None
+    try:
+        task = (proxy or _proxy_backend_stream)(stream, body)
+        stream.task = asyncio.create_task(task)
+    except BaseException:
+        if task is not None:
+            task.close()
+        revoke_turn_credential(stream.turn_token)
+        raise
+    stream.task.add_done_callback(lambda _: revoke_turn_credential(stream.turn_token))
+
 
 async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
     """
@@ -826,6 +847,7 @@ async def _proxy_backend_stream(stream: ActiveStream, request_body: dict):
         _broadcast_stream_event(stream, "error", err)
 
     finally:
+        revoke_turn_credential(stream.turn_token)
         owner = active_streams.get(cid)
         superseded = stream.finished or (owner is not None and owner is not stream)
         stream.finished = True

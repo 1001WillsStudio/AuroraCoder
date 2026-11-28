@@ -339,6 +339,23 @@ export async function listConversations(filters = {}) {
  * Get a full conversation (metadata + messages).
  * @param {string} conversationId
  */
+export async function searchConversationHistory(query, signal) {
+  const params = new URLSearchParams({ query })
+  const response = await fetch(`${API_BASE}/conversation-browser/search?${params}`, { headers: _headers(), signal })
+  if (!response.ok) throw new Error(`History search failed (${response.status})`)
+  return response.json()
+}
+
+export async function forkConversation(id, beforeUserMessage) {
+  const response = await fetch(`${API_BASE}/conversations/${encodeURIComponent(id)}/fork`, {
+    method: 'POST',
+    headers: _headers({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ before_user_message: beforeUserMessage }),
+  })
+  if (!response.ok) throw new Error(`Could not fork the conversation (${response.status})`)
+  return response.json()
+}
+
 export async function getConversation(conversationId, signal) {
   const response = await fetch(`${API_BASE}/conversations/${conversationId}`, { headers: _headers(), signal })
   if (!response.ok) {

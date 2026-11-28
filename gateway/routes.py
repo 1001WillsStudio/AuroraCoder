@@ -37,7 +37,15 @@ try:
 except ImportError:
     ConfigManager = None
 
-from gateway.conversation_store import store, frontend_messages_for_status, messages_for_retry, require_conversation_id
+from gateway.conversation_history import (
+    TURN_TOKEN_HEADER,
+    list_conversation_metadata,
+    read_conversation_transcript,
+    resolve_turn_credential,
+    search_conversation_history,
+    search_conversation_history_for_browser,
+)
+from gateway.conversation_store import InvalidForkPoint, store, frontend_messages_for_status, messages_for_retry, require_conversation_id
 from gateway.task_checklist import TaskConflict
 from src.task_checklist import TaskCheckpointUpdate, TaskEdit, TaskReopen, TaskRequestSlice, TaskResume, TaskStart
 from gateway.settings_store import (
@@ -76,6 +84,7 @@ from gateway.streaming import (
     _cancel_active_stream,
     _fix_orphan_tool_calls,
     _proxy_backend_stream,
+    launch_backend_stream,
     _subscriber_sse,
     _format_sse,
     _snapshotted_tool_calls,
@@ -122,6 +131,19 @@ class _SettingsUpdate(BaseModel):
     custom_providers: Optional[list] = None
     provider_models: Optional[dict] = None
     other: Optional[dict] = None
+
+
+class ForkRequest(BaseModel):
+    """Optional body for ``POST /api/conversations/{id}/fork``.
+
+    An omitted/null ``before_user_message`` copies all safely persisted
+    history; ``0`` forks an empty chat before the first user message.
+    """
+    before_user_message: Optional[int] = Field(
+        None,
+        description="Zero-based stored user-message ordinal to fork before",
+    )
+
 
 
 class DeleteRequest(BaseModel):
@@ -325,7 +347,7 @@ async def _start_chat_turn(request: Request, body: dict, t0: float, t1: float, *
             frontend_messages=store.get_frontend_messages(conversation_id),
         )
         body["message"] = None
-    elif prefer_saved_history:
+    elif prefer_saved_history or not body.get("messages"):
         # A desktop snapshot can be stale after streaming, reconnection or
         # another tab's turn. A new fork has no saved history yet.
         saved = store.get_messages(conversation_id)
@@ -425,7 +447,13 @@ async def _start_chat_turn(request: Request, body: dict, t0: float, t1: float, *
                 except asyncio.QueueFull:
                     pass
 
-    stream.task = asyncio.create_task(_proxy_backend_stream(stream, body))
+    try:
+        launch_backend_stream(stream, body, proxy=_proxy_backend_stream)
+    except Exception:
+        if active_streams.get(conversation_id) is stream:
+            del active_streams[conversation_id]
+        store.update_status(conversation_id, "error")
+        raise
 
     t_total = time.perf_counter() - t0
     logger.info(f"[proxy] [{cid_tag}...] total_pre_backend={t_total:.3f}s json={t1-t0:.3f}s cancel={t3-t2:.3f}s store={t5-t4:.3f}s")
@@ -1252,6 +1280,122 @@ async def save_conversation(conversation_id: str, body: ConversationSave):
     return {"id": conversation_id, "status": body.status}
 
 
+@app.get("/api/conversation-browser/search")
+async def conversation_browser_search(query: str = "", limit: int = 10):
+    """Full-dialogue search for the desktop conversation drawer.
+
+    Returns only ids, titles, last-activity timestamps and bounded match
+    snippets/positions.  Scans every stored chat, so it runs off the event
+    loop and cannot stall other request handlers.
+    """
+    return await asyncio.to_thread(
+        search_conversation_history_for_browser,
+        query,
+        limit,
+    )
+
+
+# ============================================================================
+# Endpoints — Cross-conversation reads for the agent's native tools
+# ============================================================================
+# These routes are reached ONLY by ``src/core_tools/conversation_history.py``
+# during a live turn. They are not part of the user-facing API and do not
+# accept the user's login token: each call must carry the per-turn,
+# read-only credential the proxy minted when it admitted that turn —
+# user-sent or automatic continuation, never a subagent.
+# (see gateway/conversation_history.py for the scope model).
+
+def _require_turn_credential(request: Request):
+    """Resolve the per-turn credential or fail with 401."""
+    credential = resolve_turn_credential(request.headers.get(TURN_TOKEN_HEADER, ""))
+    if credential is None:
+        raise HTTPException(
+            status_code=401,
+            detail="A valid per-turn conversation-history credential is required",
+        )
+    return credential
+
+
+@app.get("/api/conversation-history/list")
+async def conversation_history_list(
+    request: Request,
+    limit: int = 10,
+    cursor: Optional[str] = None,
+):
+    """Metadata-only listing of the user's other conversations (newest first)."""
+    credential = _require_turn_credential(request)
+    try:
+        return list_conversation_metadata(
+            exclude_conversation_id=credential.conversation_id,
+            limit=limit,
+            cursor=cursor,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid cursor") from exc
+
+
+@app.get("/api/conversation-history/search")
+async def conversation_history_search(
+    request: Request,
+    query: str = "",
+    limit: int = 5,
+):
+    """Multilingual full-transcript search over the user's other conversations."""
+    credential = _require_turn_credential(request)
+    if not query.strip():
+        return {"query": query, "results": []}
+    # Full-transcript search reads every user chat; keep it off the event loop.
+    return await asyncio.to_thread(
+        search_conversation_history,
+        query,
+        credential.conversation_id,
+        limit,
+    )
+
+
+@app.get("/api/conversation-history/read")
+async def conversation_history_read(
+    request: Request,
+    conversation_id: str,
+    after: int = -1,
+    limit: int = 20,
+):
+    """One page of a conversation's visible transcript (user + final assistant).
+
+    Tool rounds stay private: an interrupted round's progress text is never
+    returned as if it had been the turn's answer.
+    """
+    credential = _require_turn_credential(request)
+    transcript = await asyncio.to_thread(
+        read_conversation_transcript,
+        conversation_id,
+        credential.conversation_id,
+        after,
+        limit,
+    )
+    if transcript is None:
+        raise HTTPException(status_code=404, detail="No such conversation")
+    return transcript
+
+
+# ============================================================================
+# Endpoints — Workspace info + Conversation CRUD
+# ============================================================================
+
+@app.get("/api/workspace")
+async def get_workspace_info():
+    """Return basic workspace info."""
+    return {
+        "workspace": str(WORKSPACE),
+        "shell_alive": shell.is_alive,
+    }
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok", "service": "conversation-history"}
+
+
 @app.get("/api/conversations")
 async def list_conversations(
     type: Optional[str] = None,
@@ -1291,6 +1435,40 @@ async def get_conversation_children(conversation_id: str):
     """List child conversations (subagents) spawned by this conversation."""
     children = store.get_children(conversation_id)
     return {"children": children}
+
+
+@app.post("/api/conversations/{conversation_id}/fork")
+async def fork_conversation(conversation_id: str, body: Optional[ForkRequest] = None):
+    """Fork a saved transcript into a NEW conversation, persisted before reply.
+
+    This is how a client (or automation) continues earlier work in a fresh
+    chat without replaying raw history itself: the gateway copies the stored
+    provider transcript — and the matching frontend bubbles — up to the
+    optional zero-based user-message ordinal, writes the copy to disk, and
+    returns it under a new id. The source transcript is never modified.
+
+    ``before_user_message`` omitted/null means "all safely persisted
+    history"; ``0`` is a valid empty chat. Provenance is recorded as
+    ``forked_from_id`` and is independent of ``parent_id`` (the subagent link
+    that cascades on delete).
+
+    A still-running source is forkable on purpose: the gateway persists only
+    complete model rounds (previews live in memory), so the copy is always a
+    valid provider transcript — never a half-written turn — and the user can
+    branch off during a long run instead of waiting for it to finish.
+    """
+    source_id = (conversation_id or "").strip()
+    if not source_id:
+        raise HTTPException(status_code=400, detail="A conversation id is required")
+
+    before = body.before_user_message if body is not None else None
+    try:
+        return store.fork_conversation(source_id, before_user_message=before)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    except InvalidForkPoint as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
 
 
 @app.delete("/api/conversations/{conversation_id}")

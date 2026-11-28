@@ -68,6 +68,7 @@ class ChatRequest(BaseModel):
     # Injected by the gateway before proxying — gives the agent a
     # pre-built workspace tree so it doesn't waste turns exploring.
     workspace_tree: Optional[str] = Field(None)
+    conversation_history_token: Optional[str] = Field(None)
     task_state: Optional[dict] = Field(None)
     task_token: Optional[str] = Field(None)
     accept_turn_inputs: bool = Field(False)
@@ -206,6 +207,7 @@ async def stream_chat_response(
     model: Optional[str] = None,
     tools_override: Optional[list] = None,
     workspace_tree: str = "",
+    conversation_history_token: Optional[str] = None,
     task_state: Optional[dict] = None,
     task_token: Optional[str] = None,
     accept_turn_inputs: bool = False,
@@ -244,6 +246,7 @@ async def stream_chat_response(
                     model=model,
                     conversation_id=conversation_id,
                     workspace_tree=workspace_tree,
+                    **({"turn_token": conversation_history_token} if conversation_history_token else {}),
                     stop_requested=cancel_event.is_set,
                     **task_options,
                 ):
@@ -441,6 +444,7 @@ async def chat(chat_request: ChatRequest, request: Request):
                              model=chat_request.model, max_iterations=max_iterations,
                              tools_override=tools_override,
                              workspace_tree=workspace_tree,
+                             conversation_history_token=chat_request.conversation_history_token,
                              compact_delta_history=chat_request.compact_delta_history,
                              stream_stop_token=chat_request.stream_stop_token, **task_options),
         media_type="text/event-stream",
